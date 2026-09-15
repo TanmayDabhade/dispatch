@@ -1,35 +1,58 @@
 :root {
-  /* Surfaces — Beautiful UI's near-white workspace. `--surface-hover`/`-hover-strong` are
-     interactive-state fills; `--surface-inset` and `--field` back sunken/input chrome. */
-  --surface-page: #fafafb;
-  --surface-card: #ffffff;
-  --surface-raised: #f4f5f6;
-  --surface-muted: #f1f2f3;
-  --surface-hover: #f4f5f6;
-  --surface-hover-strong: #e7e9eb;
-  --surface-inset: #f7f8f9;
-  --field: #f2f2f3;
+  /* Surfaces — Linear's frame-and-panel model. `--surface-frame` is the app frame the sidebar
+     sits on; `--surface-panel` is the rounded main panel inset into it. The four layered
+     surfaces (secondary → quaternary) stack inside the panel; popover/control/selected/active
+     back floating chrome, buttons, the active nav row and the active tab. In light the frame
+     is the greyer one, mirroring dark where the frame is darker than the panel. */
+  --surface-frame: #efeff0;
+  --surface-panel: #f9f9fa;
+  --surface-secondary: #f4f4f5;
+  --surface-tertiary: #f6f6f7;
+  --surface-quaternary: #ffffff;
+  --surface-popover: #ffffff;
+  --surface-control: #f1f1f2;
+  --surface-selected: #e8e8ea;
+  --surface-active: #e3e3e6;
 
-  /* Text — neutral grays. */
-  --text-primary: #1f2124;
-  --text-secondary: #62656b;
-  --text-muted: #9a9da3;
-  --text-ghost: #9a9da3;
+  /* Legacy surface names, aliased onto the layered set above so existing call sites land on
+     the Linear surfaces without a rename. `--surface-hover` is an alpha so it also reads on
+     cards. */
+  --surface-page: var(--surface-panel);
+  --surface-card: var(--surface-quaternary);
+  --surface-raised: var(--surface-popover);
+  --surface-muted: var(--surface-secondary);
+  --surface-hover: rgb(0 0 0 / 0.04);
+  --surface-hover-strong: var(--surface-active);
+  --surface-inset: var(--surface-tertiary);
+  --field: var(--surface-secondary);
 
-  /* Borders — hairline, low-contrast. */
-  --border-default: #ecedef;
-  --border-strong: #e0e2e5;
-  --border-selected: #0285ff;
+  /* Text — neutral greys. `--text-ghost` is Linear's quaternary. */
+  --text-primary: #282a30;
+  --text-secondary: #3d3f47;
+  --text-muted: #6f6e77;
+  --text-ghost: #a4a3ab;
 
-  /* Beautiful UI blue: primary buttons, active nav, focus rings, links.
-     `--accent-tint` washes selected rows; `--accent-border` derives from it. */
-  --accent: #0285ff;
-  --accent-hover: #0170dd;
+  /* Borders — hairline, low-contrast. Panel edge, chip ring and popover ring each have their
+     own step so the half-pixel rings read at the right weight per layer. */
+  --border-subtle: #ececed;
+  --border-default: #e2e2e2;
+  --border-strong: #d4d4d7;
+  --border-panel: #e2e2e2;
+  --border-chip: #dcdcdf;
+  --border-popover: #d9d9dc;
+  --border-selected: #5e6ad2;
+
+  /* Linear indigo. Reserved for primary buttons, focus rings, toggles-on, links, the unread
+     dot and selected-tab text — selection and hover are neutral greys, never the accent.
+     `--accent-border` derives from it. */
+  --accent: #5e6ad2;
+  --accent-hover: #4f5bc7;
   --accent-contrast: #ffffff;
-  --accent-tint: #e9f3ff;
-  --accent-muted: #e9f3ff;
-  --accent-subtle: #f4f9ff;
+  --accent-tint: #eceefa;
+  --accent-muted: #eceefa;
+  --accent-subtle: #f5f6fd;
   --accent-border: color-mix(in srgb, var(--accent) 32%, var(--surface-card));
+  --focus-ring: #5e69d1;
 
   /* Per-project categorical palette — deterministically assigned (see src/lib/projectColor.ts)
      so every session/card/row for a project always shows the same color. Identity is a hue
@@ -43,33 +66,48 @@
   --project-color-7: #d65f86;
   --project-color-8: #2f9fb3;
 
+  /* Status and priority glyph colours — Linear's status vocabulary, one per glyph. */
+  --status-backlog: #9d9fa5;
+  --status-todo: #c9cbd1;
+  --status-progress: #d9a600;
+  --status-done: #5e6ad2;
+  --status-cancelled: #95a2b3;
+  --status-blocked: #e0453f;
+  --status-green: #2c9a5f;
+  --priority-urgent: #f2994a;
+
   /* Semantic — every `-border` is derived via color-mix so the dark block only needs to
      restate the `-bg`/base hue and the border recomputes for free. */
-  --green: #189a4d;
-  --green-bg: #e8f5ed;
+  --green: #2c9a5f;
+  --green-bg: #e6f4ec;
   --green-border: color-mix(in srgb, var(--green) 34%, var(--green-bg));
 
+  /* Blue is diff additions only — it is no longer the accent. */
   --blue: #0285ff;
   --blue-bg: #e9f3ff;
   --blue-border: color-mix(in srgb, var(--blue) 34%, var(--blue-bg));
 
-  --red: #e3474c;
+  --red: #e0453f;
   --red-bg: #fcecec;
   --red-border: color-mix(in srgb, var(--red) 34%, var(--red-bg));
 
-  --amber: #ef720c;
-  --amber-bg: #fdf1e5;
+  --amber: #e0861f;
+  --amber-bg: #fdf0e3;
   --amber-border: color-mix(in srgb, var(--amber) 34%, var(--amber-bg));
 
-  /* Violet is meaning color for the landing run state — accent blue now reads as
-     "working/active", so landing needs a distinct hue. */
+  /* Teal is the landing run state — violet would read as the indigo accent. */
+  --teal: #1f95a8;
+  --teal-bg: #e3f4f7;
+  --teal-border: color-mix(in srgb, var(--teal) 34%, var(--teal-bg));
+
+  /* Violet survives for syntax highlighting only (ui/ai/code-block.tsx). */
   --violet: #6e5ce6;
   --violet-bg: #efecfd;
   --violet-border: color-mix(in srgb, var(--violet) 34%, var(--violet-bg));
 
-  --gray: #62656b;
+  --gray: #6f6e77;
   --gray-bg: #f1f2f3;
-  --gray-border: #e0e2e5;
+  --gray-border: #d4d4d7;
 
   /* Tooltip chrome — always dark, in both themes, so it reads as a distinct floating layer. */
   --tooltip-bg: #25272b;
@@ -77,31 +115,68 @@
   --tooltip-muted: #a5a8ad;
   --tooltip-border: #3a3c40;
 
-  /* Elevation as layered box-shadows: a 1px ring plus soft blur, composited per surface so
-     buttons/cards/raised panels/overlays each read at a distinct depth. */
-  --shadow-hairline-ring: 0 0 0 1px var(--border-default);
-  --shadow-btn: 0 0 0 1px var(--border-strong), 0 1px 2px #1018280d;
+  /* Elevation as layered box-shadows: a half-pixel ring plus a soft drop, composited per
+     surface so buttons/cards/raised panels/overlays each read at a distinct depth. Half-pixel
+     rings render on Retina and round to 1px on a 1× display. Inputs are flat: the field ring
+     is a hairline, no inner drop. */
+  --shadow-hairline-ring: 0 0 0 0.5px var(--border-default);
+  --shadow-panel: 0 0.5px 1px 1px rgba(0, 0, 0, 0.06);
+  --shadow-btn: 0 0 0 0.5px var(--border-chip), 0 0.5px 1px rgba(0, 0, 0, 0.05);
   --shadow-card:
-    0 0 0 1px var(--border-default), 0 1px 2px #1018280a, 0 2px 6px #10182808;
-  --shadow-raised: 0 0 0 1px var(--border-default), 0 2px 10px #0000000b;
-  --shadow-overlay: 0 0 0 1px var(--border-default), 0 8px 28px #0001;
-  --shadow-inset-field: inset 0 1px 2px #0000001f;
+    0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 0.5px 1px rgba(0, 0, 0, 0.06);
+  --shadow-raised:
+    0 0 0 0.5px var(--border-default), 0 2px 10px rgba(0, 0, 0, 0.05);
+  --shadow-overlay:
+    0 0 0 0.5px var(--border-popover), 0 4px 40px rgba(0, 0, 0, 0.08),
+    0 3px 20px rgba(0, 0, 0, 0.08);
+  --shadow-inset-field: inset 0 0 0 0.5px var(--border-default);
 
-  /* Radii — theme-invariant, shared by both blocks. */
-  --radius-chip: 6px;
+  /* Radii — theme-invariant, shared by both blocks. Chip is keycaps only; control covers
+     buttons, rows, cards and menu items; popover covers dialogs, menus, the command menu and
+     the inset panel; pill covers pills, tabs and icon buttons. */
+  --radius-chip: 4px;
   --radius-control: 8px;
-  --radius-card: 10px;
+  --radius-card: 8px;
+  --radius-popover: 12px;
+  --radius-pill: 9999px;
 
-  /* Easing — theme-invariant. Default for every ui/ai/ primitive's transitions/animations. */
+  /* Fixed control geometry — every control is 28px, list rows and group headers 36px, panel
+     header rows 44px, inbox rows 48px. */
+  --control-h: 28px;
+  --row-h: 36px;
+  --header-h: 44px;
+  --inbox-row-h: 48px;
+  --sidebar-w: 244px;
+  --icon-size: 14px;
+  --avatar-size: 18px;
+
+  /* Motion — theme-invariant. `--ease-out-expo` is the default easing for every ui/ai/
+     primitive; the three durations are Linear's quick/regular/slow. */
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-quick: 0.1s;
+  --dur-regular: 0.25s;
+  --dur-slow: 0.35s;
+
+  /* How much of a status colour a group header picks up at its left edge (`.status-tint` in
+     global.css). */
+  --tint-strength: 4%;
 
   /* Run state — "what does this run want from a human", named after lib/runState.ts's
      `RunDisposition`. `-fg` is text and the state dot, `-surface` a row/tile tint, `-edge` its
      hairline. References to the palette above, never literals, so the dark block flows through
-     for free and must not restate them. */
-  --state-working-fg: var(--accent);
-  --state-working-surface: var(--accent-tint);
-  --state-working-edge: var(--accent-border);
+     for free and must not restate them. Working is Linear's in-progress yellow — indigo is
+     reserved for the accent. */
+  --state-working-fg: var(--status-progress);
+  --state-working-surface: color-mix(
+    in srgb,
+    var(--status-progress) 14%,
+    transparent
+  );
+  --state-working-edge: color-mix(
+    in srgb,
+    var(--status-progress) 40%,
+    var(--surface-quaternary)
+  );
 
   --state-waiting-fg: var(--amber);
   --state-waiting-surface: var(--amber-bg);
@@ -115,9 +190,9 @@
   --state-review-surface: var(--green-bg);
   --state-review-edge: var(--green-border);
 
-  --state-landing-fg: var(--violet);
-  --state-landing-surface: var(--violet-bg);
-  --state-landing-edge: var(--violet-border);
+  --state-landing-fg: var(--teal);
+  --state-landing-surface: var(--teal-bg);
+  --state-landing-edge: var(--teal-border);
 
   /* Ready and blocked aren't run states — they're task states, and both are deliberately
      colorless. A ready task is not an event; making it green would compete with the states
@@ -136,77 +211,101 @@
      close" while keeping the board legible behind it. */
   --overlay-light: rgba(20, 21, 24, 0.08);
 
-  /* Typography */
+  /* Typography. Inter Variable carries the 450 body weight; mono is code, file paths and
+     diffs only. */
   --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-sans:
+    'Inter Variable', 'SF Pro Display', -apple-system, BlinkMacSystemFont,
+    system-ui, sans-serif;
+  --weight-body: 450;
+  --weight-medium: 500;
+  --weight-semibold: 600;
 
-  /* Sizing tokens are rem, deliberately matching the old hardcoded px values at the browser
-     default 16px root. global.css sets the root font-size with a clamp() tied to viewport
-     width, so type and spacing scale together as the window grows. */
-  --text-2xs: 0.5938rem; /* 9.5px */
-  --text-xs: 0.625rem; /* 10px */
-  --text-meta: 0.6563rem; /* 10.5px */
-  --text-sm: 0.6875rem; /* 11px */
-  --text-base: 0.8125rem; /* 13px */
-  --text-md: 0.9375rem; /* 15px */
-  --text-lg: 1.0625rem; /* 17px */
-  --text-xl: 1.25rem; /* 20px */
+  /* Fixed px type scale (the root font-size is a fixed 16px; ⌘+/⌘− webview zoom scales the
+     whole UI). The legacy names snap onto Linear's steps; the Linear names alias the same
+     values. */
+  --text-2xs: 11px;
+  --text-xs: 11px;
+  --text-meta: 12px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 15px;
+  --text-lg: 18px;
+  --text-xl: 20px;
+  --text-micro: 11px;
+  --text-mini: 12px;
+  --text-small: 13px;
+  --text-regular: 15px;
+  --text-large: 18px;
+  --text-title3: 20px;
+  --text-title2: 24px;
 
-  /* The dense-row treatments. Every list surface in the redesign leans on these two, so they
-     live here rather than being respelled as font-size + letter-spacing per component. */
-  --label-tracking: 0.11em;
-  --meta-tracking: 0.02em;
+  /* Tracking. Uppercase tracked labels are gone; ids carry Linear's slight negative
+     tracking. */
+  --label-tracking: 0;
+  --meta-tracking: 0;
+  --id-tracking: -0.26px;
 
   /* Hairlines as inset shadows, not borders: an inset shadow is outside layout, so a row can
      carry an edge without shifting a pixel. `--hairline` outlines the whole box; the
      directional four draw one side each. Use in `box-shadow`; comma-compose for two sides. */
-  --hairline: inset 0 0 0 1px var(--border-default);
-  --hairline-strong: inset 0 0 0 1px var(--border-strong);
-  --hairline-top: inset 0 1px 0 var(--border-default);
-  --hairline-bottom: inset 0 -1px 0 var(--border-default);
-  --hairline-left: inset 1px 0 0 var(--border-default);
-  --hairline-right: inset -1px 0 0 var(--border-default);
+  --hairline: inset 0 0 0 0.5px var(--border-default);
+  --hairline-strong: inset 0 0 0 0.5px var(--border-strong);
+  --hairline-top: inset 0 0.5px 0 var(--border-default);
+  --hairline-bottom: inset 0 -0.5px 0 var(--border-default);
+  --hairline-left: inset 0.5px 0 0 var(--border-default);
+  --hairline-right: inset -0.5px 0 0 var(--border-default);
 
   /* Spacing */
-  --space-1: 0.25rem; /* 4px */
-  --space-2: 0.5rem; /* 8px */
-  --space-3: 0.75rem; /* 12px */
-  --space-4: 1rem; /* 16px */
-  --space-5: 1.25rem; /* 20px */
-  --space-6: 1.5rem; /* 24px */
-  --space-8: 2rem; /* 32px */
-  --space-10: 2.5rem; /* 40px */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
 }
 
 /* Follows the OS light/dark setting automatically. Only color tokens are overridden; the
    sizing/radius/easing tokens above are shared. */
 @media (prefers-color-scheme: dark) {
   :root {
-    --surface-page: #17181a;
-    --surface-card: #232427;
-    --surface-raised: #2a2b2e;
-    --surface-muted: #1c1d1f;
-    --surface-hover: #2a2b2e;
-    --surface-hover-strong: #313236;
-    --surface-inset: #1f2022;
-    --field: #2b2c2f;
+    --surface-frame: #08080a;
+    --surface-panel: #131313;
+    --surface-secondary: #161617;
+    --surface-tertiary: #17181a;
+    --surface-quaternary: #1b1a1a;
+    --surface-popover: #202022;
+    --surface-control: #1a1d1d;
+    --surface-selected: #232224;
+    --surface-active: #28292a;
+    /* Restated (same alias) because apps/site splits this file into its two blocks and
+       requires `--surface-page` in each. */
+    --surface-page: var(--surface-panel);
+    --surface-hover: rgb(255 255 255 / 0.035);
 
-    --text-primary: #f2f3f4;
-    --text-secondary: #a5a8ad;
-    --text-muted: #6c6f75;
-    --text-ghost: #6c6f75;
+    --text-primary: #fefeff;
+    --text-secondary: #e2e5e6;
+    --text-muted: #949497;
+    --text-ghost: #575659;
 
-    --border-default: #2e3033;
-    --border-strong: #3a3c40;
-    --border-selected: #3d9aff;
+    --border-subtle: #1a1b1d;
+    --border-default: #232426;
+    --border-strong: #29292b;
+    --border-panel: #202324;
+    --border-chip: #2e3133;
+    --border-popover: #3c3d40;
+    --border-selected: #5e6ad2;
 
-    --accent: #3d9aff;
-    --accent-hover: #7ec0ff;
+    --accent: #5e6ad2;
+    --accent-hover: #6f7add;
     --accent-contrast: #ffffff;
-    --accent-tint: #3d9aff29;
-    --accent-muted: #3d9aff29;
-    --accent-subtle: #3d9aff14;
+    --accent-tint: #5e6ad229;
+    --accent-muted: #5e6ad229;
+    --accent-subtle: #5e6ad214;
     --accent-border: color-mix(in srgb, var(--accent) 40%, var(--surface-card));
+    --focus-ring: #5e69d1;
 
     --project-color-1: #6faae2;
     --project-color-2: #46bd84;
@@ -217,31 +316,46 @@
     --project-color-7: #e07d9e;
     --project-color-8: #55b9cc;
 
-    --green: #3dbb72;
-    --green-bg: #3dbb7224;
+    --status-backlog: #bec2c8;
+    --status-todo: #e2e2e2;
+    --status-progress: #f2c94c;
+    --status-done: #5e6ad2;
+    --status-cancelled: #95a2b3;
+    --status-blocked: #eb5757;
+    --status-green: #4cb782;
+    --priority-urgent: #f2994a;
+
+    --green: #4cb782;
+    --green-bg: #4cb78224;
     --blue: #3d9aff;
     --blue-bg: #3d9aff29;
-    --red: #ee5c61;
-    --red-bg: #ee5c6124;
-    --amber: #f68f3c;
-    --amber-bg: #f68f3c24;
+    --red: #eb5757;
+    --red-bg: #eb575724;
+    --amber: #f2994a;
+    --amber-bg: #f2994a24;
+    --teal: #3fb8c9;
+    --teal-bg: #3fb8c929;
     --violet: #8f7ff2;
     --violet-bg: #8f7ff229;
-    --gray: #a5a8ad;
+    --gray: #949497;
     --gray-bg: #ffffff0e;
-    --gray-border: #3a3c40;
+    --gray-border: #29292b;
 
     --tooltip-bg: #111214;
     --tooltip-fg: #f2f3f4;
     --tooltip-muted: #a5a8ad;
     --tooltip-border: #2e3033;
 
-    --shadow-btn: 0 0 0 1px var(--border-strong), 0 1px 2px #0000004d;
+    --shadow-panel: 0 0.5px 1px 1px rgba(0, 0, 0, 0.3);
+    --shadow-btn:
+      0 0 0 0.5px var(--border-chip), 0 0.5px 1px rgba(0, 0, 0, 0.3);
     --shadow-card:
-      0 0 0 1px var(--border-default), 0 1px 2px #0003, 0 2px 6px #0003;
-    --shadow-raised: 0 0 0 1px var(--border-default), 0 2px 10px #00000038;
-    --shadow-overlay: 0 0 0 1px var(--border-strong), 0 8px 28px #00000057;
-    --shadow-inset-field: inset 0 1px 2px #0006;
+      0 0 0 0.5px rgba(255, 255, 255, 0.083), 0 0.5px 1px rgba(0, 0, 0, 0.3);
+    --shadow-raised:
+      0 0 0 0.5px var(--border-strong), 0 2px 10px rgba(0, 0, 0, 0.22);
+    --shadow-overlay:
+      0 0 0 0.5px var(--border-popover), 0 4px 40px rgba(0, 0, 0, 0.1),
+      0 3px 20px rgba(0, 0, 0, 0.125);
 
     --overlay: rgba(0, 0, 0, 0.6);
     --overlay-light: rgba(0, 0, 0, 0.3);
