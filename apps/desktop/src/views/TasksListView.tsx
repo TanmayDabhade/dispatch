@@ -1,137 +1,152 @@
-import type { EpicProgress } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { Assignee, Priority, TaskDoc } from '@dispatch/core/browser';
 import { PRIORITY_ORDER } from '@dispatch/core/browser';
-import { ChevronRight, SearchX, Waypoints } from 'lucide-react';
-import type { ReactNode } from 'react';
+import {
+  Archive,
+  ArrowUpRight,
+  Ban,
+  CircleDot,
+  Copy,
+  Eye,
+  Milestone,
+  Play,
+  SearchX,
+  SignalHigh,
+  Tag,
+  Target,
+  User,
+  Waypoints,
+} from 'lucide-react';
+import type { KeyboardEvent, ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { MergeLadderDot } from '../components/runs/MergeLadderDot';
+import { useShellActions } from '../components/shell/ShellActionsContext';
+import { AssigneeAvatar } from '../components/tasks/AssigneeAvatar';
 import { DispatchDialog } from '../components/tasks/DispatchDialog';
 import { EpicDagModal } from '../components/tasks/EpicDagModal';
-import {
-  AssigneeControl,
-  PriorityControl,
-  StatusControl,
-} from '../components/tasks/PropertyControls';
-import { StackBadge } from '../components/tasks/StackRail';
+import { PriorityIcon } from '../components/tasks/PriorityIcon';
+import { StatusIcon } from '../components/tasks/StatusIcon';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
-import { deriveEpicPulse } from '../lib/epicPulse';
-import { resolveListKeyCommand } from '../lib/keyboard';
-import { computeTaskWeights, describeWeight } from '../lib/taskWeight';
-import { cn } from '@/lib/utils';
 import {
-  type RecordsColumn,
-  type RecordsGroup,
-  type RecordsRow,
-  type RecordsSort,
-  RecordsTable,
-  sortRows,
-} from '@/ui/ai/records-table';
+  COLLAPSED_GROUPS_STORAGE_KEY,
+  readCollapsedGroups,
+  toggleCollapsedGroup,
+  writeCollapsedGroups,
+} from '../lib/collapsedEpics';
+import {
+  type GroupIcon,
+  groupTasks,
+  type ListGroup,
+  visibleRowIds,
+} from '../lib/listGrouping';
+import { colorForEpic } from '../lib/projectColor';
+import { assigneeLabel, priorityLabel, statusLabel } from '../lib/taskDisplay';
+import {
+  DEFAULT_TASKS_DISPLAY,
+  type TaskProperty,
+  type TasksDisplayPrefs,
+} from '../lib/tasksPrefs';
+import {
+  handleTaskListKeyDown,
+  type OpenPicker,
+  TaskListRow,
+} from './TaskListRow';
+import { GroupHeader } from '@/ui/ai/group-header';
+import { IconButton } from '@/ui/ai/icon-button';
+import { PillButton } from '@/ui/ai/pill';
 import { Button } from '@/ui/button';
 import { EmptyState } from '@/ui/chrome';
-import { StateDot } from '@/ui/chrome/StateDot';
-import { Input } from '@/ui/input';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
+import {
+  ContextMenu,
+  ContextMenuCheckboxItem,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from '@/ui/context-menu';
 
 interface TasksListViewProps {
   data: DispatchProjectData;
   onSelectTask: (taskId: string) => void;
-  /** The Tasks page's shared chip filters (status/priority), applied on top of this view's
-   * own text filter. Omitted passes everything. */
+  /** The Tasks page's shared filters (status/priority facets), applied before grouping.
+   * Omitted passes everything. */
   taskFilter?: (doc: TaskDoc) => boolean;
-  /** Column keys the Display menu has hidden. */
+  /** The Display popover's model — grouping, ordering, which properties a row shows. */
+  display?: TasksDisplayPrefs;
+  /** `f` on the list: the page header opens its filter menu. No-op until wired. */
+  onRequestFilter?: () => void;
+  /** `⇧V` on the list: the page header opens its Display popover. No-op until wired. */
+  onRequestDisplay?: () => void;
+  /** The retired Display-menu column set; folded into `display.properties` until the page
+   * passes `display` itself. */
   hiddenColumns?: ReadonlySet<string>;
 }
 
-// A group of rows under one epic-grouping header: `epicId` is `null` for the catch-all "No
-// epic" bucket (always rendered last) — everything else is keyed by the parent id the tasks
-// in it actually carry, even if that id doesn't resolve to a known epic (a dangling parent
-// reference still needs somewhere honest to render, rather than silently joining "No epic").
-interface EpicGroup {
-  epicId: string | null;
-  title: string;
-  progress: EpicProgress | undefined;
-  tasks: TaskDoc[];
-  /** True only for the trailing "Archived" bucket — its rows render muted and read-only. */
-  archived?: boolean;
-}
-
-const NO_EPIC_KEY = '__no-epic__';
-// The "Archived" bucket's key — kept apart from `NO_EPIC_KEY` and every real epic id.
-const ARCHIVED_GROUP_KEY = '__archived__';
-
-// Case-insensitive substring match against a task's id and title — a plain narrowing filter
-// (not the palette's fuzzy ranking), since a dense grouped list benefits more from a
-// predictable "contains" filter than from fuzzy re-ordering.
-function matchesFilter(doc: TaskDoc, filter: string): boolean {
-  if (filter.trim() === '') return true;
-  const needle = filter.toLowerCase();
-  return (
-    doc.meta.id.toLowerCase().includes(needle) ||
-    doc.meta.title.toLowerCase().includes(needle)
-  );
-}
-
-// `RecordsTable` columns for the list — priority/status/assignee are blank-labelled since
-// they render as bare inline-picker glyphs (see `renderTaskCell`), matching the dense
-// board-card/list-row anatomy those glyphs use everywhere else in the app. Sortable columns
-// carry numeric cell values (`kind: 'strength'`): priority sorts by rank, status by pipeline
-// position, weight by score — the pickers only override how the cell *renders*, never what
-// it sorts by.
-const COLUMNS: RecordsColumn[] = [
-  { key: 'priority', label: '', kind: 'strength' },
-  { key: 'id', label: 'ID' },
-  { key: 'status', label: 'Status', kind: 'strength' },
-  { key: 'title', label: 'Title' },
-  { key: 'weight', label: 'Weight', kind: 'strength' },
-  { key: 'tags', label: 'Tags', kind: 'tags' },
-  { key: 'assignee', label: '' },
-  { key: 'updated', label: 'Updated', kind: 'time' },
-];
-
-/** The columns the Display menu offers to hide (everything but the title, which is the
- * row's identity), with human labels for the glyph columns whose headers are blank. */
+/** The retired Display menu's column list — still imported by `BoardView` until its Display
+ * popover moves to `TasksDisplayPrefs`. */
 export const HIDEABLE_LIST_COLUMNS: { key: string; label: string }[] = [
   { key: 'priority', label: 'Priority' },
   { key: 'id', label: 'ID' },
   { key: 'status', label: 'Status' },
-  { key: 'weight', label: 'Weight' },
-  { key: 'tags', label: 'Tags' },
+  { key: 'tags', label: 'Labels' },
   { key: 'assignee', label: 'Assignee' },
   { key: 'updated', label: 'Updated' },
 ];
 
+const LEGACY_COLUMN_PROPERTY: Record<string, TaskProperty> = {
+  priority: 'priority',
+  id: 'id',
+  status: 'status',
+  tags: 'labels',
+  assignee: 'assignee',
+  updated: 'updated',
+};
+
+const PRIORITIES = Object.keys(PRIORITY_ORDER) as Priority[];
+const ASSIGNEES: Assignee[] = ['agent', 'human', 'none'];
+
 /**
- * Linear's dense grouped list: one section per epic (project order, "No epic" last), each a
- * full-width collapsible header (chevron + epic title + done/total progress, reusing the same
- * `epicProgressById` data `TaskBoard`'s epic cards show), then ~36px rows — priority · id ·
- * status · title (+ epic breadcrumb, + stack badge) · labels · assignee · relative "updated"
- * time. Rendered through `RecordsTable`'s `groups`/`selectable`/`renderCell` extensions (see
- * `records-table.tsx`) so the table styling — sticky header, hairline rows, hover wash — comes
- * from the shared primitive while every pre-reskin capability (bulk-select + dispatch,
- * per-epic collapsible grouping, inline priority/status/assignee pickers, the epic
- * dependency-graph modal, the stack badge, j/k roving focus) stays intact; those live in this
- * view, composed around/into the table rather than baked into it. The caller (`BoardView`, now
- * the single "Tasks" nav destination) owns the page header/New task button and the List/Board
- * toggle; this component only ever renders once there's at least one task in the project, so
- * it doesn't duplicate that container's own empty-project state — it only needs its own empty
- * state for "the search filter matched nothing."
+ * Linear's list layout for Tasks: rows straight on the panel (no card, no column header, no
+ * dividers), grouped under status-tinted 36px `GroupHeader`s with a `+` each, every row a
+ * 36px `ListRow` — priority glyph, sans id, status glyph, title, then the right-aligned pills
+ * (labels, epic chip, sub-task count, live run mark, assignee) and the absolute date. The
+ * grouping/ordering/properties come from `display` (`groupTasks`), the same model the board
+ * and Milestones read. A right-click menu and the single-key shortcuts (`s p a e` pickers,
+ * `x` select, `d` dispatch, `o`/Enter open, Space peek, `j/k`) work on the focused row; bulk
+ * selection surfaces a dispatch bar at the bottom. The caller owns the page header, view
+ * tabs and filter/display controls; this only renders once the project has tasks, so its
+ * own empty state covers "the filter matched nothing".
  */
 export function TasksListView({
   data,
   onSelectTask,
   taskFilter,
+  display,
+  onRequestFilter,
+  onRequestDisplay,
   hiddenColumns,
 }: TasksListViewProps) {
-  const [filter, setFilter] = useState('');
-  const [sort, setSort] = useState<RecordsSort>(null);
+  const shell = useShellActions();
+  const prefs = useMemo<TasksDisplayPrefs>(() => {
+    const base = display ?? DEFAULT_TASKS_DISPLAY;
+    if (hiddenColumns === undefined || hiddenColumns.size === 0) return base;
+    const properties = new Set(base.properties);
+    for (const column of hiddenColumns) {
+      const property = LEGACY_COLUMN_PROPERTY[column];
+      if (property !== undefined) properties.delete(property);
+    }
+    return { ...base, properties };
+  }, [display, hiddenColumns]);
+
   const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
-    () => new Set()
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() =>
+    readCollapsedGroups(COLLAPSED_GROUPS_STORAGE_KEY)
   );
-  // View-local modal state for the epic dependency-graph view — which epic's graph is open, or
-  // `null` when closed. Not lifted to App-level nav state since nothing outside this list needs
-  // to know the graph is open.
+  // Which epic's dependency graph is open, or `null`. View-local: nothing outside this list
+  // needs to know.
   const [dagEpicId, setDagEpicId] = useState<string | null>(null);
   // Multi-select for bulk actions. Kept here rather than lifted: nothing outside this list
   // needs to know what is ticked, and it should clear when you navigate away.
@@ -139,6 +154,10 @@ export function TasksListView({
     () => new Set()
   );
   const [dispatchOpen, setDispatchOpen] = useState(false);
+  const [picker, setPicker] = useState<OpenPicker | null>(null);
+  // The row the context menu was opened on — set by the row's own `onContextMenu` before
+  // the (single, list-wide) menu trigger handles the same event.
+  const [menuTaskId, setMenuTaskId] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   const epicById = useMemo(() => {
@@ -147,19 +166,26 @@ export function TasksListView({
     return map;
   }, [data.epics]);
 
-  const epicTitleById = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const epic of data.epics) map.set(epic.meta.id, epic.meta.title);
+  // Children per parent, for the epic row's `▶ N` sub-task count.
+  const childCountByParent = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const doc of data.tasks) {
+      if (doc.meta.parent === null) continue;
+      map.set(doc.meta.parent, (map.get(doc.meta.parent) ?? 0) + 1);
+    }
     return map;
-  }, [data.epics]);
+  }, [data.tasks]);
 
-  // The dag modal always graphs an epic's *full* child set, independent of the list's own
-  // search filter — narrowing the filter shouldn't make edges disappear from the graph.
+  // Every label in use, for the context menu's Labels submenu.
+  const allLabels = useMemo(() => {
+    const set = new Set<string>();
+    for (const doc of data.tasks) for (const l of doc.meta.labels) set.add(l);
+    return [...set].sort();
+  }, [data.tasks]);
+
   const dagEpic = dagEpicId !== null ? (epicById.get(dagEpicId) ?? null) : null;
-  // Memoized so this array is referentially stable across re-renders while the modal is open —
-  // otherwise a new array every render would bust EpicDagView's own `[tasks]` memo on every
-  // parent re-render (mirrors TaskDetailPanel's `epicChildren` memo for the same shape of
-  // derivation).
+  // Memoized so the array is stable while the modal is open — a fresh array every render
+  // would bust EpicDagView's own `[tasks]` memo.
   const dagTasks = useMemo(
     () =>
       dagEpicId !== null
@@ -168,180 +194,48 @@ export function TasksListView({
     [data.tasks, dagEpicId]
   );
 
-  // Buckets every filtered task under its `parent` epic id in one pass, then orders the
-  // resulting groups: known epics first (in the project's own epic order, skipping any epic
-  // with zero matching tasks so an empty header never renders), then any dangling parent ids
-  // that don't resolve to a known epic, then "No epic" last.
-  const groups = useMemo<EpicGroup[]>(() => {
+  const groups = useMemo<ListGroup[]>(() => {
     if (data.config === null) return [];
-    const filtered = data.tasks.filter(
-      (doc) => matchesFilter(doc, filter) && (taskFilter?.(doc) ?? true)
-    );
-
-    const byParent = new Map<string, TaskDoc[]>();
-    const noEpic: TaskDoc[] = [];
-    for (const doc of filtered) {
-      const parent = doc.meta.parent;
-      if (parent === null) {
-        noEpic.push(doc);
-        continue;
-      }
-      const bucket = byParent.get(parent);
-      if (bucket !== undefined) bucket.push(doc);
-      else byParent.set(parent, [doc]);
-    }
-
-    const result: EpicGroup[] = [];
-    const seenParents = new Set<string>();
-    for (const epic of data.epics) {
-      const bucket = byParent.get(epic.meta.id);
-      if (bucket === undefined) continue;
-      seenParents.add(epic.meta.id);
-      result.push({
-        epicId: epic.meta.id,
-        title: epic.meta.title,
-        progress: data.epicProgressById.get(epic.meta.id),
-        tasks: bucket,
-      });
-    }
-    for (const [parentId, bucket] of byParent) {
-      if (seenParents.has(parentId)) continue;
-      result.push({
-        epicId: parentId,
-        title: parentId,
-        progress: undefined,
-        tasks: bucket,
-      });
-    }
-    if (noEpic.length > 0) {
-      result.push({
-        epicId: null,
-        title: 'No epic',
-        progress: undefined,
-        tasks: noEpic,
-      });
-    }
-    // With the toggle on, archived tasks get their own trailing group rather than
-    // rejoining their original epic bucket.
-    if (data.showArchived) {
-      const archived = data.archivedTasks.filter(
-        (doc) => matchesFilter(doc, filter) && (taskFilter?.(doc) ?? true)
-      );
-      if (archived.length > 0) {
-        result.push({
-          epicId: ARCHIVED_GROUP_KEY,
-          title: 'Archived',
-          progress: undefined,
-          tasks: archived,
-          archived: true,
-        });
-      }
-    }
-    return result;
+    const passes = (doc: TaskDoc) => taskFilter?.(doc) ?? true;
+    return groupTasks(data.tasks.filter(passes), prefs, {
+      statuses: data.config.statuses,
+      epics: data.epics,
+      archivedTasks: data.showArchived
+        ? data.archivedTasks.filter(passes)
+        : undefined,
+    });
   }, [
     data.tasks,
     data.config,
     data.epics,
-    data.epicProgressById,
     data.showArchived,
     data.archivedTasks,
-    filter,
     taskFilter,
+    prefs,
   ]);
 
-  // Client-side v0 of the planning queue's weighted scoring — see `taskWeight.ts`. Archived
-  // tasks are included so their rows still render a (zero) score rather than a blank cell.
-  const weightById = useMemo(
-    () =>
-      computeTaskWeights(
-        [...data.tasks, ...data.archivedTasks],
-        // Recomputed whenever the task set changes — the age factor moves too slowly for
-        // anything finer-grained to matter.
-        new Date()
-      ),
-    [data.tasks, data.archivedTasks]
-  );
-
-  // Pipeline position per status, in the project's own configured order — the numeric cell
-  // value the Status column sorts by.
-  const statusRank = useMemo(() => {
-    const map = new Map<string, number>();
-    (data.config?.statuses ?? []).forEach((status, i) => map.set(status, i));
-    return map;
-  }, [data.config]);
-
-  const visibleColumns = useMemo(
-    () =>
-      hiddenColumns === undefined
-        ? COLUMNS
-        : COLUMNS.filter((c) => !hiddenColumns.has(c.key)),
-    [hiddenColumns]
-  );
-
-  // Every task currently rendered, keyed by id — `renderTaskCell` looks the full `TaskDoc` back
-  // up from a `RecordsRow`'s bare `id`, since a row's `cells` only carry plain sortable/
-  // displayable values, not the doc itself.
   const docById = useMemo(() => {
     const map = new Map<string, TaskDoc>();
     for (const g of groups)
-      for (const doc of g.tasks) map.set(doc.meta.id, doc);
+      for (const r of g.rows) map.set(r.doc.meta.id, r.doc);
     return map;
   }, [groups]);
 
-  // Ids in the trailing "Archived" group — read by `rowClassName`/`renderTaskCell` to dim
-  // those rows and skip the attention wash, without needing every row to carry its own group
-  // back-reference.
-  const archivedRowIds = useMemo(() => {
+  const archivedIds = useMemo(() => {
     const set = new Set<string>();
     for (const g of groups) {
-      if (g.archived === true) for (const doc of g.tasks) set.add(doc.meta.id);
+      if (g.archived) for (const r of g.rows) set.add(r.doc.meta.id);
     }
     return set;
   }, [groups]);
 
-  // Each group's rows with sortable cell values, sorted by the active header sort — shared
-  // by the table rendering and the j/k traversal order below, so the cursor always walks
-  // exactly what's on screen.
-  const sortedGroupRows = useMemo(
-    () =>
-      groups.map((group) => ({
-        group,
-        rows: sortRows(
-          group.tasks.map((doc) => ({
-            id: doc.meta.id,
-            cells: {
-              priority: PRIORITY_ORDER[doc.meta.priority],
-              id: doc.meta.id,
-              status: statusRank.get(doc.meta.status) ?? statusRank.size,
-              title: doc.meta.title,
-              weight: weightById.get(doc.meta.id)?.score ?? 0,
-              tags: doc.meta.labels,
-              assignee: doc.meta.assignee,
-              updated: doc.meta.updated,
-            },
-          })),
-          COLUMNS,
-          sort
-        ),
-      })),
-    [groups, sort, statusRank, weightById]
-  );
-
-  // j/k roving-focus + Enter-to-open only ever considers rows in expanded groups — a collapsed
-  // group's tasks are no more reachable by keyboard than they are visible.
+  // j/k only walks rows in expanded groups — a collapsed group's tasks are no more reachable
+  // by keyboard than they are visible.
   const orderedIds = useMemo(
-    () =>
-      sortedGroupRows.flatMap(({ group, rows }) =>
-        collapsedGroups.has(group.epicId ?? NO_EPIC_KEY)
-          ? []
-          : rows.map((r) => r.id)
-      ),
-    [sortedGroupRows, collapsedGroups]
+    () => visibleRowIds(groups, collapsed),
+    [groups, collapsed]
   );
 
-  // The selection, resolved back to tasks — and the subset that can actually start, which is
-  // what the bar's label has to name. Selecting a blocked task is normal; pretending it will
-  // dispatch is not.
   const selectedTasks = useMemo(
     () => data.tasks.filter((t) => selectedIds.has(t.meta.id)),
     [data.tasks, selectedIds]
@@ -360,10 +254,9 @@ export function TasksListView({
   }
 
   function toggleGroup(key: string) {
-    setCollapsedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
+    setCollapsed((prev) => {
+      const next = toggleCollapsedGroup(prev, key);
+      writeCollapsedGroups(COLLAPSED_GROUPS_STORAGE_KEY, next);
       return next;
     });
   }
@@ -372,9 +265,7 @@ export function TasksListView({
     listRef.current?.focus();
   }, []);
 
-  // Keeps the cursor pointed at a visible row whenever the filter narrows/widens the result
-  // set — falls back to the first visible row rather than leaving the cursor stuck on a row
-  // that just scrolled out of the filtered set.
+  // Keeps the cursor on a visible row whenever the filter or grouping changes.
   useEffect(() => {
     if (orderedIds.length === 0) {
       setFocusedTaskId(null);
@@ -390,283 +281,389 @@ export function TasksListView({
       ?.scrollIntoView({ block: 'nearest' });
   }, [focusedTaskId]);
 
-  function handleListKeyDown(e: React.KeyboardEvent) {
-    const command = resolveListKeyCommand(
-      { key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey },
-      { isTyping: false }
-    );
-    if (command === null || orderedIds.length === 0) return;
-    e.preventDefault();
-    if (command === 'list-confirm') {
-      if (focusedTaskId !== null) onSelectTask(focusedTaskId);
-      return;
-    }
-    const currentIndex =
-      focusedTaskId !== null ? orderedIds.indexOf(focusedTaskId) : -1;
-    const nextIndex =
-      command === 'list-down'
-        ? Math.min(currentIndex + 1, orderedIds.length - 1)
-        : Math.max(currentIndex - 1, 0);
-    setFocusedTaskId(orderedIds[Math.max(nextIndex, 0)] ?? null);
+  function dispatchOne(taskId: string) {
+    if (!data.readyIds.has(taskId)) return;
+    void data.handleDispatch(taskId);
   }
 
-  // The inline priority/status/title(+breadcrumb+stack badge)/assignee cells — everything a
-  // generic `kind` can't express. Returns `undefined` for every other column, falling back to
-  // `RecordsTable`'s own default rendering (id as plain text, tags as chips, updated as a
-  // relative timestamp).
-  function renderTaskCell(
-    row: RecordsRow,
-    column: RecordsColumn
-  ): ReactNode | undefined {
-    const doc = docById.get(row.id);
-    if (doc === undefined) return undefined;
-    if (column.key === 'priority') {
-      return (
-        <PriorityControl
-          value={doc.meta.priority}
-          onChange={(p) => void data.handleUpdate(doc.meta.id, { priority: p })}
-        />
-      );
-    }
-    if (column.key === 'status') {
-      return (
-        <StatusControl
-          value={doc.meta.status}
-          statuses={data.config?.statuses ?? []}
-          onChange={(status) => void data.moveTaskStatus(doc.meta.id, status)}
-        />
-      );
-    }
-    if (column.key === 'title') {
-      const epicTitle =
-        doc.meta.parent !== null
-          ? epicTitleById.get(doc.meta.parent)
-          : undefined;
-      return (
-        <span className="flex min-w-0 items-center gap-1.5">
-          <MergeLadderDot meta={data.latestRunByTaskId.get(doc.meta.id)} />
-          <span className="text-foreground min-w-0 flex-1 truncate text-[13px]">
-            {doc.meta.title}
-            {epicTitle !== undefined && (
-              <span className="text-muted-foreground"> › {epicTitle}</span>
-            )}
-          </span>
-          <StackBadge
-            tasks={data.tasksIncludingArchived}
-            taskId={doc.meta.id}
+  function handleListKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    handleTaskListKeyDown(e, {
+      orderedIds,
+      focusedTaskId,
+      setFocusedTaskId,
+      onOpen: onSelectTask,
+      onPeek: shell.peekTask,
+      onSelectToggle: toggleSelected,
+      onDispatch: dispatchOne,
+      setPicker,
+      onEscape: () => {
+        if (selectedIds.size === 0 && picker === null) return false;
+        setSelectedIds(new Set());
+        setPicker(null);
+        return true;
+      },
+      onRequestFilter,
+      onRequestDisplay,
+    });
+  }
+
+  const groupIcon = (icon: GroupIcon): ReactNode => {
+    if (icon === null) return undefined;
+    switch (icon.kind) {
+      case 'status':
+      case 'milestone':
+        return <StatusIcon status={icon.status} />;
+      case 'epic':
+        return icon.epicId === null ? (
+          <Milestone className="text-muted-foreground size-3.5" />
+        ) : (
+          <span
+            aria-hidden
+            className="size-2.5 rounded-[3px]"
+            style={{ backgroundColor: colorForEpic(icon.epicId) }}
           />
-        </span>
-      );
-    }
-    if (column.key === 'assignee') {
-      return (
-        <AssigneeControl
-          value={doc.meta.assignee}
-          onChange={(a) => void data.handleUpdate(doc.meta.id, { assignee: a })}
-        />
-      );
-    }
-    if (column.key === 'weight') {
-      const weight = weightById.get(doc.meta.id);
-      if (weight === undefined || weight.score === 0) return null;
-      // The score is explainable, never a black box — hover names every factor.
-      return (
-        <span
-          title={describeWeight(weight)}
-          className="text-muted-foreground font-mono text-[11px] tabular-nums"
-        >
-          {weight.score.toFixed(1)}
-        </span>
-      );
-    }
-    return undefined;
-  }
-
-  // Selected rows wash blue, the roving j/k cursor washes a lighter accent, an unreviewed
-  // run's row washes amber, and an archived row (read-only, from the "Archived" toggle) dims —
-  // in that priority order, matching the pre-reskin row's own ternary exactly.
-  function taskRowClassName(row: RecordsRow): string {
-    const archived = archivedRowIds.has(row.id);
-    const selected = selectedIds.has(row.id);
-    const focused = row.id === focusedTaskId;
-    const needsAttention = !archived && data.attentionByTaskId.has(row.id);
-    return cn(
-      selected
-        ? 'bg-accent/20'
-        : focused
-          ? 'bg-accent/50'
-          : needsAttention
-            ? 'bg-state-waiting-surface'
-            : '',
-      archived && 'opacity-55 saturate-50'
-    );
-  }
-
-  // Each `EpicGroup` becomes one `RecordsGroup`: the header is the same collapsible
-  // chevron/title/progress/pulse/dag-button row the pre-reskin list rendered, now spanning the
-  // table's full width instead of sitting above a plain `<div>` of rows.
-  const recordsGroups = useMemo<RecordsGroup[]>(
-    () =>
-      sortedGroupRows.map(({ group, rows }) => {
-        const key = group.epicId ?? NO_EPIC_KEY;
-        const collapsed = collapsedGroups.has(key);
-        const doneCount =
-          group.progress?.children.filter(
-            (c) => c.status === 'landed' || c.status === 'dropped'
-          ).length ?? 0;
-        const totalCount = group.progress?.children.length ?? 0;
-        const pulse = deriveEpicPulse(
-          group.tasks,
-          data.latestRunByTaskId,
-          data.readyIds
         );
-        return {
-          key,
-          header: (
-            <div className="flex w-full items-center gap-1.5 px-1 py-1.5">
-              <Button
-                type="button"
-                variant="ghost"
-                size="xs"
-                onClick={() => toggleGroup(key)}
-                aria-expanded={!collapsed}
-                className="group h-auto min-w-0 flex-1 justify-start gap-1.5 px-0 text-left text-[length:inherit] font-normal hover:bg-transparent has-[>svg]:px-0"
-              >
-                <ChevronRight
-                  className={cn(
-                    'text-muted-foreground size-3.5 shrink-0 transition-transform',
-                    !collapsed && 'rotate-90'
-                  )}
-                />
-                <span className="text-muted-foreground min-w-0 truncate text-[11px] font-medium">
-                  {group.title}
-                </span>
-                <span className="text-muted-foreground/60 shrink-0 font-mono text-[11px]">
-                  {group.tasks.length}
-                </span>
-                {totalCount > 0 && (
-                  <span className="text-muted-foreground/70 shrink-0 text-[11px]">
-                    {doneCount}/{totalCount} done
-                  </span>
-                )}
-                {/* The single most actionable fact about this epic, rather than a tally of
-                    everything — see deriveEpicPulse for why the ordering matters. */}
-                <span className="flex shrink-0 items-center gap-1.5">
-                  {pulse.state !== null && <StateDot state={pulse.state} />}
-                  <span
-                    className={cn(
-                      'dense-meta',
-                      pulse.state === 'answer' && 'text-state-waiting'
-                    )}
-                  >
-                    {pulse.label}
-                  </span>
-                </span>
-              </Button>
-              {/* Only for a group keyed by a real, known epic (not the dangling-parent or
-                  "No epic" buckets) — there's no epic to graph otherwise. A sibling of the
-                  toggle button above, not nested inside it (button-in-button isn't valid
-                  HTML). */}
-              {group.epicId !== null && epicTitleById.has(group.epicId) && (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        onClick={() => setDagEpicId(group.epicId)}
-                        aria-label={`View dependency graph for ${group.title}`}
-                        className="text-muted-foreground hover:text-foreground size-auto shrink-0 p-1"
-                      />
-                    }
-                  >
-                    <Waypoints className="size-3.5" />
-                  </TooltipTrigger>
-                  <TooltipContent>View dependency graph</TooltipContent>
-                </Tooltip>
-              )}
-            </div>
-          ),
-          rows: collapsed ? [] : rows,
-        };
-      }),
-    [
-      sortedGroupRows,
-      collapsedGroups,
-      data.latestRunByTaskId,
-      data.readyIds,
-      epicTitleById,
-    ]
-  );
+      case 'assignee':
+        return <AssigneeAvatar assignee={icon.assignee} size={16} />;
+      case 'priority':
+        return <PriorityIcon priority={icon.priority} />;
+    }
+  };
+
+  // Under an epic or milestone header the ` › epic` chip repeats the header.
+  const showEpicChip =
+    prefs.grouping !== 'epic' && prefs.grouping !== 'milestone';
+
+  const menuDoc = menuTaskId !== null ? docById.get(menuTaskId) : undefined;
+  const menuEditable =
+    menuDoc !== undefined && !archivedIds.has(menuDoc.meta.id);
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3">
-      <div className="flex items-center gap-2">
-        <Input
-          className="text-[13px]"
-          placeholder="Filter by id or title…"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        />
-      </div>
-
+    <div className="flex h-full min-h-0 flex-col">
       {orderedIds.length === 0 ? (
         <EmptyState
           icon={SearchX}
-          message="No tasks match this filter."
-          className="flex-1 justify-center gap-3 p-0 text-[13px] [&>[data-slot=empty-description]]:text-[length:inherit]"
+          heading="No tasks match"
+          description="Nothing passes the current filter. Clear it, or expand a collapsed group."
+          className="flex-1"
         />
       ) : (
-        <div
-          ref={listRef}
-          tabIndex={0}
-          onKeyDown={handleListKeyDown}
-          className="min-h-0 flex-1 overflow-y-auto"
+        <ContextMenu
+          onOpenChange={(open) => {
+            if (!open) setMenuTaskId(null);
+          }}
         >
-          <RecordsTable
-            columns={visibleColumns}
-            groups={recordsGroups}
-            sort={sort}
-            onSortChange={setSort}
-            onRowClick={(row) => onSelectTask(row.id)}
-            onRowMouseEnter={setFocusedTaskId}
-            selectable
-            selectedIds={selectedIds}
-            onToggleSelect={toggleSelected}
-            selectLabel={(row) =>
-              `Select ${docById.get(row.id)?.meta.title ?? row.id}`
+          <ContextMenuTrigger
+            render={
+              <div
+                ref={listRef}
+                tabIndex={0}
+                role="grid"
+                aria-label="Tasks"
+                onKeyDown={handleListKeyDown}
+                className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 outline-none"
+              />
             }
-            renderCell={renderTaskCell}
-            rowClassName={taskRowClassName}
-          />
-        </div>
+          >
+            {groups.map((group) => {
+              const isCollapsed = collapsed.has(group.key);
+              const knownEpic =
+                group.epicId !== null && epicById.has(group.epicId);
+              return (
+                <div key={group.key} data-group-key={group.key}>
+                  {group.kind !== 'none' && (
+                    <GroupHeader
+                      tint={group.tint ?? undefined}
+                      icon={groupIcon(group.icon)}
+                      name={group.label}
+                      count={group.rows.length}
+                      collapsed={isCollapsed}
+                      onToggle={() => toggleGroup(group.key)}
+                      onAdd={
+                        group.archived
+                          ? undefined
+                          : () => shell.openCreateTask(group.preset)
+                      }
+                      addLabel={`New task in ${group.label}`}
+                      actions={
+                        knownEpic ? (
+                          <IconButton
+                            label={`View dependency graph for ${group.label}`}
+                            onClick={() => setDagEpicId(group.epicId)}
+                          >
+                            <Waypoints aria-hidden />
+                          </IconButton>
+                        ) : undefined
+                      }
+                    />
+                  )}
+                  {!isCollapsed &&
+                    group.rows.map((row) => {
+                      const id = row.doc.meta.id;
+                      return (
+                        <TaskListRow
+                          key={id}
+                          doc={row.doc}
+                          data={data}
+                          prefs={prefs}
+                          indent={row.indent}
+                          archived={group.archived}
+                          epic={
+                            row.doc.meta.parent !== null
+                              ? epicById.get(row.doc.meta.parent)
+                              : undefined
+                          }
+                          childCount={childCountByParent.get(id) ?? 0}
+                          showEpicChip={showEpicChip}
+                          picker={picker}
+                          onPickerChange={setPicker}
+                          selected={selectedIds.has(id)}
+                          focused={focusedTaskId === id}
+                          onOpen={() => onSelectTask(id)}
+                          onFocus={() => setFocusedTaskId(id)}
+                          onContextMenu={() => {
+                            setMenuTaskId(id);
+                            setFocusedTaskId(id);
+                          }}
+                          onSelectToggle={() => toggleSelected(id)}
+                        />
+                      );
+                    })}
+                </div>
+              );
+            })}
+          </ContextMenuTrigger>
+          {menuDoc !== undefined && (
+            <ContextMenuContent className="min-w-[180px]">
+              {menuEditable && (
+                <>
+                  <ContextMenuSub>
+                    <ContextMenuSubTrigger>
+                      <CircleDot />
+                      Status
+                      <ContextMenuShortcut>S</ContextMenuShortcut>
+                    </ContextMenuSubTrigger>
+                    <ContextMenuSubContent>
+                      {(data.config?.statuses ?? []).map((status) => (
+                        <ContextMenuItem
+                          key={status}
+                          onClick={() =>
+                            void data.moveTaskStatus(menuDoc.meta.id, status)
+                          }
+                        >
+                          <StatusIcon status={status} />
+                          {statusLabel(status)}
+                        </ContextMenuItem>
+                      ))}
+                    </ContextMenuSubContent>
+                  </ContextMenuSub>
+                  <ContextMenuSub>
+                    <ContextMenuSubTrigger>
+                      <SignalHigh />
+                      Priority
+                      <ContextMenuShortcut>P</ContextMenuShortcut>
+                    </ContextMenuSubTrigger>
+                    <ContextMenuSubContent>
+                      {PRIORITIES.map((priority) => (
+                        <ContextMenuItem
+                          key={priority}
+                          onClick={() =>
+                            void data.handleUpdate(menuDoc.meta.id, {
+                              priority,
+                            })
+                          }
+                        >
+                          <PriorityIcon priority={priority} />
+                          {priorityLabel(priority)}
+                        </ContextMenuItem>
+                      ))}
+                    </ContextMenuSubContent>
+                  </ContextMenuSub>
+                  <ContextMenuSub>
+                    <ContextMenuSubTrigger>
+                      <User />
+                      Assignee
+                      <ContextMenuShortcut>A</ContextMenuShortcut>
+                    </ContextMenuSubTrigger>
+                    <ContextMenuSubContent>
+                      {ASSIGNEES.map((assignee) => (
+                        <ContextMenuItem
+                          key={assignee}
+                          onClick={() =>
+                            void data.handleUpdate(menuDoc.meta.id, {
+                              assignee,
+                            })
+                          }
+                        >
+                          <AssigneeAvatar assignee={assignee} size={16} />
+                          {assigneeLabel(assignee)}
+                        </ContextMenuItem>
+                      ))}
+                    </ContextMenuSubContent>
+                  </ContextMenuSub>
+                  <ContextMenuSub>
+                    <ContextMenuSubTrigger>
+                      <Tag />
+                      Labels
+                      <ContextMenuShortcut>L</ContextMenuShortcut>
+                    </ContextMenuSubTrigger>
+                    <ContextMenuSubContent>
+                      {allLabels.length === 0 ? (
+                        <ContextMenuItem disabled>
+                          No labels yet
+                        </ContextMenuItem>
+                      ) : (
+                        allLabels.map((label) => (
+                          <ContextMenuCheckboxItem
+                            key={label}
+                            checked={menuDoc.meta.labels.includes(label)}
+                            onCheckedChange={(checked) =>
+                              void data.handleUpdate(menuDoc.meta.id, {
+                                labels: checked
+                                  ? [...menuDoc.meta.labels, label]
+                                  : menuDoc.meta.labels.filter(
+                                      (l) => l !== label
+                                    ),
+                              })
+                            }
+                          >
+                            {label}
+                          </ContextMenuCheckboxItem>
+                        ))
+                      )}
+                    </ContextMenuSubContent>
+                  </ContextMenuSub>
+                  <ContextMenuSub>
+                    <ContextMenuSubTrigger>
+                      <Milestone />
+                      Epic
+                      <ContextMenuShortcut>E</ContextMenuShortcut>
+                    </ContextMenuSubTrigger>
+                    <ContextMenuSubContent>
+                      <ContextMenuItem
+                        onClick={() =>
+                          void data.handleUpdate(menuDoc.meta.id, {
+                            parent: null,
+                          })
+                        }
+                      >
+                        No epic
+                      </ContextMenuItem>
+                      {data.epics.map((epic) => (
+                        <ContextMenuItem
+                          key={epic.meta.id}
+                          onClick={() =>
+                            void data.handleUpdate(menuDoc.meta.id, {
+                              parent: epic.meta.id,
+                            })
+                          }
+                        >
+                          {epic.meta.title}
+                        </ContextMenuItem>
+                      ))}
+                    </ContextMenuSubContent>
+                  </ContextMenuSub>
+                  {/* Milestone = epic today (e-be4827): the same choices, the same field. */}
+                  <ContextMenuSub>
+                    <ContextMenuSubTrigger>
+                      <Target />
+                      Milestone
+                      <ContextMenuShortcut>M</ContextMenuShortcut>
+                    </ContextMenuSubTrigger>
+                    <ContextMenuSubContent>
+                      {data.epics.map((epic) => (
+                        <ContextMenuItem
+                          key={epic.meta.id}
+                          onClick={() =>
+                            void data.handleUpdate(menuDoc.meta.id, {
+                              parent: epic.meta.id,
+                            })
+                          }
+                        >
+                          {epic.meta.title}
+                        </ContextMenuItem>
+                      ))}
+                    </ContextMenuSubContent>
+                  </ContextMenuSub>
+                  <ContextMenuSeparator />
+                </>
+              )}
+              <ContextMenuItem onClick={() => onSelectTask(menuDoc.meta.id)}>
+                <ArrowUpRight />
+                Open
+                <ContextMenuShortcut>O</ContextMenuShortcut>
+              </ContextMenuItem>
+              <ContextMenuItem onClick={() => shell.peekTask(menuDoc.meta.id)}>
+                <Eye />
+                Peek
+                <ContextMenuShortcut>Space</ContextMenuShortcut>
+              </ContextMenuItem>
+              {menuEditable && (
+                <ContextMenuItem
+                  disabled={!data.readyIds.has(menuDoc.meta.id)}
+                  onClick={() => dispatchOne(menuDoc.meta.id)}
+                >
+                  <Play />
+                  Dispatch
+                  <ContextMenuShortcut>D</ContextMenuShortcut>
+                </ContextMenuItem>
+              )}
+              <ContextMenuItem
+                onClick={() => shell.copyTaskId(menuDoc.meta.id)}
+              >
+                <Copy />
+                Copy id
+                <ContextMenuShortcut>⌘C</ContextMenuShortcut>
+              </ContextMenuItem>
+              {menuEditable && (
+                <>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem
+                    onClick={() =>
+                      void data.handleUpdate(menuDoc.meta.id, {
+                        archivedAt: new Date().toISOString(),
+                      })
+                    }
+                  >
+                    <Archive />
+                    Archive
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    variant="destructive"
+                    onClick={() =>
+                      void data.moveTaskStatus(menuDoc.meta.id, 'dropped')
+                    }
+                  >
+                    <Ban />
+                    Drop
+                  </ContextMenuItem>
+                </>
+              )}
+            </ContextMenuContent>
+          )}
+        </ContextMenu>
       )}
 
       {/* Only appears once something is ticked, so the list is not permanently wearing a
           toolbar for an action most visits never take. */}
       {selectedIds.size > 0 && (
-        <div className="bg-accent/15 shadow-hairline-strong sticky bottom-0 flex items-center gap-2 rounded-lg px-3 py-2">
-          <span className="text-[12.5px]">{selectedIds.size} selected</span>
-          <span className="dense-meta">
+        <div className="bg-surface-quaternary rounded-card border-border-strong sticky bottom-0 mx-2 mb-2 flex h-9 items-center gap-2 border-[0.5px] px-3">
+          <span className="text-[13px] font-medium">
+            {selectedIds.size} selected
+          </span>
+          <span className="font-book text-muted-foreground text-[12px]">
             {selectedReady.length} ready to dispatch
           </span>
           <span className="flex-1" />
           <Button
-            size="xs"
             disabled={selectedReady.length === 0}
             onClick={() => setDispatchOpen(true)}
-            className="bg-accent text-accent-foreground hover:bg-accent h-auto px-2.5 py-1 text-[12px] font-normal"
           >
             Dispatch {selectedReady.length}
           </Button>
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={() => setSelectedIds(new Set())}
-            className="shadow-hairline h-auto px-2.5 py-1 text-[12px] font-normal hover:bg-transparent"
-          >
+          <PillButton onClick={() => setSelectedIds(new Set())}>
             Clear
-          </Button>
+          </PillButton>
         </div>
       )}
 

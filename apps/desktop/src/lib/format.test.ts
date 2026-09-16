@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 
 import {
+  formatCreated,
   formatRelativeTime,
   formatRelativeTimeFromIso,
+  formatShortDate,
   formatTokenCount,
   sessionDisplayName,
 } from './format.ts';
@@ -65,5 +67,17 @@ describe('colorForProject', () => {
 
   test('returns one of the 8 project color tokens', () => {
     expect(colorForProject('proj-a')).toMatch(/^var\(--project-color-[1-8]\)$/);
+  });
+});
+
+// The absolute formatters are re-exported from taskDates.ts (tested there); this pins the
+// `@/lib/format` path a view imports them through.
+describe('absolute task dates', () => {
+  const now = new Date('2026-09-15T12:00:00.000Z');
+  test('formatShortDate and formatCreated are reachable from format', () => {
+    expect(formatShortDate('2026-09-13T12:00:00.000Z', now)).toBe('Sep 13');
+    expect(formatCreated('2026-09-13T12:00:00.000Z', now)).toBe(
+      'Created Sep 13'
+    );
   });
 });

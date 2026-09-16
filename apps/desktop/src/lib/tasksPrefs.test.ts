@@ -2,13 +2,16 @@ import type { TaskDoc } from '@dispatch/core/browser';
 import { describe, expect, it } from 'bun:test';
 
 import {
-  DEFAULT_BOARD_COLUMN_PREFS,
+  DEFAULT_TASKS_DISPLAY,
   EMPTY_TASK_FILTERS,
   hasActiveFilters,
   matchesTaskFilters,
   parseBoardColumnPrefs,
-  parseHiddenListColumns,
   parseTaskFilters,
+  parseTasksDisplay,
+  serializeTasksDisplay,
+  TASKS_DISPLAY_STORAGE_KEY,
+  toggleDisplayProperty,
   toggleFilterValue,
   visibleBoardStatuses,
 } from './tasksPrefs';
@@ -51,35 +54,80 @@ describe('parseTaskFilters', () => {
   });
 });
 
-describe('parseBoardColumnPrefs', () => {
-  it('defaults hideEmpty to true', () => {
-    expect(parseBoardColumnPrefs(null)).toEqual(DEFAULT_BOARD_COLUMN_PREFS);
-    expect(parseBoardColumnPrefs('{"hidden": ["dropped"]}')).toEqual({
-      hideEmpty: true,
-      hidden: ['dropped'],
-      groupByEpic: false,
-      compact: true,
-    });
-    expect(parseBoardColumnPrefs('{"hideEmpty": false}')).toEqual({
-      hideEmpty: false,
-      hidden: [],
-      groupByEpic: false,
-      compact: true,
-    });
+describe('parseTasksDisplay', () => {
+  it('has Linear defaults: status grouping, priority order, the eight row properties', () => {
+    expect(TASKS_DISPLAY_STORAGE_KEY).toBe('dispatch:tasks-display-v1');
+    const d = parseTasksDisplay(null);
+    expect(d).toEqual(DEFAULT_TASKS_DISPLAY);
+    expect(d.grouping).toBe('status');
+    expect(d.ordering).toBe('priority');
+    expect(d.showEmptyGroups).toBe(false);
+    expect([...d.properties].sort()).toEqual([
+      'assignee',
+      'epic',
+      'id',
+      'labels',
+      'priority',
+      'run',
+      'status',
+      'updated',
+    ]);
   });
 
-  it('defaults compact cards on and honours an explicit off', () => {
-    expect(parseBoardColumnPrefs('{}').compact).toBe(true);
-    expect(parseBoardColumnPrefs('{"compact": false}').compact).toBe(false);
-    // A stale payload written before the key existed still reads as compact.
-    expect(parseBoardColumnPrefs('{"compact": "no"}').compact).toBe(true);
+  it('round-trips through serializeTasksDisplay', () => {
+    const prefs = {
+      ...DEFAULT_TASKS_DISPLAY,
+      layout: 'list' as const,
+      grouping: 'epic' as const,
+      ordering: 'updated' as const,
+      orderDir: 'desc' as const,
+      nestedSubtasks: false,
+      properties: new Set(['id', 'status'] as const),
+      dateField: 'created' as const,
+    };
+    expect(parseTasksDisplay(serializeTasksDisplay(prefs))).toEqual(prefs);
+  });
+
+  it('degrades unknown enum values and non-boolean toggles to the defaults, field by field', () => {
+    const parsed = parseTasksDisplay(
+      JSON.stringify({
+        layout: 'lanes',
+        grouping: 'milestone',
+        ordering: 'weight',
+        showEmptyGroups: 'yes',
+        properties: ['id', 'weight', 7],
+      })
+    );
+    expect(parsed.layout).toBe(DEFAULT_TASKS_DISPLAY.layout);
+    expect(parsed.grouping).toBe('milestone');
+    expect(parsed.ordering).toBe('priority');
+    expect(parsed.showEmptyGroups).toBe(false);
+    expect([...parsed.properties]).toEqual(['id']);
+  });
+
+  // The retired v1 board/list column payloads share no keys with the display model, so a
+  // user who somehow lands one under the new key gets the defaults rather than a half-read
+  // preference.
+  it('reads the retired v1 column shapes as the defaults', () => {
+    expect(
+      parseTasksDisplay(
+        '{"hideEmpty": false, "hidden": ["landed"], "compact": false}'
+      )
+    ).toEqual(DEFAULT_TASKS_DISPLAY);
+    expect(parseTasksDisplay('["tags", "updated"]')).toEqual(
+      DEFAULT_TASKS_DISPLAY
+    );
+    expect(parseTasksDisplay('not json')).toEqual(DEFAULT_TASKS_DISPLAY);
   });
 });
 
-describe('parseHiddenListColumns', () => {
-  it('parses a string array and defaults otherwise', () => {
-    expect(parseHiddenListColumns('["tags"]')).toEqual(['tags']);
-    expect(parseHiddenListColumns('oops')).toEqual([]);
+describe('toggleDisplayProperty', () => {
+  it('flips membership without mutating the input', () => {
+    const on = toggleDisplayProperty(DEFAULT_TASKS_DISPLAY, 'milestone');
+    expect(on.properties.has('milestone')).toBe(true);
+    expect(DEFAULT_TASKS_DISPLAY.properties.has('milestone')).toBe(false);
+    const off = toggleDisplayProperty(on, 'milestone');
+    expect(off.properties.has('milestone')).toBe(false);
   });
 });
 
@@ -113,47 +161,29 @@ describe('matchesTaskFilters', () => {
   });
 });
 
-describe('visibleBoardStatuses', () => {
-  const statuses = ['draft', 'ready', 'working', 'landed'];
-  const counts = new Map([
-    ['draft', 0],
-    ['ready', 5],
-    ['working', 1],
-    ['landed', 0],
-  ]);
+// The retired board-column prefs stay parseable only until BoardView's Display menu moves to
+// the display model; this pins that they still default sanely in the meantime.
+describe('retired board column prefs', () => {
+  it('parse with their old defaults', () => {
+    expect(parseBoardColumnPrefs(null)).toEqual({
+      hideEmpty: true,
+      hidden: ['landed', 'dropped'],
+      groupByEpic: false,
+      compact: true,
+    });
+  });
 
-  it('hides empty columns when hideEmpty is on', () => {
+  it('visibleBoardStatuses hides empty and explicitly hidden columns', () => {
+    const counts = new Map([
+      ['draft', 0],
+      ['ready', 5],
+    ]);
     expect(
       visibleBoardStatuses(
-        statuses,
+        ['draft', 'ready'],
         { hideEmpty: true, hidden: [], groupByEpic: false, compact: true },
         counts
       )
-    ).toEqual(['ready', 'working']);
-  });
-
-  it('keeps empty columns when hideEmpty is off', () => {
-    expect(
-      visibleBoardStatuses(
-        statuses,
-        { hideEmpty: false, hidden: [], groupByEpic: false, compact: true },
-        counts
-      )
-    ).toEqual(statuses);
-  });
-
-  it('explicit hides win regardless of count', () => {
-    expect(
-      visibleBoardStatuses(
-        statuses,
-        {
-          hideEmpty: false,
-          hidden: ['ready'],
-          groupByEpic: false,
-          compact: true,
-        },
-        counts
-      )
-    ).toEqual(['draft', 'working', 'landed']);
+    ).toEqual(['ready']);
   });
 });

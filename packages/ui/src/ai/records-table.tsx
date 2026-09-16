@@ -4,17 +4,30 @@ import {
   ChevronUp,
   type LucideIcon,
 } from 'lucide-react';
-import { Fragment, type KeyboardEvent, type ReactNode } from 'react';
+import { Fragment, type ReactNode } from 'react';
 
-import { Checkbox } from '../checkbox';
-import { formatRelativeTimeFromIso } from '../lib/format';
+import { cn } from '../lib/utils';
+import { GroupHeader } from './group-header';
+import { ListRow } from './list-row';
+import { LabelPill } from './pill';
 
 type RecordsCellKind = 'text' | 'tags' | 'time' | 'strength';
+
+/** Where a column's cell lands on the `ListRow`: the first column defaults to `title`,
+ * a `time` column to `date`, everything else to the right-aligned `trailing` group. */
+export type RecordsSlot =
+  | 'leading'
+  | 'id'
+  | 'status'
+  | 'title'
+  | 'trailing'
+  | 'date';
 
 export type RecordsColumn = {
   key: string;
   label: string;
   kind?: RecordsCellKind;
+  slot?: RecordsSlot;
 };
 
 export type RecordsRow = {
@@ -24,17 +37,16 @@ export type RecordsRow = {
 
 export type RecordsSort = { key: string; dir: 'asc' | 'desc' } | null;
 
-/** One collapsible/labelled section of rows, for a table whose rows aren't a flat list —
- * `TasksListView`'s per-epic grouping is the motivating case. Rendered as a full-width row
- * (spanning every column) ahead of that section's own rows, inside the *same* table as every
- * other group — one sticky column header for the whole table, not one per group. */
+/** One section of rows under a `GroupHeader` — `name` null renders the rows with no bar. */
 export type RecordsGroup = {
   key: string;
-  /** Arbitrary content for the section's header row — an expand/collapse trigger, counts, a
-   * secondary action button, whatever the caller needs. `null` renders no header row at all
-   * (a headerless catch-all section). The table has no opinion on what a "group" means; it
-   * only lays the header out and puts that group's rows underneath it. */
-  header: ReactNode;
+  name: ReactNode | null;
+  /** The header's 14px glyph and its left-edge tint. */
+  icon?: ReactNode;
+  tint?: string;
+  collapsed?: boolean;
+  onToggle?: () => void;
+  onAdd?: () => void;
   rows: RecordsRow[];
 };
 
@@ -42,39 +54,30 @@ export type RecordsTableProps = {
   columns: RecordsColumn[];
   /** Flat row list. Mutually exclusive with `groups` (pass exactly one). */
   rows?: RecordsRow[];
-  /** Grouped row sections — see `RecordsGroup`. Mutually exclusive with `rows`. Each group's
-   * own row order is preserved (sort still applies within a group if the caller pre-sorts
-   * each group's `rows` — the table itself never reorders what it's given). */
+  /** Grouped row sections — see `RecordsGroup`. Each group's own row order is preserved. */
   groups?: RecordsGroup[];
   sort: RecordsSort;
   onSortChange?: (sort: RecordsSort) => void;
+  /** A column-label row above the rows, with sort chevrons when `onSortChange` is given.
+   * Off by default: Linear's list has no header row. */
+  showHeader?: boolean;
   onRowClick?: (row: RecordsRow) => void;
-  /** Called when the pointer enters a row — for callers that sync a keyboard roving-focus
-   * cursor to whatever the mouse is over (`TasksListView`'s j/k navigation), matching the
-   * pre-reskin row's own `onMouseEnter`. Purely a pass-through; the table has no roving-focus
-   * concept of its own. */
   onRowMouseEnter?: (rowId: string) => void;
-  /** Adds a leading checkbox column — a bulk-selection affordance the generic `kind` cells
-   * can't express on their own. */
+  /** Rows grow a hover-revealed checkbox at the far left. */
   selectable?: boolean;
   selectedIds?: ReadonlySet<string>;
-  /** Called with a row's id when its checkbox is toggled. Required for `selectable` to do
-   * anything; the checkbox itself always reflects `selectedIds` (controlled, not local state). */
   onToggleSelect?: (rowId: string) => void;
   /** The checkbox's accessible name for a given row — defaults to the row id. */
   selectLabel?: (row: RecordsRow) => string;
-  /** Escape hatch for a cell that isn't one of the four generic `kind`s — an inline picker, a
-   * badge, a composite of several fields (Linear's `t-id › Epic title` breadcrumb, say).
-   * Return `undefined` to fall back to the default kind-based rendering for that (row, column)
-   * pair; return `null` to render nothing. Keeps the table itself agnostic of what any of
-   * those richer cells actually are. */
+  /** The keyboard cursor's row, rendered with the neutral focus wash. */
+  focusedId?: string | null;
+  /** Escape hatch for a cell that isn't one of the four generic `kind`s. Return `undefined`
+   * to fall back to the kind-based rendering; `null` to render nothing. */
   renderCell?: (
     row: RecordsRow,
     column: RecordsColumn
   ) => ReactNode | undefined;
-  /** Extra class names for one row's `<tr>` — e.g. a keyboard roving-focus highlight, an
-   * archived/dimmed treatment, or an attention wash. Composed alongside the row's own base
-   * classes, never replacing them. */
+  /** Extra class names for one row, composed alongside its own. */
   rowClassName?: (row: RecordsRow) => string | undefined;
 };
 
@@ -151,6 +154,48 @@ export function sortRows(
     .map(({ row }) => row);
 }
 
+const MONTHS = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
+/** A time cell's absolute label — `Sep 13`, with the year once it is not the current one.
+ * Exported for the test that pins the row's date treatment. */
+export function formatRecordsDate(
+  value: unknown,
+  now: Date = new Date()
+): string | null {
+  const ms = toTimestamp(value);
+  if (ms === 0) return null;
+  const date = new Date(ms);
+  const label = `${MONTHS[date.getMonth()] ?? ''} ${date.getDate()}`;
+  return date.getFullYear() === now.getFullYear()
+    ? label
+    : `${label}, ${date.getFullYear()}`;
+}
+
+const LABEL_COLOR_COUNT = 8;
+
+// Hashes a tag onto the eight categorical `--project-color-*` tokens so the same tag always
+// wears the same dot.
+function colorForTag(tag: string): string {
+  let hash = 0;
+  for (let i = 0; i < tag.length; i++) {
+    hash = (hash * 33 + tag.charCodeAt(i)) >>> 0;
+  }
+  return `var(--project-color-${(hash % LABEL_COLOR_COUNT) + 1})`;
+}
+
 const STRENGTH_BAR_HEIGHTS = ['h-1.5', 'h-2.5', 'h-3.5'];
 
 // Three-bar signal-style meter: bars up to `level` (clamped 0-3) filled with the accent
@@ -168,7 +213,7 @@ function RecordsStrengthCell({ value }: { value: unknown }) {
           key={height}
           aria-hidden
           className={`w-1 rounded-[1px] ${height} ${
-            index < level ? 'bg-primary' : 'bg-surface-inset'
+            index < level ? 'bg-accent' : 'bg-[var(--border-chip)]'
           }`}
         />
       ))}
@@ -176,32 +221,18 @@ function RecordsStrengthCell({ value }: { value: unknown }) {
   );
 }
 
+// Tags are label pills with the 8px dot; no tags renders nothing at all.
 function RecordsTagsCell({ value }: { value: unknown }) {
   const tags = Array.isArray(value) ? value.map(String) : [];
-  if (tags.length === 0) {
-    return <span className="text-muted-foreground">—</span>;
-  }
+  if (tags.length === 0) return null;
   return (
-    <div className="flex flex-wrap items-center gap-1">
+    <>
       {tags.map((tag) => (
-        <span
-          key={tag}
-          className="rounded-chip bg-surface-inset text-foreground inline-flex h-5 shrink-0 items-center px-2 text-[11px] font-medium"
-        >
+        <LabelPill key={tag} color={colorForTag(tag)}>
           {tag}
-        </span>
+        </LabelPill>
       ))}
-    </div>
-  );
-}
-
-function RecordsTimeCell({ value }: { value: unknown }) {
-  const label =
-    typeof value === 'string' ? formatRelativeTimeFromIso(value) : '—';
-  return (
-    <span className="text-muted-foreground font-mono text-[11.5px] tabular-nums">
-      {label}
-    </span>
+    </>
   );
 }
 
@@ -213,17 +244,13 @@ function RecordsCell({
   kind?: RecordsCellKind;
 }) {
   if (kind === 'tags') return <RecordsTagsCell value={value} />;
-  if (kind === 'time') return <RecordsTimeCell value={value} />;
+  if (kind === 'time') return <>{formatRecordsDate(value)}</>;
   if (kind === 'strength') return <RecordsStrengthCell value={value} />;
-  return (
-    <span className="text-foreground truncate">
-      {value === null || value === undefined ? '—' : toLabel(value)}
-    </span>
-  );
+  if (value === null || value === undefined) return null;
+  return <>{toLabel(value)}</>;
 }
 
-// Cycles a column's sort state: unsorted -> asc -> desc -> unsorted. Matches the showcase's
-// header-button affordance, where clicking the same header again eventually clears the sort.
+// Cycles a column's sort state: unsorted -> asc -> desc -> unsorted.
 function nextSort(column: RecordsColumn, current: RecordsSort): RecordsSort {
   if (current?.key !== column.key) return { key: column.key, dir: 'asc' };
   if (current.dir === 'asc') return { key: column.key, dir: 'desc' };
@@ -240,31 +267,34 @@ function RecordsHeaderCell({
   column,
   sort,
   onSortChange,
+  className,
 }: {
   column: RecordsColumn;
   sort: RecordsSort;
   onSortChange?: (sort: RecordsSort) => void;
+  className?: string;
 }) {
   const isActive = sort?.key === column.key;
   const direction = isActive ? sort.dir : 'none';
   const Icon = SORT_ICON[direction];
 
   return (
-    <th
-      scope="col"
-      className="bg-surface-inset text-muted-foreground shadow-hairline-bottom sticky top-0 z-10 px-3 py-2.5 text-left text-[11.5px] font-semibold"
+    <span
+      role="columnheader"
+      data-slot="records-header-cell"
+      className={cn('min-w-0 truncate', className)}
     >
       {onSortChange ? (
         <button
           type="button"
           onClick={() => onSortChange(nextSort(column, sort))}
           aria-label={`Sort by ${column.label}`}
-          className="group/sort hover:text-foreground inline-flex items-center gap-1"
+          className="group/sort inline-flex items-center gap-1 hover:text-(--text-secondary)"
         >
           <span className="truncate">{column.label}</span>
           <Icon
             aria-hidden
-            className={`ease-out-expo size-3 shrink-0 transition-opacity duration-100 ${
+            className={`size-3 shrink-0 transition-opacity duration-100 ${
               isActive ? 'opacity-100' : 'opacity-0 group-hover/sort:opacity-60'
             }`}
           />
@@ -272,179 +302,162 @@ function RecordsHeaderCell({
       ) : (
         <span className="truncate">{column.label}</span>
       )}
-    </th>
+    </span>
   );
 }
 
-function RecordsBodyRow({
-  row,
-  columns,
-  onRowClick,
-  onRowMouseEnter,
-  selectable = false,
-  selected = false,
-  onToggleSelect,
-  selectLabel,
-  renderCell,
-  className,
-}: {
-  row: RecordsRow;
-  columns: RecordsColumn[];
-  onRowClick?: (row: RecordsRow) => void;
-  onRowMouseEnter?: (rowId: string) => void;
-  selectable?: boolean;
-  selected?: boolean;
-  onToggleSelect?: (rowId: string) => void;
-  selectLabel?: (row: RecordsRow) => string;
-  renderCell?: (
-    row: RecordsRow,
-    column: RecordsColumn
-  ) => ReactNode | undefined;
-  className?: string;
-}) {
-  const interactive = onRowClick !== undefined;
-
-  function handleKeyDown(event: KeyboardEvent<HTMLTableRowElement>) {
-    if (!onRowClick) return;
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      onRowClick(row);
-    }
-  }
-
-  return (
-    <tr
-      role={interactive ? 'button' : undefined}
-      tabIndex={interactive ? 0 : undefined}
-      data-row-id={row.id}
-      onClick={interactive ? () => onRowClick(row) : undefined}
-      onKeyDown={interactive ? handleKeyDown : undefined}
-      onMouseEnter={onRowMouseEnter ? () => onRowMouseEnter(row.id) : undefined}
-      className={`ease-out-expo shadow-hairline-bottom transition-colors duration-100 ${
-        interactive ? 'hover:bg-surface-hover cursor-pointer' : ''
-      } ${className ?? ''}`}
-    >
-      {selectable && (
-        <td className="px-2 py-2.5 align-middle">
-          {/* Selecting a row and opening it are different intents, so the checkbox itself
-              (a real, keyboard-operable control — unlike the plain `<td>` around it) stops
-              its click from bubbling to the row's own `onClick` above. */}
-          <Checkbox
-            checked={selected}
-            aria-label={selectLabel?.(row) ?? `Select ${row.id}`}
-            onClick={(event) => event.stopPropagation()}
-            onCheckedChange={() => onToggleSelect?.(row.id)}
-          />
-        </td>
-      )}
-      {columns.map((column) => (
-        <td key={column.key} className="px-3 py-2.5 align-middle">
-          {renderCell?.(row, column) ?? (
-            <RecordsCell value={row.cells[column.key]} kind={column.kind} />
-          )}
-        </td>
-      ))}
-    </tr>
-  );
+function slotOf(column: RecordsColumn, index: number): RecordsSlot {
+  if (column.slot !== undefined) return column.slot;
+  if (index === 0) return 'title';
+  if (column.kind === 'time') return 'date';
+  return 'trailing';
 }
 
 // Normalizes the `rows`/`groups` split into one shape the render below always walks: a flat
-// `rows` list becomes a single headerless group, so there's exactly one rendering path rather
-// than a duplicated flat-vs-grouped branch.
+// `rows` list becomes a single headerless group.
 function toSections(
   rows: RecordsRow[] | undefined,
   groups: RecordsGroup[] | undefined
 ): RecordsGroup[] {
   if (groups !== undefined) return groups;
-  return [{ key: '__flat__', header: null, rows: rows ?? [] }];
+  return [{ key: '__flat__', name: null, rows: rows ?? [] }];
 }
 
-/** Full-bleed data grid: a sticky, muted header row with sort chevrons (`onSortChange`
- * cycles unsorted -> asc -> desc -> unsorted per column) over hairline-divided rows that
- * wash `bg-surface-hover` on hover when `onRowClick` is given. Cells render per their
- * column's `kind` — `tags` as a chip row, `time` as a relative, monospaced timestamp,
- * `strength` as a 3-bar meter, everything else as plain text (or `renderCell`'s custom
- * content, when given). Matches the showcase's "Records Table" primitive, adapted from its
- * CRM-specific chrome to the generic columns/rows contract `TasksListView` renders through —
- * `selectable`/`groups`/`renderCell`/`rowClassName` are presentational extensions Task 26
- * added on top of that base contract so a bulk-select column, per-epic grouping, inline
- * pickers, and a keyboard roving-focus highlight could all render through this one table
- * rather than needing a second, bespoke row renderer next to it. */
+/** A Linear-style records list: `ListRow`s (36px, no card, no dividers, a hover checkbox
+ * when `selectable`) under optional `GroupHeader`s, with cells placed by column slot — the
+ * first column is the title, a `time` column the far-right `Sep 13` date, and everything
+ * else joins the right-aligned trailing group (tags as `LabelPill`s, strength as a meter).
+ * `showHeader` adds a label row with sort chevrons (`onSortChange` cycles
+ * unsorted -> asc -> desc); `sortRows` is the matching comparator. */
 export function RecordsTable({
   columns,
   rows,
   groups,
   sort,
   onSortChange,
+  showHeader = false,
   onRowClick,
   onRowMouseEnter,
   selectable = false,
   selectedIds,
   onToggleSelect,
   selectLabel,
+  focusedId,
   renderCell,
   rowClassName,
 }: RecordsTableProps) {
   const sections = toSections(rows, groups);
-  const colSpan = columns.length + (selectable ? 1 : 0);
+  const placed = columns.map((column, index) => ({
+    column,
+    slot: slotOf(column, index),
+  }));
+  const titleColumns = placed.filter((p) => p.slot === 'title');
+  const rightColumns = placed.filter(
+    (p) => p.slot === 'trailing' || p.slot === 'date'
+  );
+  const leftColumns = placed.filter(
+    (p) => p.slot === 'leading' || p.slot === 'id' || p.slot === 'status'
+  );
+
+  const cell = (row: RecordsRow, column: RecordsColumn): ReactNode => {
+    const custom = renderCell?.(row, column);
+    if (custom !== undefined) return custom;
+    return <RecordsCell value={row.cells[column.key]} kind={column.kind} />;
+  };
+
+  const slotContent = (row: RecordsRow, slot: RecordsSlot): ReactNode => {
+    const matches = placed.filter((p) => p.slot === slot);
+    if (matches.length === 0) return undefined;
+    if (matches.length === 1 && matches[0] !== undefined) {
+      return cell(row, matches[0].column);
+    }
+    return matches.map((p) => (
+      <Fragment key={p.column.key}>{cell(row, p.column)}</Fragment>
+    ));
+  };
 
   return (
-    <div className="rounded-card border-border bg-card shadow-card overflow-hidden border">
-      <div className="max-h-full overflow-auto">
-        <table className="w-full border-collapse text-[12.5px]">
-          <thead>
-            <tr>
-              {selectable && (
-                <th
-                  scope="col"
-                  className="bg-surface-inset shadow-hairline-bottom sticky top-0 z-10 w-8 px-2 py-2.5"
-                />
-              )}
-              {columns.map((column) => (
-                <RecordsHeaderCell
-                  key={column.key}
-                  column={column}
-                  sort={sort}
-                  onSortChange={onSortChange}
-                />
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {sections.map((section) => (
-              <Fragment key={section.key}>
-                {section.header !== null && (
-                  <tr>
-                    {/* `top-9` approximates the sticky column header's own height, so a
-                        group header sticks directly beneath it rather than under it. */}
-                    <td
-                      colSpan={colSpan}
-                      className="bg-background sticky top-9 z-[5] p-0"
-                    >
-                      {section.header}
-                    </td>
-                  </tr>
-                )}
-                {section.rows.map((row) => (
-                  <RecordsBodyRow
-                    key={row.id}
-                    row={row}
-                    columns={columns}
-                    onRowClick={onRowClick}
-                    onRowMouseEnter={onRowMouseEnter}
-                    selectable={selectable}
-                    selected={selectedIds?.has(row.id) ?? false}
-                    onToggleSelect={onToggleSelect}
-                    selectLabel={selectLabel}
-                    renderCell={renderCell}
-                    className={rowClassName?.(row)}
-                  />
-                ))}
-              </Fragment>
+    <div
+      role="table"
+      data-slot="records-table"
+      className="flex flex-col text-[13px]"
+    >
+      {showHeader && (
+        <div
+          role="row"
+          data-slot="records-header"
+          className="text-muted-foreground flex h-9 items-center gap-2 px-3 text-[12px] font-medium"
+        >
+          {selectable && <span aria-hidden className="size-4 shrink-0" />}
+          {leftColumns.map((p) => (
+            <RecordsHeaderCell
+              key={p.column.key}
+              column={p.column}
+              sort={sort}
+              onSortChange={onSortChange}
+              className="shrink-0"
+            />
+          ))}
+          <span className="flex min-w-0 flex-1 items-center gap-2">
+            {titleColumns.map((p) => (
+              <RecordsHeaderCell
+                key={p.column.key}
+                column={p.column}
+                sort={sort}
+                onSortChange={onSortChange}
+              />
             ))}
-          </tbody>
-        </table>
-      </div>
+          </span>
+          {rightColumns.map((p) => (
+            <RecordsHeaderCell
+              key={p.column.key}
+              column={p.column}
+              sort={sort}
+              onSortChange={onSortChange}
+              className="shrink-0"
+            />
+          ))}
+        </div>
+      )}
+      {sections.map((section) => (
+        <Fragment key={section.key}>
+          {section.name !== null && (
+            <GroupHeader
+              name={section.name}
+              icon={section.icon}
+              tint={section.tint}
+              count={section.rows.length}
+              collapsed={section.collapsed}
+              onToggle={section.onToggle}
+              onAdd={section.onAdd}
+            />
+          )}
+          {!section.collapsed &&
+            section.rows.map((row) => (
+              <ListRow
+                key={row.id}
+                data-row-id={row.id}
+                leading={slotContent(row, 'leading')}
+                id={slotContent(row, 'id')}
+                status={slotContent(row, 'status')}
+                title={slotContent(row, 'title') ?? null}
+                trailing={slotContent(row, 'trailing')}
+                date={slotContent(row, 'date')}
+                selected={selectedIds?.has(row.id) ?? false}
+                focused={focusedId === row.id}
+                onClick={onRowClick ? () => onRowClick(row) : undefined}
+                onMouseEnter={
+                  onRowMouseEnter ? () => onRowMouseEnter(row.id) : undefined
+                }
+                onSelectToggle={
+                  selectable ? () => onToggleSelect?.(row.id) : undefined
+                }
+                selectLabel={selectLabel?.(row) ?? `Select ${row.id}`}
+                className={rowClassName?.(row)}
+              />
+            ))}
+        </Fragment>
+      ))}
     </div>
   );
 }

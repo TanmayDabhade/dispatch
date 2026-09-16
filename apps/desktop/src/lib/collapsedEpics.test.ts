@@ -2,9 +2,15 @@ import { describe, expect, test } from 'bun:test';
 
 import {
   COLLAPSED_EPICS_STORAGE_KEY,
+  COLLAPSED_GROUPS_STORAGE_KEY,
   parseCollapsedEpics,
+  parseCollapsedGroups,
+  readCollapsedGroups,
   serializeCollapsedEpics,
+  serializeCollapsedGroups,
   toggleCollapsedEpic,
+  toggleCollapsedGroup,
+  writeCollapsedGroups,
 } from './collapsedEpics';
 
 describe('parseCollapsedEpics', () => {
@@ -66,5 +72,38 @@ describe('storage key', () => {
   // it from colliding with the view-mode preference, which is deliberately long-lived.
   test('is namespaced to dispatch', () => {
     expect(COLLAPSED_EPICS_STORAGE_KEY).toStartWith('dispatch:');
+    expect(COLLAPSED_GROUPS_STORAGE_KEY).toBe('dispatch:list-collapsed-groups');
+  });
+});
+
+// The list's groups are keyed by kind and id (`status:ready`, `epic:e-1`), not by epic alone;
+// the generic helpers take any string and the epic-named ones are the same functions.
+describe('collapsed groups', () => {
+  test('the epic helpers are aliases of the generic ones', () => {
+    expect(parseCollapsedEpics).toBe(parseCollapsedGroups);
+    expect(serializeCollapsedEpics).toBe(serializeCollapsedGroups);
+    expect(toggleCollapsedEpic).toBe(toggleCollapsedGroup);
+  });
+
+  test('any group key round-trips', () => {
+    const keys = toggleCollapsedGroup(new Set(['status:ready']), 'epic:e-1');
+    expect(parseCollapsedGroups(serializeCollapsedGroups(keys))).toEqual(
+      new Set(['epic:e-1', 'status:ready'])
+    );
+  });
+
+  test('read/write go through sessionStorage and tolerate an empty store', () => {
+    window.sessionStorage.removeItem(COLLAPSED_GROUPS_STORAGE_KEY);
+    expect(readCollapsedGroups(COLLAPSED_GROUPS_STORAGE_KEY)).toEqual(
+      new Set()
+    );
+    writeCollapsedGroups(
+      COLLAPSED_GROUPS_STORAGE_KEY,
+      new Set(['milestone:e-2'])
+    );
+    expect(readCollapsedGroups(COLLAPSED_GROUPS_STORAGE_KEY)).toEqual(
+      new Set(['milestone:e-2'])
+    );
+    window.sessionStorage.removeItem(COLLAPSED_GROUPS_STORAGE_KEY);
   });
 });

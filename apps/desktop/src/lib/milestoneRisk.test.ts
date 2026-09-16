@@ -2,7 +2,7 @@ import type { RunMeta } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
-import { deriveMilestoneStatus } from './milestoneRisk';
+import { deriveMilestoneStatus, milestoneHealthPill } from './milestoneRisk';
 
 function task(id: string): TaskDoc {
   return { meta: { id, title: id } } as TaskDoc;
@@ -117,5 +117,40 @@ describe('deriveMilestoneStatus', () => {
   test('tasks with no run are simply skipped', () => {
     const s = deriveMilestoneStatus(three, runs(run('t-2')), false);
     expect(s.working).toBe(1);
+  });
+});
+
+describe('milestoneHealthPill', () => {
+  test('a stall reads At risk on the amber dot', () => {
+    const status = deriveMilestoneStatus(
+      [task('a')],
+      runs(run('a', { state: 'failed' })),
+      false
+    );
+    expect(milestoneHealthPill(status)).toEqual({
+      label: 'At risk',
+      tint: 'var(--state-waiting-fg)',
+    });
+  });
+
+  test('live agents read as a running count on the working yellow', () => {
+    const status = deriveMilestoneStatus(
+      [task('a'), task('b')],
+      runs(run('a'), run('b')),
+      false
+    );
+    expect(milestoneHealthPill(status)).toEqual({
+      label: '2 running',
+      tint: 'var(--state-working-fg)',
+    });
+  });
+
+  test('idle and complete milestones wear nothing', () => {
+    expect(
+      milestoneHealthPill(deriveMilestoneStatus([task('a')], runs(), false))
+    ).toBeNull();
+    expect(
+      milestoneHealthPill(deriveMilestoneStatus([task('a')], runs(), true))
+    ).toBeNull();
   });
 });
