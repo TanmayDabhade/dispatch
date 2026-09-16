@@ -160,15 +160,15 @@ test('a severity is named once for the group, not on every row', () => {
 test('a long detail clamps until asked for the rest', () => {
   const wall = 'x'.repeat(400);
   render(<ReviewCasePanel {...empty} findings={[finding({ detail: wall })]} />);
-  fireEvent.click(screen.getByRole('button', { name: 'more' }));
-  expect(screen.getByRole('button', { name: 'less' })).toBeDefined();
+  fireEvent.click(screen.getByRole('button', { name: 'More' }));
+  expect(screen.getByRole('button', { name: 'Less' })).toBeDefined();
 });
 
 test('a short detail gets no toggle', () => {
   render(
     <ReviewCasePanel {...empty} findings={[finding({ detail: 'brief' })]} />
   );
-  expect(screen.queryByRole('button', { name: 'more' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'More' })).toBeNull();
 });
 
 test('the review button appears only when starting one is possible', () => {

@@ -4,36 +4,42 @@
    so a var() declared here on :root reaches inside both packages like any
    other inherited property.
 
-   The mapping direction is deliberate: the app adopted Pierre's design
-   language, and these aliases keep the diff surface in step with chrome
-   that was rebuilt to match it. Each side of a light/dark pair points at
-   the same self-flipping token, so tokens.css's own dark-mode overrides
-   carry through without restating literal hex values here. */
+   Each side of a light/dark pair points at the same self-flipping token, so
+   tokens.css's own dark-mode overrides carry through without restating
+   literal hex values here. The diff sits directly on the panel surface, the
+   gutter is closed by a half-pixel hairline, and the accent is the indigo the
+   rest of the app reserves for focus and selection chrome. */
 :root {
   /* @pierre/diffs (PatchDiff) — background, foreground, fonts, and the
      addition/deletion/modified accent colors used for line highlights and
-     the changed-file header. */
-  --diffs-light-bg: var(--surface-card);
-  --diffs-dark-bg: var(--surface-card);
+     the changed-file header. Code stays mono; the file header is sans. */
+  --diffs-light-bg: var(--surface-panel);
+  --diffs-dark-bg: var(--surface-panel);
   --diffs-light: var(--text-primary);
   --diffs-dark: var(--text-primary);
   --diffs-font-family: var(--font-mono);
   --diffs-header-font-family: var(--font-sans);
-  --diffs-font-size: var(--text-meta);
+  --diffs-font-size: var(--text-mini);
   --diffs-light-addition-color: var(--green);
   --diffs-dark-addition-color: var(--green);
   --diffs-light-deletion-color: var(--red);
   --diffs-dark-deletion-color: var(--red);
   --diffs-light-modified-color: var(--blue);
   --diffs-dark-modified-color: var(--blue);
+  /* The line between the number gutter and the code: Pierre's default is a 2px
+     band of the background; a half-pixel hairline is the app's rule. */
+  --diffs-gap-style: 0.5px solid var(--border-default);
+  --diffs-bg-separator-override: var(--surface-quaternary);
+  --diffs-fg-number-override: var(--text-ghost);
 
   /* @pierre/trees (FileTree) — these are single override slots rather than
      light/dark pairs, so each one aliases to a design token that already
      resolves to the right value for the current scheme. */
-  --trees-bg-override: var(--surface-raised);
+  --trees-bg-override: var(--surface-panel);
   --trees-fg-override: var(--text-primary);
   --trees-fg-muted-override: var(--text-muted);
-  --trees-bg-muted-override: var(--surface-muted);
-  --trees-border-color-override: var(--border-default);
+  --trees-bg-muted-override: var(--surface-quaternary);
+  --trees-border-color-override: var(--border-subtle);
+  --trees-border-radius-override: var(--radius-control);
   --trees-accent-override: var(--accent);
 }

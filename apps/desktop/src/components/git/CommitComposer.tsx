@@ -36,7 +36,7 @@ export function CommitComposer({
     message.trim() !== '' && (stagedCount > 0 || amend) && !busy;
 
   return (
-    <div className="shadow-hairline-top flex flex-col gap-1.5 pt-2">
+    <div className="shadow-hairline-top flex shrink-0 flex-col gap-1.5 px-4 py-3">
       <div className="flex items-end gap-2">
         <Textarea
           id="git-commit-message"
@@ -48,7 +48,7 @@ export function CommitComposer({
           }
           value={message}
           onChange={(e) => onMessageChange(e.target.value)}
-          className="min-h-0 flex-1 text-[12px]"
+          className="min-h-0 flex-1 text-[13px]"
         />
         <div className="flex flex-col gap-1.5">
           <ButtonGroup orientation="vertical">
@@ -70,9 +70,8 @@ export function CommitComposer({
               {amend ? 'Amend' : 'Commit'}
             </Button>
           </ButtonGroup>
-          <Label className="text-muted-foreground flex items-center gap-1.5 px-1 text-[11px] font-normal">
+          <Label className="text-muted-foreground font-book flex items-center gap-1.5 px-1 text-[12px]">
             <Checkbox
-              className="size-3.5"
               checked={amend}
               onCheckedChange={(checked) => onAmendChange(checked === true)}
             />

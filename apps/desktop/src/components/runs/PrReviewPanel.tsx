@@ -27,9 +27,14 @@ import {
   STATE_TONE,
   StatusPill,
 } from './PrStatusPills';
+import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 import { Skeleton } from '@/ui/skeleton';
 import { Textarea } from '@/ui/textarea';
+
+// The sentence-case 12px/500 heading each section of the panel opens with.
+const HEADING_CLASS = 'text-[12px] font-medium text-muted-foreground';
+const META_CLASS = 'text-[12px] font-book text-muted-foreground tabular-nums';
 
 // The header row: PR number + title, its open/merged state, review decision,
 // CI check counts, mergeability, the diffstat, and a link out to GitHub.
@@ -46,7 +51,7 @@ function PrStatusHeader({ status }: { status: PrStatus }) {
           href={status.url}
           target="_blank"
           rel="noreferrer"
-          className="text-muted-foreground hover:text-foreground ml-auto inline-flex shrink-0 items-center gap-1 text-[11px]"
+          className="text-muted-foreground font-book ml-auto inline-flex shrink-0 items-center gap-1 text-[12px] hover:text-(--text-secondary)"
         >
           #{status.number}
           <ExternalLink className="size-3" />
@@ -84,9 +89,9 @@ function PrStatusHeader({ status }: { status: PrStatus }) {
           </StatusPill>
         )}
 
-        <span className="text-muted-foreground ml-1 font-mono text-[11px]">
+        <span className={cn(META_CLASS, 'ml-1')}>
           <span className="text-state-review">+{status.additions}</span>{' '}
-          <span className="text-destructive">−{status.deletions}</span> ·{' '}
+          <span className="text-state-failed">−{status.deletions}</span> ·{' '}
           {status.changedFiles} file{status.changedFiles === 1 ? '' : 's'}
         </span>
       </div>
@@ -102,29 +107,29 @@ function ConversationRow({ item }: { item: PrConversationItem }) {
       ? REVIEW_VERDICT[item.state]
       : undefined;
   return (
-    <div className="border-border/60 flex flex-col gap-1 rounded-md border px-3 py-2">
-      <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-        <span className="text-foreground font-medium">{item.author}</span>
+    <div className="bg-surface-quaternary rounded-card border-border-strong flex flex-col gap-1.5 border-[0.5px] px-3 py-2">
+      <div className="flex flex-wrap items-center gap-1.5 text-[12px] font-medium">
+        <span className="text-muted-foreground">{item.author}</span>
         {verdict !== undefined && (
           <StatusPill tone={verdict.tone}>{verdict.label}</StatusPill>
         )}
         {item.kind === 'comment' && (
-          <span className="text-muted-foreground">commented</span>
+          <span className="text-muted-foreground font-book">commented</span>
         )}
         {item.kind === 'line-comment' && item.path !== undefined && (
-          <span className="text-muted-foreground font-mono">
+          <span className="text-muted-foreground font-mono font-normal">
             {item.path}
             {item.line !== undefined ? `:${item.line}` : ''}
           </span>
         )}
         {item.createdAt !== '' && (
-          <span className="text-muted-foreground/60 ml-auto">
+          <span className={cn(META_CLASS, 'ml-auto')}>
             {formatRelativeTimeFromIso(item.createdAt)}
           </span>
         )}
       </div>
       {item.body.trim() !== '' && (
-        <Markdown content={item.body} className="text-[13px]" />
+        <Markdown content={item.body} className="font-book text-[13px]" />
       )}
     </div>
   );
@@ -150,7 +155,7 @@ function AgentFindings({
   // panel would read as "no review has run" when the truth is "unknown".
   if (error !== null) {
     return (
-      <p className="text-destructive text-[12px]">
+      <p className="text-state-failed font-book text-[12px]">
         Couldn&rsquo;t load the agent&rsquo;s findings: {error}
       </p>
     );
@@ -161,23 +166,21 @@ function AgentFindings({
   if (open.length === 0) return null;
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
-        What the agent found
-      </div>
+      <div className={HEADING_CLASS}>What the agent found</div>
       {open.map((f) => (
-        <div key={f.id} className="text-[12.5px]">
+        <div key={f.id} className="text-[13px]">
           <div className="flex items-baseline gap-1.5">
             <TriangleAlert className="text-state-waiting size-3 shrink-0 self-center" />
-            <span className="dense-meta shrink-0">{f.severity}</span>
-            <span className="min-w-0 flex-1">{f.title}</span>
+            <span className={cn(META_CLASS, 'shrink-0')}>{f.severity}</span>
+            <span className="min-w-0 flex-1 font-medium">{f.title}</span>
             {f.file !== null && (
-              <span className="dense-meta shrink-0 font-mono">
+              <span className="text-muted-foreground shrink-0 font-mono text-[12px]">
                 {f.file}
                 {f.line !== null && `:${f.line}`}
               </span>
             )}
           </div>
-          <p className="text-muted-foreground pl-4.5 text-[11px] leading-snug">
+          <p className="text-muted-foreground font-book pl-4.5 text-[12px] leading-snug">
             {f.detail}
           </p>
         </div>
@@ -235,8 +238,8 @@ export function ForkConfirm({
   onConfirm: () => void;
 }) {
   return (
-    <div className="border-state-waiting-edge bg-state-waiting-surface flex flex-col gap-2 rounded-md border p-2">
-      <p className="text-foreground text-[12px]">
+    <div className="bg-state-waiting-surface rounded-card flex flex-col gap-2 p-2">
+      <p className="text-foreground font-book text-[13px]">
         This PR comes from a fork owned by{' '}
         <span className="font-medium">{owner}</span>. Reviewing it checks that
         code out and runs it on this machine.
@@ -335,14 +338,14 @@ export function PrReviewPanel({
   const needsBody = draft.trim() === '';
 
   return (
-    <div className="border-border bg-muted/20 flex flex-col gap-3 rounded-md border p-3">
+    <div className="rounded-card border-border bg-surface-secondary flex flex-col gap-3 border-[0.5px] p-3">
       {loading && detail === undefined ? (
         <div className="flex flex-col gap-2">
-          <Skeleton className="h-5 w-64 rounded-md" />
-          <Skeleton className="h-5 w-40 rounded-md" />
+          <Skeleton className="h-5 w-64" />
+          <Skeleton className="h-5 w-40" />
         </div>
       ) : error !== null ? (
-        <p className="text-destructive text-[12px]">
+        <p className="text-state-failed font-book text-[12px]">
           Couldn&rsquo;t load the PR: {error}
         </p>
       ) : detail === undefined ? null : (
@@ -353,9 +356,7 @@ export function PrReviewPanel({
 
           {detail.conversation.length > 0 && (
             <div className="flex flex-col gap-1.5">
-              <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
-                Conversation
-              </div>
+              <div className={HEADING_CLASS}>Conversation</div>
               {detail.conversation.map((item, i) => (
                 <ConversationRow key={i} item={item} />
               ))}
@@ -363,12 +364,14 @@ export function PrReviewPanel({
           )}
 
           {actionError !== null && (
-            <p className="text-destructive text-[12px]">{actionError}</p>
+            <p className="text-state-failed font-book text-[12px]">
+              {actionError}
+            </p>
           )}
 
           {!isOpen ? (
             <div className="flex flex-col gap-2">
-              <div className="text-muted-foreground flex flex-col gap-1 text-[12px]">
+              <div className="text-muted-foreground font-book flex flex-col gap-1 text-[13px]">
                 <p className="flex items-center gap-1.5">
                   {state === 'MERGED' ? (
                     <GitMerge className="size-3.5" />
@@ -397,7 +400,7 @@ export function PrReviewPanel({
                 placeholder="Leave a comment…"
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
-                className="text-[13px]"
+                className="bg-surface-quaternary rounded-card border-border-strong border-[0.5px] text-[13px] shadow-none"
               />
               <div className="flex flex-wrap justify-end gap-2">
                 <Button
@@ -414,7 +417,7 @@ export function PrReviewPanel({
           ) : (
             <div className="flex flex-col gap-2">
               {dispatchedRunId !== null && (
-                <p className="text-muted-foreground text-[12px]">
+                <p className="text-muted-foreground font-book text-[12px]">
                   Review dispatched &mdash; run {dispatchedRunId}.
                 </p>
               )}
@@ -446,7 +449,7 @@ export function PrReviewPanel({
                 placeholder="Leave a review comment…"
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
-                className="text-[13px]"
+                className="bg-surface-quaternary rounded-card border-border-strong border-[0.5px] text-[13px] shadow-none"
               />
               <div className="flex flex-wrap justify-end gap-2">
                 <Button

@@ -3,9 +3,8 @@ import { Bot, Check, GitPullRequest, MessageSquare, Undo2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { cn } from '@/lib/utils';
+import { PillButton } from '@/ui/ai/pill';
 import { Button } from '@/ui/button';
-import { ButtonGroup } from '@/ui/button-group';
-import { Panel } from '@/ui/chrome';
 import { SectionLabel } from '@/ui/chrome/SectionLabel';
 import { Input } from '@/ui/input';
 import { Label } from '@/ui/label';
@@ -177,39 +176,37 @@ export function ReviewVerdictBar({
 
   const warnings =
     extraWarnings.length > 0 ? (
-      <span className="text-state-waiting text-[11.5px]">
+      <span className="text-state-waiting font-book text-[12px]">
         {extraWarnings.join(' · ')}
       </span>
     ) : null;
 
   const aiReviewButton =
     onStartAiReview === undefined ? null : (
-      <Button
-        variant="outline"
-        size="sm"
+      <PillButton
         disabled={reviewAgentLive || aiReview.status === 'starting'}
         onClick={() => void startAiReview()}
         className="self-start"
       >
-        <Bot className="size-3.5" />
+        <Bot />
         {reviewAgentLive
           ? 'Agent reviewing…'
           : aiReview.status === 'starting'
             ? 'Starting…'
             : 'Ask an agent to review'}
-      </Button>
+      </PillButton>
     );
 
   const aiReviewStatus = reviewAgentLive ? (
-    <p className="text-state-review text-[11px]">
+    <p className="text-state-review font-book text-[12px]">
       An agent is reviewing this run — its findings land here once it finishes.
     </p>
   ) : aiReview.status === 'started' ? (
-    <p className="text-state-review text-[11px]">
+    <p className="text-state-review font-book text-[12px]">
       Review started — its findings land here once it finishes.
     </p>
   ) : aiReview.status === 'error' ? (
-    <p className="text-state-failed text-[11px]">
+    <p className="text-state-failed font-book text-[12px]">
       Couldn&rsquo;t start the review: {aiReview.message}
     </p>
   ) : null;
@@ -225,7 +222,7 @@ export function ReviewVerdictBar({
   // `getByLabelText(...).checked` meaningful in ReviewVerdictBar.test.tsx
   // and ReviewCommentsPanel.test.tsx.
   const githubCheckbox = !canPostToGitHub ? null : (
-    <label className="flex min-w-0 cursor-pointer flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11.5px]">
+    <label className="font-book flex min-w-0 cursor-pointer flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[12px]">
       <input
         type="checkbox"
         checked={postToGitHub}
@@ -234,7 +231,7 @@ export function ReviewVerdictBar({
       />
       <GitPullRequest className="size-3 shrink-0" />
       Also post to GitHub
-      <span className="text-muted-foreground text-[11px] leading-snug">
+      <span className="text-muted-foreground text-[12px] leading-snug">
         Off, the review still goes back to the agent — only the pull request is
         left alone.
       </span>
@@ -256,13 +253,14 @@ export function ReviewVerdictBar({
   // and unlike a hover `title` a Tooltip actually reaches keyboard/screen-reader users.
   if (layout === 'bar') {
     return (
-      <div className="border-border flex shrink-0 flex-col gap-1.5 border-t pt-3">
+      <div className="shadow-hairline-top flex shrink-0 flex-col gap-1.5 px-4 pt-3 pb-3">
         <div className="flex items-center gap-3">
           <Input
+            variant="borderless"
             value={summary}
             onChange={(e) => setSummary(e.target.value)}
             placeholder="Anything the agent should know overall…"
-            className="h-auto min-w-0 flex-1 border-none bg-transparent px-0 text-[12.5px] shadow-none outline-none focus-visible:ring-0"
+            className="min-w-0 flex-1 text-[13px]"
           />
           {/* RadioGroup's own base is `grid gap-3` (a vertical stack) — `flex-row` alone
               can't dedupe against that `display: grid` via twMerge (different utility
@@ -283,8 +281,10 @@ export function ReviewVerdictBar({
                   <Label
                     key={v.value}
                     className={cn(
-                      'flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-[12px] font-normal',
-                      active ? 'bg-accent/15' : 'hover:bg-muted/40'
+                      'flex h-7 cursor-pointer items-center gap-1.5 rounded-control px-2 text-[12px] font-medium transition-colors duration-100',
+                      active
+                        ? 'bg-surface-active text-foreground'
+                        : 'text-muted-foreground hover:bg-surface-hover'
                     )}
                   >
                     <Tooltip>
@@ -302,32 +302,40 @@ export function ReviewVerdictBar({
               })}
             </RadioGroup>
           </TooltipProvider>
-          <ButtonGroup>
+          <div className="flex shrink-0 items-center gap-2">
             {aiReviewButton}
             {submitButton}
-          </ButtonGroup>
+          </div>
         </div>
         {/* Wraps: the GitHub label carries a full sentence, which on a narrow
             window would otherwise squeeze the status text beside it. */}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span className="dense-meta shrink-0">{countText}</span>
+          <span className="text-muted-foreground font-book shrink-0 text-[12px] tabular-nums">
+            {countText}
+          </span>
           {githubCheckbox}
           {warnings}
           <span className="flex-1" />
           {aiReviewStatus}
           {error !== null && (
-            <span className="text-state-failed text-[11.5px]">{error}</span>
+            <span className="text-state-failed font-book text-[12px]">
+              {error}
+            </span>
           )}
           {sent !== null && (
-            <span className="text-state-review text-[11.5px]">{sent}</span>
+            <span className="text-state-review font-book text-[12px]">
+              {sent}
+            </span>
           )}
         </div>
       </div>
     );
   }
 
+  // The stacked card is the comment-card composer: quaternary surface, half-pixel strong
+  // ring, the heading, a borderless textarea, the verdict rows and the actions.
   return (
-    <Panel className="p-3">
+    <div className="bg-surface-quaternary rounded-card border-border-strong border-[0.5px] p-3">
       <SectionLabel>Finish the review</SectionLabel>
 
       {/* A row of its own rather than riding beside the label — this column is narrow enough
@@ -340,10 +348,11 @@ export function ReviewVerdictBar({
       )}
 
       <Textarea
+        variant="borderless"
         value={summary}
         onChange={(e) => setSummary(e.target.value)}
         placeholder="Anything the agent should know overall…"
-        className="mt-2 min-h-[64px] w-full resize-y border-none bg-transparent px-0 text-[12.5px] shadow-none outline-none focus-visible:ring-0"
+        className="mt-2 min-h-[64px] w-full resize-y text-[13px]"
       />
 
       {/* Hints stay visible text here (unlike the bar layout's Tooltip) — there's room for
@@ -360,19 +369,19 @@ export function ReviewVerdictBar({
             <Label
               key={v.value}
               className={cn(
-                'flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 font-normal',
-                active ? 'bg-accent/15' : 'hover:bg-muted/40'
+                'flex cursor-pointer items-start gap-2 rounded-control px-2 py-1.5 font-normal transition-colors duration-100',
+                active ? 'bg-surface-active' : 'hover:bg-surface-hover'
               )}
             >
               <RadioGroupItem value={v.value} className="mt-0.5 size-3.5" />
               <span className="min-w-0 flex-1">
-                <span className="flex items-center gap-1.5 text-[12.5px]">
+                <span className="flex items-center gap-1.5 text-[13px] font-medium">
                   <Icon className="size-3" />
                   {v.label}
                 </span>
                 {/* Each verdict states what it will actually do — that "approve" means
                     "queues a merge" is not guessable from the word alone. */}
-                <span className="text-muted-foreground block text-[11px] leading-snug">
+                <span className="text-muted-foreground font-book block text-[12px] leading-snug">
                   {v.hint}
                 </span>
               </span>
@@ -384,17 +393,19 @@ export function ReviewVerdictBar({
       {githubCheckbox !== null && <div className="mt-2">{githubCheckbox}</div>}
 
       {error !== null && (
-        <p className="text-state-failed mt-2 text-[12px]">{error}</p>
+        <p className="text-state-failed font-book mt-2 text-[12px]">{error}</p>
       )}
       {sent !== null && (
-        <p className="text-state-review mt-2 text-[12px]">{sent}</p>
+        <p className="text-state-review font-book mt-2 text-[12px]">{sent}</p>
       )}
 
       <div className="mt-2 flex items-center gap-2">
-        <span className="dense-meta flex-1">{countText}</span>
+        <span className="text-muted-foreground font-book flex-1 text-[12px] tabular-nums">
+          {countText}
+        </span>
         {warnings}
         {submitButton}
       </div>
-    </Panel>
+    </div>
   );
 }

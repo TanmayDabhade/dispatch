@@ -2,7 +2,13 @@ import { useQuery } from '@tanstack/react-query';
 import { AlertCircle, FileX, Info } from 'lucide-react';
 
 import { getFileDiffForSessionFile } from '../lib/tauri';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/ui/dialog';
+import {
+  Dialog,
+  DialogBody,
+  DialogChrome,
+  DialogContent,
+  DialogTitle,
+} from '@/ui/dialog';
 import { Skeleton } from '@/ui/skeleton';
 
 interface DiffModalProps {
@@ -66,77 +72,89 @@ export function DiffModal({
         if (!open) onClose();
       }}
     >
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-4xl">
-        <DialogHeader>
+      <DialogContent
+        showCloseButton={false}
+        className="flex max-h-[85vh] flex-col sm:max-w-4xl"
+      >
+        {/* The crumb row names the session, then the file — a path, so it keeps mono. */}
+        <DialogChrome>
+          <span className="shrink-0">{sessionLabel}</span>
+          <span aria-hidden className="text-muted-foreground">
+            ›
+          </span>
           <DialogTitle
-            className="truncate font-mono text-[13px] font-medium"
+            className="text-foreground truncate font-mono text-[12px] leading-4 font-medium"
             title={filePath ?? undefined}
           >
             {filePath}
           </DialogTitle>
-        </DialogHeader>
-
-        {isLoading && (
-          <div className="flex flex-col gap-1.5">
-            <Skeleton className="h-4 w-1/3" />
-            <Skeleton className="h-40 w-full" />
-          </div>
-        )}
-        {isError && (
-          <div className="flex flex-col items-center gap-2 py-6 text-center">
-            <AlertCircle className="text-destructive size-5" />
-            <p className="text-muted-foreground text-[13px]">
-              Couldn&rsquo;t load this diff.
-            </p>
-          </div>
-        )}
-        {!isLoading && !isError && data === null && (
-          <div className="flex flex-col items-center gap-2 py-6 text-center">
-            <FileX className="text-muted-foreground size-5" />
-            <p className="text-muted-foreground text-[13px]">
-              This file change no longer exists.
-            </p>
-          </div>
-        )}
-        {!isLoading && !isError && data && (
-          <>
-            <p className="text-muted-foreground font-mono text-[11px]">
-              {sessionLabel} · {data.edit_count} edit
-              {data.edit_count === 1 ? '' : 's'} ·{' '}
-              {new Date(data.occurred_at * 1000).toLocaleString()}
-            </p>
-
-            {data.lines.length === 0 ? (
+        </DialogChrome>
+        <DialogBody className="min-h-0 flex-1 gap-3 overflow-y-auto pb-4">
+          {isLoading && (
+            <div className="flex flex-col gap-1.5">
+              <Skeleton className="h-4 w-1/3" />
+              <Skeleton className="h-40 w-full" />
+            </div>
+          )}
+          {isError && (
+            <div className="flex flex-col items-center gap-2 py-6 text-center">
+              <AlertCircle className="text-state-failed size-5" />
               <p className="text-muted-foreground text-[13px]">
-                No diff content captured for this change — it was recorded
-                before Dispatch started storing before/after text.
+                Couldn&rsquo;t load this diff.
               </p>
-            ) : (
-              <div className="bg-card rounded-card shadow-card flex flex-col overflow-hidden">
-                <div className="py-1 font-mono text-[13px] leading-relaxed">
-                  {data.lines.map((line, i) => (
-                    <div key={i} className={`flex ${TAG_LINE_CLASS[line.tag]}`}>
-                      <span
-                        className={`w-6 flex-shrink-0 text-center select-none ${TAG_PREFIX_CLASS[line.tag]}`}
+            </div>
+          )}
+          {!isLoading && !isError && data === null && (
+            <div className="flex flex-col items-center gap-2 py-6 text-center">
+              <FileX className="text-muted-foreground size-5" />
+              <p className="text-muted-foreground text-[13px]">
+                This file change no longer exists.
+              </p>
+            </div>
+          )}
+          {!isLoading && !isError && data && (
+            <>
+              <p className="text-muted-foreground font-book text-[12px] tabular-nums">
+                {data.edit_count} edit
+                {data.edit_count === 1 ? '' : 's'} ·{' '}
+                {new Date(data.occurred_at * 1000).toLocaleString()}
+              </p>
+
+              {data.lines.length === 0 ? (
+                <p className="text-muted-foreground text-[13px]">
+                  No diff content captured for this change — it was recorded
+                  before Dispatch started storing before/after text.
+                </p>
+              ) : (
+                <div className="bg-surface-quaternary rounded-card border-border flex flex-col overflow-hidden border-[0.5px]">
+                  <div className="py-1 font-mono text-[12px] leading-relaxed">
+                    {data.lines.map((line, i) => (
+                      <div
+                        key={i}
+                        className={`flex ${TAG_LINE_CLASS[line.tag]}`}
                       >
-                        {TAG_PREFIX[line.tag]}
-                      </span>
-                      <span className="min-w-0 flex-1 px-6 break-words whitespace-pre-wrap">
-                        {line.content}
-                      </span>
-                    </div>
-                  ))}
+                        <span
+                          className={`w-6 flex-shrink-0 text-center select-none ${TAG_PREFIX_CLASS[line.tag]}`}
+                        >
+                          {TAG_PREFIX[line.tag]}
+                        </span>
+                        <span className="min-w-0 flex-1 px-6 break-words whitespace-pre-wrap">
+                          {line.content}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  {data.truncated && (
+                    <p className="text-muted-foreground shadow-hairline-top font-book flex items-center gap-1.5 px-6 py-2 text-[12px]">
+                      <Info className="size-3.5" />
+                      Diff truncated — this change is too large to show in full.
+                    </p>
+                  )}
                 </div>
-                {data.truncated && (
-                  <p className="text-muted-foreground shadow-hairline-top flex items-center gap-1.5 px-6 py-2 text-[13px]">
-                    <Info className="size-3.5" />
-                    Diff truncated — this change is too large to show in full.
-                  </p>
-                )}
-              </div>
-            )}
-          </>
-        )}
+              )}
+            </>
+          )}
+        </DialogBody>
       </DialogContent>
     </Dialog>
   );

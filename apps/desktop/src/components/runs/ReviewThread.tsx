@@ -13,11 +13,18 @@ import {
   suggestionForSubmit,
 } from '@/lib/suggestionRange';
 import { cn } from '@/lib/utils';
+import { PillButton } from '@/ui/ai/pill';
 import { Button } from '@/ui/button';
-import { Panel } from '@/ui/chrome';
 import { Input } from '@/ui/input';
 import { ScrollArea } from '@/ui/scroll-area';
 import { Textarea } from '@/ui/textarea';
+
+// The comment card: quaternary surface, 8px radius, half-pixel strong ring — the same
+// card an issue page's comments and its "Leave a comment…" composer sit in. Indented past
+// the diff gutter so the card hangs under the code it annotates.
+const COMMENT_CARD_CLASS =
+  'my-1.5 ml-[90px] rounded-card border-[0.5px] border-border-strong bg-surface-quaternary p-3';
+const META_CLASS = 'text-[12px] font-book text-muted-foreground';
 
 /**
  * Where a note written here ends up: back to the agent on a run's own diff, or
@@ -195,20 +202,19 @@ export function ReviewThread({
   };
 
   return (
-    // Panel's own border replaces `shadow-hairline` here — same swap as every other card in
-    // this sweep (e.g. EnrichReview), not a diff-rendering change.
-    <Panel
-      className={cn('my-1.5 ml-[90px] p-3', comment.resolved && 'opacity-60')}
+    <div
+      data-slot="review-thread"
+      className={cn(COMMENT_CARD_CLASS, comment.resolved && 'opacity-60')}
     >
       <div className="flex items-center gap-2">
-        <span className="text-accent-foreground text-[11px] font-medium">
+        <span className="text-muted-foreground text-[12px] font-medium">
           {comment.author}
         </span>
         {anchor === 'moved' && (
-          <span className="dense-meta">moved to line {comment.line}</span>
+          <span className={META_CLASS}>moved to line {comment.line}</span>
         )}
         {anchor === 'outdated' && (
-          <span className="dense-meta text-state-waiting">
+          <span className={cn(META_CLASS, 'text-state-waiting')}>
             outdated — the code here changed
           </span>
         )}
@@ -217,12 +223,11 @@ export function ReviewThread({
           <Button
             type="button"
             variant="ghost"
+            size="xs"
             onClick={() => void toggleResolved()}
             className={cn(
-              'h-auto p-0 text-[11px] font-normal hover:bg-transparent',
-              comment.resolved
-                ? 'text-state-review hover:text-state-review'
-                : 'text-muted-foreground hover:text-foreground'
+              'h-auto px-0 text-[12px]',
+              comment.resolved && 'text-state-review hover:text-state-review'
             )}
           >
             {comment.resolved ? (
@@ -237,7 +242,9 @@ export function ReviewThread({
         )}
       </div>
 
-      <p className="mt-1.5 text-[12.5px] leading-relaxed">{comment.body}</p>
+      <p className="font-book mt-1.5 text-[13px] leading-relaxed">
+        {comment.body}
+      </p>
 
       {comment.suggestion !== undefined && onApply !== undefined && (
         <div className="mt-1.5 flex items-center gap-2">
@@ -247,13 +254,13 @@ export function ReviewThread({
               find out the first click worked. */}
           <Button
             type="button"
+            size="sm"
             disabled={
               applyState.status === 'applying' ||
               applyState.status === 'succeeded' ||
               (applyState.status === 'failed' && applyState.disabled)
             }
             onClick={handleApply}
-            className="h-auto rounded-md px-2.5 py-1 text-[12px]"
           >
             {applyState.status === 'applying'
               ? 'Applying…'
@@ -262,7 +269,7 @@ export function ReviewThread({
                 : 'Apply'}
           </Button>
           {applyState.status === 'failed' && (
-            <span className="text-destructive text-[11px]">
+            <span className="text-state-failed font-book text-[12px]">
               {applyState.message}
             </span>
           )}
@@ -273,39 +280,42 @@ export function ReviewThread({
         <div key={r.id} className="mt-2 flex gap-2">
           <CornerDownRight className="text-muted-foreground mt-0.5 size-3 shrink-0" />
           <div>
-            <span className="text-accent-foreground text-[11px] font-medium">
+            <span className="text-muted-foreground text-[12px] font-medium">
               {r.author}
             </span>
-            <p className="text-[12.5px] leading-relaxed">{r.body}</p>
+            <p className="font-book text-[13px] leading-relaxed">{r.body}</p>
           </div>
         </div>
       ))}
 
       {error !== null && (
-        <p role="alert" className="text-destructive mt-1.5 text-[11.5px]">
+        <p
+          role="alert"
+          className="text-state-failed font-book mt-1.5 text-[12px]"
+        >
           {error}
         </p>
       )}
 
       {!comment.resolved &&
         (!canReply ? (
-          <p className="text-muted-foreground mt-2 text-[11.5px]">
-            {replyNote}
-          </p>
+          <p className={cn(META_CLASS, 'mt-2')}>{replyNote}</p>
         ) : (
+          // The inline "Leave a reply…" row: borderless, so it reads as part of the card.
           <div className="mt-2 flex gap-2">
             <Input
+              variant="borderless"
               value={reply}
               onChange={(e) => setReply(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') void sendReply();
               }}
               placeholder={REPLY_PLACEHOLDER[destination]}
-              className="h-auto min-w-0 flex-1 px-2 py-1 text-[12px]"
+              className="min-w-0 flex-1 text-[13px]"
             />
           </div>
         ))}
-    </Panel>
+    </div>
   );
 }
 
@@ -457,16 +467,17 @@ export function ReviewComposer({
   };
 
   return (
-    // Panel's own border replaces `shadow-hairline-strong` — same swap as `ReviewThread`'s
-    // own card above, not a diff-rendering change.
-    <Panel className="my-1.5 ml-[90px] p-3">
-      <div className="dense-label text-accent-foreground">
+    // The composer is the same card as a thread — Linear's "Leave a comment…" box — with the
+    // line reference as its 12px heading and a borderless textarea for the body.
+    <div data-slot="review-composer" className={COMMENT_CARD_CLASS}>
+      <div className="text-muted-foreground text-[12px] font-medium">
         {startLine !== undefined && startLine !== line
           ? `Comment on lines ${startLine}–${line}`
           : `Comment on line ${line}`}
       </div>
       <Textarea
         autoFocus
+        variant="borderless"
         value={body}
         onChange={(e) => setBody(e.target.value)}
         onKeyDown={(e) => {
@@ -476,12 +487,12 @@ export function ReviewComposer({
           }
         }}
         placeholder={COMPOSER_PLACEHOLDER[destination]}
-        className="mt-1.5 min-h-[52px] w-full resize-y bg-transparent text-[12.5px]"
+        className="mt-1.5 min-h-[52px] w-full resize-y text-[13px]"
       />
       {suggestionItem !== null && (
         <ScrollArea
           data-testid="suggestion-editor"
-          className="border-border mt-1.5 max-h-40 rounded-md border"
+          className="rounded-card border-border mt-1.5 max-h-40 border-[0.5px]"
         >
           <CodeView
             disableWorkerPool
@@ -494,39 +505,29 @@ export function ReviewComposer({
         </ScrollArea>
       )}
       {error !== null && (
-        <p role="alert" className="text-destructive text-[11.5px]">
+        <p role="alert" className="text-state-failed font-book text-[12px]">
           {error}
         </p>
       )}
-      <div className="mt-1.5 flex gap-2">
-        <Button
-          type="button"
-          disabled={body.trim() === '' || busy}
-          onClick={handleSuggest}
-          className="h-auto rounded-md px-2.5 py-1 text-[12px]"
-        >
-          {suggestion !== undefined ? 'Suggest' : 'Add comment'}
-        </Button>
+      <div className="mt-2 flex items-center justify-end gap-2">
+        <PillButton onClick={onCancel}>Cancel</PillButton>
         {canApplyNow(seed, suggestionText, onApply !== undefined) && (
-          <Button
-            type="button"
-            variant="outline"
+          <PillButton
             disabled={body.trim() === '' || busy}
             onClick={handleApplyNow}
-            className="h-auto rounded-md px-2.5 py-1 text-[12px]"
           >
             Apply now
-          </Button>
+          </PillButton>
         )}
         <Button
           type="button"
-          variant="outline"
-          onClick={onCancel}
-          className="h-auto rounded-md px-2.5 py-1 text-[12px]"
+          size="sm"
+          disabled={body.trim() === '' || busy}
+          onClick={handleSuggest}
         >
-          Cancel
+          {suggestion !== undefined ? 'Suggest' : 'Add comment'}
         </Button>
       </div>
-    </Panel>
+    </div>
   );
 }

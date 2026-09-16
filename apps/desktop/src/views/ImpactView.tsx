@@ -1,13 +1,7 @@
 import type { ImpactEntry, ImpactSubjectKind } from '@dispatch/client';
 import { IMPACT_SUBJECT_KINDS } from '@dispatch/client';
 import { useQuery } from '@tanstack/react-query';
-import {
-  ChevronDown,
-  ChevronsUpDown,
-  ChevronUp,
-  TriangleAlert,
-  Waypoints,
-} from 'lucide-react';
+import { ChevronDown, ChevronUp, TriangleAlert, Waypoints } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { ImpactPanel } from '../components/impact/ImpactPanel';
@@ -19,7 +13,8 @@ import { DEFAULT_REVIEW_CAP, summarizeImpact } from '../lib/impactSummary';
 import { resolveAffectedFilesStatus } from '../lib/impactViewStatus';
 import type { InsightDelta } from '@/ui/ai/insight-cards';
 import { InsightCard } from '@/ui/ai/insight-cards';
-import { Button } from '@/ui/button';
+import { PageHeader } from '@/ui/ai/page-header';
+import { SelectPill } from '@/ui/ai/pill';
 import {
   EmptyState,
   HintText,
@@ -28,7 +23,6 @@ import {
   PanelRow,
 } from '@/ui/chrome';
 import { PathCrumb } from '@/ui/chrome/path-crumb';
-import { Toolbar } from '@/ui/chrome/toolbar';
 import {
   Collapsible,
   CollapsibleContent,
@@ -54,6 +48,8 @@ import { Skeleton } from '@/ui/skeleton';
 
 interface ImpactViewProps {
   data: DispatchProjectData;
+  /** The active project's display name, the first crumb of the page header. */
+  projectName?: string | null;
   /** Subject handed over by one of the three "open in Impact" entry points
    *  (Review case panel, task detail, Git file pane), or `null` when this
    *  view was reached from the sidebar with nothing chosen yet. */
@@ -125,7 +121,7 @@ function LiveClaims({
       {overlaps.map((overlap) => (
         <div
           key={overlap.a.runId + ':' + overlap.b.runId}
-          className="bg-state-waiting-surface text-state-waiting rounded-control flex items-start gap-2 px-3 py-2 text-[12.5px]"
+          className="bg-state-waiting-surface text-state-waiting rounded-card font-book flex items-start gap-2 px-3 py-2 text-[13px]"
         >
           <TriangleAlert className="size-3.5 shrink-0 translate-y-0.5" />
           <span className="min-w-0">
@@ -133,7 +129,7 @@ function LiveClaims({
               ' and ' +
               (titleByRunId.get(overlap.b.runId) ?? overlap.b.taskId) +
               ' are claiming overlapping paths: '}
-            <span className="font-mono text-[11.5px]">
+            <span className="font-mono text-[12px]">
               {overlap.paths.join(', ')}
             </span>
           </span>
@@ -200,21 +196,17 @@ function SubjectCombobox({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         render={
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
+          <SelectPill
             aria-haspopup="listbox"
             aria-expanded={open}
             aria-label={ariaLabel}
-            className="w-80 justify-between font-normal"
+            className="w-72 [&>span]:flex-1 [&>span]:text-left"
           />
         }
       >
         <span className={cnTruncate(selected === undefined)}>
           {selected?.label ?? placeholder}
         </span>
-        <ChevronsUpDown className="size-3.5 shrink-0 opacity-50" />
       </PopoverTrigger>
       <PopoverContent align="start" className="w-96 p-0">
         <Command>
@@ -232,7 +224,7 @@ function SubjectCombobox({
               >
                 <span className="min-w-0 flex-1 truncate">{option.label}</span>
                 {option.hint !== undefined && (
-                  <span className="text-muted-foreground ml-2 shrink-0 font-mono text-[11px]">
+                  <span className="text-muted-foreground font-book ml-2 shrink-0 text-[12px]">
                     {option.hint}
                   </span>
                 )}
@@ -265,7 +257,11 @@ function cnTruncate(placeholder: boolean): string {
  * `summarizeImpact` via the embedded `ImpactPanel`; this view only adds the
  * grouped path list `ImpactPanel`'s compact surface has no room for.
  */
-export function ImpactView({ data, initialSubject }: ImpactViewProps) {
+export function ImpactView({
+  data,
+  projectName,
+  initialSubject,
+}: ImpactViewProps) {
   const [kind, setKind] = useState<ImpactSubjectKind>(
     initialSubject?.kind ?? 'file'
   );
@@ -397,75 +393,89 @@ export function ImpactView({ data, initialSubject }: ImpactViewProps) {
     setId(pathDraft.trim());
   }
 
-  return (
-    <div className="flex flex-col gap-4">
-      <Toolbar>
-        <Select
-          value={kind}
-          onValueChange={(value) => pickKind(value as ImpactSubjectKind)}
-        >
-          <SelectTrigger size="sm" aria-label="Subject kind" className="w-28">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {IMPACT_SUBJECT_KINDS.map((k) => (
-              <SelectItem key={k} value={k}>
-                {SUBJECT_KIND_LABEL[k]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+  // The subject picker sits in the header's second row — kind on the left, then the
+  // path field or the run/task combobox for that kind.
+  const picker = (
+    <div className="flex items-center gap-2">
+      <Select
+        value={kind}
+        onValueChange={(value) => pickKind(value as ImpactSubjectKind)}
+      >
+        <SelectTrigger aria-label="Subject kind" className="w-28">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {IMPACT_SUBJECT_KINDS.map((k) => (
+            <SelectItem key={k} value={k}>
+              {SUBJECT_KIND_LABEL[k]}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
 
-        {kind === 'file' && (
-          <Input
-            className="h-8 w-64 text-[12px]"
-            placeholder="File path, e.g. src/api.ts"
-            aria-label="File path"
-            value={pathDraft}
-            onChange={(e) => setPathDraft(e.target.value)}
-            onBlur={commitPath}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') commitPath();
-            }}
-          />
-        )}
-
-        {kind === 'run' && (
-          <SubjectCombobox
-            value={id}
-            placeholder="Choose a run…"
-            ariaLabel="Run"
-            options={runOptions}
-            onSelect={setId}
-          />
-        )}
-
-        {kind === 'task' && (
-          <SubjectCombobox
-            value={id}
-            placeholder="Choose a task…"
-            ariaLabel="Task"
-            options={taskOptions}
-            onSelect={setId}
-          />
-        )}
-      </Toolbar>
-
-      {!hasSubject ? (
-        <LiveClaims
-          claims={runClaims ?? []}
-          overlaps={overlaps}
-          titleByRunId={titleByRunId}
+      {kind === 'file' && (
+        <Input
+          className="w-64"
+          placeholder="File path, e.g. src/api.ts"
+          aria-label="File path"
+          value={pathDraft}
+          onChange={(e) => setPathDraft(e.target.value)}
+          onBlur={commitPath}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commitPath();
+          }}
         />
-      ) : (
-        <>
-          <ImpactPanel client={data.client} subject={kind} id={id} />
+      )}
 
-          {status.kind === 'entries' && status.groups.length > 1 && (
-            <ReachByHopCard groups={status.groups} />
-          )}
+      {kind === 'run' && (
+        <SubjectCombobox
+          value={id}
+          placeholder="Choose a run…"
+          ariaLabel="Run"
+          options={runOptions}
+          onSelect={setId}
+        />
+      )}
 
-          {/* Suppressed entirely on error, and on a reason-carrying 200
+      {kind === 'task' && (
+        <SubjectCombobox
+          value={id}
+          placeholder="Choose a task…"
+          ariaLabel="Task"
+          options={taskOptions}
+          onSelect={setId}
+        />
+      )}
+    </div>
+  );
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <PageHeader
+        crumb={[
+          ...(projectName !== undefined && projectName !== null
+            ? [projectName]
+            : []),
+          'Impact',
+        ]}
+        tabs={picker}
+      />
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-3">
+        {!hasSubject ? (
+          <LiveClaims
+            claims={runClaims ?? []}
+            overlaps={overlaps}
+            titleByRunId={titleByRunId}
+          />
+        ) : (
+          <>
+            <ImpactPanel client={data.client} subject={kind} id={id} />
+
+            {status.kind === 'entries' && status.groups.length > 1 && (
+              <ReachByHopCard groups={status.groups} />
+            )}
+
+            {/* Suppressed entirely on error, and on a reason-carrying 200
               (`no-declared-writes` / `writes-match-nothing`), rather than
               repeating either here: `ImpactPanel` immediately above already
               renders the real failure or the real reason, and a second,
@@ -473,76 +483,76 @@ export function ImpactView({ data, initialSubject }: ImpactViewProps) {
               read as disagreeing. What this panel must never do is fall
               back to "No files affected." for either case — see
               `resolveAffectedFilesStatus`. */}
-          {status.kind !== 'error' && status.kind !== 'suppressed' && (
-            <Panel>
-              <PanelHeader count={shownCount}>Affected files</PanelHeader>
-              <PanelRow className="flex-col items-stretch gap-1.5">
-                <Input
-                  className="h-8 text-[12px]"
-                  placeholder="Filter by path…"
-                  aria-label="Filter affected files by path"
-                  value={filter}
-                  onChange={(e) => setFilter(e.target.value)}
-                />
-                {entries.length > 0 && (
-                  <HintText>
-                    {shownCount} of {entries.length} shown
-                  </HintText>
-                )}
-              </PanelRow>
+            {status.kind !== 'error' && status.kind !== 'suppressed' && (
+              <Panel>
+                <PanelHeader count={shownCount}>Affected files</PanelHeader>
+                <PanelRow className="flex-col items-stretch gap-1.5">
+                  <Input
+                    placeholder="Filter by path…"
+                    aria-label="Filter affected files by path"
+                    value={filter}
+                    onChange={(e) => setFilter(e.target.value)}
+                  />
+                  {entries.length > 0 && (
+                    <HintText>
+                      {shownCount} of {entries.length} shown
+                    </HintText>
+                  )}
+                </PanelRow>
 
-              {status.kind === 'pending' ? (
-                <div className="flex flex-col gap-2 p-3">
-                  <Skeleton className="h-3.5 w-2/3" />
-                  <Skeleton className="h-3.5 w-1/2" />
-                </div>
-              ) : status.kind === 'empty' ? (
-                <EmptyState message={status.message} />
-              ) : (
-                status.groups.map((group) => {
-                  // Controlled off `collapsedHops` — that external `ReadonlySet` stays the
-                  // single source of truth, same as TasksListView's groups.
-                  const open = !collapsedHops.has(group.hops);
-                  return (
-                    <PanelRow
-                      key={group.hops}
-                      className="flex-col items-stretch gap-1.5"
-                    >
-                      <Collapsible
-                        open={open}
-                        onOpenChange={() => toggleHop(group.hops)}
-                        className="flex flex-col gap-1.5"
+                {status.kind === 'pending' ? (
+                  <div className="flex flex-col gap-2 p-3">
+                    <Skeleton className="h-3.5 w-2/3" />
+                    <Skeleton className="h-3.5 w-1/2" />
+                  </div>
+                ) : status.kind === 'empty' ? (
+                  <EmptyState message={status.message} />
+                ) : (
+                  status.groups.map((group) => {
+                    // Controlled off `collapsedHops` — that external `ReadonlySet` stays the
+                    // single source of truth, same as TasksListView's groups.
+                    const open = !collapsedHops.has(group.hops);
+                    return (
+                      <PanelRow
+                        key={group.hops}
+                        className="flex-col items-stretch gap-1.5"
                       >
-                        <CollapsibleTrigger className="bg-muted hover:bg-secondary dense-meta flex w-full items-center gap-2 rounded px-3 py-1.5 transition-colors duration-150">
-                          {open ? (
-                            <ChevronUp className="size-3.5 shrink-0" />
-                          ) : (
-                            <ChevronDown className="size-3.5 shrink-0" />
-                          )}
-                          <span>
-                            {`Hop ${group.hops} · ${group.paths.length} file${
-                              group.paths.length === 1 ? '' : 's'
-                            }`}
-                          </span>
-                        </CollapsibleTrigger>
-                        <CollapsibleContent>
-                          <ul className="flex flex-col gap-1 pl-1">
-                            {group.paths.map((path) => (
-                              <li key={path}>
-                                <PathCrumb path={path} />
-                              </li>
-                            ))}
-                          </ul>
-                        </CollapsibleContent>
-                      </Collapsible>
-                    </PanelRow>
-                  );
-                })
-              )}
-            </Panel>
-          )}
-        </>
-      )}
+                        <Collapsible
+                          open={open}
+                          onOpenChange={() => toggleHop(group.hops)}
+                          className="flex flex-col gap-1.5"
+                        >
+                          <CollapsibleTrigger className="text-muted-foreground rounded-control flex h-7 w-full items-center gap-2 px-2 text-[12px] font-medium transition-colors duration-100 hover:text-(--text-secondary)">
+                            {open ? (
+                              <ChevronUp className="size-3 shrink-0" />
+                            ) : (
+                              <ChevronDown className="size-3 shrink-0" />
+                            )}
+                            <span>
+                              {`Hop ${group.hops} · ${group.paths.length} file${
+                                group.paths.length === 1 ? '' : 's'
+                              }`}
+                            </span>
+                          </CollapsibleTrigger>
+                          <CollapsibleContent>
+                            <ul className="flex flex-col gap-1 pl-1">
+                              {group.paths.map((path) => (
+                                <li key={path}>
+                                  <PathCrumb path={path} />
+                                </li>
+                              ))}
+                            </ul>
+                          </CollapsibleContent>
+                        </Collapsible>
+                      </PanelRow>
+                    );
+                  })
+                )}
+              </Panel>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }

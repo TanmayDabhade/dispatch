@@ -1,5 +1,5 @@
 import type { GateStatus, MergeQueueEntry } from '@dispatch/client';
-import { X } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { LandingRow } from '../components/landing/LandingRow';
@@ -16,23 +16,13 @@ import {
   visibleLandingRows,
 } from '../lib/landingView';
 import { groupFailedAttempts } from '../lib/queueHistory';
-import { Badge } from '@/ui/badge';
+import { GroupHeader } from '@/ui/ai/group-header';
+import { ListRow } from '@/ui/ai/list-row';
+import { PageHeader, ViewTabs } from '@/ui/ai/page-header';
+import { Pill, PillButton } from '@/ui/ai/pill';
 import { Button } from '@/ui/button';
 import { EmptyState } from '@/ui/chrome';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/ui/collapsible';
-import { Input } from '@/ui/input';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/ui/table';
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/ui/input-group';
 
 // Persists filters across launches, same key/shape Task 8's read/serialize
 // pair round-trips — the only place that touches localStorage for them.
@@ -43,8 +33,20 @@ function readStoredFilters(): LandingFilters {
   return readLandingFilters(window.localStorage.getItem(FILTERS_STORAGE_KEY));
 }
 
+// The header's two view tabs: what is still in flight, and what already landed.
+type LandingTab = 'queue' | 'landed';
+
+const LANDING_TABS: { id: LandingTab; label: string }[] = [
+  { id: 'queue', label: 'Queue' },
+  { id: 'landed', label: 'Landed' },
+];
+
+const META_CLASS = 'text-[12px] font-book text-muted-foreground tabular-nums';
+
 interface LandingTableViewProps {
   data: DispatchProjectData;
+  /** The active project's display name, the first crumb of the page header. */
+  projectName?: string | null;
   /** A run-backed row's title click — App.tsx opens the task's Diff tab. */
   onOpenRun: (taskId: string, runId: string) => void;
   /** A bare PR row's title click — App.tsx opens the PR review page. */
@@ -53,9 +55,10 @@ interface LandingTableViewProps {
 
 /** The unified PR table: every run/PR/queue-local entry in flight, grouped by
  * what it needs, the queue's own verdict on anything it bounced ("Failed to
- * land", with a retry), plus a collapsible history of what recently landed. */
+ * land", with a retry), and — under the Landed tab — what recently landed. */
 export function LandingTableView({
   data,
+  projectName,
   onOpenRun,
   onOpenPr,
 }: LandingTableViewProps) {
@@ -67,7 +70,7 @@ export function LandingTableView({
     );
   }, [filters]);
 
-  const [landedOpen, setLandedOpen] = useState(false);
+  const [tab, setTab] = useState<LandingTab>('queue');
   const [staleOpen, setStaleOpen] = useState(false);
   const [pushRetrying, setPushRetrying] = useState(false);
   // The run a failed row is re-enqueueing, so its Retry reads busy while the
@@ -116,7 +119,7 @@ export function LandingTableView({
   const now = Date.now();
 
   // Re-clicking the same author/gate a row's own buttons set clears it —
-  // the dismissible chip above the table does the same thing in reverse.
+  // the dismissible chip under the header does the same thing in reverse.
   const toggleAuthor = (author: string) =>
     setFilters((f) => ({ ...f, author: f.author === author ? null : author }));
   const toggleGate = (gate: GateStatus) =>
@@ -144,10 +147,6 @@ export function LandingTableView({
   // the entry `gateChipLabel` needs to name "behind <title>".
   const queueRows =
     snapshot !== null ? snapshot.rows.filter((r) => r.queue !== undefined) : [];
-  // An all-local snapshot renders a page of dashes in the PR columns — they only earn
-  // their width once a row actually has GitHub data.
-  const showPrColumns =
-    snapshot !== null && snapshot.rows.some((r) => r.pr !== undefined);
   const reviewedAtByRunId = new Map(
     data.runs
       .filter((r) => r.reviewedAt !== undefined)
@@ -168,177 +167,161 @@ export function LandingTableView({
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3">
-      <div className="flex items-baseline gap-2">
-        {/* react-query keeps the last snapshot on a failed refetch — this
-            badge is the only thing that flags it as stale, not current. */}
-        {snapshot !== null && data.landingIsError && (
-          <Badge
-            variant="outline"
-            className="text-muted-foreground border-border"
-          >
-            stale · {relativeTime(snapshot.generatedAt, now)}
-          </Badge>
-        )}
-      </div>
+    <div className="flex h-full min-h-0 flex-col">
+      <PageHeader
+        crumb={[
+          ...(projectName !== undefined && projectName !== null
+            ? [projectName]
+            : []),
+          'Landing',
+        ]}
+        actions={
+          // react-query keeps the last snapshot on a failed refetch — this
+          // pill is the only thing that flags it as stale, not current.
+          snapshot !== null && data.landingIsError ? (
+            <Pill className="text-muted-foreground">
+              Stale · {relativeTime(snapshot.generatedAt, now)}
+            </Pill>
+          ) : undefined
+        }
+        tabs={
+          <ViewTabs
+            tabs={LANDING_TABS}
+            active={tab}
+            onChange={(id) => setTab(id as LandingTab)}
+          />
+        }
+        controls={
+          tab === 'queue' ? (
+            <InputGroup className="h-7 w-64 gap-2 px-2 has-[>[data-align=inline-start]]:[&>input]:pl-0">
+              <InputGroupAddon className="p-0">
+                <Search className="text-muted-foreground size-3.5 shrink-0" />
+              </InputGroupAddon>
+              <InputGroupInput
+                value={filters.query}
+                onChange={(e) =>
+                  setFilters((f) => ({ ...f, query: e.target.value }))
+                }
+                placeholder="Search title, author, branch, or #123…"
+                aria-label="Search the PR table"
+                className="h-auto px-0 text-[12px] md:text-[12px]"
+              />
+            </InputGroup>
+          ) : undefined
+        }
+      />
+
+      {/* Applied filters, as the chip row Linear draws under its header. */}
+      {tab === 'queue' && (authorFilter !== null || gateFilter !== null) && (
+        <div className="shadow-hairline-bottom flex h-10 shrink-0 items-center gap-1.5 px-4">
+          {authorFilter !== null && (
+            <FilterChip
+              label={`Author is ${authorFilter}`}
+              onDismiss={() => toggleAuthor(authorFilter)}
+            />
+          )}
+          {gateFilter !== null && (
+            <FilterChip
+              label={`Gate is ${gateFilter}`}
+              onDismiss={() => toggleGate(gateFilter)}
+            />
+          )}
+          <Button variant="ghost" size="xs" onClick={clearFilters}>
+            Clear filters
+          </Button>
+        </div>
+      )}
 
       {/* The one queue outcome nothing else reports. A drain that merges locally but fails
           to push leaves origin without the commit, while the rows below have already moved
-          that entry into "Recently landed" — this is the only place that says otherwise. */}
+          that entry into "Landed" — this is the only place that says otherwise. */}
       {data.lastPushError !== null && (
-        <div className="border-destructive/30 bg-destructive/10 text-destructive flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-[12px]">
+        <div className="bg-state-failed-surface text-state-failed rounded-card mx-4 mt-3 flex items-center justify-between gap-3 px-3 py-2 text-[12px]">
           <span className="min-w-0 truncate">
             Merged locally — push failed: {data.lastPushError}
           </span>
-          <Button
-            variant="secondary"
-            size="xs"
-            disabled={pushRetrying}
-            onClick={() => void retryPush()}
-          >
+          <PillButton disabled={pushRetrying} onClick={() => void retryPush()}>
             Retry push
-          </Button>
+          </PillButton>
         </div>
       )}
 
       {snapshot === null && data.landingIsError ? (
         <EmptyState
-          message="Couldn't load the PR table."
-          action={
-            <Button size="sm" variant="outline" onClick={data.landingRefetch}>
-              Retry
-            </Button>
-          }
+          heading="Couldn't load the PR table."
+          secondary={{ label: 'Retry', onClick: data.landingRefetch }}
         />
       ) : snapshot === null ? (
-        <p className="text-muted-foreground text-[12.5px]">
+        <p className="text-muted-foreground font-book px-4 py-3 text-[13px]">
           Loading the PR table…
         </p>
+      ) : tab === 'landed' ? (
+        <LandedList
+          landed={landedTasks}
+          queueLanded={snapshot.landed}
+          now={now}
+        />
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              value={filters.query}
-              onChange={(e) =>
-                setFilters((f) => ({ ...f, query: e.target.value }))
-              }
-              placeholder="Search title, author, branch, or #123…"
-              className="h-8 max-w-xs text-[12.5px]"
-            />
-            {authorFilter !== null && (
-              <FilterChip
-                label={`author: ${authorFilter}`}
-                onDismiss={() => toggleAuthor(authorFilter)}
-              />
-            )}
-            {gateFilter !== null && (
-              <FilterChip
-                label={`gate: ${gateFilter}`}
-                onDismiss={() => toggleGate(gateFilter)}
-              />
-            )}
-            {hasActiveFilters && (
-              <Button
-                variant="ghost"
-                size="xs"
-                onClick={clearFilters}
-                className="text-muted-foreground hover:text-foreground h-auto px-1.5 py-1 text-[11.5px] font-normal"
-              >
-                Clear filters
-              </Button>
-            )}
-          </div>
-
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 py-2">
           {visibleRows.length === 0 ? (
             <EmptyState
-              message={
+              heading={
                 snapshot.rows.length === 0
                   ? 'Nothing in flight.'
                   : 'No rows match.'
               }
-              action={
-                hasActiveFilters ? (
-                  <Button size="sm" variant="outline" onClick={clearFilters}>
-                    Clear filters
-                  </Button>
-                ) : undefined
+              secondary={
+                hasActiveFilters
+                  ? { label: 'Clear filters', onClick: clearFilters }
+                  : undefined
               }
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-6" />
-                  <TableHead>Change</TableHead>
-                  <TableHead>Lands</TableHead>
-                  {showPrColumns && (
-                    <TableHead className="hidden md:table-cell">
-                      Checks
-                    </TableHead>
-                  )}
-                  {showPrColumns && (
-                    <TableHead className="hidden sm:table-cell">
-                      Changes
-                    </TableHead>
-                  )}
-                  <TableHead className="hidden md:table-cell">Review</TableHead>
-                  {showPrColumns && <TableHead>Worktree</TableHead>}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {visibleRows.map((entry) =>
-                  entry.type === 'group' ? (
-                    <TableRow
-                      key={`group-${entry.id}`}
-                      className="hover:bg-transparent"
-                    >
-                      <TableCell
-                        colSpan={showPrColumns ? 7 : 4}
-                        className="bg-muted/20 py-1.5"
-                      >
-                        <span className="dense-label">{entry.label}</span>{' '}
-                        <Badge variant="outline" className="ml-1">
-                          {entry.count}
-                        </Badge>
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    <LandingRow
-                      key={entry.row.id}
-                      row={entry.row}
-                      queueRows={queueRows}
-                      now={now}
-                      showPrColumns={showPrColumns}
-                      extraRuns={
-                        entry.row.taskId !== undefined
-                          ? deduped?.extraRunsByTask.get(entry.row.taskId)
-                          : undefined
-                      }
-                      reviewedAt={
-                        entry.row.runId !== undefined
-                          ? reviewedAtByRunId.get(entry.row.runId)
-                          : undefined
-                      }
-                      onFilterAuthor={toggleAuthor}
-                      onFilterGate={toggleGate}
-                      onOpenRun={onOpenRun}
-                      onOpenPr={onOpenPr}
-                      client={client}
-                      port={data.port}
-                      onRetryQueue={data.handleRecheckMergeQueue}
-                    />
-                  )
-                )}
-              </TableBody>
-            </Table>
+            <div className="flex flex-col gap-0.5" role="table">
+              {visibleRows.map((entry) =>
+                entry.type === 'group' ? (
+                  <GroupHeader
+                    key={`group-${entry.id}`}
+                    name={entry.label}
+                    count={entry.count}
+                    className="mt-2 first:mt-0"
+                  />
+                ) : (
+                  <LandingRow
+                    key={entry.row.id}
+                    row={entry.row}
+                    queueRows={queueRows}
+                    now={now}
+                    extraRuns={
+                      entry.row.taskId !== undefined
+                        ? deduped?.extraRunsByTask.get(entry.row.taskId)
+                        : undefined
+                    }
+                    reviewedAt={
+                      entry.row.runId !== undefined
+                        ? reviewedAtByRunId.get(entry.row.runId)
+                        : undefined
+                    }
+                    onFilterAuthor={toggleAuthor}
+                    onFilterGate={toggleGate}
+                    onOpenRun={onOpenRun}
+                    onOpenPr={onOpenPr}
+                    client={client}
+                    port={data.port}
+                    onRetryQueue={data.handleRecheckMergeQueue}
+                  />
+                )
+              )}
+            </div>
           )}
 
           {failedAttempts.length > 0 && (
-            <section className="flex flex-col gap-0.5">
-              <div className="flex items-center gap-2 px-1 py-1">
-                <span className="dense-label">Failed to land</span>
-                <Badge variant="outline">{failedAttempts.length}</Badge>
-              </div>
+            <section className="mt-3 flex flex-col gap-0.5">
+              <GroupHeader
+                name="Failed to land"
+                count={failedAttempts.length}
+                tint="var(--state-failed-fg)"
+              />
               {failedAttempts.map((entry) => (
                 <FailedAttemptRow
                   key={attemptKey(entry)}
@@ -356,105 +339,77 @@ export function LandingTableView({
           {/* Failures the run has outgrown — reviewed anyway, superseded by a newer
               attempt, or re-queued. Kept reachable, never as headline rows. */}
           {staleAttempts.length > 0 && (
-            <Collapsible open={staleOpen} onOpenChange={setStaleOpen}>
-              <CollapsibleTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    className="text-muted-foreground hover:text-foreground h-auto w-fit px-1.5 py-1 text-[11.5px] font-normal"
-                  />
-                }
-              >
-                {staleOpen ? 'Hide' : 'Show'} {staleAttempts.length} stale{' '}
-                {staleAttempts.length === 1 ? 'attempt' : 'attempts'}
-              </CollapsibleTrigger>
-              <CollapsibleContent className="mt-1 flex flex-col gap-0.5">
-                {staleAttempts.map((entry) => (
-                  <div
+            <section className="mt-3 flex flex-col gap-0.5">
+              <GroupHeader
+                name="Stale attempts"
+                count={staleAttempts.length}
+                collapsed={!staleOpen}
+                onToggle={() => setStaleOpen((v) => !v)}
+              />
+              {staleOpen &&
+                staleAttempts.map((entry) => (
+                  <ListRow
                     key={attemptKey(entry)}
-                    className="dense-meta flex items-center gap-1.5 truncate px-1 py-0.5"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => onOpenRun(entry.taskId, entry.runId)}
-                      className="text-foreground truncate hover:underline"
-                    >
-                      {entry.taskTitle}
-                    </button>
-                    <span>·</span>
-                    <span className="min-w-0 truncate">
-                      {entry.reason ?? 'failed'}
-                    </span>
-                    <span>·</span>
-                    <span className="shrink-0">
-                      {relativeTime(attemptFinishedAt(entry), now)}
-                    </span>
-                  </div>
+                    title={entry.taskTitle}
+                    crumb={entry.reason ?? 'failed'}
+                    onClick={() => onOpenRun(entry.taskId, entry.runId)}
+                    date={relativeTime(attemptFinishedAt(entry), now)}
+                  />
                 ))}
-              </CollapsibleContent>
-            </Collapsible>
+            </section>
           )}
-
-          <Collapsible open={landedOpen} onOpenChange={setLandedOpen}>
-            <CollapsibleTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  className="text-muted-foreground hover:text-foreground h-auto w-fit px-1.5 py-1 text-[11.5px] font-normal"
-                />
-              }
-            >
-              {landedOpen ? 'Hide' : 'Show'} recently landed (
-              {landedTasks.length})
-            </CollapsibleTrigger>
-            <CollapsibleContent className="mt-1 flex flex-col gap-0.5">
-              {landedTasks.length === 0 ? (
-                <p className="text-muted-foreground text-[12.5px]">
-                  Nothing has landed yet.
-                </p>
-              ) : (
-                landedTasks.map((landed) => {
-                  // The queue's own history enriches a row with how it landed,
-                  // when this daemon session still remembers it.
-                  const queueEntry = snapshot.landed.find(
-                    (l) => l.title === landed.title
-                  );
-                  return (
-                    <div
-                      key={landed.id}
-                      className="dense-meta flex items-center gap-1.5 truncate px-1 py-0.5"
-                    >
-                      <span className="text-foreground truncate">
-                        {landed.title}
-                      </span>
-                      {queueEntry !== undefined && (
-                        <>
-                          <span>·</span>
-                          <span>
-                            {queueEntry.via === 'pr'
-                              ? `via PR #${queueEntry.prNumber}`
-                              : 'via local'}
-                          </span>
-                          {queueEntry.mergeCommit !== undefined && (
-                            <>
-                              <span>·</span>
-                              <span>{queueEntry.mergeCommit.slice(0, 7)}</span>
-                            </>
-                          )}
-                        </>
-                      )}
-                      <span>·</span>
-                      <span>{relativeTime(landed.landedAt, now)}</span>
-                    </div>
-                  );
-                })
-              )}
-            </CollapsibleContent>
-          </Collapsible>
         </div>
       )}
+    </div>
+  );
+}
+
+/** The Landed tab: every task that landed, newest first, with how it landed
+ * when this daemon session's queue still remembers. */
+function LandedList({
+  landed,
+  queueLanded,
+  now,
+}: {
+  landed: ReturnType<typeof landedFromTasks>;
+  queueLanded: NonNullable<DispatchProjectData['landing']>['landed'];
+  now: number;
+}) {
+  if (landed.length === 0) {
+    return <EmptyState heading="Nothing has landed yet." />;
+  }
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 py-2">
+      <div className="flex flex-col gap-0.5" role="table">
+        {landed.map((entry) => {
+          // The queue's own history enriches a row with how it landed,
+          // when this daemon session still remembers it.
+          const queueEntry = queueLanded.find((l) => l.title === entry.title);
+          return (
+            <ListRow
+              key={entry.id}
+              title={entry.title}
+              trailing={
+                queueEntry !== undefined ? (
+                  <>
+                    <Pill>
+                      {queueEntry.via === 'pr'
+                        ? `PR #${queueEntry.prNumber}`
+                        : 'Local'}
+                    </Pill>
+                    {queueEntry.mergeCommit !== undefined && (
+                      <span className={META_CLASS}>
+                        {queueEntry.mergeCommit.slice(0, 7)}
+                      </span>
+                    )}
+                  </>
+                ) : undefined
+              }
+              date={relativeTime(entry.landedAt, now)}
+            />
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -495,34 +450,30 @@ function FailedAttemptRow({
   onRetry: () => void;
 }) {
   return (
-    <div className="hover:bg-muted/40 rounded-md px-3 py-2 transition-colors duration-150">
-      <div className="flex items-center gap-3">
-        <button
-          type="button"
-          onClick={onOpen}
-          className="min-w-0 flex-1 truncate text-left text-[13px] hover:underline"
-        >
-          {entry.taskTitle}
-        </button>
-        <span className="dense-meta shrink-0">
-          {relativeTime(attemptFinishedAt(entry), now)}
-        </span>
-        <Button
-          type="button"
-          size="xs"
-          variant="outline"
-          disabled={retryDisabled}
-          onClick={onRetry}
-          aria-label={`Retry: ${entry.taskTitle}`}
-          className="shrink-0"
-        >
-          {retrying ? 'Queuing…' : 'Retry'}
-        </Button>
-      </div>
+    <div className="hover:bg-surface-hover rounded-control transition-colors duration-100">
+      <ListRow
+        title={entry.taskTitle}
+        onClick={onOpen}
+        className="hover:bg-transparent"
+        trailing={
+          <PillButton
+            className="h-6"
+            disabled={retryDisabled}
+            onClick={(event) => {
+              event.stopPropagation();
+              onRetry();
+            }}
+            aria-label={`Retry: ${entry.taskTitle}`}
+          >
+            {retrying ? 'Queuing…' : 'Retry'}
+          </PillButton>
+        }
+        date={relativeTime(attemptFinishedAt(entry), now)}
+      />
       {/* Full text, wrapped — a verify log's useful line is usually its last. Height is
           capped so a reason at the server's 4 KB limit scrolls in place instead of
           pushing the rest of the page away. */}
-      <p className="text-state-failed mt-1 max-h-32 overflow-y-auto text-[12px] break-words whitespace-pre-wrap">
+      <p className="text-state-failed font-book max-h-32 overflow-y-auto px-3 pb-2 text-[12px] break-words whitespace-pre-wrap">
         {entry.reason ?? 'failed'}
       </p>
     </div>
@@ -537,16 +488,16 @@ function FilterChip({
   onDismiss: () => void;
 }) {
   return (
-    <Badge variant="secondary" className="gap-1 py-0.5 pr-1">
+    <Pill className="pr-1">
       {label}
       <button
         type="button"
         onClick={onDismiss}
         aria-label={`Remove filter: ${label}`}
-        className="hover:text-foreground rounded-full"
+        className="text-muted-foreground rounded-pill flex size-4 items-center justify-center hover:text-(--text-secondary)"
       >
         <X className="size-3" />
       </button>
-    </Badge>
+    </Pill>
   );
 }

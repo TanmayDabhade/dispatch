@@ -242,16 +242,16 @@ export function RunReviewView({
           landed work, so the reviewer must know it arrived after the recorded failure
           rather than reading this as an ordinary dead run's leftovers. */}
       {orphanWork !== null && (
-        <div className="border-state-review-edge bg-state-review-surface text-state-review rounded-md border px-3 py-2 text-[12px]">
+        <div className="bg-state-review-surface text-state-review rounded-card font-book px-3 py-2 text-[12px]">
           {orphanWork}
         </div>
       )}
       {error !== null && (
         <Alert
           variant="destructive"
-          className="border-destructive/30 bg-destructive/10 rounded-md px-3 py-2"
+          className="bg-state-failed-surface rounded-card border-none px-3 py-2"
         >
-          <AlertDescription className="text-destructive text-[12px]">
+          <AlertDescription className="text-state-failed font-book text-[12px]">
             {error}
           </AlertDescription>
         </Alert>
@@ -342,8 +342,8 @@ export function RunReviewView({
       </div>
 
       {hasOpenPr ? (
-        <div className="border-border flex items-center justify-between gap-2 border-t pt-3">
-          <span className="text-muted-foreground text-[12px]">
+        <div className="shadow-hairline-top flex items-center justify-between gap-2 pt-3">
+          <span className="text-muted-foreground font-book text-[12px]">
             A PR is open for this run — Review PR opens the pull request page.
           </span>
           <div className="flex items-center gap-2">
@@ -388,7 +388,7 @@ export function RunReviewView({
           </div>
         </div>
       ) : (
-        <div className="border-border flex items-center justify-end gap-2 border-t pt-3">
+        <div className="shadow-hairline-top flex items-center justify-end gap-2 pt-3">
           <QueueMergeControl
             meta={meta}
             mergeQueue={mergeQueue}
@@ -420,7 +420,7 @@ export function RunReviewView({
             variant="ghost"
             size="sm"
             disabled={busy}
-            className="hover:text-destructive"
+            className="hover:text-state-failed"
             onClick={() => void run(onDiscard)}
           >
             <Trash2 className="size-3.5" />

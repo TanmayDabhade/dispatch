@@ -74,7 +74,7 @@ function ChangedFilesTree({
     <FileTree
       model={model}
       header={
-        <span className="text-muted-foreground block px-3 py-2 text-[11px] tracking-wide uppercase">
+        <span className="text-muted-foreground flex h-9 items-center px-3 text-[12px] font-medium">
           Changed files
         </span>
       }
@@ -112,8 +112,8 @@ export function RunDiffView({
   if (diffLoading) {
     return (
       <div className="grid h-full min-h-0 grid-cols-[14rem_1fr] gap-3">
-        <Skeleton className="rounded-md" />
-        <Skeleton className="rounded-md" />
+        <Skeleton className="rounded-card" />
+        <Skeleton className="rounded-card" />
       </div>
     );
   }
@@ -121,7 +121,9 @@ export function RunDiffView({
     return (
       <div className="text-muted-foreground flex flex-col items-center justify-center gap-2 py-10 text-center">
         <CircleAlert className="size-5" />
-        <p className="text-[13px]">Couldn&rsquo;t load the diff: {diffError}</p>
+        <p className="font-book text-[13px]">
+          Couldn&rsquo;t load the diff: {diffError}
+        </p>
       </div>
     );
   }
@@ -133,11 +135,11 @@ export function RunDiffView({
     // Its overflow-auto columns then had nothing bounding them, so a long diff
     // simply ran off the bottom with no way to scroll to the rest.
     <div className="grid h-full min-h-0 grid-cols-[14rem_1fr] gap-3">
-      <div className="border-border bg-muted/30 min-h-0 overflow-auto rounded-md border">
+      <div className="rounded-card border-border min-h-0 overflow-auto border-[0.5px]">
         {diff.files.length === 0 ? (
           <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
             <FileX className="size-4" />
-            <p className="text-[12px]">No file changes recorded.</p>
+            <p className="font-book text-[13px]">No file changes recorded.</p>
           </div>
         ) : (
           <ChangedFilesTree files={diff.files} onFileFocus={handleFileFocus} />
@@ -145,7 +147,7 @@ export function RunDiffView({
       </div>
       {/* A flex column, not `overflow-auto`: the scroller has to be `CodeView` itself, and
           `flex-1` sizes it off this column directly rather than through a percentage. */}
-      <div className="border-border flex min-h-0 flex-col overflow-hidden rounded-md border">
+      <div className="rounded-card border-border flex min-h-0 flex-col overflow-hidden border-[0.5px]">
         <DiffSurface
           patch={diff.patch}
           emptyLabel="No changes to show for this run."

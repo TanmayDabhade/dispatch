@@ -11,6 +11,8 @@ import { reviewTargetKey } from '@/lib/reviewTarget';
 import { Button } from '@/ui/button';
 import { Panel } from '@/ui/chrome';
 
+const META_CLASS = 'text-[12px] font-book text-muted-foreground tabular-nums';
+
 /** How the diff hands a selection to the dock. Imperative because the two sit side by side in
  * the review page and the pending attachments belong to the dock, not to the page. */
 export interface ReviewChatHandle {
@@ -131,13 +133,13 @@ export function ReviewChatPanel({
     return (
       <Button
         type="button"
-        variant="outline"
+        variant="ghost"
         onClick={() => setOpen(true)}
-        className="text-muted-foreground hover:text-foreground mt-2 h-auto w-full justify-start gap-2 rounded-md px-3 py-1.5 text-left text-[12px] font-normal"
+        className="bg-surface-quaternary hover:bg-surface-active rounded-card border-border font-book mt-2 h-9 w-full justify-start gap-2 border-[0.5px] px-3 text-left text-[13px]"
       >
-        <MessageSquare className="size-3.5 shrink-0" />
+        <MessageSquare className="shrink-0" />
         <span className="min-w-0 flex-1 truncate">Ask about this diff…</span>
-        {count > 0 && <span className="dense-meta shrink-0">{count}</span>}
+        {count > 0 && <span className={`${META_CLASS} shrink-0`}>{count}</span>}
       </Button>
     );
   }
@@ -145,10 +147,10 @@ export function ReviewChatPanel({
   return (
     // Panel's own border replaces the hand-spelled `border-border ... rounded-md border` —
     // same swap as the review threads above, not a diff-rendering change.
-    <Panel className="mt-2 flex max-h-[45%] shrink-0 flex-col gap-2 rounded-md p-2">
-      <div className="flex items-center gap-2">
-        <MessageSquare className="size-3.5 shrink-0" />
-        <span className="min-w-0 flex-1 text-[12px] font-medium">
+    <Panel className="mt-2 flex max-h-[45%] shrink-0 flex-col gap-2 p-2">
+      <div className="flex h-7 items-center gap-2">
+        <MessageSquare className="text-muted-foreground size-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 text-[13px] font-medium text-(--text-secondary)">
           Chat about this diff
         </span>
         <Button
@@ -157,9 +159,8 @@ export function ReviewChatPanel({
           size="icon-xs"
           aria-label="Collapse the chat"
           onClick={() => setOpen(false)}
-          className="text-muted-foreground hover:text-foreground hover:bg-transparent"
         >
-          <ChevronDown className="size-3.5" />
+          <ChevronDown />
         </Button>
       </div>
 
@@ -178,7 +179,7 @@ export function ReviewChatPanel({
         onSend={handleSend}
       />
 
-      <p className="text-muted-foreground text-[11px]">
+      <p className="text-muted-foreground font-book text-[12px]">
         Saved with this review — nothing is dispatched to an agent yet.
       </p>
     </Panel>
@@ -189,12 +190,12 @@ export function ReviewChatPanel({
 function Message({ message }: { message: ChatMessage }) {
   return (
     <div className="flex flex-col gap-1">
-      <span className="dense-meta">
-        {message.role === 'human' ? 'you' : 'agent'}
+      <span className="text-muted-foreground text-[12px] font-medium">
+        {message.role === 'human' ? 'You' : 'Agent'}
         {message.target === undefined ? '' : ` → ${message.target}`}
       </span>
       {message.snippets.length > 0 && (
-        <div className="text-muted-foreground flex flex-wrap gap-1 font-mono text-[11px]">
+        <div className="text-muted-foreground flex flex-wrap gap-1 font-mono text-[12px]">
           {message.snippets.map((snippet, index) => (
             <span key={`${snippet.file}-${index}`}>
               {snippetLabel(snippet)}
@@ -202,7 +203,7 @@ function Message({ message }: { message: ChatMessage }) {
           ))}
         </div>
       )}
-      <p className="text-[12.5px] leading-snug whitespace-pre-wrap">
+      <p className="font-book text-[13px] leading-snug whitespace-pre-wrap">
         {message.body}
       </p>
     </div>

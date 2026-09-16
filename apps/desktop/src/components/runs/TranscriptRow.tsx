@@ -105,10 +105,12 @@ export function TranscriptRow({
         // unreadable however well it is typeset.
         <Markdown
           content={entry.text ?? ''}
-          className="max-w-[68ch] text-[13px] leading-relaxed"
+          className="font-book max-w-[68ch] text-[13px] leading-relaxed"
         />
       ) : (
-        <span className={cn('text-[12px] leading-relaxed', TONE[tone])}>
+        <span
+          className={cn('text-[12px] leading-relaxed font-book', TONE[tone])}
+        >
           {entry.text ?? ''}
         </span>
       )}
@@ -126,7 +128,7 @@ function GutterCell({
   return (
     <span
       className={cn(
-        'dense-label pt-0.5 text-right',
+        'text-muted-foreground pt-0.5 text-right text-[12px] font-medium',
         tone === 'accent' && 'text-accent-foreground',
         tone === 'bad' && 'text-state-failed',
         tone === 'good' && 'text-state-review'
@@ -232,15 +234,18 @@ function AgentRow({ entry }: { entry: NormalizedEntry }) {
   ].filter((part): part is string => part !== null);
   const body =
     typeof prompt === 'string' && prompt !== '' ? (
-      <Markdown content={prompt} className="max-w-[68ch] text-[12.5px]" />
+      <Markdown
+        content={prompt}
+        className="font-book max-w-[68ch] text-[13px]"
+      />
     ) : agent?.phase === 'finished' &&
       (agent.summary !== undefined || totals.length > 0) ? (
-      <div className="flex max-w-[68ch] flex-col gap-1 text-[12.5px]">
+      <div className="font-book flex max-w-[68ch] flex-col gap-1 text-[13px]">
         {agent.summary !== undefined && (
-          <Markdown content={agent.summary} className="text-[12.5px]" />
+          <Markdown content={agent.summary} className="font-book text-[13px]" />
         )}
         {totals.length > 0 && (
-          <span className="text-muted-foreground font-mono text-[11px]">
+          <span className="text-muted-foreground font-book text-[12px] tabular-nums">
             {totals.join(' · ')}
           </span>
         )}

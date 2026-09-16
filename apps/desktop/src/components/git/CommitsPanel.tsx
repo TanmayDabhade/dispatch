@@ -1,8 +1,7 @@
 import type { GitLogEntry } from '@dispatch/client';
 
 import { formatRelativeTimeFromIso } from '@/lib/format';
-import { cn } from '@/lib/utils';
-import { Button } from '@/ui/button';
+import { ListRow } from '@/ui/ai/list-row';
 
 interface CommitsPanelProps {
   commits: GitLogEntry[];
@@ -21,39 +20,36 @@ export function CommitsPanel({
 }: CommitsPanelProps) {
   if (loading) {
     return (
-      <div className="text-muted-foreground p-3 text-[12px]">Loading…</div>
+      <div className="text-muted-foreground font-book px-3 py-2 text-[13px]">
+        Loading…
+      </div>
     );
   }
   if (commits.length === 0) {
     return (
-      <div className="text-muted-foreground p-3 text-[12px]">No commits.</div>
+      <div className="text-muted-foreground font-book px-3 py-2 text-[13px]">
+        No commits.
+      </div>
     );
   }
 
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col px-1 py-1" role="table">
       {commits.map((commit, index) => (
-        <Button
+        <ListRow
           key={commit.sha}
-          type="button"
-          variant="ghost"
-          size="xs"
           data-git-selected={index === selectedIndex ? 'true' : undefined}
           onClick={() => onSelectIndex(index)}
-          className={cn(
-            'ease-out-expo h-auto flex-col items-start justify-start gap-0.5 rounded-none px-3 py-1.5 text-left text-[12px] font-normal transition-colors duration-100 hover:text-inherit',
-            index === selectedIndex
-              ? 'bg-surface-hover'
-              : 'hover:bg-surface-hover'
-          )}
-        >
-          <span className="truncate">{commit.subject}</span>
-          <span className="text-muted-foreground flex items-center gap-2 text-[10.5px]">
-            <span className="font-mono">{commit.shortSha}</span>
-            <span className="truncate">{commit.author}</span>
-            <span>{formatRelativeTimeFromIso(commit.date)}</span>
-          </span>
-        </Button>
+          selected={index === selectedIndex}
+          id={commit.shortSha}
+          title={commit.subject}
+          trailing={
+            <span className="text-muted-foreground font-book max-w-32 truncate text-[12px]">
+              {commit.author}
+            </span>
+          }
+          date={formatRelativeTimeFromIso(commit.date)}
+        />
       ))}
     </div>
   );
