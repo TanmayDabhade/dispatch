@@ -9,17 +9,16 @@ import { beforeEach, expect, test } from 'bun:test';
 import { useState } from 'react';
 
 import { BRAIN_DUMP_DRAFT_KEY } from '../../hooks/usePersistedDraft';
-import { BrainDumpFab } from './BrainDumpFab';
-import { TooltipProvider } from '@/ui/tooltip';
+import { QuickCaptureDialog } from './QuickCaptureDialog';
 
-// The draft persists to localStorage now (shared with the full view); one
-// test's typing must not leak into the next mount.
+// The draft persists to localStorage (shared with the full view); one test's typing must
+// not leak into the next mount.
 beforeEach(() => {
   window.localStorage.removeItem(BRAIN_DUMP_DRAFT_KEY);
 });
 
-// `open` is controlled by App in production (so ⌘D can drive it); the harness plays App's
-// role. The trigger's tooltip needs the same provider App.tsx wraps the whole shell in.
+// `open` is controlled by App in production (⌘D and the rail row drive it); the harness
+// plays App's role with a button standing in for both.
 function Harness({
   onOpenBrainDump = () => {},
   onCapture = () => Promise.resolve(),
@@ -29,14 +28,17 @@ function Harness({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <TooltipProvider>
-      <BrainDumpFab
+    <>
+      <button type="button" onClick={() => setOpen(true)}>
+        Drop a thought
+      </button>
+      <QuickCaptureDialog
         open={open}
         onOpenChange={setOpen}
         onCapture={onCapture}
         onOpenBrainDump={onOpenBrainDump}
       />
-    </TooltipProvider>
+    </>
   );
 }
 
@@ -48,15 +50,22 @@ function mount(
 }
 
 function openPanel() {
-  fireEvent.click(screen.getByRole('button', { name: 'Add to Brain dump' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Drop a thought' }));
   return screen.getByPlaceholderText<HTMLTextAreaElement>('Dump it here…');
 }
 
-test('the panel stays closed until the brain button is clicked', () => {
+test('the dialog stays closed until opened, and there is no floating button', () => {
   mount();
   expect(screen.queryByRole('dialog')).toBeNull();
+  expect(
+    screen.queryByRole('button', { name: 'Add to Brain dump' })
+  ).toBeNull();
   openPanel();
   expect(screen.getByRole('dialog')).not.toBeNull();
+  // The 12px crumb names where the thought goes.
+  const crumb = document.querySelector('[data-slot="dialog-chrome"]');
+  expect(crumb?.textContent).toContain('Brain dump');
+  expect(crumb?.textContent).toContain('Quick capture');
 });
 
 test('capturing hands the draft to onCapture, then clears and closes', async () => {
@@ -126,7 +135,7 @@ test('the Drop it button is disabled while the draft is blank', () => {
   ).toBe(true);
 });
 
-test('Open Brain dump navigates and closes the panel', () => {
+test('Open Brain dump navigates and closes the dialog', () => {
   let opened = 0;
   mount({ onOpenBrainDump: () => opened++ });
   openPanel();
@@ -135,7 +144,7 @@ test('Open Brain dump navigates and closes the panel', () => {
   expect(screen.queryByRole('dialog')).toBeNull();
 });
 
-test('Escape closes the panel', () => {
+test('Escape closes the dialog', () => {
   mount();
   openPanel();
   fireEvent.keyDown(document, { key: 'Escape' });

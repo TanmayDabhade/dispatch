@@ -1,7 +1,11 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
-import type { GlobalKeyCommand } from '../lib/keyboard';
-import { isTypingTagName, resolveGlobalKeyCommand } from '../lib/keyboard';
+import type { ChordPrefix, GlobalKeyCommand } from '../lib/keyboard';
+import {
+  isTypingTagName,
+  resolveChordPrefix,
+  resolveGlobalKeyCommand,
+} from '../lib/keyboard';
 
 /** True while the event's target is a text field — the DOM-touching half of
  * `GlobalKeyboardContext.isTyping` that `lib/keyboard.ts` itself stays pure of. Exported so
@@ -39,8 +43,13 @@ function isAnyModalOpen(): boolean {
   );
 }
 
+/** How long an armed chord prefix (`g`) waits for its second key. */
+export const CHORD_PREFIX_TIMEOUT_MS = 600;
+
 interface UseGlobalKeyboardOptions {
   onCommand: (command: GlobalKeyCommand) => void;
+  /** Overrides the 600ms chord window — tests only. */
+  prefixTimeoutMs?: number;
 }
 
 /** Wires `resolveGlobalKeyCommand` to a real `keydown` listener on the window — the one place
@@ -48,21 +57,64 @@ interface UseGlobalKeyboardOptions {
  * so it stays unit-testable on its own. Mount once near the app root. Deliberately never
  * resolves (or `preventDefault`s) list-navigation keys — those belong to whichever list view
  * has focus, resolved locally via `resolveListKeyCommand`, so this listener never swallows an
- * Enter/j/k meant for a button, form, or text field elsewhere on the page. */
+ * Enter/j/k meant for a button, form, or text field elsewhere on the page.
+ *
+ * Also holds the `g` chord state: a bare `g` arms a prefix for `CHORD_PREFIX_TIMEOUT_MS`, and
+ * the next keystroke either completes the chord or drops it — the prefix never outlives one
+ * keystroke, so a stray `g` can't change what a later letter means. */
 export function useGlobalKeyboard({
   onCommand,
+  prefixTimeoutMs = CHORD_PREFIX_TIMEOUT_MS,
 }: UseGlobalKeyboardOptions): void {
+  const pendingPrefix = useRef<ChordPrefix | null>(null);
+  const prefixTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
+    function clearPrefix() {
+      pendingPrefix.current = null;
+      if (prefixTimer.current !== null) {
+        clearTimeout(prefixTimer.current);
+        prefixTimer.current = null;
+      }
+    }
+
+    function armPrefix(prefix: ChordPrefix) {
+      clearPrefix();
+      pendingPrefix.current = prefix;
+      prefixTimer.current = setTimeout(clearPrefix, prefixTimeoutMs);
+    }
+
     function handleKeyDown(event: KeyboardEvent) {
       // A Radix dismissable layer (Select/DropdownMenu popper) already preventDefaults Escape
       // when it closes itself — without this guard the window-level listener below still saw
       // the same keystroke and dispatched a second, unwanted "back" navigation on top of it.
       if (event.defaultPrevented) return;
-      const command = resolveGlobalKeyCommand(
-        { key: event.key, metaKey: event.metaKey, ctrlKey: event.ctrlKey },
-        { isTyping: isTypingTarget(event.target), modalOpen: isAnyModalOpen() }
-      );
-      if (command === null) return;
+      const input = {
+        key: event.key,
+        metaKey: event.metaKey,
+        ctrlKey: event.ctrlKey,
+      };
+      const ctx = {
+        isTyping: isTypingTarget(event.target),
+        modalOpen: isAnyModalOpen(),
+        pendingPrefix: pendingPrefix.current,
+      };
+      const command = resolveGlobalKeyCommand(input, ctx);
+      if (command === null) {
+        const prefix = resolveChordPrefix(input, ctx);
+        if (prefix !== null) {
+          // The prefix key itself must not type anywhere; nothing else about the keystroke
+          // is owned here.
+          event.preventDefault();
+          armPrefix(prefix);
+          return;
+        }
+        // A modifier keystroke while a chord is armed (holding shift to type `?`, say) is
+        // not the chord's second key; anything else — including a miss — ends the chord.
+        if (!isModifierKey(event.key)) clearPrefix();
+        return;
+      }
+      clearPrefix();
       // Every resolved command owns the keystroke — cmd+k in particular must not also type a
       // literal "k" into whatever's focused, and "/" must not land in a text field either.
       // Only commands the root layer actually resolves ever reach this point, so this never
@@ -72,6 +124,16 @@ export function useGlobalKeyboard({
     }
 
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onCommand]);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      clearPrefix();
+    };
+  }, [onCommand, prefixTimeoutMs]);
+}
+
+// Bare modifier keydowns (`Shift` before a `?`) arrive as their own events.
+function isModifierKey(key: string): boolean {
+  return (
+    key === 'Shift' || key === 'Meta' || key === 'Control' || key === 'Alt'
+  );
 }

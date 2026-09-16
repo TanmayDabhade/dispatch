@@ -86,6 +86,28 @@ describe('navReducer', () => {
     expect(closed.activeRunId).toBeNull();
   });
 
+  test('openShortcuts/closeShortcuts flip shortcutsOpen and touch nothing else', () => {
+    const opened = navReducer(initialNavState, { type: 'openShortcuts' });
+    expect(opened.shortcutsOpen).toBe(true);
+    expect(opened.history).toBe(initialNavState.history);
+    expect(opened.paletteOpen).toBe(false);
+    const closed = navReducer(opened, { type: 'closeShortcuts' });
+    expect(closed.shortcutsOpen).toBe(false);
+  });
+
+  test('escape closes the shortcuts reference before anything beneath it', () => {
+    const state: NavState = {
+      ...initialNavState,
+      shortcutsOpen: true,
+      paletteOpen: true,
+      peekTaskId: 'task-1',
+    };
+    const next = navReducer(state, { type: 'escape' });
+    expect(next.shortcutsOpen).toBe(false);
+    expect(next.paletteOpen).toBe(true);
+    expect(next.peekTaskId).toBe('task-1');
+  });
+
   test('togglePalette flips paletteOpen both ways', () => {
     const opened = navReducer(initialNavState, { type: 'togglePalette' });
     expect(opened.paletteOpen).toBe(true);

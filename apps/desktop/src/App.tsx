@@ -1,8 +1,6 @@
 import type { TaskDoc } from '@dispatch/core/browser';
 import { useQuery } from '@tanstack/react-query';
-import type { Update } from '@tauri-apps/plugin-updater';
 import { Plus, TriangleAlert } from 'lucide-react';
-import type { CSSProperties } from 'react';
 import {
   useCallback,
   useEffect,
@@ -13,17 +11,30 @@ import {
 } from 'react';
 
 import { AddProjectDialog } from './components/shell/AddProjectDialog';
-import { BrainDumpFab } from './components/shell/BrainDumpFab';
 import { CommandPalette } from './components/shell/CommandPalette';
-import type { PaletteEntry } from './components/shell/CommandPalette';
 import { ErrorBoundary } from './components/shell/ErrorBoundary';
-import { InboxPanel } from './components/shell/InboxPanel';
+import { FrameStatusStrip } from './components/shell/FrameStatusStrip';
 import { LiveRail } from './components/shell/LiveRail';
-import { Sidebar, useSidebarCollapsed } from './components/shell/Sidebar';
-import { PROJECT_VIEW_ORDER } from './components/shell/Sidebar';
-import { TitleBar } from './components/shell/TitleBar';
+import {
+  type NotificationInbox,
+  NotificationInboxProvider,
+} from './components/shell/NotificationInboxContext';
+import { ProjectSwitcher } from './components/shell/ProjectSwitcher';
+import { QuickCaptureDialog } from './components/shell/QuickCaptureDialog';
+import {
+  type CreateTaskPreset,
+  type ShellActions,
+  ShellActionsProvider,
+} from './components/shell/ShellActionsContext';
+import { ShortcutsDialog } from './components/shell/ShortcutsDialog';
+import {
+  PROJECT_NAV_VIEWS,
+  PROJECT_VIEW_ORDER,
+  Sidebar,
+  useSidebarCollapsed,
+  useTrafficLightInset,
+} from './components/shell/Sidebar';
 import { useToasts } from './components/shell/Toasts';
-import { UpdateBanner } from './components/shell/UpdateBanner';
 import { AiTaskComposer } from './components/tasks/AiTaskComposer';
 import { CreateTaskModal } from './components/tasks/CreateTaskModal';
 import type { TaskDetailPanelProps } from './components/tasks/detail';
@@ -36,14 +47,12 @@ import { withActionFeedback } from './lib/actionFeedback';
 import type { GlobalView, ProjectView, TaskTab } from './lib/appNav';
 import { initialNavState, navReducer } from './lib/appNav';
 import { hideArchivedRuns } from './lib/archiveFilter';
-import type { DecisionItem } from './lib/decisionFeed';
-import { decisionTarget, pendingDecisionCount } from './lib/decisionFeed';
 import type { InboxTarget } from './lib/inbox';
 import { projectViewForInboxTarget, unreadCount } from './lib/inbox';
 import { buildInbox } from './lib/inboxQueue';
-import { landingNavBadge } from './lib/landingView';
 import { isLinearConfigured } from './lib/linearSettings';
 import { resolveExecuteModel } from './lib/models';
+import { buildPaletteEntries } from './lib/paletteEntries';
 import { basename } from './lib/projectName';
 import { prNumberFromUrl } from './lib/reviewTarget';
 import { isTerminalRunState } from './lib/runState';
@@ -56,7 +65,7 @@ import {
   listRegisteredProjects,
   touchProjectOpened,
 } from './lib/tauri';
-import { checkForUpdate } from './lib/updater';
+import { checkForUpdate, installUpdateAndRelaunch } from './lib/updater';
 import { applyZoomFactor, loadZoomFactor, stepZoomFactor } from './lib/zoom';
 import { AllAgentsView } from './views/AllAgentsView';
 import { BoardView } from './views/BoardView';
@@ -75,6 +84,8 @@ import { PrReviewView } from './views/PrReviewView';
 import { SessionsHubView } from './views/SessionsHubView';
 import { SettingsView } from './views/SettingsView';
 import { TaskView } from './views/TaskView';
+import { cn } from '@/lib/utils';
+import { PageHeaderShellContext } from '@/ui/ai/page-header';
 import { Button } from '@/ui/button';
 import { EmptyState } from '@/ui/chrome';
 import {
@@ -92,39 +103,55 @@ import { TooltipProvider } from '@/ui/tooltip';
 function App() {
   const [navState, dispatchNav] = useReducer(navReducer, initialNavState);
   const [showCreate, setShowCreate] = useState(false);
-  // Pre-selects `CreateTaskModal`'s Status field from a board/list "+" button; `null` leaves
-  // it to default to the first configured status.
-  const [createStatus, setCreateStatus] = useState<string | null>(null);
-  // Whether the notification inbox popover (the bell in Sidebar's global section) is open —
-  // see toggleInbox below for why opening it also marks everything read.
-  const [inboxOpen, setInboxOpen] = useState(false);
+  // What a board column's or list group's "+" pre-fills into the creator (status today;
+  // epic/milestone once the creator reads them); `null` leaves every field to its default.
+  const [createPreset, setCreatePreset] = useState<CreateTaskPreset | null>(
+    null
+  );
   // The AI task composer, a dialog rather than a screen — open state lives here (not in
   // `navState`) so it renders on top of whatever view is underneath instead of replacing it.
   const [aiComposerOpen, setAiComposerOpen] = useState(false);
 
-  // The left rail's collapsed state, owned here because `SidebarProvider` wraps the whole
-  // shell row; `Sidebar` reads it back through `useSidebar`. Persistence lives with the rail.
+  // Whether the rail is hidden (`[`), owned here because `SidebarProvider` wraps the whole
+  // shell row. Persistence lives with the rail.
   const [sidebarCollapsed, setSidebarCollapsed] = useSidebarCollapsed();
-  // The Tasks view's layout, lifted to App because it's switched from the sidebar's Tasks
-  // row rather than in-page tabs.
-  const [tasksViewMode, setTasksViewMode] = useTasksViewMode();
+  // Whether to clear the macOS traffic lights: the rail's top strip when it is showing, the
+  // panel header (via `PageHeaderShellContext`) when it is hidden.
+  const trafficLightInset = useTrafficLightInset();
+  // The Tasks view's layout, kept at App level until the Tasks header's view tabs own it.
+  const [tasksViewMode] = useTasksViewMode();
   // Text handed to the planner from elsewhere (Brain dump's "hand it to the planner", or one
   // inbox item's "plan it"). Keyed into PlansView so a second hand-off with different text
   // remounts the composer rather than being swallowed by its existing state.
   const [planSeed, setPlanSeed] = useState<string | null>(null);
 
+  const toasts = useToasts();
+
   // Auto-update: check GitHub's `latest.json` once after mount (non-blocking —
   // `checkForUpdate` is a no-op outside Tauri and swallows its own errors), and
-  // if a newer signed release is published, offer a dismissible banner. Dismissal
-  // is session-only; the next launch re-checks. `void` because the effect body
-  // can't be async and the result is stored via `setPendingUpdate`.
-  const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null);
-  const [updateDismissed, setUpdateDismissed] = useState(false);
+  // if a newer signed release is published, offer it as a toast with a Restart
+  // action. Dismissal is session-only; the next launch re-checks.
   useEffect(() => {
     void checkForUpdate().then((update) => {
-      if (update !== null) setPendingUpdate(update);
+      if (update === null) return;
+      toasts.push({
+        title: `Dispatch ${update.version} available`,
+        description: 'Restart to update.',
+        action: {
+          label: 'Restart',
+          onClick: () => {
+            void installUpdateAndRelaunch(update).catch((err: unknown) => {
+              toasts.push({
+                title: 'Update failed',
+                description: err instanceof Error ? err.message : String(err),
+                tone: 'error',
+              });
+            });
+          },
+        },
+      });
     });
-  }, []);
+  }, [toasts]);
 
   // Re-applies the persisted webview zoom on launch — ⌘+/⌘−/⌘0 adjust it from
   // `useGlobalKeyboard`'s command handler below.
@@ -294,22 +321,28 @@ function App() {
     dispatchNav({ type: 'setGlobalView', view });
   }, []);
 
-  // Opens the full-page task creator, optionally pre-set to a status — the single entry point
-  // every "New task"/"+" affordance (the header button, a board column's or list group's hover
-  // "+", the palette action, the global "c" shortcut) calls through, so the creator's initial
-  // status is always explicit rather than a leftover from whichever column's "+" was clicked
-  // last. Describing the task in natural language is the primary path now; the structured
-  // modal below is the quick-add fallback.
-  const openCreateTask = useCallback((status?: string) => {
-    setCreateStatus(status ?? null);
+  // Opens the task creator, optionally pre-filled — the single entry point every "New
+  // task"/"+" affordance (the rail's pencil, a board column's or list group's hover "+", the
+  // palette action, the global `c` shortcut) calls through, so the creator's preset is
+  // always explicit rather than a leftover from whichever column's "+" was clicked last.
+  // Describing the task in natural language is the primary path; the structured modal
+  // below is the quick-add fallback.
+  const openCreateTask = useCallback((preset?: CreateTaskPreset) => {
+    setCreatePreset(preset ?? null);
     dispatchNav({ type: 'openNewTask' });
+  }, []);
+
+  const closeCreateTask = useCallback(() => {
+    setAiComposerOpen(false);
+    setShowCreate(false);
+    dispatchNav({ type: 'closeNewTask' });
   }, []);
 
   // The structured quick-add fallback: `CreateTaskModal`, unchanged, for when you already know
   // the exact fields and don't want to spend an agent round-trip describing them. Reachable
   // from the palette and from the full-page creator's own "Quick add…" button.
-  const openQuickAddTask = useCallback((status?: string) => {
-    setCreateStatus(status ?? null);
+  const openQuickAddTask = useCallback((preset?: CreateTaskPreset) => {
+    setCreatePreset(preset ?? null);
     setShowCreate(true);
   }, []);
 
@@ -318,8 +351,6 @@ function App() {
   const onRunDispatched = useCallback((runId: string, taskId: string) => {
     dispatchNav({ type: 'openTask', taskId, tab: 'chat', runId });
   }, []);
-
-  const toasts = useToasts();
 
   const rawData = useDispatchProject(activeProject?.path ?? null, {
     selectedRunId: navState.activeRunId,
@@ -440,20 +471,29 @@ function App() {
     ]
   );
 
-  // Whether the quick-capture surface exists right now — shared by the FAB's render and the
-  // ⌘D shortcut, so the shortcut can never open a modal the button couldn't.
-  const brainDumpFabMounted =
-    navState.section === 'project' &&
-    navState.projectView !== 'brain-dump' &&
-    activeProject !== null &&
-    data.client !== null;
-  const [brainDumpOpen, setBrainDumpOpen] = useState(false);
+  // Whether a quick capture can land right now: the raw capture handler silently no-ops
+  // without a daemon client, and a capture that quietly drops the thought is worse than no
+  // dialog. Gates ⌘D and the rail's "Drop a thought" alike.
+  const quickCaptureAvailable = activeProject !== null && data.client !== null;
+  const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
+  const openQuickCapture = useCallback(() => {
+    if (quickCaptureAvailable) setQuickCaptureOpen(true);
+  }, [quickCaptureAvailable]);
+
+  const toggleSidebar = useCallback(
+    () => setSidebarCollapsed(!sidebarCollapsed),
+    [sidebarCollapsed, setSidebarCollapsed]
+  );
+
+  const openShortcuts = useCallback(
+    () => dispatchNav({ type: 'openShortcuts' }),
+    []
+  );
 
   useGlobalKeyboard({
-    // `modalOpen` (I3) is computed inside the hook itself now, via a live DOM check for any
-    // open `Modal` instance — not just `showCreate` (App.tsx's only *direct* modal), so
-    // SessionDetailModal/DiffModal mounted deep inside the Sessions hub also suppress the
-    // global `escape` command while open, the same as CreateTaskModal always did.
+    // `modalOpen` is computed inside the hook itself, via a live DOM check for any open
+    // dialog — so SessionDetailModal/DiffModal mounted deep inside the Sessions hub also
+    // suppress the global commands while open, the same as CreateTaskModal always did.
     onCommand: (command) => {
       if (command === 'open-palette') dispatchNav({ type: 'togglePalette' });
       else if (command === 'escape') dispatchNav({ type: 'escape' });
@@ -470,13 +510,18 @@ function App() {
             command.slice(5) as 'in' | 'out' | 'reset'
           )
         );
-      } else if (command === 'brain-dump') {
-        // Same gate as the FAB's own render: no capture surface, no shortcut. On the Brain
-        // dump view itself the full composer is already on screen.
-        if (brainDumpFabMounted) setBrainDumpOpen(true);
-      } else if (command.startsWith('goto-')) {
-        // Position in the rail, not an id — the numbers stay learnable because
-        // they match what the sidebar prints next to each entry.
+      } else if (command === 'brain-dump') openQuickCapture();
+      else if (command === 'toggle-sidebar') toggleSidebar();
+      else if (command === 'new-task') {
+        if (activeProject !== null) openCreateTask();
+      } else if (command === 'open-shortcuts') openShortcuts();
+      else if (command === 'goto-settings') setGlobalView('settings');
+      else if (command === 'goto-overseer') setGlobalView('overseer');
+      else if (command === 'goto-inbox') selectProjectView('inbox');
+      else if (command === 'goto-tasks') selectProjectView('board');
+      else if (command === 'goto-control-room') selectProjectView('overview');
+      else if (command.startsWith('goto-')) {
+        // Position in the rail, not an id — ⌘1 is the first row, and so on.
         const view = PROJECT_VIEW_ORDER[Number(command.slice(5)) - 1];
         if (view !== undefined) selectProjectView(view);
       }
@@ -573,21 +618,10 @@ function App() {
     markNotificationInboxRead,
   } = data;
 
-  // Opens/closes the inbox popover. Opening it marks every entry read in one step (not
-  // per-entry, which would be more distracting than useful) — see inbox.ts's markAllRead.
-  const toggleInbox = useCallback(() => {
-    setInboxOpen((open) => {
-      const next = !open;
-      if (next) markNotificationInboxRead();
-      return next;
-    });
-  }, [markNotificationInboxRead]);
-
   // Click-through for a notification row: a run transition opens that run's task; a target
-  // that names a page rather than a record routes via `projectViewForInboxTarget`.
-  // Also marks the whole inbox read again: an entry can arrive while the panel is already
-  // open (opening only marks-read at that instant), and without this a fresh unread badge
-  // would linger after the user just acted on the newest entry.
+  // that names a page rather than a record routes via `projectViewForInboxTarget`. Marks
+  // the whole inbox read too — an entry can arrive while the Inbox page is already open,
+  // and without this a fresh unread count would linger after the user just acted on it.
   const navigateFromInbox = useCallback(
     (target: InboxTarget) => {
       if (target.kind === 'task') {
@@ -595,13 +629,11 @@ function App() {
         // need a view switch the way the run/queue targets below do.
         dispatchNav({ type: 'openPeek', taskId: target.taskId });
         markNotificationInboxRead();
-        setInboxOpen(false);
         return;
       }
       if (target.kind === 'draft') {
         dispatchNav({ type: 'openDraft', draftId: target.draftId });
         markNotificationInboxRead();
-        setInboxOpen(false);
         return;
       }
       // Everything left either names a page or names one run.
@@ -612,145 +644,133 @@ function App() {
         jumpToRun(target.runId);
       }
       markNotificationInboxRead();
-      setInboxOpen(false);
     },
     [selectProjectView, markNotificationInboxRead, dispatchNav, jumpToRun]
   );
 
-  // Click-through for a decision-feed row: deep-links to the surface where the
-  // decision is answered (see decisionTarget). No mark-as-read here — the feed
-  // clears itself when the underlying gate resolves.
-  const openDecision = useCallback(
-    (item: DecisionItem) => {
-      const target = decisionTarget(item);
-      if (target === null) return;
-      if (target.kind === 'task') {
-        openTaskView(target.taskId, target.tab, target.runId ?? undefined);
-      } else {
-        jumpToRun(target.runId);
-      }
-      setInboxOpen(false);
-    },
-    [openTaskView, jumpToRun]
+  const notificationInboxValue = useMemo<NotificationInbox>(
+    () => ({
+      entries: notificationInbox.entries,
+      unreadCount: unreadCount(notificationInbox),
+      markAllRead: markNotificationInboxRead,
+      navigate: navigateFromInbox,
+    }),
+    [notificationInbox, markNotificationInboxRead, navigateFromInbox]
   );
 
-  const paletteEntries = useMemo<PaletteEntry[]>(() => {
-    const entries: PaletteEntry[] = [];
+  const peekTask = useCallback(
+    (taskId: string) => dispatchNav({ type: 'openPeek', taskId }),
+    []
+  );
 
-    if (activeProject !== null) {
-      entries.push(
-        {
-          id: 'action-new-task',
-          label: 'New task',
-          kind: 'action',
-          run: () => openCreateTask(),
-        },
-        {
-          id: 'action-quick-add-task',
-          label: 'Quick add task…',
-          kind: 'action',
-          run: () => openQuickAddTask(),
-        },
-        {
-          id: 'action-plan-work',
-          label: 'Plan work…',
-          kind: 'action',
-          run: () => selectProjectView('plans'),
-        },
-        {
-          id: 'go-tasks',
-          label: 'Go to Tasks',
-          kind: 'go to',
-          run: () => selectProjectView('board'),
-        },
-        {
-          id: 'go-inbox',
-          label: 'Go to Inbox',
-          kind: 'go to',
-          run: () => selectProjectView('inbox'),
-        },
-        {
-          id: 'go-plans',
-          label: 'Go to Plans',
-          kind: 'go to',
-          run: () => selectProjectView('plans'),
-        },
-        {
-          id: 'go-landing',
-          label: 'Go to Landing',
-          kind: 'go to',
-          run: () => selectProjectView('landing'),
-        }
-      );
-      for (const doc of paletteTasks) {
-        entries.push({
-          id: `task-${doc.meta.id}`,
-          label: doc.meta.title,
-          sublabel: doc.meta.id,
-          kind: 'task',
-          run: () => {
+  const openOverseer = useCallback(
+    (prompt?: string) => {
+      if (prompt !== undefined) overseer.setDraft(prompt);
+      setGlobalView('overseer');
+    },
+    [overseer, setGlobalView]
+  );
+
+  // The clipboard write is best-effort: a denied permission surfaces as a toast rather than
+  // a silent nothing.
+  const copyTaskId = useCallback(
+    (taskId: string) => {
+      void navigator.clipboard
+        .writeText(taskId)
+        .then(() => toasts.push({ title: `Copied ${taskId}`, tone: 'success' }))
+        .catch((err: unknown) =>
+          toasts.push({
+            title: 'Copy failed',
+            description: err instanceof Error ? err.message : String(err),
+            tone: 'error',
+          })
+        );
+    },
+    [toasts]
+  );
+
+  // The shell's verbs, one object every view can reach through `useShellActions()`.
+  const shellActions = useMemo<ShellActions>(
+    () => ({
+      openTask: openTaskView,
+      peekTask,
+      openCreateTask,
+      createPreset,
+      closeCreateTask,
+      openPalette: () => dispatchNav({ type: 'openPalette' }),
+      toggleSidebar,
+      sidebarHidden: sidebarCollapsed,
+      openOverseer,
+      setProjectView: selectProjectView,
+      setGlobalView,
+      openShortcuts,
+      copyTaskId,
+    }),
+    [
+      openTaskView,
+      peekTask,
+      openCreateTask,
+      createPreset,
+      closeCreateTask,
+      toggleSidebar,
+      sidebarCollapsed,
+      openOverseer,
+      selectProjectView,
+      setGlobalView,
+      openShortcuts,
+      copyTaskId,
+    ]
+  );
+
+  // What every page header reads for its sidebar toggle and drag region.
+  const pageHeaderShell = useMemo(
+    () => ({
+      sidebarHidden: sidebarCollapsed,
+      onToggleSidebar: toggleSidebar,
+      trafficLightInset,
+      dragRegion: true,
+    }),
+    [sidebarCollapsed, toggleSidebar, trafficLightInset]
+  );
+
+  const paletteEntries = useMemo(
+    () =>
+      buildPaletteEntries({
+        hasProject: activeProject !== null,
+        views: PROJECT_NAV_VIEWS,
+        tasks: paletteTasks,
+        readyIds: paletteReadyIds,
+        dev: import.meta.env.DEV,
+        actions: {
+          openCreateTask: () => openCreateTask(),
+          openQuickAddTask: () => openQuickAddTask(),
+          setProjectView: selectProjectView,
+          setGlobalView,
+          peekTask: (taskId) => {
             selectProjectView('board');
-            dispatchNav({ type: 'openPeek', taskId: doc.meta.id });
+            peekTask(taskId);
           },
-        });
-        if (paletteReadyIds.has(doc.meta.id)) {
-          entries.push({
-            id: `dispatch-${doc.meta.id}`,
-            label: `Dispatch ${doc.meta.title}`,
-            sublabel: doc.meta.id,
-            kind: 'action',
-            run: () => void handleDispatch(doc.meta.id),
-          });
-        }
-      }
-    }
-
-    entries.push(
-      {
-        id: 'go-all-agents',
-        label: 'Go to All Agents',
-        kind: 'go to',
-        run: () => setGlobalView('all-agents'),
-      },
-      {
-        id: 'go-sessions',
-        label: 'Go to Sessions',
-        kind: 'go to',
-        run: () => setGlobalView('sessions'),
-      },
-      {
-        id: 'go-overseer',
-        label: 'Go to Overseer',
-        kind: 'go to',
-        run: () => setGlobalView('overseer'),
-      },
-      {
-        id: 'go-settings',
-        label: 'Go to Settings',
-        kind: 'go to',
-        run: () => setGlobalView('settings'),
-      }
-    );
-    // Dev-only primitive review surface — never registered in a production build.
-    if (import.meta.env.DEV) {
-      entries.push({
-        id: 'go-gallery',
-        label: 'Go to Gallery',
-        kind: 'go to',
-        run: () => setGlobalView('gallery'),
-      });
-    }
-    return entries;
-  }, [
-    activeProject,
-    paletteTasks,
-    paletteReadyIds,
-    handleDispatch,
-    selectProjectView,
-    setGlobalView,
-    openCreateTask,
-    openQuickAddTask,
-  ]);
+          dispatchTask: (taskId) => void handleDispatch(taskId),
+          openQuickCapture,
+          toggleSidebar,
+          openShortcuts,
+        },
+      }),
+    [
+      activeProject,
+      paletteTasks,
+      paletteReadyIds,
+      handleDispatch,
+      selectProjectView,
+      setGlobalView,
+      openCreateTask,
+      openQuickAddTask,
+      peekTask,
+      openQuickCapture,
+      toggleSidebar,
+      openShortcuts,
+    ]
+  );
 
   // Resolution states for the single active project, checked in order: an outright failure to
   // resolve the project root or check it for a `.dispatch/` tracker (rare — both are local
@@ -782,437 +802,449 @@ function App() {
 
   return (
     <TooltipProvider>
-      <div className="bg-background flex h-screen flex-col overflow-hidden">
-        {/* The custom titlebar must be the window's topmost strip: with `titleBarStyle:
-            "Overlay"` the native traffic lights float over whatever is rendered up here. */}
-        <TitleBar
-          projectName={activeProject?.name ?? null}
-          projectPath={activeProject?.path ?? null}
-          noProjectYet={noProjectYet}
-          switcherOpen={switcherOpen}
-          onToggleSwitcher={() => setSwitcherOpen((open) => !open)}
-          switchProjects={switchProjects ?? []}
-          onSelectProject={selectSwitchProject}
-          onAddProject={() => {
-            setSwitcherOpen(false);
-            setAddProjectOpen(true);
-          }}
-          onOpenPalette={() => dispatchNav({ type: 'openPalette' })}
-          pendingCount={pendingDecisionCount(data.decisions)}
-          unreadCount={unreadCount(data.notificationInbox)}
-          inboxOpen={inboxOpen}
-          onToggleInbox={toggleInbox}
-          inboxPanel={
-            <InboxPanel
-              decisions={data.decisions}
-              onOpenDecision={openDecision}
-              entries={notificationInbox.entries}
-              onNavigate={navigateFromInbox}
-              onMarkAllRead={markNotificationInboxRead}
-            />
-          }
-          drafts={data.drafts}
-          onOpenDraft={(draftId) => dispatchNav({ type: 'openDraft', draftId })}
-          onDismissDraft={(id) => void data.handleDismissDraft(id)}
-        />
-        {pendingUpdate !== null && !updateDismissed && (
-          <UpdateBanner
-            update={pendingUpdate}
-            onDismiss={() => setUpdateDismissed(true)}
-          />
-        )}
-        <SidebarProvider
-          open={!sidebarCollapsed}
-          onOpenChange={(open) => setSidebarCollapsed(!open)}
-          // The rail's widths, unchanged from the hand-rolled version it replaced: 15rem
-          // expanded, a 3.5rem icon strip collapsed.
-          style={
-            {
-              '--sidebar-width': '15rem',
-              '--sidebar-width-icon': '3.5rem',
-            } as CSSProperties
-          }
-          // `relative` is what keeps the rail inside this row rather than pinned to the
-          // viewport, so an update banner above it is never covered.
-          className="relative min-h-0 flex-1 overflow-hidden"
-        >
-          <Sidebar
-            hasActiveProject={activeProject !== null}
-            section={navState.section}
-            projectView={navState.projectView}
-            globalView={navState.globalView}
-            liveAgentCount={liveRuns.length}
-            overseerPendingCount={
-              (overseer.record?.pendingActions.length ?? 0) +
-              (overseer.record?.pendingApprovals.length ?? 0)
-            }
-            spendToday={todaySpend}
-            badges={{
-              board: data.readyIds.size,
-              inbox: inboxData.total,
-              landing:
-                data.landing !== null ? landingNavBadge(data.landing) : 0,
-            }}
-            onSetProjectView={selectProjectView}
-            onSetGlobalView={setGlobalView}
-            tasksViewMode={tasksViewMode}
-            onSetTasksViewMode={setTasksViewMode}
-            syncStatus={data.syncStatus}
-            onDisableAutoCommit={() =>
-              void data.handleUpdateConfig({ autoCommit: false })
-            }
-            // Project scope only — the global views have no runs to show. The section lives
-            // in the rail's footer now that the shell has one rail instead of two.
-            liveRail={
-              navState.section === 'project' && activeProject !== null ? (
-                <LiveRail
-                  runs={data.runs}
-                  attentionCount={inboxData.total}
-                  overseer={overseer}
-                  daemonReady={
-                    !data.portLoading && !data.portError && data.client !== null
+      <ShellActionsProvider value={shellActions}>
+        <NotificationInboxProvider value={notificationInboxValue}>
+          <PageHeaderShellContext.Provider value={pageHeaderShell}>
+            {/* Linear's frame: the window is the dark frame, the rail sits directly on it, and
+          the content is one rounded panel inset 8px from the top and right with the status
+          strip in the 36px below. Views own their inset from here on — the panel has no
+          padding of its own. */}
+            <div className="bg-frame relative flex h-screen flex-col overflow-hidden">
+              <SidebarProvider
+                open={!sidebarCollapsed}
+                onOpenChange={(open) => setSidebarCollapsed(!open)}
+                className="flex min-h-0 flex-1 overflow-hidden"
+              >
+                <Sidebar
+                  hasActiveProject={activeProject !== null}
+                  section={navState.section}
+                  projectView={navState.projectView}
+                  globalView={navState.globalView}
+                  trafficLightInset={trafficLightInset}
+                  switcher={
+                    <ProjectSwitcher
+                      projectName={activeProject?.name ?? null}
+                      projectPath={activeProject?.path ?? null}
+                      noProjectYet={noProjectYet}
+                      open={switcherOpen}
+                      onOpenChange={setSwitcherOpen}
+                      switchProjects={switchProjects ?? []}
+                      onSelectProject={selectSwitchProject}
+                      onAddProject={() => {
+                        setSwitcherOpen(false);
+                        setAddProjectOpen(true);
+                      }}
+                      onOpenSettings={() => setGlobalView('settings')}
+                      onOpenGallery={
+                        import.meta.env.DEV
+                          ? () => setGlobalView('gallery')
+                          : undefined
+                      }
+                    />
                   }
-                  onOpenTask={openTaskView}
-                  onOpenInbox={() => selectProjectView('inbox')}
-                  onOpenOverseer={() => setGlobalView('overseer')}
-                  collapsed={sidebarCollapsed}
+                  onOpenPalette={() => dispatchNav({ type: 'openPalette' })}
+                  onNewTask={() => openCreateTask()}
+                  inboxCount={inboxData.total}
+                  overseerPendingCount={
+                    (overseer.record?.pendingActions.length ?? 0) +
+                    (overseer.record?.pendingApprovals.length ?? 0)
+                  }
+                  liveAgentCount={liveRuns.length}
+                  drafts={data.drafts}
+                  onOpenDraft={(draftId) =>
+                    dispatchNav({ type: 'openDraft', draftId })
+                  }
+                  onDismissDraft={(id) => void data.handleDismissDraft(id)}
+                  onSetProjectView={selectProjectView}
+                  onSetGlobalView={setGlobalView}
+                  onQuickCapture={openQuickCapture}
+                  // Project scope only — the global views have no runs to show.
+                  liveRail={
+                    navState.section === 'project' && activeProject !== null ? (
+                      <LiveRail
+                        runs={data.runs}
+                        overseer={overseer}
+                        onOpenTask={openTaskView}
+                        onOpenOverseer={() => setGlobalView('overseer')}
+                      />
+                    ) : null
+                  }
                 />
-              ) : null
-            }
-          />
-          <main className="min-w-0 flex-1 overflow-auto p-6">
-            <ErrorBoundary label="this page">
-              {resolutionError !== null ? (
-                <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-                  <TriangleAlert className="text-destructive size-5" />
-                  <EmptyState message={resolutionError} className="p-0" />
-                </div>
-              ) : noProjectYet ? (
-                <Empty className="h-full gap-4 rounded-none border-none p-0 md:p-0">
-                  {/* The Hydrogen mark — same wordmark icon as the sidebar, scaled up — so the
-                  empty first-run state still reads as "Dispatch", not a generic error page. */}
-                  <EmptyMedia className="border-border mb-0 size-12 rounded-xl border bg-white p-0">
-                    <svg
-                      viewBox="0 0 34 36"
-                      className="size-7"
-                      fill="none"
-                      aria-hidden="true"
-                    >
-                      <path
-                        d="M17 0C26.3888 0 34 7.61116 34 17C34 19.6624 33.3869 22.1813 32.2959 24.4248C33.3569 25.6519 34 27.2505 34 29C34 32.866 30.866 36 27 36C24.7943 36 22.828 34.979 21.5449 33.3848C20.0982 33.7852 18.5742 34 17 34C7.61116 34 0 26.3888 0 17C0 13.7085 0.935188 10.6354 2.55469 8.03223C2.20259 7.43659 2 6.74205 2 6C2 3.79086 3.79086 2 6 2C6.74205 2 7.43659 2.20259 8.03223 2.55469C10.6354 0.935188 13.7085 0 17 0ZM17 3.40039C14.4188 3.40039 12.0051 4.11849 9.94922 5.36719C9.98199 5.57335 10 5.78461 10 6C10 8.20914 8.20914 10 6 10C5.78461 10 5.57335 9.98199 5.36719 9.94922C4.11849 12.0051 3.40039 14.4188 3.40039 17C3.40039 24.5111 9.48893 30.5996 17 30.5996C18.0707 30.5996 19.112 30.4741 20.1113 30.2402C20.0393 29.8376 20 29.4233 20 29C20 25.134 23.134 22 27 22C27.8672 22 28.6974 22.158 29.4639 22.4463C30.1936 20.7786 30.5996 18.9369 30.5996 17C30.5996 9.48893 24.5111 3.40039 17 3.40039Z"
-                        fill="#000000"
-                      />
-                    </svg>
-                  </EmptyMedia>
-                  <EmptyHeader className="gap-1">
-                    <EmptyTitle className="text-[15px] tracking-normal">
-                      No project yet
-                    </EmptyTitle>
-                    <EmptyDescription className="max-w-sm text-[13px]">
-                      Add a local folder or clone a repository from GitHub to
-                      get started.
-                    </EmptyDescription>
-                  </EmptyHeader>
-                  <EmptyContent>
-                    <Button onClick={() => setAddProjectOpen(true)}>
-                      <Plus className="size-4" />
-                      Add project
-                    </Button>
-                  </EmptyContent>
-                </Empty>
-              ) : stillResolving ? (
-                <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-                  <Spinner className="text-muted-foreground size-5" />
-                  <EmptyState message="Loading project…" className="p-0" />
-                </div>
-              ) : showGetStarted ? (
-                <GetStartedView projectPath={root} />
-              ) : navState.section === 'global' ? (
-                <>
-                  {navState.globalView === 'all-agents' && (
-                    <AllAgentsView
-                      // `visibleRuns`, not `runs`: this is the run *list* the archive filter
-                      // was built for, and the only surface left that can unarchive one.
-                      runs={data.visibleRuns}
-                      // The non-run agents (planners, enrich, drafts, overseers) — archiving
-                      // never applies to them, so they bypass the archive filter.
-                      sessions={data.agentSessions}
-                      archivedRunCount={archivedRunCount}
-                      showArchived={data.showArchived}
-                      onSetShowArchived={data.setShowArchived}
-                      onArchiveRun={(runId, archived) =>
-                        void data.handleArchiveRun(runId, archived)
-                      }
-                      portLoading={data.portLoading}
-                      portError={data.portError}
-                      portErrorDetail={data.portErrorDetail}
-                      client={data.client}
-                      onRetry={data.retryEnsureDispatchd}
-                      onJumpToRun={jumpToRun}
-                    />
+                {/* With the rail hidden the panel keeps an 8px margin on the left too, so it
+                    reads as inset on every side rather than flush against the window edge. */}
+                <div
+                  className={cn(
+                    'flex min-w-0 flex-1 flex-col pt-2 pr-2 pb-9',
+                    sidebarCollapsed && 'pl-2'
                   )}
-                  {navState.globalView === 'sessions' && <SessionsHubView />}
-                  {navState.globalView === 'overseer' && (
-                    <OverseerView data={data} overseer={overseer} />
-                  )}
-                  {navState.globalView === 'settings' && (
-                    <SettingsView
-                      activeProject={activeProject}
-                      data={data}
-                      onOpenTask={(taskId) => openTaskView(taskId, 'details')}
-                    />
-                  )}
-                  {import.meta.env.DEV && navState.globalView === 'gallery' && (
-                    <GalleryView />
-                  )}
-                </>
-              ) : activeProject === null ? (
-                <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-                  <Spinner className="text-muted-foreground size-5" />
-                  <EmptyState message="Loading project…" className="p-0" />
-                </div>
-              ) : (
-                <>
-                  {navState.projectView === 'overview' && (
-                    <OverviewView
-                      data={data}
-                      onOpenTask={(taskId) =>
-                        dispatchNav({ type: 'openPeek', taskId })
-                      }
-                      onOpenRun={jumpToRun}
-                      onReviewRun={(runId) => {
-                        const run = data.runs.find((r) => r.id === runId);
-                        if (run !== undefined) {
-                          openTaskView(run.taskId, 'diff', run.id);
-                        }
-                      }}
-                      onGoToBoard={() => selectProjectView('board')}
-                    />
-                  )}
-                  {navState.projectView === 'inbox' && (
-                    <InboxView
-                      data={inboxData}
-                      project={data}
-                      onOpenTask={openTaskView}
-                      onOpenPr={(number) =>
-                        dispatchNav({ type: 'openPr', number })
-                      }
-                    />
-                  )}
-                  {navState.projectView === 'landing' && (
-                    <LandingTableView
-                      data={data}
-                      onOpenRun={(taskId, runId) =>
-                        openTaskView(taskId, 'diff', runId)
-                      }
-                      onOpenPr={(number) =>
-                        dispatchNav({ type: 'openPr', number })
-                      }
-                    />
-                  )}
-                  {navState.projectView === 'pr' &&
-                    navState.activePrNumber !== null && (
-                      <PrReviewView
-                        key={navState.activePrNumber}
-                        data={data}
-                        prNumber={navState.activePrNumber}
-                        onBack={() => dispatchNav({ type: 'back' })}
-                      />
-                    )}
-                  {navState.projectView === 'impact' && (
-                    // Keyed by the preselected subject so arriving with a new
-                    // one (a different "open in Impact" click) resets the
-                    // view's local picker/filter state instead of reusing
-                    // whatever was left over from the last subject.
-                    <ImpactView
-                      key={
-                        navState.impactSubject === null
-                          ? 'impact-empty'
-                          : `${navState.impactSubject.kind}:${navState.impactSubject.id}`
-                      }
-                      data={data}
-                      initialSubject={navState.impactSubject}
-                    />
-                  )}
-                  {navState.projectView === 'board' && (
-                    <BoardView
-                      data={data}
-                      mode={tasksViewMode}
-                      onSelectTask={(taskId) =>
-                        dispatchNav({ type: 'openPeek', taskId })
-                      }
-                      onNewTask={openCreateTask}
-                      onPlanWork={() => selectProjectView('plans')}
-                    />
-                  )}
-                  {navState.projectView === 'task' &&
-                    navState.activeTaskId !== null &&
-                    data.config !== null && (
-                      <TaskView
-                        key={navState.activeTaskId}
-                        data={data}
-                        taskId={navState.activeTaskId}
-                        tab={navState.taskTab}
-                        activeRunId={navState.activeRunId}
-                        onSetTab={(tab) =>
-                          dispatchNav({ type: 'setTaskTab', tab })
-                        }
-                        onSelectRun={(runId) =>
-                          openTaskView(
-                            navState.activeTaskId,
-                            navState.taskTab,
-                            runId
-                          )
-                        }
-                        onBack={() => dispatchNav({ type: 'back' })}
-                        // `undefined` when the task has gone away (deleted/archived out from
-                        // under an open view) — TaskView's own lookup finds the same absence
-                        // and renders its "no longer available" state before ever touching
-                        // this prop.
-                        panelProps={
-                          activeTaskDoc !== null
-                            ? buildTaskPanelProps(activeTaskDoc)
-                            : undefined
-                        }
-                        onViewPr={(runId) => {
-                          const number = prNumberFromUrl(
-                            data.runs.find((r) => r.id === runId)?.prUrl
-                          );
-                          if (number !== null) {
-                            dispatchNav({ type: 'openPr', number });
-                          }
-                        }}
-                        onOpenImpact={(subject) =>
-                          dispatchNav({ type: 'openImpact', subject })
-                        }
-                      />
-                    )}
-                  {navState.projectView === 'branches' && (
-                    <BranchesView
-                      data={data}
-                      onOpenRun={jumpToRun}
-                      onOpenImpact={(subject) =>
-                        dispatchNav({ type: 'openImpact', subject })
-                      }
-                    />
-                  )}
-                  {navState.projectView === 'brain-dump' && (
-                    <BrainDumpView
-                      data={data}
-                      onOpenTask={(taskId) =>
-                        dispatchNav({ type: 'openPeek', taskId })
-                      }
-                      onPlanText={(text) => {
-                        setPlanSeed(text);
-                        selectProjectView('plans');
-                      }}
-                    />
-                  )}
-                  {navState.projectView === 'plans' && (
-                    <PlansView
-                      data={data}
-                      onGoToBoard={() => selectProjectView('board')}
-                      initialPrompt={planSeed ?? undefined}
-                      key={planSeed ?? 'plans'}
-                    />
-                  )}
-                  {navState.projectView === 'draft' &&
-                    (activeDraft !== null && data.config !== null ? (
-                      <DraftView
-                        key={activeDraft.id}
-                        data={data}
-                        onCreate={rawData.handleCreate}
-                        draft={activeDraft}
-                        onDone={() => selectProjectView('board')}
-                      />
-                    ) : data.config === null ? (
-                      <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-                        <Spinner className="text-muted-foreground size-5" />
-                        <EmptyState
-                          message="Loading project…"
-                          className="p-0"
-                        />
-                      </div>
-                    ) : (
-                      <div className="flex h-full items-center justify-center">
-                        <EmptyState
-                          message="That draft is no longer available."
-                          action={
-                            <Button
-                              size="sm"
-                              onClick={() => selectProjectView('board')}
+                >
+                  <main className="bg-background border-border-panel shadow-panel rounded-popover min-h-0 flex-1 overflow-auto border-[0.5px]">
+                    <ErrorBoundary label="this page">
+                      {resolutionError !== null ? (
+                        <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+                          <TriangleAlert className="text-destructive size-5" />
+                          <EmptyState
+                            message={resolutionError}
+                            className="p-0"
+                          />
+                        </div>
+                      ) : noProjectYet ? (
+                        <Empty className="h-full gap-4 rounded-none border-none p-0 md:p-0">
+                          {/* The Hydrogen mark — same wordmark icon as the sidebar, scaled up — so the
+                    empty first-run state still reads as "Dispatch", not a generic error page. */}
+                          <EmptyMedia className="border-border mb-0 size-12 rounded-xl border bg-white p-0">
+                            <svg
+                              viewBox="0 0 34 36"
+                              className="size-7"
+                              fill="none"
+                              aria-hidden="true"
                             >
-                              Back to board
+                              <path
+                                d="M17 0C26.3888 0 34 7.61116 34 17C34 19.6624 33.3869 22.1813 32.2959 24.4248C33.3569 25.6519 34 27.2505 34 29C34 32.866 30.866 36 27 36C24.7943 36 22.828 34.979 21.5449 33.3848C20.0982 33.7852 18.5742 34 17 34C7.61116 34 0 26.3888 0 17C0 13.7085 0.935188 10.6354 2.55469 8.03223C2.20259 7.43659 2 6.74205 2 6C2 3.79086 3.79086 2 6 2C6.74205 2 7.43659 2.20259 8.03223 2.55469C10.6354 0.935188 13.7085 0 17 0ZM17 3.40039C14.4188 3.40039 12.0051 4.11849 9.94922 5.36719C9.98199 5.57335 10 5.78461 10 6C10 8.20914 8.20914 10 6 10C5.78461 10 5.57335 9.98199 5.36719 9.94922C4.11849 12.0051 3.40039 14.4188 3.40039 17C3.40039 24.5111 9.48893 30.5996 17 30.5996C18.0707 30.5996 19.112 30.4741 20.1113 30.2402C20.0393 29.8376 20 29.4233 20 29C20 25.134 23.134 22 27 22C27.8672 22 28.6974 22.158 29.4639 22.4463C30.1936 20.7786 30.5996 18.9369 30.5996 17C30.5996 9.48893 24.5111 3.40039 17 3.40039Z"
+                                fill="#000000"
+                              />
+                            </svg>
+                          </EmptyMedia>
+                          <EmptyHeader className="gap-1">
+                            <EmptyTitle className="text-[15px] tracking-normal">
+                              No project yet
+                            </EmptyTitle>
+                            <EmptyDescription className="max-w-sm text-[13px]">
+                              Add a local folder or clone a repository from
+                              GitHub to get started.
+                            </EmptyDescription>
+                          </EmptyHeader>
+                          <EmptyContent>
+                            <Button onClick={() => setAddProjectOpen(true)}>
+                              <Plus className="size-4" />
+                              Add project
                             </Button>
-                          }
-                        />
-                      </div>
-                    ))}
-                </>
+                          </EmptyContent>
+                        </Empty>
+                      ) : stillResolving ? (
+                        <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+                          <Spinner className="text-muted-foreground size-5" />
+                          <EmptyState
+                            message="Loading project…"
+                            className="p-0"
+                          />
+                        </div>
+                      ) : showGetStarted ? (
+                        <GetStartedView projectPath={root} />
+                      ) : navState.section === 'global' ? (
+                        <>
+                          {navState.globalView === 'all-agents' && (
+                            <AllAgentsView
+                              // `visibleRuns`, not `runs`: this is the run *list* the archive filter
+                              // was built for, and the only surface left that can unarchive one.
+                              runs={data.visibleRuns}
+                              // The non-run agents (planners, enrich, drafts, overseers) — archiving
+                              // never applies to them, so they bypass the archive filter.
+                              sessions={data.agentSessions}
+                              archivedRunCount={archivedRunCount}
+                              showArchived={data.showArchived}
+                              onSetShowArchived={data.setShowArchived}
+                              onArchiveRun={(runId, archived) =>
+                                void data.handleArchiveRun(runId, archived)
+                              }
+                              portLoading={data.portLoading}
+                              portError={data.portError}
+                              portErrorDetail={data.portErrorDetail}
+                              client={data.client}
+                              onRetry={data.retryEnsureDispatchd}
+                              onJumpToRun={jumpToRun}
+                            />
+                          )}
+                          {navState.globalView === 'sessions' && (
+                            <SessionsHubView />
+                          )}
+                          {navState.globalView === 'overseer' && (
+                            <OverseerView data={data} overseer={overseer} />
+                          )}
+                          {navState.globalView === 'settings' && (
+                            <SettingsView
+                              activeProject={activeProject}
+                              data={data}
+                              onOpenTask={(taskId) =>
+                                openTaskView(taskId, 'details')
+                              }
+                            />
+                          )}
+                          {import.meta.env.DEV &&
+                            navState.globalView === 'gallery' && (
+                              <GalleryView />
+                            )}
+                        </>
+                      ) : activeProject === null ? (
+                        <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+                          <Spinner className="text-muted-foreground size-5" />
+                          <EmptyState
+                            message="Loading project…"
+                            className="p-0"
+                          />
+                        </div>
+                      ) : (
+                        <>
+                          {navState.projectView === 'overview' && (
+                            <OverviewView
+                              data={data}
+                              onOpenTask={(taskId) =>
+                                dispatchNav({ type: 'openPeek', taskId })
+                              }
+                              onOpenRun={jumpToRun}
+                              onReviewRun={(runId) => {
+                                const run = data.runs.find(
+                                  (r) => r.id === runId
+                                );
+                                if (run !== undefined) {
+                                  openTaskView(run.taskId, 'diff', run.id);
+                                }
+                              }}
+                              onGoToBoard={() => selectProjectView('board')}
+                            />
+                          )}
+                          {navState.projectView === 'inbox' && (
+                            <InboxView
+                              data={inboxData}
+                              project={data}
+                              onOpenTask={openTaskView}
+                              onOpenPr={(number) =>
+                                dispatchNav({ type: 'openPr', number })
+                              }
+                            />
+                          )}
+                          {navState.projectView === 'landing' && (
+                            <LandingTableView
+                              data={data}
+                              onOpenRun={(taskId, runId) =>
+                                openTaskView(taskId, 'diff', runId)
+                              }
+                              onOpenPr={(number) =>
+                                dispatchNav({ type: 'openPr', number })
+                              }
+                            />
+                          )}
+                          {navState.projectView === 'pr' &&
+                            navState.activePrNumber !== null && (
+                              <PrReviewView
+                                key={navState.activePrNumber}
+                                data={data}
+                                prNumber={navState.activePrNumber}
+                                onBack={() => dispatchNav({ type: 'back' })}
+                              />
+                            )}
+                          {navState.projectView === 'impact' && (
+                            // Keyed by the preselected subject so arriving with a new
+                            // one (a different "open in Impact" click) resets the
+                            // view's local picker/filter state instead of reusing
+                            // whatever was left over from the last subject.
+                            <ImpactView
+                              key={
+                                navState.impactSubject === null
+                                  ? 'impact-empty'
+                                  : `${navState.impactSubject.kind}:${navState.impactSubject.id}`
+                              }
+                              data={data}
+                              initialSubject={navState.impactSubject}
+                            />
+                          )}
+                          {navState.projectView === 'board' && (
+                            <BoardView
+                              data={data}
+                              mode={tasksViewMode}
+                              onSelectTask={(taskId) =>
+                                dispatchNav({ type: 'openPeek', taskId })
+                              }
+                              onNewTask={(status) =>
+                                openCreateTask(
+                                  status !== undefined ? { status } : undefined
+                                )
+                              }
+                              onPlanWork={() => selectProjectView('plans')}
+                            />
+                          )}
+                          {navState.projectView === 'task' &&
+                            navState.activeTaskId !== null &&
+                            data.config !== null && (
+                              <TaskView
+                                key={navState.activeTaskId}
+                                data={data}
+                                taskId={navState.activeTaskId}
+                                tab={navState.taskTab}
+                                activeRunId={navState.activeRunId}
+                                onSetTab={(tab) =>
+                                  dispatchNav({ type: 'setTaskTab', tab })
+                                }
+                                onSelectRun={(runId) =>
+                                  openTaskView(
+                                    navState.activeTaskId,
+                                    navState.taskTab,
+                                    runId
+                                  )
+                                }
+                                onBack={() => dispatchNav({ type: 'back' })}
+                                // `undefined` when the task has gone away (deleted/archived out from
+                                // under an open view) — TaskView's own lookup finds the same absence
+                                // and renders its "no longer available" state before ever touching
+                                // this prop.
+                                panelProps={
+                                  activeTaskDoc !== null
+                                    ? buildTaskPanelProps(activeTaskDoc)
+                                    : undefined
+                                }
+                                onViewPr={(runId) => {
+                                  const number = prNumberFromUrl(
+                                    data.runs.find((r) => r.id === runId)?.prUrl
+                                  );
+                                  if (number !== null) {
+                                    dispatchNav({ type: 'openPr', number });
+                                  }
+                                }}
+                                onOpenImpact={(subject) =>
+                                  dispatchNav({ type: 'openImpact', subject })
+                                }
+                              />
+                            )}
+                          {navState.projectView === 'branches' && (
+                            <BranchesView
+                              data={data}
+                              onOpenRun={jumpToRun}
+                              onOpenImpact={(subject) =>
+                                dispatchNav({ type: 'openImpact', subject })
+                              }
+                            />
+                          )}
+                          {navState.projectView === 'brain-dump' && (
+                            <BrainDumpView
+                              data={data}
+                              onOpenTask={(taskId) =>
+                                dispatchNav({ type: 'openPeek', taskId })
+                              }
+                              onPlanText={(text) => {
+                                setPlanSeed(text);
+                                selectProjectView('plans');
+                              }}
+                            />
+                          )}
+                          {navState.projectView === 'plans' && (
+                            <PlansView
+                              data={data}
+                              onGoToBoard={() => selectProjectView('board')}
+                              initialPrompt={planSeed ?? undefined}
+                              key={planSeed ?? 'plans'}
+                            />
+                          )}
+                          {navState.projectView === 'draft' &&
+                            (activeDraft !== null && data.config !== null ? (
+                              <DraftView
+                                key={activeDraft.id}
+                                data={data}
+                                onCreate={rawData.handleCreate}
+                                draft={activeDraft}
+                                onDone={() => selectProjectView('board')}
+                              />
+                            ) : data.config === null ? (
+                              <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+                                <Spinner className="text-muted-foreground size-5" />
+                                <EmptyState
+                                  message="Loading project…"
+                                  className="p-0"
+                                />
+                              </div>
+                            ) : (
+                              <div className="flex h-full items-center justify-center">
+                                <EmptyState
+                                  message="That draft is no longer available."
+                                  action={
+                                    <Button
+                                      size="sm"
+                                      onClick={() => selectProjectView('board')}
+                                    >
+                                      Back to board
+                                    </Button>
+                                  }
+                                />
+                              </div>
+                            ))}
+                        </>
+                      )}
+                    </ErrorBoundary>
+                  </main>
+                </div>
+              </SidebarProvider>
+              <FrameStatusStrip
+                className="absolute inset-x-0 bottom-0"
+                syncStatus={activeProject !== null ? data.syncStatus : null}
+                onDisableAutoCommit={() =>
+                  void data.handleUpdateConfig({ autoCommit: false })
+                }
+                spendToday={todaySpend}
+                onOpenShortcuts={openShortcuts}
+                onOpenOverseer={() => setGlobalView('overseer')}
+              />
+
+              <QuickCaptureDialog
+                open={quickCaptureOpen}
+                onOpenChange={setQuickCaptureOpen}
+                onCapture={rawData.handleCaptureInbox}
+                onOpenBrainDump={() => selectProjectView('brain-dump')}
+              />
+
+              <ShortcutsDialog
+                open={navState.shortcutsOpen}
+                onOpenChange={(open) => {
+                  if (!open) dispatchNav({ type: 'closeShortcuts' });
+                }}
+              />
+
+              {selectedDoc !== null && data.config !== null && (
+                // Remount per task so per-task state (model choice, in-flight dispatch) can't leak across stack-rail navigation.
+                <TaskPeekDialog
+                  key={selectedDoc.meta.id}
+                  {...buildTaskPanelProps(selectedDoc)}
+                  onClose={() => dispatchNav({ type: 'closePeek' })}
+                  onExpand={() => openTaskView(selectedDoc.meta.id)}
+                />
               )}
-            </ErrorBoundary>
-          </main>
-        </SidebarProvider>
 
-        {/* The quick-capture brain button, pinned bottom-right on every project screen except
-            Brain dump itself (which has the full composer). Gated on a live daemon client:
-            the raw capture handler silently no-ops when `client` is null, and a capture that
-            quietly drops the thought is worse than no button. Open state lives here so the
-            ⌘D global shortcut reaches the same modal the button opens. */}
-        {brainDumpFabMounted && (
-          <BrainDumpFab
-            open={brainDumpOpen}
-            onOpenChange={setBrainDumpOpen}
-            onCapture={rawData.handleCaptureInbox}
-            onOpenBrainDump={() => selectProjectView('brain-dump')}
-          />
-        )}
+              {showCreate && data.config !== null && (
+                <CreateTaskModal
+                  statuses={data.config.statuses}
+                  epics={data.epics}
+                  initialStatus={createPreset?.status}
+                  onCreate={(input) => data.handleCreate(input)}
+                  onClose={() => setShowCreate(false)}
+                />
+              )}
 
-        {selectedDoc !== null && data.config !== null && (
-          // Remount per task so per-task state (model choice, in-flight dispatch) can't leak across stack-rail navigation.
-          <TaskPeekDialog
-            key={selectedDoc.meta.id}
-            {...buildTaskPanelProps(selectedDoc)}
-            onClose={() => dispatchNav({ type: 'closePeek' })}
-            onExpand={() => openTaskView(selectedDoc.meta.id)}
-          />
-        )}
+              {aiComposerOpen && (
+                <AiTaskComposer
+                  data={data}
+                  onStartDraft={rawData.handleStartDraft}
+                  onQuickAdd={() => {
+                    setAiComposerOpen(false);
+                    openQuickAddTask(createPreset ?? undefined);
+                  }}
+                  onClose={() => setAiComposerOpen(false)}
+                />
+              )}
 
-        {showCreate && data.config !== null && (
-          <CreateTaskModal
-            statuses={data.config.statuses}
-            epics={data.epics}
-            initialStatus={createStatus ?? undefined}
-            onCreate={(input) => data.handleCreate(input)}
-            onClose={() => setShowCreate(false)}
-          />
-        )}
+              {addProjectOpen && (
+                <AddProjectDialog
+                  onAdd={handleAddProject}
+                  onClose={() => setAddProjectOpen(false)}
+                />
+              )}
 
-        {aiComposerOpen && (
-          <AiTaskComposer
-            data={data}
-            onStartDraft={rawData.handleStartDraft}
-            onQuickAdd={() => {
-              setAiComposerOpen(false);
-              openQuickAddTask(createStatus ?? undefined);
-            }}
-            onClose={() => setAiComposerOpen(false)}
-          />
-        )}
-
-        {addProjectOpen && (
-          <AddProjectDialog
-            onAdd={handleAddProject}
-            onClose={() => setAddProjectOpen(false)}
-          />
-        )}
-
-        <CommandPalette
-          isOpen={navState.paletteOpen}
-          entries={paletteEntries}
-          onClose={() => dispatchNav({ type: 'closePalette' })}
-        />
-      </div>
+              <CommandPalette
+                isOpen={navState.paletteOpen}
+                entries={paletteEntries}
+                onClose={() => dispatchNav({ type: 'closePalette' })}
+              />
+            </div>
+          </PageHeaderShellContext.Provider>
+        </NotificationInboxProvider>
+      </ShellActionsProvider>
     </TooltipProvider>
   );
 }
