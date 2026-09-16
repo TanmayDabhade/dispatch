@@ -2,8 +2,10 @@ import { AlertCircle } from 'lucide-react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { describeDaemonError } from '../shell/DaemonUnavailable';
-import { Badge } from '@/ui/badge';
-import { HintText, MetaText, Panel, PanelHeader, PanelRow } from '@/ui/chrome';
+import { SettingsGroup, SettingsRow } from './SettingsGroup';
+import { cn } from '@/lib/utils';
+import { Pill } from '@/ui/ai/pill';
+import { PanelRow } from '@/ui/chrome';
 import { StatTile } from '@/ui/chrome/StatTile';
 
 interface DaemonSectionProps {
@@ -15,49 +17,54 @@ interface DaemonSectionProps {
 // carries the same information, so the dot itself is `aria-hidden`.
 function daemonDotClass(data: DispatchProjectData): string {
   if (data.portLoading) return 'bg-muted-foreground/40';
-  return data.client !== null ? 'bg-primary' : 'bg-state-failed';
+  return data.client !== null ? 'bg-state-review' : 'bg-state-failed';
 }
 
 function daemonStatusLabel(data: DispatchProjectData): string {
-  if (data.portLoading) return 'starting';
-  return data.client !== null ? 'running' : 'not running';
+  if (data.portLoading) return 'Starting';
+  return data.client !== null ? 'Running' : 'Not running';
 }
 
 /** Daemon health, plus the one tracker-config field with no editable home
  *  elsewhere: statuses. */
 export function DaemonSection({ activeProject, data }: DaemonSectionProps) {
+  const errorDetail = describeDaemonError(data.portErrorDetail);
   return (
     <>
-      <Panel>
-        <PanelHeader>Daemon</PanelHeader>
-
-        <PanelRow className="flex-col items-stretch gap-1.5">
-          <div className="flex items-center gap-2">
-            <span
-              aria-hidden="true"
-              className={`size-1.5 flex-shrink-0 rounded-full ${daemonDotClass(data)}`}
-            />
-            <span className="text-[13px]">{daemonStatusLabel(data)}</span>
-            <MetaText>{activeProject.path}</MetaText>
-          </div>
-
+      <SettingsGroup title="Daemon">
+        <SettingsRow
+          title="dispatchd"
+          subtitle={<span className="font-mono">{activeProject.path}</span>}
+          control={
+            <span className="font-book flex items-center gap-2 text-[12px] text-(--text-secondary)">
+              <span
+                aria-hidden="true"
+                className={cn(
+                  'size-1.5 shrink-0 rounded-full',
+                  daemonDotClass(data)
+                )}
+              />
+              {daemonStatusLabel(data)}
+            </span>
+          }
+        >
           {data.portError && (
             <div className="flex flex-col gap-1.5">
               <p className="text-state-failed flex items-center gap-1.5 text-[13px]">
-                <AlertCircle className="size-3.5 flex-shrink-0" />
+                <AlertCircle className="size-3.5 shrink-0" />
                 Couldn&rsquo;t start dispatchd
               </p>
-              {describeDaemonError(data.portErrorDetail) !== null && (
-                <pre className="dense-meta bg-muted/40 max-h-48 overflow-auto rounded p-3 text-left whitespace-pre-wrap">
-                  {describeDaemonError(data.portErrorDetail)}
+              {errorDetail !== null && (
+                <pre className="bg-surface-quaternary text-muted-foreground rounded-control max-h-48 overflow-auto p-3 text-left font-mono text-[12px] whitespace-pre-wrap">
+                  {errorDetail}
                 </pre>
               )}
             </div>
           )}
-        </PanelRow>
+        </SettingsRow>
 
         {data.health !== undefined && (
-          <PanelRow className="grid grid-cols-3 gap-3">
+          <PanelRow className="grid grid-cols-3 gap-3 py-3">
             <StatTile
               value={data.health.pr ? 'Yes' : 'No'}
               label="PR capability"
@@ -66,31 +73,22 @@ export function DaemonSection({ activeProject, data }: DaemonSectionProps) {
             <StatTile value={data.runs.length} label="Runs recorded" />
           </PanelRow>
         )}
-      </Panel>
+      </SettingsGroup>
 
       {data.config !== null && (
-        <Panel>
-          <PanelHeader>Tracker config</PanelHeader>
-
-          <PanelRow className="flex-col items-stretch gap-1.5">
-            <span className="text-[12px]">Statuses</span>
+        <SettingsGroup title="Tracker config">
+          <SettingsRow
+            title="Statuses"
+            subtitle="Statuses stay in .dispatch/config.yml. Every task file on disk stores its status by name, so removing one here would orphan those tasks."
+            stacked
+          >
             <div className="flex flex-wrap gap-1">
               {data.config.statuses.map((status) => (
-                <Badge key={status} variant="outline">
-                  {status}
-                </Badge>
+                <Pill key={status}>{status}</Pill>
               ))}
             </div>
-          </PanelRow>
-
-          <PanelRow>
-            <HintText>
-              Statuses stay in .dispatch/config.yml. Every task file on disk
-              stores its status by name, so removing one here would orphan those
-              tasks.
-            </HintText>
-          </PanelRow>
-        </Panel>
+          </SettingsRow>
+        </SettingsGroup>
       )}
     </>
   );

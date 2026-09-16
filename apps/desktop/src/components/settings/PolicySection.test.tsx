@@ -41,17 +41,19 @@ function receipt(overrides: Partial<LedgerEntry>): LedgerEntry {
 }
 
 function clientWith(entries: LedgerEntry[]): ApiClient {
-  return { fetchLedger: async () => entries } as unknown as ApiClient;
+  return {
+    fetchLedger: () => Promise.resolve(entries),
+  } as unknown as ApiClient;
 }
 
 const noSave = async () => {};
 
-test('the slider sits on the configured rung and a stop click saves the new one', async () => {
+test('the slider sits on the configured rung and a stop click saves the new one', () => {
   const saves: unknown[] = [];
   render(
     <PolicySection
       config={configAt(1)}
-      onSave={async (patch) => void saves.push(patch)}
+      onSave={(patch) => Promise.resolve(void saves.push(patch))}
       client={null}
     />
   );
@@ -70,7 +72,7 @@ test('re-clicking the current stop does not save', () => {
   render(
     <PolicySection
       config={configAt(2)}
-      onSave={async (patch) => void saves.push(patch)}
+      onSave={(patch) => Promise.resolve(void saves.push(patch))}
       client={null}
     />
   );
@@ -92,7 +94,7 @@ test('a pinned gate reads as pinned and a pin change saves key-by-key', () => {
   render(
     <PolicySection
       config={configAt(1, { merge: 'auto' })}
-      onSave={async (patch) => void saves.push(patch)}
+      onSave={(patch) => Promise.resolve(void saves.push(patch))}
       client={null}
     />
   );
@@ -158,4 +160,20 @@ test('an empty ledger explains where receipts will land', async () => {
   await waitFor(() =>
     expect(screen.getByText(/No auto-decisions yet/)).toBeDefined()
   );
+});
+
+// The floor heading is a sentence-case 12px row, never an uppercase tracked label,
+// and the receipt's task id is sans.
+test('the floor heading is sentence case and receipt ids are not monospaced', async () => {
+  render(
+    <PolicySection
+      config={configAt(2)}
+      onSave={noSave}
+      client={clientWith([receipt({})])}
+    />
+  );
+  const floor = screen.getByText('Irreversibility floor');
+  expect(floor.className).not.toContain('uppercase');
+  await screen.findByText('Scope extended for run r-x');
+  expect(screen.getByText('t-aaaaaa').className).not.toContain('font-mono');
 });

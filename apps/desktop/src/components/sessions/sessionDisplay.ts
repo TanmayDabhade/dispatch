@@ -1,11 +1,22 @@
 import type { ProjectSummary, Session } from '../../lib/types';
 
-/** Session status renders as a small colored dot rather than a filled pill — green while the
- * session is still active, a muted dot once it's ended. Shared by every session row/detail
- * surface in the Sessions hub (the session list's `SessionRow` and `SessionDetailModal`) so the
- * status → color mapping lives in exactly one place. */
+/** Session status renders as a small colored dot rather than a filled pill — the review
+ * green while the session is still active, a muted dot once it's ended. Shared by every
+ * session row/detail surface in the Sessions hub (the session list's `SessionRow` and
+ * `SessionDetailModal`) so the status → color mapping lives in exactly one place. */
 export function statusDotClass(status: Session['status']): string {
-  return status === 'active' ? 'bg-emerald-500' : 'bg-muted-foreground/50';
+  return status === 'active' ? 'bg-state-review' : 'bg-muted-foreground/50';
+}
+
+/** The spend windows the Sessions header offers as view tabs, in days. 30 is the default —
+ * `ReportView`'s own former default, kept when the range picker was cut. */
+export const SPEND_WINDOWS: readonly number[] = [7, 30, 90];
+
+export const DEFAULT_SPEND_WINDOW = 30;
+
+/** A window's tab label: `7 days`, `30 days`, `90 days`. */
+export function spendWindowLabel(days: number): string {
+  return `${String(days)} days`;
 }
 
 /** `tags` is stored as a JSON array string (e.g. `["bugfix","refactor"]`); falls back to

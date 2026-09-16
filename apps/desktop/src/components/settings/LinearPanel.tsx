@@ -16,13 +16,13 @@ import {
   resolveMappedStateId,
   statusMapCompleteness,
 } from '../../lib/linearSettings';
+import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
 import { cn } from '@/lib/utils';
-import { Badge } from '@/ui/badge';
+import { PillButton } from '@/ui/ai/pill';
+import { Switch } from '@/ui/ai/switch';
 import { Button } from '@/ui/button';
-import { Checkbox } from '@/ui/checkbox';
-import { HintText, MetaText, Panel, PanelHeader, PanelRow } from '@/ui/chrome';
+import { PanelRow } from '@/ui/chrome';
 import { Input } from '@/ui/input';
-import { Label } from '@/ui/label';
 import {
   Select,
   SelectContent,
@@ -39,7 +39,7 @@ const LINEAR_DIRECTIONS: { value: 'both' | 'pull' | 'push'; label: string }[] =
   ];
 
 // Free-typed while focused, snapped back to the saved value on blur if it isn't a valid
-// interval (mirrors ProjectSettingsSection's concurrency input).
+// interval (mirrors AgentsSection's concurrency input).
 function LinearIntervalRow({
   value,
   onSave,
@@ -50,10 +50,13 @@ function LinearIntervalRow({
   const [draft, setDraft] = useState(String(value));
   useEffect(() => setDraft(String(value)), [value]);
   return (
-    <PanelRow>
-      <label className="flex items-center gap-3">
-        <span className="w-40 flex-shrink-0 text-[13px]">Poll interval</span>
+    <SettingsRow
+      title="Poll interval"
+      subtitle="Seconds between sync passes, minimum 30."
+      htmlFor="linear-poll-interval"
+      control={
         <Input
+          id="linear-poll-interval"
           aria-label="Poll interval"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -66,15 +69,14 @@ function LinearIntervalRow({
             }
           }}
           inputMode="numeric"
-          className="w-20 font-mono text-[12.5px]"
+          className="w-20 text-right tabular-nums"
         />
-      </label>
-      <MetaText>seconds, minimum 30</MetaText>
-    </PanelRow>
+      }
+    />
   );
 }
 
-// One status-map row: a dispatch status and a `<select>` of the team's workflow states, falling
+// One status-map row: a dispatch status and a select of the team's workflow states, falling
 // back to a "Not mapped" placeholder for a missing or stale (post-team-change) entry.
 function LinearStatusMapRow({
   status,
@@ -89,32 +91,29 @@ function LinearStatusMapRow({
 }) {
   const selectedId = resolveMappedStateId(value, states);
   return (
-    <div className="flex items-center gap-3 py-1">
-      <Badge
-        variant="outline"
-        className="w-32 flex-shrink-0 justify-start truncate"
-      >
-        {status}
-      </Badge>
-      <Select
-        value={selectedId}
-        onValueChange={(id) => {
-          const state = states.find((s) => s.id === id);
-          if (state !== undefined) onChange(state);
-        }}
-      >
-        <SelectTrigger size="sm" className="w-[200px] text-[12px]">
-          <SelectValue placeholder="Not mapped" />
-        </SelectTrigger>
-        <SelectContent>
-          {states.map((state) => (
-            <SelectItem key={state.id} value={state.id}>
-              {state.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
+    <SettingsRow
+      title={status}
+      control={
+        <Select
+          value={selectedId}
+          onValueChange={(id) => {
+            const state = states.find((s) => s.id === id);
+            if (state !== undefined) onChange(state);
+          }}
+        >
+          <SelectTrigger aria-label={`${status} maps to`} className="w-[180px]">
+            <SelectValue placeholder="Not mapped" />
+          </SelectTrigger>
+          <SelectContent>
+            {states.map((state) => (
+              <SelectItem key={state.id} value={state.id}>
+                {state.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      }
+    />
   );
 }
 
@@ -128,15 +127,11 @@ function FetchFailureRow({
   onRetry: () => void;
 }) {
   return (
-    <PanelRow className="flex-col items-stretch gap-1.5">
-      <div className="flex items-center gap-2">
-        <span className="text-state-failed text-[12px]">
-          {describeFetchFailure(error)}
-        </span>
-        <Button size="sm" variant="secondary" onClick={onRetry}>
-          Retry
-        </Button>
-      </div>
+    <PanelRow className="flex-nowrap gap-3">
+      <span className="text-state-failed min-w-0 flex-1 text-[12px]">
+        {describeFetchFailure(error)}
+      </span>
+      <PillButton onClick={onRetry}>Retry</PillButton>
     </PanelRow>
   );
 }
@@ -240,242 +235,225 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
   const keyNote = linearKeySourceNote(linearStatus.keySource);
 
   return (
-    <Panel>
-      <PanelHeader>Linear</PanelHeader>
-
-      {/* What connecting buys, before the key field asks for anything: the panel used to open
-          on an input and a button, so the first question — what does this do to my board — went
-          unanswered. Every claim below is one the panel's own controls back: direction, the
-          status map, the interval, and Import. */}
-      <PanelRow className="flex-col items-stretch gap-1">
-        <span className="text-[13px]">
-          Keeps this project&rsquo;s tasks and one Linear team in step.
-        </span>
-        <HintText>
-          Issues in the team become tasks here and tasks created here become
-          issues there; a task&rsquo;s status change moves the issue to the
-          matching workflow state, and the reverse, using the status map below.
-          Sync runs on the interval you pick and only carries what changed since
-          the last one — Import brings the team&rsquo;s existing backlog across
-          once. The API key stays in ~/.dispatch/credentials.json, never in the
-          repo.
-        </HintText>
-      </PanelRow>
-
-      {linearStatus.keySource !== 'project' && (
-        <PanelRow className="flex-col items-stretch gap-2">
-          <HintText>{keyNote}</HintText>
-          <div className="flex items-center gap-2">
-            <Input
-              type="password"
-              autoComplete="off"
-              placeholder="Linear API key"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              className="max-w-xs font-mono text-[12.5px]"
-            />
-            <Button
-              size="sm"
-              disabled={connecting || apiKey.trim() === ''}
-              onClick={() => void connect()}
-            >
-              {connecting ? 'Connecting…' : 'Connect'}
-            </Button>
-          </div>
-          {connectError !== null && (
-            <span className="text-state-failed text-[12px]">
-              {connectError}
-            </span>
-          )}
-        </PanelRow>
-      )}
-
-      {linearStatus.connected && (
-        <>
-          <PanelRow className="flex-col items-stretch gap-1.5">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="text-state-review size-3.5 flex-shrink-0" />
-              <span className="text-[13px]">
-                Connected{viewer !== null ? ` as ${viewer.name}` : ''}
-              </span>
-              {linearStatus.keySource === 'project' && (
+    <>
+      <SettingsGroup
+        title="Linear"
+        hint="Keeps this project’s tasks and one Linear team in step. Issues in the team become tasks here and tasks created here become issues there; a task’s status change moves the issue to the matching workflow state, and the reverse, using the status map below. Sync runs on the interval you pick and only carries what changed since the last one — Import brings the team’s existing backlog across once. The API key stays in ~/.dispatch/credentials.json, never in the repo."
+      >
+        {linearStatus.keySource !== 'project' && (
+          <SettingsRow
+            title="API key"
+            subtitle={keyNote}
+            htmlFor="linear-api-key"
+            stacked
+            control={
+              <>
+                <Input
+                  id="linear-api-key"
+                  type="password"
+                  autoComplete="off"
+                  placeholder="Linear API key"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  className="max-w-xs"
+                />
                 <Button
-                  size="sm"
-                  variant="secondary"
-                  className="ml-auto"
-                  disabled={disconnecting}
-                  onClick={() => void disconnect()}
+                  disabled={connecting || apiKey.trim() === ''}
+                  onClick={() => void connect()}
                 >
-                  {disconnecting ? 'Disconnecting…' : 'Disconnect'}
+                  {connecting ? 'Connecting…' : 'Connect'}
                 </Button>
-              )}
-            </div>
-            {disconnectError !== null && (
+              </>
+            }
+          >
+            {connectError !== null && (
               <span className="text-state-failed text-[12px]">
-                {disconnectError}
+                {connectError}
               </span>
             )}
-          </PanelRow>
+          </SettingsRow>
+        )}
 
-          <PanelRow>
-            <Label className="flex items-center gap-2 font-normal">
-              <Checkbox
-                className="size-3.5"
-                checked={config.linear.enabled}
-                disabled={!configured}
-                onCheckedChange={(checked) =>
-                  void data.handleUpdateConfig({
-                    linear: { enabled: checked === true },
-                  })
-                }
-              />
-              <span className="text-[13px]">Sync this project with Linear</span>
-            </Label>
-            {!teamChosen && <MetaText>choose a team first</MetaText>}
-          </PanelRow>
+        {linearStatus.connected && (
+          <>
+            <SettingsRow
+              title={
+                <span className="flex items-center gap-1.5">
+                  <CheckCircle2 className="text-state-review size-3.5 shrink-0" />
+                  Connected{viewer !== null ? ` as ${viewer.name}` : ''}
+                </span>
+              }
+              control={
+                linearStatus.keySource === 'project' ? (
+                  <PillButton
+                    disabled={disconnecting}
+                    onClick={() => void disconnect()}
+                  >
+                    {disconnecting ? 'Disconnecting…' : 'Disconnect'}
+                  </PillButton>
+                ) : undefined
+              }
+            >
+              {disconnectError !== null && (
+                <span className="text-state-failed text-[12px]">
+                  {disconnectError}
+                </span>
+              )}
+            </SettingsRow>
 
-          {data.linearTeamsError !== null && (
-            <FetchFailureRow
-              error={data.linearTeamsError}
-              onRetry={() => data.refetchLinearTeams()}
+            <SettingsRow
+              title="Sync this project with Linear"
+              subtitle={teamChosen ? undefined : 'Choose a team first.'}
+              htmlFor="linear-enabled"
+              control={
+                <Switch
+                  id="linear-enabled"
+                  checked={config.linear.enabled}
+                  disabled={!configured}
+                  onCheckedChange={(checked) =>
+                    void data.handleUpdateConfig({
+                      linear: { enabled: checked },
+                    })
+                  }
+                />
+              }
             />
-          )}
 
-          <PanelRow>
-            <label className="flex items-center gap-3">
-              <span className="w-40 flex-shrink-0 text-[13px]">Team</span>
-              <Select
-                value={config.linear.teamId ?? ''}
-                onValueChange={(teamId) =>
-                  void data.handleUpdateConfig({ linear: { teamId } })
-                }
-              >
-                <SelectTrigger
-                  size="sm"
-                  aria-label="Team"
-                  className="w-[220px] text-[12px]"
+            {data.linearTeamsError !== null && (
+              <FetchFailureRow
+                error={data.linearTeamsError}
+                onRetry={() => data.refetchLinearTeams()}
+              />
+            )}
+
+            <SettingsRow
+              title="Team"
+              control={
+                <Select
+                  value={config.linear.teamId ?? ''}
+                  onValueChange={(teamId) =>
+                    void data.handleUpdateConfig({ linear: { teamId } })
+                  }
                 >
-                  <SelectValue placeholder="Choose a team" />
-                </SelectTrigger>
-                <SelectContent>
-                  {linearTeams.map((team) => (
-                    <SelectItem key={team.id} value={team.id}>
-                      {team.name} ({team.key})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </label>
-          </PanelRow>
+                  <SelectTrigger aria-label="Team" className="w-[200px]">
+                    <SelectValue placeholder="Choose a team" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {linearTeams.map((team) => (
+                      <SelectItem key={team.id} value={team.id}>
+                        {team.name} ({team.key})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              }
+            />
 
-          <PanelRow>
-            <label className="flex items-center gap-3">
-              <span className="w-40 flex-shrink-0 text-[13px]">Direction</span>
-              <Select
-                value={config.linear.direction}
-                onValueChange={(direction) =>
-                  void data.handleUpdateConfig({
-                    linear: {
-                      direction: direction as 'both' | 'pull' | 'push',
-                    },
-                  })
-                }
-              >
-                <SelectTrigger
-                  size="sm"
-                  aria-label="Direction"
-                  className="w-[220px] text-[12px]"
+            <SettingsRow
+              title="Direction"
+              control={
+                <Select
+                  value={config.linear.direction}
+                  onValueChange={(direction) =>
+                    void data.handleUpdateConfig({
+                      linear: {
+                        direction: direction as 'both' | 'pull' | 'push',
+                      },
+                    })
+                  }
                 >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {LINEAR_DIRECTIONS.map((d) => (
-                    <SelectItem key={d.value} value={d.value}>
-                      {d.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </label>
-          </PanelRow>
+                  <SelectTrigger aria-label="Direction" className="w-[200px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {LINEAR_DIRECTIONS.map((d) => (
+                      <SelectItem key={d.value} value={d.value}>
+                        {d.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              }
+            />
 
-          <LinearIntervalRow
-            value={config.linear.intervalSec}
-            onSave={(intervalSec) =>
-              void data.handleUpdateConfig({ linear: { intervalSec } })
-            }
-          />
+            <LinearIntervalRow
+              value={config.linear.intervalSec}
+              onSave={(intervalSec) =>
+                void data.handleUpdateConfig({ linear: { intervalSec } })
+              }
+            />
 
-          <PanelRow>
-            <HintText>
-              Labels sync in from Linear, but a label you add or remove here
-              does not push back out yet — edit labels on the Linear side for
-              now.
-            </HintText>
-          </PanelRow>
+            <PanelRow>
+              <SettingsHint>
+                Labels sync in from Linear, but a label you add or remove here
+                does not push back out yet — edit labels on the Linear side for
+                now.
+              </SettingsHint>
+            </PanelRow>
+          </>
+        )}
+      </SettingsGroup>
 
+      {linearStatus.connected && teamChosen && (
+        <SettingsGroup
+          title="Status mapping"
+          hint={`${String(completeness.mapped)} of ${String(completeness.total)} mapped.`}
+        >
           {data.linearStatesError !== null && (
             <FetchFailureRow
               error={data.linearStatesError}
               onRetry={() => data.refetchLinearStates()}
             />
           )}
+          {config.statuses.map((status) => (
+            <LinearStatusMapRow
+              key={status}
+              status={status}
+              value={config.linear.statusMap[status]}
+              states={linearStates}
+              onChange={(state) =>
+                void data.handleUpdateConfig({
+                  linear: { statusMap: { [status]: state.name } },
+                })
+              }
+            />
+          ))}
+        </SettingsGroup>
+      )}
 
-          {teamChosen && (
-            <PanelRow className="flex-col items-stretch gap-1.5">
-              <div className="flex items-center justify-between">
-                <span className="text-[12px]">Status mapping</span>
-                <MetaText>
-                  {completeness.mapped} of {completeness.total} mapped
-                </MetaText>
-              </div>
-              {config.statuses.map((status) => (
-                <LinearStatusMapRow
-                  key={status}
-                  status={status}
-                  value={config.linear.statusMap[status]}
-                  states={linearStates}
-                  onChange={(state) =>
-                    void data.handleUpdateConfig({
-                      linear: { statusMap: { [status]: state.name } },
-                    })
-                  }
-                />
-              ))}
-            </PanelRow>
-          )}
-
-          <PanelRow className="flex-col items-stretch gap-1.5">
-            <HintText>
-              Sync only moves what changes after a task is linked — it never
-              bulk-imports the backlog on its own. Import brings down every
-              issue in this team that has no matching task yet.
-            </HintText>
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="secondary"
+      {linearStatus.connected && (
+        <SettingsGroup title="Sync">
+          <SettingsRow
+            title="Import from Linear"
+            subtitle="Sync only moves what changes after a task is linked — it never bulk-imports the backlog on its own. Import brings down every issue in this team that has no matching task yet."
+            control={
+              <PillButton
                 disabled={importing || !configured}
                 onClick={() => void importFromLinear()}
               >
                 {importing ? 'Importing…' : 'Import from Linear'}
-              </Button>
-              {importResult !== null && (
-                <MetaText>{formatSyncCounts(importResult)}</MetaText>
-              )}
-            </div>
+              </PillButton>
+            }
+          >
+            {importResult !== null && (
+              <SettingsHint>{formatSyncCounts(importResult)}</SettingsHint>
+            )}
             {importError !== null && (
               <span className="text-state-failed text-[12px]">
                 {importError}
               </span>
             )}
-          </PanelRow>
+          </SettingsRow>
 
-          <PanelRow className="flex-col items-stretch gap-1.5">
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="secondary"
+          <SettingsRow
+            title="Sync now"
+            subtitle={
+              linearStatus.lastSyncAt !== null
+                ? `Last sync ${formatRelativeTimeFromIso(linearStatus.lastSyncAt)}.`
+                : 'Not synced yet.'
+            }
+            control={
+              <PillButton
                 disabled={syncing || linearStatus.syncing || !configured}
                 onClick={() => void sync()}
               >
@@ -486,25 +464,20 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
                   )}
                 />
                 {syncing || linearStatus.syncing ? 'Syncing…' : 'Sync now'}
-              </Button>
-              {linearStatus.lastSyncAt !== null && (
-                <MetaText>
-                  Last sync {formatRelativeTimeFromIso(linearStatus.lastSyncAt)}
-                </MetaText>
-              )}
-            </div>
+              </PillButton>
+            }
+          >
             {linearStatus.lastError !== null && !lastErrorInSummary && (
               <span className="text-state-failed text-[12px]">
                 {linearStatus.lastError}
               </span>
             )}
-
             {summary !== null && (
               <div className="flex flex-col gap-1">
-                <MetaText>{formatSyncCounts(summary)}</MetaText>
+                <SettingsHint>{formatSyncCounts(summary)}</SettingsHint>
                 {summary.errors.map((message, i) => (
                   <span
-                    key={`${message}-${i}`}
+                    key={`${message}-${String(i)}`}
                     className="text-state-failed text-[12px]"
                   >
                     {message}
@@ -520,9 +493,9 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
             {syncError !== null && (
               <span className="text-state-failed text-[12px]">{syncError}</span>
             )}
-          </PanelRow>
-        </>
+          </SettingsRow>
+        </SettingsGroup>
       )}
-    </Panel>
+    </>
   );
 }

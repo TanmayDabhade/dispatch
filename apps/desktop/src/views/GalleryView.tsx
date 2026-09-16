@@ -1,4 +1,5 @@
 import { galleryStories } from './galleryStories';
+import { PageHeader } from '@/ui/ai/page-header';
 
 /**
  * Dev-only review surface for the Beautiful UI primitives (tasks 6-24): a sticky index of
@@ -9,23 +10,26 @@ import { galleryStories } from './galleryStories';
  */
 export function GalleryView() {
   return (
-    <div className="bg-background flex h-full min-h-0 flex-col gap-4 overflow-y-auto">
-      <div className="flex items-center gap-2">
-        <span className="text-muted-foreground text-[12px]">
-          {galleryStories.length}{' '}
-          {galleryStories.length === 1 ? 'primitive' : 'primitives'}
-        </span>
-      </div>
-      <div className="flex min-h-0 flex-1 gap-6">
+    <div className="flex h-full min-h-0 flex-col">
+      <PageHeader
+        crumb={['Gallery']}
+        actions={
+          <span className="text-muted-foreground font-book px-2 text-[12px] tabular-nums">
+            {galleryStories.length}{' '}
+            {galleryStories.length === 1 ? 'primitive' : 'primitives'}
+          </span>
+        }
+      />
+      <div className="flex min-h-0 flex-1 gap-6 overflow-y-auto px-6 py-4">
         <nav
           aria-label="Gallery index"
-          className="sticky top-0 flex w-48 shrink-0 flex-col gap-0.5 self-start"
+          className="sticky top-0 flex w-48 shrink-0 flex-col gap-px self-start"
         >
           {galleryStories.map((story) => (
             <a
               key={story.id}
               href={`#gallery-${story.id}`}
-              className="text-muted-foreground hover:bg-surface-hover hover:text-foreground rounded-control px-2 py-1.5 text-[12px]"
+              className="text-muted-foreground hover:bg-surface-hover rounded-control flex h-7 items-center px-2 text-[13px] font-medium transition-colors duration-100 hover:text-(--text-secondary)"
             >
               {story.title}
             </a>
@@ -36,14 +40,14 @@ export function GalleryView() {
             <section
               key={story.id}
               id={`gallery-${story.id}`}
-              className="bg-card rounded-card shadow-card flex flex-col gap-3 p-5"
+              className="bg-surface-quaternary rounded-card shadow-card flex flex-col gap-3 p-4"
             >
-              <div className="flex flex-col gap-1">
-                <h2 className="text-foreground text-[13px] font-semibold">
+              <div className="flex flex-col gap-0.5">
+                <h2 className="text-foreground text-[13px] font-medium">
                   {story.title}
                 </h2>
                 {story.note !== undefined && (
-                  <p className="text-muted-foreground text-[12px]">
+                  <p className="text-muted-foreground font-book text-[12px]">
                     {story.note}
                   </p>
                 )}

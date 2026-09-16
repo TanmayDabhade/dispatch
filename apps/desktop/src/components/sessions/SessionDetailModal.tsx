@@ -20,11 +20,16 @@ import {
   parseTags,
   statusDotClass,
 } from './sessionDisplay';
-import { Alert } from '@/ui/alert';
-import { Badge } from '@/ui/badge';
-import { Button } from '@/ui/button';
+import { Pill, PillButton } from '@/ui/ai/pill';
+import { EmptyState, SectionLabel } from '@/ui/chrome';
 import { StatTile } from '@/ui/chrome/StatTile';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/ui/dialog';
+import {
+  Dialog,
+  DialogBody,
+  DialogChrome,
+  DialogContent,
+  DialogTitle,
+} from '@/ui/dialog';
 import { Skeleton } from '@/ui/skeleton';
 
 interface GroupedFileChange {
@@ -102,38 +107,33 @@ export function SessionDetailModal({
         if (!open) onClose();
       }}
     >
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent
+        showCloseButton={false}
+        className="max-h-[85vh] sm:max-w-2xl"
+      >
         <ErrorBoundary label="this dialog">
-          <DialogHeader>
-            <DialogTitle className="text-[15px] font-medium">
-              {title}
-            </DialogTitle>
-          </DialogHeader>
+          <DialogChrome>Sessions › Session</DialogChrome>
+          <DialogBody className="min-h-0 overflow-y-auto pt-0 pb-4">
+            <DialogTitle>{title}</DialogTitle>
 
-          {isLoading && (
-            <div className="flex flex-col gap-2">
-              <Skeleton className="h-6 w-1/3" />
-              <Skeleton className="h-20 w-full" />
-              <Skeleton className="h-20 w-full" />
-            </div>
-          )}
-          {isError && (
-            <Alert
-              variant="destructive"
-              className="flex flex-col items-center gap-2 border-none bg-transparent px-0 py-6 text-center [&>svg]:size-5 [&>svg]:translate-y-0"
-            >
-              <OctagonAlert />
-              <p className="text-muted-foreground text-[13px]">
-                Couldn&rsquo;t load this session.
-              </p>
-            </Alert>
-          )}
-          {!isLoading && !isError && !data && (
-            <p className="text-muted-foreground text-[13px]">
-              This session no longer exists.
-            </p>
-          )}
-          {data && <SessionDetailContent detail={data} />}
+            {isLoading && (
+              <div className="flex flex-col gap-2">
+                <Skeleton className="h-6 w-1/3" />
+                <Skeleton className="h-20 w-full" />
+                <Skeleton className="h-20 w-full" />
+              </div>
+            )}
+            {isError && (
+              <EmptyState
+                icon={OctagonAlert}
+                heading="Couldn’t load this session"
+              />
+            )}
+            {!isLoading && !isError && !data && (
+              <EmptyState heading="This session no longer exists" />
+            )}
+            {data && <SessionDetailContent detail={data} />}
+          </DialogBody>
         </ErrorBoundary>
       </DialogContent>
     </Dialog>
@@ -159,27 +159,28 @@ function SessionDetailContent({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-2">
-        <span className="text-muted-foreground flex items-center gap-1.5 text-[11px]">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-muted-foreground font-book flex items-center gap-1.5 text-[12px]">
           <span
             className={`size-1.5 rounded-full ${statusDotClass(session.status)}`}
             aria-hidden="true"
           />
-          {session.status}
+          {session.status === 'active' ? 'Active' : 'Ended'}
         </span>
-        <Badge variant="secondary" className="gap-1">
+        <Pill>
           <AgentIcon agentId={session.agent} className="size-3" />
           {agent.label}
-        </Badge>
-        <span className="text-muted-foreground font-mono text-[11px]">
+        </Pill>
+        <span className="text-muted-foreground font-book text-[12px]">
           {modelDisplayName(session.model) ?? 'unknown model'}
         </span>
+        <div className="ml-auto">
+          <ExportControl
+            label="Export transcript"
+            onExport={() => exportTranscript(session.id)}
+          />
+        </div>
       </div>
-
-      <ExportControl
-        label="Export transcript"
-        onExport={() => exportTranscript(session.id)}
-      />
 
       <div className="grid grid-cols-4 gap-3">
         <StatTile value={durationDisplay} label="Duration" />
@@ -203,60 +204,50 @@ function SessionDetailContent({
       {tags.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {tags.map((tag) => (
-            <Badge key={tag} variant="outline">
-              {tag}
-            </Badge>
+            <Pill key={tag}>{tag}</Pill>
           ))}
         </div>
       )}
 
-      <p className="text-muted-foreground text-[13px]">
+      <p className="text-muted-foreground font-book text-[13px]">
         {session.summary ?? 'No summary yet'}
       </p>
 
       <div className="flex flex-col gap-2">
-        <h3 className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
-          Files changed ({groupedFiles.length})
-        </h3>
+        <SectionLabel count={groupedFiles.length}>Files changed</SectionLabel>
         {groupedFiles.length === 0 ? (
-          <p className="text-muted-foreground text-[13px]">
+          <p className="text-muted-foreground font-book text-[13px]">
             No file changes recorded.
           </p>
         ) : (
-          <ul className="flex flex-col gap-2">
+          <ul className="rounded-card bg-surface-quaternary shadow-card [&>*+*]:shadow-hairline-top flex flex-col overflow-hidden">
             {groupedFiles.map((file) => (
               <li
                 key={file.file_path}
-                className="border-border flex items-center justify-between gap-3 rounded-md border px-3 py-2"
+                className="flex min-h-9 items-center justify-between gap-3 px-3 py-1.5"
               >
                 <div className="flex min-w-0 flex-col gap-0.5">
-                  <span className="text-foreground truncate font-mono text-[13px]">
+                  <span className="text-foreground truncate font-mono text-[12px]">
                     {file.file_path}
                   </span>
-                  <span className="text-muted-foreground text-[11px]">
+                  <span className="text-muted-foreground font-book text-[12px] tabular-nums">
                     {file.edit_count > 1
-                      ? `${file.edit_count} edits`
+                      ? `${String(file.edit_count)} edits`
                       : '1 edit'}{' '}
                     · +{file.lines_added} / -{file.lines_removed}
                   </span>
                 </div>
                 <div className="flex flex-shrink-0 gap-2">
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => setDiffPath(file.file_path)}
-                  >
+                  <PillButton onClick={() => setDiffPath(file.file_path)}>
                     <GitCompare className="size-3.5" />
                     View diff
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
+                  </PillButton>
+                  <PillButton
                     onClick={() => handleOpenInEditor(file.file_path)}
                   >
                     <SquareArrowOutUpRight className="size-3.5" />
                     Open
-                  </Button>
+                  </PillButton>
                 </div>
               </li>
             ))}

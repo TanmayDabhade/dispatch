@@ -141,3 +141,26 @@ test('emptying the run command reverts to the saved value instead of saving an e
   expect(saved).toEqual([]);
   expect((input as HTMLInputElement).value).toBe('bun run dev');
 });
+
+// Auto-commit is a row whose title labels an indigo `Switch`, not a checkbox.
+test('auto-commit renders as a switch named by its row title', () => {
+  render(<GeneralSection config={config} onSave={() => Promise.resolve()} />);
+  const toggle = screen.getByRole('switch', {
+    name: 'Let an agent commit its own work as it goes',
+  });
+  expect(toggle.getAttribute('aria-checked')).toBe('false');
+  expect(screen.queryByRole('checkbox')).toBeNull();
+});
+
+// Every group is a 15px sentence-case heading over its card; no uppercase labels.
+test('the section headings are sentence case', () => {
+  render(<GeneralSection config={config} onSave={() => Promise.resolve()} />);
+  const headings = screen.getAllByRole('heading', { level: 2 });
+  expect(headings.map((h) => h.textContent)).toEqual([
+    'Before anything lands',
+    'How to run this project',
+  ]);
+  for (const heading of headings) {
+    expect(heading.className).not.toContain('uppercase');
+  }
+});

@@ -92,3 +92,14 @@ test('changing a strategy select patches only that row', () => {
     { round: 2, strategy: 'fresh', modelTier: 'high' },
   ]);
 });
+
+// The ladder is its own settings group; the add control is the secondary pill.
+test('the editor is a sentence-case group with a pill Add step', () => {
+  render(<EscalationEditor steps={steps} onChange={() => {}} />);
+  expect(
+    screen.getByRole('heading', { name: 'Escalation ladder' })
+  ).toBeDefined();
+  expect(
+    screen.getByRole('button', { name: 'Add step' }).getAttribute('data-slot')
+  ).toBe('pill-button');
+});

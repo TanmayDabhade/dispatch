@@ -1,7 +1,9 @@
 import type { EscalationStep } from '@dispatch/core/browser';
 
+import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
+import { PillButton } from '@/ui/ai/pill';
 import { Button } from '@/ui/button';
-import { HintText, Panel, PanelHeader, PanelRow } from '@/ui/chrome';
+import { PanelRow } from '@/ui/chrome';
 import {
   Select,
   SelectContent,
@@ -54,82 +56,85 @@ export function EscalationEditor({ steps, onChange }: EscalationEditorProps) {
   }
 
   return (
-    <Panel>
-      <PanelHeader>Escalation ladder</PanelHeader>
+    <SettingsGroup
+      title="Escalation ladder"
+      hint="What the fix loop tries on each round after a failed verify or review."
+    >
       {steps.length === 0 && (
         <PanelRow>
-          <HintText>
+          <SettingsHint>
             No escalation steps — every round resumes at the standard tier.
-          </HintText>
+          </SettingsHint>
         </PanelRow>
       )}
       {steps.map((step, index) => (
-        <PanelRow key={step.round}>
-          <span className="min-w-0 flex-1 text-[13px] font-medium">
-            Round {step.round}
-          </span>
-          <Select
-            value={step.strategy}
-            onValueChange={(value) =>
-              updateStep(index, {
-                strategy: value as EscalationStep['strategy'],
-              })
-            }
-          >
-            <SelectTrigger
-              size="sm"
-              aria-label={`Round ${step.round} strategy`}
-              className="w-[130px] shrink-0 text-[12px]"
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {STRATEGIES.map(([value, label]) => (
-                <SelectItem key={value} value={value}>
-                  {label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select
-            value={step.modelTier}
-            onValueChange={(value) =>
-              updateStep(index, {
-                modelTier: value as EscalationStep['modelTier'],
-              })
-            }
-          >
-            <SelectTrigger
-              size="sm"
-              aria-label={`Round ${step.round} model tier`}
-              className="w-[130px] shrink-0 text-[12px]"
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {MODEL_TIERS.map(([value, label]) => (
-                <SelectItem key={value} value={value}>
-                  {label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            aria-label={`Remove round ${step.round}`}
-            onClick={() => removeStep(index)}
-          >
-            Remove
-          </Button>
-        </PanelRow>
+        <SettingsRow
+          key={step.round}
+          title={`Round ${String(step.round)}`}
+          control={
+            <>
+              <Select
+                value={step.strategy}
+                onValueChange={(value) =>
+                  updateStep(index, {
+                    strategy: value as EscalationStep['strategy'],
+                  })
+                }
+              >
+                <SelectTrigger
+                  aria-label={`Round ${String(step.round)} strategy`}
+                  className="w-[120px]"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {STRATEGIES.map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={step.modelTier}
+                onValueChange={(value) =>
+                  updateStep(index, {
+                    modelTier: value as EscalationStep['modelTier'],
+                  })
+                }
+              >
+                <SelectTrigger
+                  aria-label={`Round ${String(step.round)} model tier`}
+                  className="w-[110px]"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {MODEL_TIERS.map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-label={`Remove round ${String(step.round)}`}
+                onClick={() => removeStep(index)}
+              >
+                Remove
+              </Button>
+            </>
+          }
+        />
       ))}
       <PanelRow>
-        <Button type="button" variant="outline" size="sm" onClick={addStep}>
+        <PillButton type="button" onClick={addStep}>
           Add step
-        </Button>
+        </PillButton>
       </PanelRow>
-    </Panel>
+    </SettingsGroup>
   );
 }
