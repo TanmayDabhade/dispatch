@@ -163,6 +163,10 @@
   --color-border-panel: var(--border-panel);
   --color-border-chip: var(--border-chip);
   --color-border-popover: var(--border-popover);
+  --color-border-strong: var(--border-strong);
+  /* Linear's secondary text (#e2e5e6 dark) as a named colour, so a label can say
+     `text-text-secondary` — `text-secondary` is already shadcn's control surface. */
+  --color-text-secondary: var(--text-secondary);
   --color-accent-tint: var(--accent-tint);
   --color-focus-ring: var(--focus-ring);
   --color-tooltip-bg: var(--tooltip-bg);
