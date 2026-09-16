@@ -1,3 +1,10 @@
+import { cn } from '../lib/utils';
+import {
+  VIEW_TAB_ACTIVE_CLASS,
+  VIEW_TAB_CLASS,
+  VIEW_TAB_INACTIVE_CLASS,
+} from './page-header';
+
 export type FilterChipOption = { id: string; label: string };
 
 export type FilterChipsProps = {
@@ -24,11 +31,11 @@ export function filterRows<T>(
 }
 
 /** Pill row of status filters: each option toggles independently (multi-select), an
- * optional count badge shows how many rows currently carry that status. Inactive chips
- * sit on `bg-surface-inset`; active ones wash `bg-accent-tint` with `text-primary` and
- * a matching badge. Matches the showcase's "Filter Table" chip row. Purely
- * presentational — callers own the `active` array and status vocabulary; pair with
- * `filterRows` to apply the selection. */
+ * optional count shows how many rows currently carry that status. The pills are the
+ * `ViewTabs` recipe — 28px, control surface when off, lifted to `bg-surface-active`
+ * when on; the count is plain 11px text, never a badge. Purely presentational —
+ * callers own the `active` array and status vocabulary; pair with `filterRows` to
+ * apply the selection. */
 export function FilterChips({
   options,
   active,
@@ -52,19 +59,14 @@ export function FilterChips({
             type="button"
             aria-pressed={isActive}
             onClick={() => onToggle(option.id)}
-            className={`ease-out-expo flex h-6.5 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-[12px] font-medium transition-[background-color,box-shadow,color] duration-200 ${
-              isActive
-                ? 'bg-accent-tint text-primary shadow-btn'
-                : 'bg-surface-inset text-muted-foreground hover:bg-surface-hover'
-            }`}
+            className={cn(
+              VIEW_TAB_CLASS,
+              isActive ? VIEW_TAB_ACTIVE_CLASS : VIEW_TAB_INACTIVE_CLASS
+            )}
           >
             {option.label}
             {count !== undefined && (
-              <span
-                className={`rounded-[4px] px-1 text-[10.5px] tabular-nums ${
-                  isActive ? 'bg-card text-primary' : 'text-muted-foreground'
-                }`}
-              >
+              <span className="font-book text-muted-foreground text-[11px] tabular-nums">
                 {count}
               </span>
             )}

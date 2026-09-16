@@ -15,7 +15,10 @@ export function StatPair({
   if (added <= 0 && removed <= 0) return null;
   return (
     <span
-      className={cn('dense-meta flex shrink-0 items-center gap-1.5', className)}
+      className={cn(
+        'flex shrink-0 items-center gap-1.5 text-[12px] font-book tabular-nums',
+        className
+      )}
     >
       {added > 0 && <span className="text-green">+{added}</span>}
       {removed > 0 && <span className="text-red">−{removed}</span>}

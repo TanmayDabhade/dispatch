@@ -13,7 +13,7 @@ import {
   Wrench,
 } from 'lucide-react';
 
-import { type FeedState, feedTier, isInFlightState } from '../lib/feedState';
+import { type FeedState, feedTier } from '../lib/feedState';
 import { cn } from '../lib/utils';
 
 // One lucide glyph per state — the glyph names the specific move, literal
@@ -46,35 +46,27 @@ const TIER_COLOR = {
 
 interface StateMarkProps {
   state: FeedState;
-  /** `sm` for inline text and board cards, `md` for row leads and page headers. */
+  /** Accepted for the call sites that still pass it; every mark is 14px now. */
   size?: 'sm' | 'md';
-  /** Force the pulse on or off. Defaults to pulsing whenever the state is in flight. */
+  /** Accepted for the call sites that still pass it; marks no longer pulse — the
+   * in-progress hue says "in flight" on its own. */
   pulse?: boolean;
   className?: string;
 }
 
 /**
- * The small mark that tells a row's state apart: glyph = which move, hue =
- * whose move. Pulse means "in flight" and nothing else — it is the only motion
- * these surfaces have, and `motion-safe:` gates it.
+ * The 14px mark that tells a row's state apart: glyph = which move, hue =
+ * whose move. Still, like Linear's status icons — no motion.
  */
-export function StateMark({
-  state,
-  size = 'sm',
-  pulse,
-  className,
-}: StateMarkProps) {
-  const animate = pulse ?? isInFlightState(state);
+export function StateMark({ state, className }: StateMarkProps) {
   const Icon = MARK_ICON[state];
   return (
     <Icon
       aria-hidden
-      strokeWidth={2.25}
+      strokeWidth={1.75}
       className={cn(
-        'shrink-0',
-        size === 'sm' ? 'size-3.5' : 'size-4',
+        'size-3.5 shrink-0',
         TIER_COLOR[feedTier(state)],
-        animate && 'motion-safe:animate-pulse',
         className
       )}
     />

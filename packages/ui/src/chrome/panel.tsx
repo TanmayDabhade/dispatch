@@ -4,8 +4,9 @@ import { cn } from '../lib/utils';
 import { SectionLabel } from './SectionLabel';
 
 /**
- * The app's single container shape — `shadow-card` + rounded, rows contained
- * rather than flush. Views must not spell one out; the chrome guard enforces that.
+ * The app's single container shape — the settings grouped card: secondary surface,
+ * a half-pixel border, no drop shadow, rows contained rather than flush. Views must
+ * not spell one out; the chrome guard enforces that.
  */
 export function Panel({
   children,
@@ -17,7 +18,7 @@ export function Panel({
   return (
     <div
       className={cn(
-        'bg-card shadow-card rounded-card overflow-hidden',
+        'overflow-hidden rounded-card border-[0.5px] border-border bg-surface-secondary',
         className
       )}
     >
@@ -48,7 +49,7 @@ export function PanelHeader({
   return (
     <div
       className={cn(
-        'shadow-hairline-bottom flex min-h-9 flex-wrap items-center gap-2 px-3 py-2',
+        'shadow-hairline-bottom flex h-9 items-center gap-2 px-3',
         className
       )}
       {...rest}
@@ -86,11 +87,11 @@ export function PanelRow({
   onClick?: () => void;
 } & Omit<ComponentPropsWithRef<'div'>, 'children' | 'onClick'>) {
   const classes = cn(
-    'flex w-full flex-wrap items-center gap-2 px-3 py-2 text-left',
+    'flex min-h-9 w-full flex-wrap items-center gap-2 px-3 py-1.5 text-left',
     'shadow-hairline-bottom last:shadow-none',
     urgent && 'border-l-2 border-l-foreground',
     onClick &&
-      'cursor-pointer hover:bg-muted/60 transition-colors duration-150',
+      'cursor-pointer hover:bg-surface-hover transition-colors duration-100',
     className
   );
 

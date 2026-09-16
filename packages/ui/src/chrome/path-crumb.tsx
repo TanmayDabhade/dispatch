@@ -1,6 +1,7 @@
 import { cn } from '../lib/utils';
 
-/** A slash-separated path with the leading directories dimmed to context. */
+/** A slash-separated path with the leading directories dimmed to context. Mono, as
+ * every file path is. */
 export function PathCrumb({
   path,
   className,
@@ -12,7 +13,7 @@ export function PathCrumb({
   return (
     <span
       className={cn(
-        'dense-meta flex min-w-0 flex-wrap items-center',
+        'flex min-w-0 flex-wrap items-center font-mono text-[12px]',
         className
       )}
     >

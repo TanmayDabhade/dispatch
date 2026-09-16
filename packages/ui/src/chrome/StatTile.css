@@ -8,8 +8,9 @@
 }
 
 .stat-tile-value {
-  font-family: var(--font-mono);
   font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
   color: var(--text-primary);
 }
 

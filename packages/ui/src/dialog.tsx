@@ -1,9 +1,10 @@
 'use client';
 
 import { Dialog as DialogPrimitive } from '@base-ui/react/dialog';
-import { XIcon } from 'lucide-react';
+import { Maximize2Icon, XIcon } from 'lucide-react';
 import * as React from 'react';
 
+import { IconButton } from './ai/icon-button';
 import { Button } from './button';
 import { cn } from './lib/utils';
 
@@ -34,7 +35,7 @@ function DialogOverlay({
     <DialogPrimitive.Backdrop
       data-slot="dialog-overlay"
       className={cn(
-        'fixed inset-0 z-50 bg-black/50 transition-opacity duration-200 data-ending-style:opacity-0 data-starting-style:opacity-0',
+        'fixed inset-0 z-50 bg-[var(--overlay)] transition-opacity duration-100 data-ending-style:opacity-0 data-starting-style:opacity-0',
         className
       )}
       {...props}
@@ -56,7 +57,7 @@ function DialogContent({
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(
-          'fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-card bg-background p-6 shadow-overlay transition-[opacity,scale] duration-200 outline-none data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0 sm:max-w-lg',
+          'fixed top-1/2 left-1/2 z-50 flex w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col gap-0 rounded-popover bg-popover p-0 shadow-overlay transition-[opacity,scale] duration-100 outline-none data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0 sm:max-w-lg',
           className
         )}
         {...props}
@@ -65,10 +66,10 @@ function DialogContent({
         {showCloseButton && (
           <DialogPrimitive.Close
             data-slot="dialog-close"
-            className="ring-offset-background focus:ring-ring absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
+            className="absolute top-2 right-2"
+            render={<IconButton label="Close" />}
           >
             <XIcon />
-            <span className="sr-only">Close</span>
           </DialogPrimitive.Close>
         )}
       </DialogPrimitive.Popup>
@@ -76,39 +77,99 @@ function DialogContent({
   );
 }
 
+// The 40px chrome row at the top of a dialog: a 12px crumb (`[team] › New issue`) on the
+// left, expand and close icon buttons on the right. Pass `showCloseButton={false}` to
+// `DialogContent` when using it, so the close lives here and nowhere else.
+function DialogChrome({
+  className,
+  children,
+  onExpand,
+  showCloseButton = true,
+  ...props
+}: React.ComponentProps<'div'> & {
+  onExpand?: () => void;
+  showCloseButton?: boolean;
+}) {
+  return (
+    <div
+      data-slot="dialog-chrome"
+      className={cn(
+        'flex h-10 shrink-0 items-center gap-1.5 pr-2 pl-4 text-[12px] font-medium text-muted-foreground',
+        className
+      )}
+      {...props}
+    >
+      <div className="flex min-w-0 flex-1 items-center gap-1.5 truncate">
+        {children}
+      </div>
+      {onExpand !== undefined && (
+        <IconButton label="Expand" onClick={onExpand}>
+          <Maximize2Icon />
+        </IconButton>
+      )}
+      {showCloseButton && (
+        <DialogPrimitive.Close
+          data-slot="dialog-close"
+          render={<IconButton label="Close" />}
+        >
+          <XIcon />
+        </DialogPrimitive.Close>
+      )}
+    </div>
+  );
+}
+
 function DialogHeader({ className, ...props }: React.ComponentProps<'div'>) {
   return (
     <div
       data-slot="dialog-header"
-      className={cn('flex flex-col gap-2 text-center sm:text-left', className)}
+      className={cn('flex flex-col gap-1 px-4 pt-4 pb-2 text-left', className)}
       {...props}
     />
   );
 }
 
+// The dialog's content between header and footer; the popup itself has no padding.
+function DialogBody({ className, ...props }: React.ComponentProps<'div'>) {
+  return (
+    <div
+      data-slot="dialog-body"
+      className={cn('flex min-h-0 flex-col gap-4 px-4 py-3', className)}
+      {...props}
+    />
+  );
+}
+
+// Footer: `leading` sits on the left (an attach icon, a `Create more` switch), the
+// action buttons on the right.
 function DialogFooter({
   className,
   showCloseButton = false,
+  leading,
   children,
   ...props
 }: React.ComponentProps<'div'> & {
   showCloseButton?: boolean;
+  leading?: React.ReactNode;
 }) {
   return (
     <div
       data-slot="dialog-footer"
       className={cn(
-        'flex flex-col-reverse gap-2 sm:flex-row sm:justify-end',
+        'flex items-center justify-between gap-2 px-4 py-3',
         className
       )}
       {...props}
     >
-      {children}
-      {showCloseButton && (
-        <DialogPrimitive.Close render={<Button variant="outline" />}>
-          Close
-        </DialogPrimitive.Close>
-      )}
+      <div className="flex min-w-0 items-center gap-2">{leading}</div>
+      <div className="flex shrink-0 items-center gap-2">
+        {children}
+        {showCloseButton && (
+          <DialogPrimitive.Close render={<Button variant="outline" />}>
+            Close
+          </DialogPrimitive.Close>
+        )}
+      </div>
     </div>
   );
 }
@@ -117,7 +178,7 @@ function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
   return (
     <DialogPrimitive.Title
       data-slot="dialog-title"
-      className={cn('text-lg leading-none font-semibold', className)}
+      className={cn('text-[15px] leading-5 font-semibold', className)}
       {...props}
     />
   );
@@ -130,7 +191,7 @@ function DialogDescription({
   return (
     <DialogPrimitive.Description
       data-slot="dialog-description"
-      className={cn('text-sm text-muted-foreground', className)}
+      className={cn('text-[13px] font-book text-muted-foreground', className)}
       {...props}
     />
   );
@@ -138,6 +199,8 @@ function DialogDescription({
 
 export {
   Dialog,
+  DialogBody,
+  DialogChrome,
   DialogClose,
   DialogContent,
   DialogDescription,

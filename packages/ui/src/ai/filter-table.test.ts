@@ -1,6 +1,8 @@
+import { render, screen } from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
+import { createElement } from 'react';
 
-import { filterRows } from './filter-table';
+import { FilterChips, filterRows } from './filter-table';
 
 type Task = { id: string; status: string };
 
@@ -45,5 +47,33 @@ describe('filterRows', () => {
       't-todo-2',
       't-done-1',
     ]);
+  });
+});
+
+// The chips are the `ViewTabs` pills: 28px, control surface off, lifted when on, the
+// count as plain 11px text rather than a badge.
+describe('FilterChips', () => {
+  test('active chips lift and counts are plain text', () => {
+    render(
+      createElement(FilterChips, {
+        options: [
+          { id: 'todo', label: 'To do' },
+          { id: 'done', label: 'Done' },
+        ],
+        active: ['todo'],
+        onToggle: () => {},
+        counts: { todo: 2, done: 1 },
+      })
+    );
+    const todo = screen.getByRole('button', { name: /To do/ });
+    const done = screen.getByRole('button', { name: /Done/ });
+    expect(todo.getAttribute('aria-pressed')).toBe('true');
+    expect(todo.className.split(/\s+/)).toContain('h-7');
+    expect(todo.className).toContain('bg-surface-active');
+    expect(done.className).toContain('bg-surface-control');
+    const count = screen.getByText('2');
+    expect(count.className).toContain('text-[11px]');
+    expect(count.className).not.toContain('font-mono');
+    expect(count.className).not.toContain('bg-');
   });
 });

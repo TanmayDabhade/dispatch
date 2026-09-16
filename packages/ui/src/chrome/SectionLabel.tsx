@@ -4,7 +4,7 @@ import { cn } from '../lib/utils';
 
 interface SectionLabelProps {
   children: ReactNode;
-  /** Shown in mono beside the label. Omit rather than passing 0 — see below. */
+  /** Shown beside the label. Omit rather than passing 0 — see below. */
   count?: number;
   /** Extends a hairline from the label to the far edge, fading out as it goes. */
   rule?: boolean;
@@ -14,8 +14,8 @@ interface SectionLabelProps {
 }
 
 /**
- * The uppercase micro-heading that titles every band in the app — "Merge queue", "Files
- * touched", "Needs triage".
+ * The sentence-case 12px heading that titles every band in the app — "Merge queue",
+ * "Files touched", "Needs triage".
  *
  * The optional rule is the part worth having in one place: it fades to transparent instead of
  * stopping at a hard edge, so a heading can span a full-width pane without drawing a line that
@@ -31,8 +31,14 @@ export function SectionLabel({
 }: SectionLabelProps) {
   return (
     <div className={cn('flex items-center gap-2', className)}>
-      <span className="dense-label">{children}</span>
-      {count !== undefined && <span className="dense-meta">{count}</span>}
+      <span className="text-muted-foreground text-[12px] font-medium">
+        {children}
+      </span>
+      {count !== undefined && (
+        <span className="font-book text-muted-foreground text-[12px] tabular-nums">
+          {count}
+        </span>
+      )}
       {rule && (
         <span
           aria-hidden

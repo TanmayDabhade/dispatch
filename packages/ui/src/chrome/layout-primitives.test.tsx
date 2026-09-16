@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
 import { EmptyState } from './empty-state';
@@ -35,6 +35,37 @@ test('an empty state shows its message and action', () => {
   );
   expect(screen.getByText('Nothing to land.')).toBeDefined();
   expect(screen.getByRole('button', { name: 'Refresh' })).toBeDefined();
+});
+
+// The Linear empty state: heading, description, an indigo primary pill with an
+// inline keycap hint, and a control-surface secondary pill.
+test('an empty state renders heading, description and both pills', () => {
+  let primary = 0;
+  let secondary = 0;
+  const { container } = render(
+    <EmptyState
+      heading="No tasks yet"
+      description="Plan work or dispatch an agent to get started."
+      primary={{
+        label: 'Plan work',
+        hint: 'N then P',
+        onClick: () => primary++,
+      }}
+      secondary={{ label: 'Import', onClick: () => secondary++ }}
+    />
+  );
+  expect(screen.getByText('No tasks yet').className).toContain('font-medium');
+  expect(
+    screen.getByText('Plan work or dispatch an agent to get started.').className
+  ).toContain('max-w-[340px]');
+  const plan = screen.getByRole('button', { name: /Plan work/ });
+  expect(plan.className).toContain('bg-primary');
+  expect(plan.className).toContain('rounded-pill');
+  expect(container.querySelector('kbd')?.textContent).toBe('N then P');
+  fireEvent.click(plan);
+  fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+  expect(primary).toBe(1);
+  expect(secondary).toBe(1);
 });
 
 // SectionLabel is pre-existing; this only pins the behaviour Plan 2 relies on

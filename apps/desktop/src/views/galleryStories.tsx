@@ -19,6 +19,7 @@ import { diffTableStories } from './stories/diff-table.stories';
 import { filterTableStories } from './stories/filter-table.stories';
 import { fineTuneCardStories } from './stories/fine-tune-card.stories';
 import { insightCardsStories } from './stories/insight-cards.stories';
+import { linearPrimitiveStories } from './stories/linear-primitives.stories';
 import { recommendationCardStories } from './stories/recommendation-card.stories';
 import { recordsTableStories } from './stories/records-table.stories';
 import { searchStories } from './stories/search.stories';
@@ -432,18 +433,38 @@ export const galleryStories: GalleryStory[] = [
   {
     id: 'button-variants',
     title: 'Button variants',
-    note: 'Existing shadcn Button — placeholder story proving the gallery scaffold before the Beautiful UI primitives land.',
+    note: 'Every variant is 28px and 12px/500. Default is the indigo rectangle with a 6px radius; secondary and outline are the control-surface pill; ghost is a header action with no fill; destructive is red text on the pill. Sizes: xs 24px, lg 32px, icon 28px round.',
     render: () => (
-      <div className="flex flex-wrap items-center gap-3">
-        <Button variant="default">Default</Button>
-        <Button variant="secondary">Secondary</Button>
-        <Button variant="outline">Outline</Button>
-        <Button variant="ghost">Ghost</Button>
-        <Button variant="destructive">Destructive</Button>
-        <Button variant="link">Link</Button>
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <Button variant="default">Create task</Button>
+          <Button variant="secondary">Secondary</Button>
+          <Button variant="outline">Outline</Button>
+          <Button variant="ghost">Ghost</Button>
+          <Button variant="destructive">Delete</Button>
+          <Button variant="link">Link</Button>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button size="xs" variant="secondary">
+            Extra small
+          </Button>
+          <Button size="sm" variant="secondary">
+            Small
+          </Button>
+          <Button size="lg" variant="secondary">
+            Large
+          </Button>
+          <Button size="icon" variant="ghost" aria-label="Copy">
+            <CopyIcon />
+          </Button>
+          <Button size="icon-xs" variant="ghost" aria-label="Close">
+            <XIcon />
+          </Button>
+        </div>
       </div>
     ),
   },
+  ...linearPrimitiveStories,
   {
     id: 'loading-state-grid',
     title: 'Loading state — grid',

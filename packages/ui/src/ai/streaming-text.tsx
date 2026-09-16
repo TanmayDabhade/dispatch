@@ -32,7 +32,7 @@ function SourceChip({
 }) {
   const content = (
     <>
-      <sup className="font-mono text-[9px] leading-none">{index + 1}</sup>
+      <sup className="font-book text-[9px] leading-none">{index + 1}</sup>
       {source.label}
     </>
   );
