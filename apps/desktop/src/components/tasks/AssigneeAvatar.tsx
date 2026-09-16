@@ -1,61 +1,77 @@
 import type { Assignee } from '@dispatch/core/browser';
-import { Bot, User } from 'lucide-react';
 
+import { colorForProject } from '../../lib/projectColor';
+import { assigneeLabel, assigneeRef } from '../../lib/taskDisplay';
 import { cn } from '@/lib/utils';
-import { Avatar, AvatarFallback } from '@/ui/avatar';
-
-const ASSIGNEE_LABEL: Record<Assignee, string> = {
-  agent: 'Assigned to an agent',
-  human: 'Assigned to a person',
-  none: 'Unassigned',
-};
+import { InitialsAvatar } from '@/ui/ai/initials-avatar';
 
 export interface AssigneeAvatarProps {
   assignee: Assignee;
+  /** The person's display name, for initials (`Wyat Soule` → `WS`). Falls back to the
+   * ref's handle, then to the assignee kind. */
+  name?: string;
+  /** 18px on rows and cards (default); 16px on activity timeline lines. */
+  size?: 16 | 18;
   className?: string;
 }
 
-/**
- * Small avatar standing in for Linear's assignee circle: a bot glyph for an agent, a person
- * glyph for a human, and an empty dashed ring for unassigned — the redesign brief's exact
- * three-state treatment. Uses lucide (already a dependency) rather than a custom SVG, unlike
- * `StatusIcon`/`PriorityIcon`, since the brief calls out "agent = a small bot/cpu lucide
- * glyph in a circle, human = person" directly.
- */
-export function AssigneeAvatar({ assignee, className }: AssigneeAvatarProps) {
-  const label = ASSIGNEE_LABEL[assignee];
+const SIZE_CLASS: Record<16 | 18, string> = {
+  16: 'size-4 text-[8px]',
+  18: 'size-[18px] text-[9px]',
+};
 
-  if (assignee === 'none') {
+/**
+ * Linear's 18px assignee circle: an agent is `AG` on the in-progress yellow (the one
+ * Dispatch-specific thing about assignees — at a glance the board says which cards the
+ * fleet owns), a person is their initials on a colour hashed from their name, and unassigned
+ * is an empty dashed ring.
+ */
+export function AssigneeAvatar({
+  assignee,
+  name,
+  size = 18,
+  className,
+}: AssigneeAvatarProps) {
+  const kind = assigneeRef(assignee)?.kind ?? 'none';
+  const sizeClass = SIZE_CLASS[size];
+
+  if (kind === 'none') {
+    const label = assigneeLabel(assignee);
     return (
-      <Avatar
-        title={label}
-        aria-label={label}
+      <span
         role="img"
+        aria-label={label}
+        title={label}
+        data-slot="assignee-avatar"
         className={cn(
-          'size-4 border border-dashed border-muted-foreground/40 bg-transparent',
+          'inline-block shrink-0 rounded-pill border-[0.5px] border-dashed border-muted-foreground/50',
+          sizeClass,
           className
         )}
       />
     );
   }
 
-  // An agent-owned card is the one Dispatch-specific thing about this app's assignees, so the
-  // agent avatar carries the indigo working tint while a human stays neutral — at a glance the
-  // board says which cards the fleet owns.
-  const Icon = assignee === 'agent' ? Bot : User;
+  if (kind === 'agent') {
+    return (
+      <InitialsAvatar
+        name="Agent"
+        title={name ?? assigneeLabel(assignee)}
+        color="var(--status-progress)"
+        data-kind="agent"
+        className={cn(sizeClass, className)}
+      />
+    );
+  }
+
+  const displayName = name ?? assigneeLabel(assignee);
   return (
-    <Avatar title={label} className={cn('size-4', className)}>
-      <AvatarFallback
-        aria-label={label}
-        className={cn(
-          'rounded-full',
-          assignee === 'agent'
-            ? 'bg-state-working-surface text-state-working'
-            : 'bg-muted text-muted-foreground'
-        )}
-      >
-        <Icon className="size-2.5" strokeWidth={2} aria-hidden="true" />
-      </AvatarFallback>
-    </Avatar>
+    <InitialsAvatar
+      name={displayName}
+      title={displayName}
+      color={colorForProject(displayName)}
+      data-kind="human"
+      className={cn(sizeClass, className)}
+    />
   );
 }

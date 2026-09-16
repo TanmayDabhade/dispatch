@@ -1,4 +1,10 @@
-import type { Priority } from '@dispatch/core/browser';
+import type {
+  ActorRef,
+  Assignee,
+  Priority,
+  TaskKind,
+} from '@dispatch/core/browser';
+import { parseActorRef } from '@dispatch/core/browser';
 
 // Mirrors the `tone` prop `Pill` accepts (see components/ui/Pill.tsx) —
 // duplicated here rather than imported since Pill doesn't export its prop
@@ -51,6 +57,51 @@ export function priorityTone(priority: Priority): Tone | null {
     default:
       return null;
   }
+}
+
+const PRIORITY_LABEL: Record<Priority, string> = {
+  none: 'No priority',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  urgent: 'Urgent',
+};
+
+/** The menu/rail wording for a priority — `No priority` rather than `None`, so an unset
+ * value still names what it is unset *of*. */
+export function priorityLabel(priority: Priority): string {
+  return PRIORITY_LABEL[priority];
+}
+
+/** Parses an assignee for display without throwing: a malformed ref reads as a person
+ * with the raw value for a handle, and a missing one (older task files) as unassigned. */
+export function assigneeRef(
+  assignee: Assignee | null | undefined
+): ActorRef | null {
+  if (assignee === null || assignee === undefined || assignee === '') {
+    return null;
+  }
+  try {
+    return parseActorRef(assignee);
+  } catch {
+    return { kind: 'human', handle: assignee, operator: null };
+  }
+}
+
+/** The menu/rail wording for an assignee wire value: `Unassigned` for `none`, the bare
+ * kinds as `Agent`/`Human`, and a named ref by its handle (`human:wyat` → `wyat`,
+ * `agent:wyat/claude` → `claude`). */
+export function assigneeLabel(assignee: Assignee | null | undefined): string {
+  const ref = assigneeRef(assignee);
+  if (ref === null) return 'Unassigned';
+  if (ref.handle !== null) return ref.handle;
+  return ref.kind === 'agent' ? 'Agent' : 'Human';
+}
+
+const KIND_LABEL: Record<TaskKind, string> = { task: 'Task', epic: 'Epic' };
+
+export function kindLabel(kind: TaskKind): string {
+  return KIND_LABEL[kind];
 }
 
 // A task body is `## Description\n\n...\n\n## Acceptance Criteria\n\n## Activity\n` (see

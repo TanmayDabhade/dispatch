@@ -22,8 +22,6 @@ interface RunStateVisual {
   /** Tailwind text-color class, driving `currentColor` on the glyph. */
   colorClass: string;
   label: string;
-  /** `running` is the one state that moves — the loader spins. */
-  spin?: boolean;
 }
 
 // The same lucide glyph-per-move language as the feed's StateMark (packages/ui
@@ -45,7 +43,6 @@ const RUN_STATE_VISUALS: Record<RunStateIconState, RunStateVisual> = {
     icon: LoaderCircle,
     colorClass: 'text-state-working',
     label: 'Working',
-    spin: true,
   },
   'awaiting-approval': {
     icon: ShieldCheck,
@@ -119,13 +116,11 @@ export interface RunStateIconProps {
 
 /**
  * The agent-state counterpart to `StatusIcon`: what a run (or a dependency block) currently
- * wants from a human, as a 16px glyph in the run-state palette. Status answers "how far along
+ * wants from a human, as a 14px glyph in the run-state palette. Status answers "how far along
  * is this task", this answers "is something happening to it right now" — the two sit next to
  * each other on a card and deliberately don't share glyph sets, so neither is mistaken for
- * the other.
- *
- * `running` spins its loader; the animation drops under `prefers-reduced-motion`, where the
- * partial ring still reads as distinct from provisioning's ellipsis.
+ * the other. Still, like Linear's status icons: the in-progress hue says "in flight" on its
+ * own, so nothing spins or pulses.
  */
 export function RunStateIcon({ state, className }: RunStateIconProps) {
   const visual = RUN_STATE_VISUALS[state];
@@ -134,14 +129,8 @@ export function RunStateIcon({ state, className }: RunStateIconProps) {
     <Icon
       role="img"
       aria-label={visual.label}
-      strokeWidth={2.25}
-      className={cn(
-        'size-4 shrink-0',
-        visual.colorClass,
-        visual.spin === true &&
-          'animate-spin [animation-duration:1.4s] motion-reduce:animate-none',
-        className
-      )}
+      strokeWidth={1.75}
+      className={cn('size-3.5 shrink-0', visual.colorClass, className)}
     />
   );
 }

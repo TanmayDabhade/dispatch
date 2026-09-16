@@ -2,36 +2,46 @@ import type { Assignee, Priority, TaskDoc } from '@dispatch/core/browser';
 import { Check, Milestone } from 'lucide-react';
 import type { ReactNode } from 'react';
 
+import {
+  assigneeLabel,
+  priorityLabel,
+  statusLabel,
+} from '../../lib/taskDisplay';
 import { AssigneeAvatar } from './AssigneeAvatar';
 import { PriorityIcon } from './PriorityIcon';
 import { StatusIcon } from './StatusIcon';
 import { cn } from '@/lib/utils';
-import { Button } from '@/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/ui/dropdown-menu';
+import { Kbd } from '@/ui/kbd';
 
 // Shared inline editors for a task's properties, so status/priority/assignee/epic edit
-// identically everywhere they appear — a bare glyph you click on a dense board card or list
-// row (`variant: 'icon'`), or a full labeled row in the detail modal's properties rail
-// (`variant: 'row'`). Every surface that shows a property should edit it through one of these
-// rather than re-deriving the picker, matching Linear's "click the thing to change the thing"
-// interaction across the whole app.
+// identically everywhere they appear — a bare 14px glyph you click on a board card or list
+// row (`variant: 'inline'`), or Linear's 32px ghost row in the properties rail
+// (`variant: 'row'`). Every surface that shows a property should edit it through one of
+// these rather than re-deriving the picker, matching Linear's "click the thing to change the
+// thing" interaction across the whole app.
 
 const PRIORITIES: Priority[] = ['urgent', 'high', 'medium', 'low', 'none'];
 const ASSIGNEES: Assignee[] = ['agent', 'human', 'none'];
-// Radix menu/select values can't be the empty string, so this sentinel stands in for the
-// "no epic" choice and is mapped back to `null` at the onChange boundary.
+// Menu values can't be the empty string, so this sentinel stands in for the "no epic"
+// choice and is mapped back to `null` at the onChange boundary.
 const NO_EPIC = '__none__';
 
-function capitalize(word: string): string {
-  return word.charAt(0).toUpperCase() + word.slice(1);
-}
+export type ControlVariant = 'inline' | 'row';
 
-export type ControlVariant = 'icon' | 'row';
+/** Open state a list row or the task page can drive from the `s`/`p`/`a`/`l` keys. Leave
+ * both out and the picker manages itself. */
+export interface ControlledOpen {
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+}
 
 interface Option {
   value: string;
@@ -39,74 +49,92 @@ interface Option {
   glyph: ReactNode;
 }
 
-// The trigger + menu shared by every control. On a card/row the trigger is the selected
-// option's glyph alone; in the rail it's the glyph plus its label. Clicks and pointer-downs
-// are stopped from propagating so opening/using the picker never also selects the card it sits
-// on (the board card and list row are themselves clickable, and the menu is portaled — its
-// clicks would otherwise bubble through React back to that parent).
+// The trigger + menu shared by every control. Inline, the trigger is the selected option's
+// glyph in a 20px hit area; in the rail it is the glyph plus its label on a 32px ghost row,
+// and an unset value reads as the action that fills it (`Set priority`, `Assign`). The
+// menu opens with a header naming the picker and its single-key shortcut, then one 32px
+// item per option with a 12px check on the current one. Clicks and pointer-downs are
+// stopped from propagating so opening/using the picker never also selects the card or row
+// it sits on (both are themselves clickable, and the menu is portaled — its clicks would
+// otherwise bubble through React back to that parent).
 function PropertyDropdown({
   value,
   options,
   onChange,
   variant,
   ariaLabel,
-  muted = false,
+  menuTitle,
+  shortcut,
+  unset = false,
+  unsetLabel,
+  open,
+  onOpenChange,
 }: {
   value: string;
   options: Option[];
   onChange: (value: string) => void;
   variant: ControlVariant;
   ariaLabel: string;
-  /** Dims the row-variant label for an "unset" value (no priority, unassigned, no epic). */
-  muted?: boolean;
-}) {
+  /** The menu's header, `Change status`. */
+  menuTitle: string;
+  /** The single key that opens this picker from a focused row, shown as a keycap. */
+  shortcut: string;
+  /** The value is the "nothing chosen" option — the row dims and reads `unsetLabel`. */
+  unset?: boolean;
+  unsetLabel?: string;
+} & ControlledOpen) {
   const selected = options.find((o) => o.value === value);
+  const rowLabel =
+    unset && unsetLabel !== undefined ? unsetLabel : selected?.label;
   return (
-    <DropdownMenu>
+    <DropdownMenu
+      open={open}
+      onOpenChange={
+        onOpenChange === undefined ? undefined : (next) => onOpenChange(next)
+      }
+    >
       <DropdownMenuTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost"
-            aria-label={ariaLabel}
-            onClick={(e) => e.stopPropagation()}
-            onPointerDown={(e) => e.stopPropagation()}
-            className={cn(
-              'h-auto font-normal hover:text-foreground focus-visible:outline-none focus-visible:ring-ring/40',
-              variant === 'icon'
-                ? 'size-5 justify-center rounded p-0 has-[>svg]:px-0 hover:bg-muted/70 focus-visible:ring-2'
-                : 'w-full justify-start gap-2 rounded-md px-2 py-1.5 has-[>svg]:px-2 text-[13px] hover:bg-muted/60 focus-visible:ring-1'
-            )}
-          />
-        }
-      >
-        {variant === 'icon' ? (
-          (selected?.glyph ?? null)
-        ) : (
-          <>
-            {selected?.glyph}
-            <span className={cn('truncate', muted && 'text-muted-foreground')}>
-              {selected?.label}
-            </span>
-          </>
+        aria-label={ariaLabel}
+        data-slot="property-control"
+        data-variant={variant}
+        data-unset={unset || undefined}
+        onClick={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
+        className={cn(
+          'shrink-0 items-center rounded-control transition-colors duration-100 outline-none hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-ring data-popup-open:bg-surface-hover',
+          variant === 'inline'
+            ? 'inline-flex size-5 justify-center'
+            : 'flex h-8 w-full min-w-0 gap-2 px-2 text-[13px] font-medium text-(--text-secondary)',
+          variant === 'row' && unset && 'text-muted-foreground'
         )}
+      >
+        {selected?.glyph}
+        {variant === 'row' && <span className="truncate">{rowLabel}</span>}
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"
-        className="max-h-72"
+        className="max-h-72 min-w-[184px]"
         onClick={(e) => e.stopPropagation()}
       >
-        {options.map((o) => (
-          <DropdownMenuItem
-            key={o.value}
-            onClick={() => onChange(o.value)}
-            className="gap-2 pr-8 text-[13px]"
-          >
-            {o.glyph}
-            <span className="truncate">{o.label}</span>
-            {o.value === value && <Check className="ml-auto size-3.5" />}
-          </DropdownMenuItem>
-        ))}
+        <DropdownMenuGroup>
+          <DropdownMenuLabel className="flex items-center gap-2">
+            {menuTitle}
+            <Kbd className="ml-auto">{shortcut}</Kbd>
+          </DropdownMenuLabel>
+          {options.map((o) => (
+            <DropdownMenuItem
+              key={o.value}
+              onClick={() => onChange(o.value)}
+              data-selected={o.value === value || undefined}
+            >
+              {o.glyph}
+              <span className="truncate">{o.label}</span>
+              {o.value === value && (
+                <Check className="ml-auto size-3" aria-label="Selected" />
+              )}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -116,16 +144,18 @@ export function StatusControl({
   value,
   statuses,
   onChange,
-  variant = 'icon',
+  variant = 'inline',
+  open,
+  onOpenChange,
 }: {
   value: string;
   statuses: string[];
   onChange: (status: string) => void;
   variant?: ControlVariant;
-}) {
+} & ControlledOpen) {
   const options = statuses.map((s) => ({
     value: s,
-    label: s,
+    label: statusLabel(s),
     glyph: <StatusIcon status={s} />,
   }));
   return (
@@ -135,6 +165,10 @@ export function StatusControl({
       onChange={onChange}
       variant={variant}
       ariaLabel="Change status"
+      menuTitle="Change status"
+      shortcut="S"
+      open={open}
+      onOpenChange={onOpenChange}
     />
   );
 }
@@ -142,15 +176,17 @@ export function StatusControl({
 export function PriorityControl({
   value,
   onChange,
-  variant = 'icon',
+  variant = 'inline',
+  open,
+  onOpenChange,
 }: {
   value: Priority;
   onChange: (priority: Priority) => void;
   variant?: ControlVariant;
-}) {
+} & ControlledOpen) {
   const options = PRIORITIES.map((p) => ({
     value: p,
-    label: p,
+    label: priorityLabel(p),
     glyph: <PriorityIcon priority={p} />,
   }));
   return (
@@ -160,7 +196,12 @@ export function PriorityControl({
       onChange={(v) => onChange(v as Priority)}
       variant={variant}
       ariaLabel="Change priority"
-      muted={value === 'none'}
+      menuTitle="Change priority"
+      shortcut="P"
+      unset={value === 'none'}
+      unsetLabel="Set priority"
+      open={open}
+      onOpenChange={onOpenChange}
     />
   );
 }
@@ -168,16 +209,21 @@ export function PriorityControl({
 export function AssigneeControl({
   value,
   onChange,
-  variant = 'icon',
+  variant = 'inline',
+  open,
+  onOpenChange,
 }: {
   value: Assignee;
   onChange: (assignee: Assignee) => void;
   variant?: ControlVariant;
-}) {
-  const options = ASSIGNEES.map((a) => ({
+} & ControlledOpen) {
+  // A named ref (`human:wyat`) is not one of the three fixed choices, so it is listed as
+  // the current value on top rather than silently rendering as unassigned.
+  const values = ASSIGNEES.includes(value) ? ASSIGNEES : [value, ...ASSIGNEES];
+  const options = values.map((a) => ({
     value: a,
-    label: capitalize(a),
-    glyph: <AssigneeAvatar assignee={a} />,
+    label: assigneeLabel(a),
+    glyph: <AssigneeAvatar assignee={a} size={16} />,
   }));
   return (
     <PropertyDropdown
@@ -186,7 +232,12 @@ export function AssigneeControl({
       onChange={onChange}
       variant={variant}
       ariaLabel="Change assignee"
-      muted={value === 'none'}
+      menuTitle="Assign to"
+      shortcut="A"
+      unset={value === 'none'}
+      unsetLabel="Assign"
+      open={open}
+      onOpenChange={onOpenChange}
     />
   );
 }
@@ -196,12 +247,14 @@ export function EpicControl({
   epics,
   onChange,
   variant = 'row',
+  open,
+  onOpenChange,
 }: {
   value: string | null;
   epics: TaskDoc[];
   onChange: (parent: string | null) => void;
   variant?: ControlVariant;
-}) {
+} & ControlledOpen) {
   const options: Option[] = [
     {
       value: NO_EPIC,
@@ -221,7 +274,12 @@ export function EpicControl({
       onChange={(v) => onChange(v === NO_EPIC ? null : v)}
       variant={variant}
       ariaLabel="Change epic"
-      muted={value === null}
+      menuTitle="Add to epic"
+      shortcut="E"
+      unset={value === null}
+      unsetLabel="Add to epic"
+      open={open}
+      onOpenChange={onOpenChange}
     />
   );
 }

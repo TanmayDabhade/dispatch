@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 
 import {
+  assigneeLabel,
+  kindLabel,
   parseTaskSections,
+  priorityLabel,
   priorityTone,
   sectionOrDash,
   statusLabel,
@@ -68,5 +71,41 @@ describe('statusLabel', () => {
 
   test('drops empty segments rather than emitting stray spaces', () => {
     expect(statusLabel('done--')).toBe('Done');
+  });
+});
+
+describe('priorityLabel', () => {
+  test('names every priority, with an explicit "No priority" for none', () => {
+    expect(priorityLabel('none')).toBe('No priority');
+    expect(priorityLabel('low')).toBe('Low');
+    expect(priorityLabel('medium')).toBe('Medium');
+    expect(priorityLabel('high')).toBe('High');
+    expect(priorityLabel('urgent')).toBe('Urgent');
+  });
+});
+
+describe('assigneeLabel', () => {
+  test('reads none as Unassigned and the bare kinds by name', () => {
+    expect(assigneeLabel('none')).toBe('Unassigned');
+    expect(assigneeLabel('agent')).toBe('Agent');
+    expect(assigneeLabel('human')).toBe('Human');
+  });
+
+  test('names a handled ref by its handle', () => {
+    expect(assigneeLabel('human:wyat')).toBe('wyat');
+    expect(assigneeLabel('agent:wyat/claude')).toBe('claude');
+  });
+
+  test('falls back to the raw value for a malformed ref, and Unassigned for a missing one', () => {
+    expect(assigneeLabel('robot')).toBe('robot');
+    expect(assigneeLabel(null)).toBe('Unassigned');
+    expect(assigneeLabel('')).toBe('Unassigned');
+  });
+});
+
+describe('kindLabel', () => {
+  test('labels both kinds', () => {
+    expect(kindLabel('task')).toBe('Task');
+    expect(kindLabel('epic')).toBe('Epic');
   });
 });

@@ -1,7 +1,12 @@
 import type { RunMeta } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
-import { mergeLadderLabel, mergeLadderState } from './mergeLadder';
+import {
+  mergeLadderLabel,
+  mergeLadderPillLabel,
+  mergeLadderState,
+  mergeLadderTint,
+} from './mergeLadder';
 
 // Builds a minimal RunMeta for these tests — only the merge-ladder-relevant
 // fields need to vary per test, everything else is filler.
@@ -82,5 +87,21 @@ describe('mergeLadderLabel', () => {
       )
     ).toBe('merged via PR');
     expect(mergeLadderLabel('on-origin')).toBe('merged via PR');
+  });
+});
+
+describe('mergeLadderTint', () => {
+  test('paints each rung with a --state-* role, never a raw hue', () => {
+    expect(mergeLadderTint('unmerged')).toBe('var(--state-ready-fg)');
+    expect(mergeLadderTint('merged-local')).toBe('var(--state-waiting-fg)');
+    expect(mergeLadderTint('on-origin')).toBe('var(--state-landing-fg)');
+  });
+});
+
+describe('mergeLadderPillLabel', () => {
+  test('gives each rung a short pill label', () => {
+    expect(mergeLadderPillLabel('unmerged')).toBe('Not merged');
+    expect(mergeLadderPillLabel('merged-local')).toBe('Merged locally');
+    expect(mergeLadderPillLabel('on-origin')).toBe('On origin');
   });
 });
