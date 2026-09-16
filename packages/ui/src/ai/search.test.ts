@@ -1,7 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 
 import type { SearchGroup, SearchItem } from './search';
-import { filterGroups, moveActive, resolveActiveId } from './search';
+import {
+  filterGroups,
+  moveActive,
+  resolveActiveId,
+  splitKeycaps,
+} from './search';
 
 const GROUPS: SearchGroup[] = [
   {
@@ -139,5 +144,21 @@ describe('moveActive', () => {
     expect(moveActive(ITEMS, 'ghost', 'next')).toBe('b');
     expect(moveActive(ITEMS, 'ghost', 'previous')).toBe('c');
     expect(moveActive(ITEMS, null, 'next')).toBe('b');
+  });
+});
+
+describe('splitKeycaps', () => {
+  test('one token is one keycap', () => {
+    expect(splitKeycaps('⌘1')).toEqual(['⌘1']);
+    expect(splitKeycaps('C')).toEqual(['C']);
+  });
+
+  test('whitespace separates chord keys into their own keycaps', () => {
+    expect(splitKeycaps('G S')).toEqual(['G', 'S']);
+    expect(splitKeycaps('  ⌥   U ')).toEqual(['⌥', 'U']);
+  });
+
+  test('an empty string yields no keycaps', () => {
+    expect(splitKeycaps('')).toEqual([]);
   });
 });
