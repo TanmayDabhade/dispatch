@@ -61,6 +61,7 @@ import { LinearSync } from './linear/sync.js';
 import { NoteStore } from './notes.js';
 import { EpicEngine } from './orchestrator/epic.js';
 import { ClaudeExecutor } from './orchestrator/executors/claude.js';
+import { CodexExecutor } from './orchestrator/executors/codex.js';
 import { FixLoop, FixLoopStore } from './orchestrator/fixLoop.js';
 import { JjManager } from './orchestrator/jj.js';
 import { MergeQueue } from './orchestrator/mergeQueue.js';
@@ -157,9 +158,10 @@ export interface StartServerOptions {
   // directly.
   storeBackend?: TaskStoreBackend;
   // Overrides which executors get registered on the orchestrator, in place
-  // of the production default (ClaudeExecutor as 'claude' only — Phase 7
-  // moved FakeExecutor's registration behind bin.ts's DISPATCH_ENABLE_FAKES
-  // gate rather than always registering it here). Tests that dispatch
+  // of the production defaults (ClaudeExecutor as 'claude', CodexExecutor as
+  // 'codex' when the codex CLI is installed — Phase 7 moved FakeExecutor
+  // behind bin.ts's DISPATCH_ENABLE_FAKES gate rather than always registering
+  // it here). Tests that dispatch
   // through the real HTTP surface without exercising the real Agent SDK
   // (e.g. a request that omits `executor` and so defaults to 'claude') use
   // this to register a FakeExecutor under 'claude' too — the point being
@@ -274,6 +276,13 @@ const DEFAULT_WEB_DIST_DIR = join(moduleDir, '..', '..', 'web', 'dist');
  * daemon that scaffolded files and then opened a database would find an empty
  * project and report nothing wrong.
  */
+// Codex is offered only when its CLI is actually installed, so no picker ever
+// lists an executor whose first run would die on spawn.
+export function registerCodexIfInstalled(orchestrator: Orchestrator): void {
+  if (Bun.which('codex') === null) return;
+  orchestrator.registerExecutor('codex', new CodexExecutor());
+}
+
 export function resolveStoreBackend(rootDir: string): TaskStoreBackend {
   const recorded = readProjectBackend(rootDir);
   if (recorded !== null) return recorded;
@@ -723,8 +732,9 @@ async function bootServer(
     // nothing in the audit trail until an unrelated task edit came along.
     if (isReceiptEvent(event)) receiptsScheduler?.notifyChanged();
   });
-  // The orchestrator's own executor registry: 'claude' (Slice O2's real
-  // Agent SDK executor) is the production default per api.ts's createRun.
+  // The orchestrator's own executor registry: the real 'claude' backend, plus
+  // 'codex' when its CLI is installed. A call that omits `executor` runs on
+  // the project's `orchestrator.executor` (see Orchestrator.defaultExecutorName).
   // FakeExecutor is NOT registered by default (Phase 7) — bin.ts registers
   // it under 'fake' only when DISPATCH_ENABLE_FAKES=1, a test/e2e-only hook.
   // Tests override this default entirely via `registerExecutors` (see its
@@ -855,6 +865,7 @@ async function bootServer(
     opts.registerExecutors(orchestrator);
   } else {
     orchestrator.registerExecutor('claude', new ClaudeExecutor());
+    registerCodexIfInstalled(orchestrator);
   }
   // Questions an agent raised mid-run. A run going terminal drops its own, so
   // the app never shows a card whose answer nobody is listening for.

@@ -1,11 +1,11 @@
-import { loadConfig } from '@dispatch/core';
+import { executorModels, loadConfig } from '@dispatch/core';
 import type {
   ActorContext,
   CommandEvidence,
+  ExecutorModels,
   Finding,
   FindingRecommendation,
   FindingSeverity,
-  ModelConfig,
   MutationEvidence,
   TaskDoc,
   TaskRisk,
@@ -140,13 +140,14 @@ export type ReviewParseResult =
   | { ok: true; findings: ParsedReviewFinding[] }
   | { ok: false; error: string };
 
-// Only routine work has its review dropped to the planning tier. A task's own
-// `model` override is ignored here: it says what writes, not what judges.
+// Only routine work has its review dropped to the planning tier, when the
+// executor has one. A task's own `model` override is ignored here: it says
+// what writes, not what judges. Undefined leaves the executor on its default.
 export function reviewModelForRisk(
   risk: TaskRisk,
-  models: ModelConfig
-): string {
-  return risk === 'routine' ? models.plan : models.execute;
+  models: ExecutorModels
+): string | undefined {
+  return risk === 'routine' ? (models.plan ?? models.execute) : models.execute;
 }
 
 export function sharedSurfaceWrites(writes: string[]): string[] {
@@ -827,11 +828,16 @@ export class ReviewRunner {
     if (task === null) {
       throw new OrchestratorNotFoundError(`task not found: ${opts.taskId}`);
     }
-    const models = loadConfig(this.ctx.rootDir).models;
+    // The reviewer is the project's default executor, not whichever one wrote
+    // the work: a second provider judging the diff is the stronger setup, and
+    // the choice belongs to the project, not the author.
+    const executor = this.ctx.orchestrator.defaultExecutorName();
+    const models = executorModels(loadConfig(this.ctx.rootDir), executor);
     return await this.ctx.orchestrator.dispatchAuxRun({
       taskId: opts.taskId,
       kind: 'review',
       head: opts.head,
+      executor,
       model: reviewModelForRisk(task.meta.risk, models),
       buildPrompt: ({ runId, worktreePath }) => {
         const changed = changedFiles(this.ctx.rootDir, opts.base, opts.head);

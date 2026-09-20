@@ -448,6 +448,12 @@ describe('reviewModelForRisk', () => {
     expect(reviewModelForRisk('elevated', models)).toBe('opus');
     expect(reviewModelForRisk('critical', models)).toBe('opus');
   });
+
+  it('falls back to the coding tier, then to the executor default, when tiers are unset', () => {
+    expect(reviewModelForRisk('routine', { execute: 'x' })).toBe('x');
+    expect(reviewModelForRisk('routine', {})).toBeUndefined();
+    expect(reviewModelForRisk('critical', {})).toBeUndefined();
+  });
 });
 
 describe('write-set classification', () => {
@@ -1338,4 +1344,38 @@ it('undeclaredWrites exempts .dispatch bookkeeping', () => {
       ['.dispatch/tasks/t-abc123-something.md', 'src/real-change.ts']
     )
   ).toEqual(['src/real-change.ts']);
+});
+
+describe('ReviewRunner executor choice', () => {
+  it("reviews on the project's default executor even when another wrote the work", async () => {
+    const reviewer = new ScriptedReviewer(JSON.stringify({ findings: [] }));
+    const { orchestrator, runner, store } = setupReview(reviewer);
+    const codex = new ScriptedReviewer(JSON.stringify({ findings: [] }));
+    orchestrator.registerExecutor('codex', codex);
+    writeFileSync(
+      join(repo, '.dispatch', 'config.yml'),
+      'models:\n  plan: claude-sonnet-5\nexecutors:\n  codex:\n    models:\n      execute: gpt-x\n'
+    );
+    const task = store.create({ title: 'harden sync', risk: 'routine' });
+    const { base, head } = commitRange();
+
+    const executed = await orchestrator.dispatch(task.meta.id, 'codex');
+    await waitFor(
+      () => orchestrator.getRun(executed.id)?.meta.state === 'finished'
+    );
+
+    const meta = await runner.startReview({
+      taskId: task.meta.id,
+      base,
+      head,
+      round: 0,
+      scope: 'full',
+      openFindings: [],
+    });
+    expect(meta.executor).toBe('claude');
+    expect(meta.model).toBe('claude-sonnet-5');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+  });
 });

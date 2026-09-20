@@ -621,16 +621,12 @@ async function createRun(
     return errorResponse(400, 'invalid fresh: expected a boolean');
   }
   // Named vs defaulted is the whole distinction dispatchOrResume turns on, so
-  // the raw fields go through untouched and only the FALLBACKS are resolved
-  // here: omitting `model` still runs a fresh dispatch on the project's
-  // configured `models.execute` (so a script or an older UI build lands where
-  // settings chose), while naming one that the resumable run cannot honour is
-  // what sends the call down the fresh path in the first place.
+  // the raw fields go through untouched; the orchestrator resolves the
+  // executor's own default model for a fresh run.
   const meta = await ctx.orchestrator.dispatchOrResume(taskId, {
     executor: typeof executorField === 'string' ? executorField : undefined,
     model: typeof modelField === 'string' ? modelField : undefined,
     fresh: freshField === true,
-    defaults: { model: loadConfig(ctx.rootDir).models.execute },
   });
   return jsonResponse(meta, 201);
 }
@@ -787,6 +783,23 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     // Like permissionMode: core's updateConfig rejects an unknown role or bad
     // value before writing, and that ConfigError becomes the 400 below.
     patch.models = body.models as Partial<ModelConfig>;
+  }
+  if ('executor' in body) {
+    if (typeof body.executor !== 'string') {
+      return errorResponse(400, 'executor must be a string');
+    }
+    patch.executor = body.executor;
+  }
+  if ('executors' in body) {
+    if (
+      typeof body.executors !== 'object' ||
+      body.executors === null ||
+      Array.isArray(body.executors)
+    ) {
+      return errorResponse(400, 'executors must be an object');
+    }
+    // Like models: core's updateConfig validates each role before writing.
+    patch.executors = body.executors as NonNullable<ConfigPatch['executors']>;
   }
   if ('linear' in body) {
     if (
@@ -5140,6 +5153,19 @@ export async function handleApi(
     // enrich/"add detail" agents, task drafts, overseer chats), normalized for
     // the All agents page. Task runs are not repeated here: GET /api/runs
     // already lists them, and the client merges the two.
+    // GET /api/executors — what this daemon can dispatch on, so no client has
+    // to hard-code executor names.
+    if (
+      segments[0] === 'executors' &&
+      segments.length === 1 &&
+      method === 'GET'
+    ) {
+      return jsonResponse({
+        executors: ctx.orchestrator.describeExecutors(),
+        default: ctx.orchestrator.defaultExecutorName(),
+      });
+    }
+
     if (segments[0] === 'agents' && segments.length === 1 && method === 'GET') {
       return jsonResponse(
         buildAgentSessions(

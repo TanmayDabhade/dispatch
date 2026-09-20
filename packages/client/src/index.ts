@@ -34,6 +34,8 @@ export type {
   EpicProgress,
   EpicProgressChild,
   EpicSession,
+  ExecutorInfo,
+  ExecutorsResponse,
   Finding,
   FindingRecommendation,
   FindingSeverity,

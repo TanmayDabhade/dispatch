@@ -335,12 +335,15 @@ export function registerPlanCommands(program: Command, ctx: CliContext): void {
   epic
     .command('start <epicId>')
     .option('--concurrency <n>', 'max concurrent child runs')
-    .option('--executor <name>', 'claude|fake', 'claude')
+    .option(
+      '--executor <name>',
+      "an executor the daemon registered; defaults to the project's"
+    )
     .option('--json')
     .action(
       async (
         epicId: string,
-        opts: { concurrency?: string; executor: string; json?: boolean }
+        opts: { concurrency?: string; executor?: string; json?: boolean }
       ) => {
         const { client } = await daemonFor(ctx);
         const session = await client.startEpic(epicId, {

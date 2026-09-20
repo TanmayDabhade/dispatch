@@ -413,3 +413,38 @@ describe('VerificationRunner', () => {
     );
   });
 });
+
+describe('VerificationRunner executor inheritance', () => {
+  it('verifies on the executor that wrote the work, in its own model namespace', async () => {
+    const { orchestrator, runner, store } = setupVerify(
+      new ScriptedVerifier(JSON.stringify({ ok: true, checks: [] }))
+    );
+    orchestrator.registerExecutor(
+      'codex',
+      new ScriptedVerifier(JSON.stringify({ ok: true, checks: [] }))
+    );
+    writeFileSync(
+      join(repo, '.dispatch', 'config.yml'),
+      'verify:\n  command: bun run dev\nexecutors:\n  codex:\n    models:\n      execute: gpt-x\n'
+    );
+    const task = store.create({ title: 'harden sync' });
+    const head = commitHead();
+
+    const executed = await orchestrator.dispatch(task.meta.id, 'codex');
+    await waitFor(
+      () => orchestrator.getRun(executed.id)?.meta.state === 'finished'
+    );
+
+    const result = await runner.startVerification({
+      taskId: task.meta.id,
+      head,
+    });
+    expect(result.skipped).toBe(false);
+    if (result.skipped) return;
+    expect(result.meta.executor).toBe('codex');
+    expect(result.meta.model).toBe('gpt-x');
+    await waitFor(
+      () => orchestrator.getRun(result.meta.id)?.meta.state === 'finished'
+    );
+  });
+});

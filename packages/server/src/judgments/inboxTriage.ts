@@ -41,7 +41,7 @@ export interface TriageCandidate {
   title: string;
 }
 
-export type TriageKind = InboxKind | 'noise';
+type TriageKind = InboxKind | 'noise';
 
 export interface InboxTriage {
   itemId: string;
