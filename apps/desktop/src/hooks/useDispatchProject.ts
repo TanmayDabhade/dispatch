@@ -55,6 +55,7 @@ import {
 } from '../lib/daemonAuth';
 import type { DecisionItem } from '../lib/decisionFeed';
 import { fetchDecisions, isDecisionsChanged } from '../lib/decisionFeed';
+import { isFakeExecutorDevToolEnabled } from '../lib/devTools';
 import type { WorkEpicOptions } from '../lib/epicSession';
 import { epicPausedNotice } from '../lib/epicSession';
 import { fixLoopCappedNotice } from '../lib/fixLoopStatus';
@@ -2139,7 +2140,15 @@ export function useDispatchProject(
       if (client === null) return;
       const { concurrency, maxSpendUsd, maxRuns } =
         typeof opts === 'number' ? { concurrency: opts } : opts;
-      await client.startEpic(epicId, { concurrency, maxSpendUsd, maxRuns });
+      // The same opt-in the task page's hidden fake control uses: a fan-out
+      // against a DISPATCH_ENABLE_FAKES daemon runs scripted agents, not Claude.
+      const executor = isFakeExecutorDevToolEnabled() ? 'fake' : undefined;
+      await client.startEpic(epicId, {
+        concurrency,
+        maxSpendUsd,
+        maxRuns,
+        executor,
+      });
       void queryClient.invalidateQueries({ queryKey: epicProgressKeyPrefix });
       void queryClient.invalidateQueries({ queryKey: runsQueryKey });
     },

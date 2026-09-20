@@ -699,7 +699,7 @@ test('a lane header’s Send agents… confirms through the options-shaped handl
   fireEvent.click(screen.getAllByRole('button', { name: 'Send agents…' })[0]);
   expect(dialogTitle()).toBe('Send agents · Payments epic');
   await settleTick(() => {
-    fireEvent.click(screen.getByRole('button', { name: /Send \d+ agents/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Send \d+ agents?/ }));
   });
   // The config's concurrency, and the dialog's defaults: $10 × 2 tasks, one run each.
   expect(calls.work).toEqual([

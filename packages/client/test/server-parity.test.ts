@@ -175,7 +175,9 @@ describe('epic types mirror dispatchd', () => {
     ['EpicChildPhase', 'epicPhase.ts'],
   ] as const) {
     it(`${name} carries the same literals as the server`, () => {
-      const pattern = new RegExp(`export type ${name} =([^;]+);`);
+      // The server keeps a union file-private once nothing else in the daemon
+      // imports it; the client still mirrors it, so `export` is optional here.
+      const pattern = new RegExp(`(?:export )?type ${name} =([^;]+);`);
       const server = literals(serverSource('orchestrator', file), pattern);
       const client = literals(clientSource(), pattern);
       expect(server).not.toBeNull();

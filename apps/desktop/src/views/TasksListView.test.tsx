@@ -161,7 +161,7 @@ function bulkDispatch(titles: string[]) {
     screen.getByRole('button', { name: `Dispatch ${titles.length}` })
   );
   const dialog = within(screen.getByRole('dialog'));
-  fireEvent.click(dialog.getByRole('button', { name: /^Send \d+ agents$/ }));
+  fireEvent.click(dialog.getByRole('button', { name: /^Send \d+ agents?$/ }));
 }
 
 // The failure this covers: the bulk bar loops handleDispatch, so a naive implementation fires

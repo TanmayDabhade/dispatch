@@ -205,7 +205,10 @@ export function DispatchDialog({
   const canConfirm =
     !spendInvalid && !runsInvalid && (raising ? ceilingChanged : agents > 0);
   const label =
-    confirmLabel ?? (raising ? 'Raise ceiling' : `Send ${agents} agents`);
+    confirmLabel ??
+    (raising
+      ? 'Raise ceiling'
+      : `Send ${agents} ${agents === 1 ? 'agent' : 'agents'}`);
 
   const hints: string[] = [];
   if (preview.undeclaredWrites > 0) {

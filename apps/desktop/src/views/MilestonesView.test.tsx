@@ -458,11 +458,11 @@ test('an idle milestone offers Send agents…, which opens the fan-out dialog fo
   fireEvent.click(screen.getByRole('button', { name: 'Send agents…' }));
   expect(dialogTitle()).toBe('Send agents · Payments');
   expect(
-    screen.getByRole('button', { name: /Send \d+ agents/ })
+    screen.getByRole('button', { name: /Send \d+ agents?/ })
   ).not.toBeNull();
 
   await settle(() => {
-    fireEvent.click(screen.getByRole('button', { name: /Send \d+ agents/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Send \d+ agents?/ }));
   });
   expect(calls.work).toHaveLength(1);
   expect(calls.work[0]?.[0]).toBe('e-1');

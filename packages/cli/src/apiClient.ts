@@ -521,7 +521,7 @@ export interface ApiClient {
   startEpic(epicId: string, opts?: EpicSessionOptions): Promise<EpicSession>;
   // Holds new dispatches; live runs finish on their own.
   pauseEpic(epicId: string): Promise<EpicSession>;
-  // Lifts a pause, optionally re-ceilinging the session on the way back.
+  // Lifts a pause, optionally setting new ceilings on the way back.
   // `executor` is fixed for a session's life, so resume never takes one.
   resumeEpic(
     epicId: string,

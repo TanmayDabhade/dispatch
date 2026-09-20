@@ -46,7 +46,7 @@ function mount(
     runs: () => screen.getByLabelText<HTMLInputElement>('Max runs'),
     confirmButton: () =>
       screen.getByRole('button', {
-        name: overrides.confirmLabel ?? /Send \d+ agents|Raise ceiling/,
+        name: overrides.confirmLabel ?? /Send \d+ agents?|Raise ceiling/,
       }),
   };
 }
@@ -207,6 +207,12 @@ describe('DispatchDialog', () => {
     });
     expect(confirmButton().textContent).toContain('Send 5 agents');
     expect(screen.getAllByText('Cannot start')).toHaveLength(7);
+  });
+
+  test('one agent reads in the singular', () => {
+    const { confirmButton } = mount({ readyIds: new Set(['t-1']) });
+    expect(confirmButton().textContent).toContain('Send 1 agent');
+    expect(confirmButton().textContent).not.toContain('agents');
   });
 
   test('nothing to send disables the button', () => {
