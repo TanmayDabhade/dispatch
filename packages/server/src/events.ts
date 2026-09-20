@@ -1,4 +1,5 @@
 import type { LinearSyncSummary } from './linear/sync.js';
+import type { EpicPauseReason } from './orchestrator/epic.js';
 import type { FixLoopStop } from './orchestrator/fixLoop.js';
 import type { NormalizedEntry, RunSurvey } from './orchestrator/types.js';
 import type { ReceiptsResult } from './receipts/exporter.js';
@@ -92,6 +93,25 @@ export type ServerEvent =
       cap: number;
       reason: FixLoopStop;
       message?: string;
+    }
+  // An epic's dispatch session changed: started, paused, resumed, stopped,
+  // completed, or a fill dispatched a batch. Same "go refetch, no payload
+  // beyond the id" contract as `plan.changed` — EpicEngine debounces it per
+  // epic so a wave's terminal storm is one refetch of GET /api/epics/:id/progress.
+  | { type: 'epic.changed'; epicId: string }
+  // An epic's session paused on its own (a ceiling or a fill that kept
+  // failing — never a human's pause). Carries the spend numbers like
+  // `fixloop.capped` so a client can toast the reason without a fetch.
+  | {
+      type: 'epic.paused';
+      epicId: string;
+      reason: EpicPauseReason;
+      settledUsd: number;
+      estimatedLiveUsd: number;
+      maxSpendUsd: number | null;
+      runsStarted: number;
+      maxRuns: number | null;
+      detail?: string;
     }
   // A run reached `failed`/`interrupted-dirty` and was surveyed — carries
   // the survey so a connected client can show it without a follow-up fetch.

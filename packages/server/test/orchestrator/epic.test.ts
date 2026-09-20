@@ -160,13 +160,31 @@ describe('EpicEngine.start', () => {
     );
   });
 
-  it('409s starting an epic that already has an active session', async () => {
+  // The ceiling is `orchestrator.maxConcurrency` (default 16), read off
+  // config at start() — the error names it so a dialog can say why.
+  it('400s a concurrency above the configured maxConcurrency, naming the cap', async () => {
+    const { epics, store } = makeHarness();
+    const epic = store.create({ title: 'Epic', kind: 'epic' });
+    await expect(
+      epics.start(epic.meta.id, { executor: 'fake', concurrency: 33 })
+    ).rejects.toThrow(/between 1 and 16/);
+    expect(epics.progress(epic.meta.id).session).toBeNull();
+  });
+
+  it('409s starting an epic that already has an active or paused session', async () => {
     const { epics, store } = makeHarness();
     const epic = store.create({ title: 'Epic', kind: 'epic' });
     await epics.start(epic.meta.id, { executor: 'fake' });
     await expect(
       epics.start(epic.meta.id, { executor: 'fake' })
+    ).rejects.toThrow(/already has an active dispatch session/);
+    epics.pause(epic.meta.id);
+    await expect(
+      epics.start(epic.meta.id, { executor: 'fake' })
     ).rejects.toThrow(OrchestratorConflictError);
+    await expect(
+      epics.start(epic.meta.id, { executor: 'fake' })
+    ).rejects.toThrow(/\(paused\) — resume or stop it first/);
   });
 
   // C2(a): a bogus executor must 400 before any session is ever created —
@@ -559,7 +577,7 @@ describe('EpicEngine.start', () => {
     expect(harness.epics.progress(epicId).active).toBe(false);
   });
 
-  it('progress reports children grouped by status and current live runs', async () => {
+  it('progress reports the session, its spend, each child with phase and wave, and the live runs', async () => {
     const harness = makeHarness();
     const { epicId, childIds } = createEpicWithChildren(harness.store, 2);
 
@@ -571,7 +589,36 @@ describe('EpicEngine.start', () => {
     expect(progress.liveRuns).toHaveLength(1);
     expect(progress.active).toBe(true);
     expect(progress.concurrency).toBe(1);
-    void childIds;
+    expect(progress.session).toMatchObject({
+      epicId,
+      state: 'active',
+      active: true,
+      concurrency: 1,
+      executor: 'fake',
+      maxSpendUsd: null,
+      maxRuns: null,
+    });
+    expect(progress.spend).toEqual({
+      settledUsd: 0,
+      liveCount: 1,
+      estimatedLiveUsd: 10,
+      runsStarted: 1,
+      maxSpendUsd: null,
+      maxRuns: null,
+    });
+    const live = progress.liveRuns[0];
+    const byId = new Map(progress.children.map((c) => [c.id, c]));
+    expect(byId.get(live.taskId)).toMatchObject({
+      phase: 'working',
+      wave: 1,
+      runId: live.id,
+      openFindings: 0,
+    });
+    const other = childIds.find((id) => id !== live.taskId)!;
+    expect(byId.get(other)).toMatchObject({ phase: 'queued', wave: 1 });
+    expect(progress.waves).toEqual([
+      { index: 1, total: 2, byPhase: { working: 1, queued: 1 } },
+    ]);
   });
 
   it('counts an archived child in progress() and completes once its sibling also finishes', async () => {

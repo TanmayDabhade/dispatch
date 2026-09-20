@@ -99,6 +99,14 @@ export function mergeQueuePath(rootDir: string): string {
   return join(runsDir(rootDir), 'merge-queue.json');
 }
 
+// Where EpicEngine's dispatch sessions live (see its persist()/hydrate()):
+// the per-epic concurrency, ceilings and state a daemon restart re-arms
+// instead of forgetting. Beside merge-queue.json for the same reason, and
+// beside the run registry it derives spend from.
+export function epicSessionsPath(rootDir: string): string {
+  return join(runsDir(rootDir), 'epic-sessions.json');
+}
+
 // Where PrManager's epic-PR ledger lives: the PRs opened to land whole epic
 // branches on the default base (epicId -> PR url), persisted so a daemon
 // restart keeps polling them to merged instead of forgetting an epic mid-land.

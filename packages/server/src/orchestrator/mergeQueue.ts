@@ -223,10 +223,11 @@ const MID_FLIGHT_STATES: ReadonlySet<MergeQueueEntryState> = new Set([
  * restart reloads the queue instead of silently dropping it.
  *
  * `verifyCommand` is read fresh via `loadConfig(ctx.rootDir)` at the moment
- * each entry is verified (not cached at construction or per-enqueue) — this
- * mirrors how EpicEngine reads `orchestrator.epicConcurrency` fresh off
- * `loadConfig` at dispatch time, so a user editing config.yml between merges
- * takes effect on the very next entry the queue processes.
+ * each entry is verified (not cached at construction or per-enqueue), so a
+ * user editing config.yml between merges takes effect on the very next entry
+ * the queue processes. Unlike EpicEngine, which reads
+ * `orchestrator.epicConcurrency` once at `start()` and holds it for the
+ * session's life.
  */
 export class MergeQueue {
   private readonly entries: MergeQueueEntry[] = [];
