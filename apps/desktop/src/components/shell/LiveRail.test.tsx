@@ -1,4 +1,10 @@
-import type { OverseerAction, OverseerRecord, RunMeta } from '@dispatch/client';
+import type {
+  EpicProgress,
+  OverseerAction,
+  OverseerRecord,
+  RunMeta,
+} from '@dispatch/client';
+import type { TaskDoc } from '@dispatch/core/browser';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
@@ -72,6 +78,54 @@ function overseerSession(over: Partial<OverseerSession> = {}): OverseerSession {
     setDraft: () => {},
     ...over,
   };
+}
+
+// A milestone mid fan-out: the ids of its children are all the rail reads from it, plus
+// the spend block the section row prints.
+function session(
+  epicId: string,
+  childIds: string[],
+  over: Partial<EpicProgress['spend']> = {}
+): EpicProgress {
+  return {
+    epicId,
+    active: true,
+    concurrency: 2,
+    session: {
+      epicId,
+      concurrency: 2,
+      executor: 'claude',
+      state: 'active',
+      maxSpendUsd: 60,
+      maxRuns: null,
+      startedAt: '2026-08-04T00:00:00.000Z',
+      updatedAt: '2026-08-04T00:00:00.000Z',
+      active: true,
+    },
+    spend: {
+      settledUsd: 41.2,
+      liveCount: childIds.length,
+      estimatedLiveUsd: 10 * childIds.length,
+      runsStarted: childIds.length,
+      maxSpendUsd: 60,
+      maxRuns: null,
+      ...over,
+    },
+    children: childIds.map((id) => ({
+      id,
+      title: id,
+      status: 'working',
+      phase: 'working',
+      wave: 1,
+      openFindings: 0,
+    })),
+    waves: [],
+    liveRuns: [],
+  };
+}
+
+function epicDoc(id: string, title: string): TaskDoc {
+  return { meta: { id, title, kind: 'epic', status: 'working' } } as TaskDoc;
 }
 
 function railProps(over: Partial<Parameters<typeof LiveRail>[0]> = {}) {
@@ -234,4 +288,113 @@ test('a live run that fanned out shows its running/total sub-agent count', () =>
   expect(screen.getByLabelText('5 of 12 sub-agents running').textContent).toBe(
     '5/12'
   );
+});
+
+test('the rail keeps its test id in both the idle and the populated state', () => {
+  const { rerender } = render(<LiveRail {...railProps()} />);
+  expect(screen.getByTestId('live-rail').textContent).toBe(
+    'No agents running.'
+  );
+  rerender(<LiveRail {...railProps({ runs: [run()] })} />);
+  expect(screen.getByTestId('live-rail').className).toContain('max-h-56');
+});
+
+test('live runs on a milestone with a session group under its section row', () => {
+  const opened: string[] = [];
+  const runs = [
+    run({ id: 'r-1', taskId: 't-1', taskTitle: 'Rotate the tokens' }),
+    run({ id: 'r-9', taskId: 't-9', taskTitle: 'Loose run' }),
+    run({ id: 'r-2', taskId: 't-2', taskTitle: 'Rewrite the login' }),
+  ];
+  render(
+    <LiveRail
+      {...railProps({
+        runs,
+        sessions: [session('e-1', ['t-1', 't-2'])],
+        epics: [epicDoc('e-1', 'Auth rewrite')],
+        onOpenMilestone: (id) => {
+          opened.push(id);
+        },
+      })}
+    />
+  );
+  const section = screen.getByRole('button', {
+    name: 'Auth rewrite milestone',
+  });
+  expect(section.className).toContain('h-7');
+  expect(section.textContent).toContain('Auth rewrite');
+  expect(screen.getByText('2 running · $41.20 / $60')).toBeDefined();
+
+  // Section row, its two rows, then the loose row — in that order.
+  const names = screen
+    .getAllByRole('button')
+    .map((button) => button.getAttribute('aria-label'));
+  expect(names).toEqual([
+    'Auth rewrite milestone',
+    'Rotate the tokens',
+    'Rewrite the login',
+    'Loose run',
+  ]);
+
+  fireEvent.click(section);
+  expect(opened).toEqual(['e-1']);
+});
+
+test('a session with no ceiling prints its settled spend alone', () => {
+  render(
+    <LiveRail
+      {...railProps({
+        runs: [run({ taskId: 't-1' })],
+        sessions: [session('e-1', ['t-1'], { maxSpendUsd: null })],
+        epics: [epicDoc('e-1', 'Auth rewrite')],
+      })}
+    />
+  );
+  expect(screen.getByText('1 running · $41.20')).toBeDefined();
+});
+
+test('a milestone with no epic doc is named by its id', () => {
+  render(
+    <LiveRail
+      {...railProps({
+        runs: [run({ taskId: 't-1' })],
+        sessions: [session('e-1', ['t-1'])],
+      })}
+    />
+  );
+  expect(screen.getByRole('button', { name: 'e-1 milestone' })).toBeDefined();
+});
+
+test('a session with nothing live adds no section row', () => {
+  render(
+    <LiveRail
+      {...railProps({
+        runs: [run({ taskId: 't-9' })],
+        sessions: [session('e-1', ['t-1'])],
+        epics: [epicDoc('e-1', 'Auth rewrite')],
+      })}
+    />
+  );
+  expect(screen.queryByText(/milestone|running ·/)).toBeNull();
+  expect(screen.getAllByRole('button')).toHaveLength(1);
+});
+
+test('without sessions the rail renders exactly as before', () => {
+  const runs = [
+    run({ id: 'r-1', taskId: 't-1' }),
+    run({ id: 'r-2', taskId: 't-2' }),
+  ];
+  const { container: bare } = render(<LiveRail {...railProps({ runs })} />);
+  const { container: withEmpty } = render(
+    <LiveRail
+      {...railProps({
+        runs,
+        sessions: [],
+        epics: [],
+        onOpenMilestone: () => {},
+      })}
+    />
+  );
+  expect(withEmpty.innerHTML).toBe(bare.innerHTML);
+  expect(bare.querySelector('[data-slot="live-rail-group"]')).toBeNull();
 });
