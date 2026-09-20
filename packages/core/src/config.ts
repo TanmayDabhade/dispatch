@@ -8,6 +8,7 @@ import type {
   ConfigPatch,
   DispatchConfig,
   EscalationStep,
+  ExecutorConfig,
   FixLoopConfig,
   LinearConfig,
   ModelConfig,
@@ -22,12 +23,14 @@ import type {
 import {
   CARTO_MODES,
   DEFAULT_CARTO,
+  DEFAULT_EXECUTOR_NAME,
   DEFAULT_FIX_LOOP,
   DEFAULT_LINEAR,
   DEFAULT_MODELS,
   DEFAULT_NOTIFICATIONS,
   DEFAULT_RECEIPTS,
   DEFAULT_REPO_DIGEST,
+  EXECUTOR_MODEL_ROLES,
   FIX_MODEL_TIERS,
   FIX_STRATEGIES,
   LINEAR_DIRECTIONS,
@@ -79,6 +82,7 @@ const DEFAULT_ORCHESTRATOR: OrchestratorConfig = {
   // No default turn cap — maxBudgetUsd is the real guard.
   permissionMode: 'auto',
   epicConcurrency: 3,
+  executor: DEFAULT_EXECUTOR_NAME,
   // 10 minutes: above a real install+build+test verify, still bounded.
   verifyTimeoutSec: 600,
 };
@@ -104,6 +108,7 @@ const DEFAULTS: DispatchConfig = {
   autoCommit: false,
   orchestrator: { ...DEFAULT_ORCHESTRATOR },
   models: { ...DEFAULT_MODELS },
+  executors: {},
   linear: { ...DEFAULT_LINEAR, statusMap: { ...DEFAULT_LINEAR.statusMap } },
   fixLoop: cloneFixLoop(DEFAULT_FIX_LOOP),
   carto: { ...DEFAULT_CARTO },
@@ -272,13 +277,88 @@ function parseOrchestratorConfig(raw: unknown): OrchestratorConfig {
     );
   }
 
+  const { executor } = obj;
+  if (
+    executor !== undefined &&
+    (typeof executor !== 'string' || executor.trim() === '')
+  ) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: orchestrator.executor must be a non-empty string'
+    );
+  }
+
   return {
     maxTurns: maxTurns ?? DEFAULT_ORCHESTRATOR.maxTurns,
     maxBudgetUsd,
     permissionMode: permissionMode ?? DEFAULT_ORCHESTRATOR.permissionMode,
     epicConcurrency: epicConcurrency ?? DEFAULT_ORCHESTRATOR.epicConcurrency,
     verifyTimeoutSec: verifyTimeoutSec ?? DEFAULT_ORCHESTRATOR.verifyTimeoutSec,
+    executor: executor?.trim() ?? DEFAULT_ORCHESTRATOR.executor,
   };
+}
+
+// Validates one `executors.<name>.models` block: only the execute-side roles,
+// each a non-empty string. Shared by loadConfig and updateConfig so a bad
+// value never reaches disk and then fails every later load.
+function parseExecutorModels(
+  name: string,
+  raw: unknown,
+  prefix: string
+): ExecutorConfig['models'] {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(
+      `${prefix}: executors.${name}.models must be an object`
+    );
+  }
+  const obj = raw as Record<string, unknown>;
+  const models: ExecutorConfig['models'] = {};
+  for (const [role, value] of Object.entries(obj)) {
+    if (
+      !EXECUTOR_MODEL_ROLES.includes(role as keyof ExecutorConfig['models'])
+    ) {
+      throw new ConfigError(
+        `${prefix}: unknown executors.${name}.models role "${role}" (expected ${EXECUTOR_MODEL_ROLES.join('|')})`
+      );
+    }
+    if (typeof value !== 'string' || value.trim() === '') {
+      throw new ConfigError(
+        `${prefix}: executors.${name}.models.${role} must be a non-empty string`
+      );
+    }
+    models[role as keyof ExecutorConfig['models']] = value.trim();
+  }
+  return models;
+}
+
+// Validates the optional `executors:` block, same contract as
+// parseOrchestratorConfig: absent means none configured.
+function parseExecutorsConfig(raw: unknown): Record<string, ExecutorConfig> {
+  if (raw === undefined) return {};
+  const prefix = 'invalid .dispatch/config.yml';
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(`${prefix}: executors must be an object`);
+  }
+  const result: Record<string, ExecutorConfig> = {};
+  for (const [name, entry] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      throw new ConfigError(
+        `${prefix}: executors.${name} must be an object with a models block`
+      );
+    }
+    for (const key of Object.keys(entry)) {
+      if (key !== 'models') {
+        throw new ConfigError(
+          `${prefix}: unknown executors.${name} key "${key}" (expected models)`
+        );
+      }
+    }
+    const { models } = entry as { models?: unknown };
+    result[name] = {
+      models:
+        models === undefined ? {} : parseExecutorModels(name, models, prefix),
+    };
+  }
+  return result;
 }
 
 // Validates the optional `repoDigest:` block, same contract as
@@ -758,6 +838,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
       autoCommit: DEFAULTS.autoCommit,
       orchestrator: { ...DEFAULTS.orchestrator },
       models: { ...DEFAULTS.models },
+      executors: {},
       linear: {
         ...DEFAULTS.linear,
         statusMap: { ...DEFAULTS.linear.statusMap },
@@ -842,6 +923,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
     verifySteps: raw.verifySteps,
     orchestrator: parseOrchestratorConfig(raw.orchestrator),
     models: parseModelConfig(raw.models),
+    executors: parseExecutorsConfig(raw.executors),
     linear: parseLinearConfig(raw.linear),
     fixLoop: parseFixLoopConfig(raw.fixLoop),
     verify: parseVerifyConfig(raw.verify),
@@ -1041,6 +1123,21 @@ export function updateConfig(
         );
       }
       doc.setIn(['models', role], value.trim());
+    }
+  }
+  if (patch.executor !== undefined) {
+    if (typeof patch.executor !== 'string' || patch.executor.trim() === '') {
+      throw new ConfigError('invalid executor: must be a non-empty string');
+    }
+    doc.setIn(['orchestrator', 'executor'], patch.executor.trim());
+  }
+  if (patch.executors !== undefined) {
+    for (const [name, entry] of Object.entries(patch.executors)) {
+      if (entry.models === undefined) continue;
+      const models = parseExecutorModels(name, entry.models, 'invalid patch');
+      for (const [role, value] of Object.entries(models)) {
+        doc.setIn(['executors', name, 'models', role], value);
+      }
     }
   }
   if (patch.linear !== undefined) applyLinearPatch(doc, patch.linear);
