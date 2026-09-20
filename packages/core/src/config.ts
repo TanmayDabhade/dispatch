@@ -9,6 +9,7 @@ import type {
   DispatchConfig,
   EscalationStep,
   ExecutorConfig,
+  ExecutorPricing,
   FixLoopConfig,
   LinearConfig,
   ModelConfig,
@@ -31,6 +32,7 @@ import {
   DEFAULT_RECEIPTS,
   DEFAULT_REPO_DIGEST,
   EXECUTOR_MODEL_ROLES,
+  EXECUTOR_PRICING_FIELDS,
   FIX_MODEL_TIERS,
   FIX_STRATEGIES,
   LINEAR_DIRECTIONS,
@@ -330,6 +332,51 @@ function parseExecutorModels(
   return models;
 }
 
+// Validates one `executors.<name>.pricing` block: known fields only, each a
+// non-negative finite number, `input` and `output` required.
+function parseExecutorPricing(
+  name: string,
+  raw: unknown,
+  prefix: string
+): ExecutorPricing {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(
+      `${prefix}: executors.${name}.pricing must be an object`
+    );
+  }
+  const obj = raw as Record<string, unknown>;
+  for (const key of Object.keys(obj)) {
+    if (!EXECUTOR_PRICING_FIELDS.includes(key as keyof ExecutorPricing)) {
+      throw new ConfigError(
+        `${prefix}: unknown executors.${name}.pricing field "${key}" (expected ${EXECUTOR_PRICING_FIELDS.join('|')})`
+      );
+    }
+  }
+  const rate = (key: keyof ExecutorPricing): number | undefined => {
+    const value = obj[key];
+    if (value === undefined) return undefined;
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+      throw new ConfigError(
+        `${prefix}: executors.${name}.pricing.${key} must be a non-negative number`
+      );
+    }
+    return value;
+  };
+  const input = rate('input');
+  const output = rate('output');
+  if (input === undefined || output === undefined) {
+    throw new ConfigError(
+      `${prefix}: executors.${name}.pricing needs both input and output rates`
+    );
+  }
+  const cachedInput = rate('cachedInput');
+  return {
+    input,
+    output,
+    ...(cachedInput === undefined ? {} : { cachedInput }),
+  };
+}
+
 // Validates the optional `executors:` block, same contract as
 // parseOrchestratorConfig: absent means none configured.
 function parseExecutorsConfig(raw: unknown): Record<string, ExecutorConfig> {
@@ -346,16 +393,22 @@ function parseExecutorsConfig(raw: unknown): Record<string, ExecutorConfig> {
       );
     }
     for (const key of Object.keys(entry)) {
-      if (key !== 'models') {
+      if (key !== 'models' && key !== 'pricing') {
         throw new ConfigError(
-          `${prefix}: unknown executors.${name} key "${key}" (expected models)`
+          `${prefix}: unknown executors.${name} key "${key}" (expected models|pricing)`
         );
       }
     }
-    const { models } = entry as { models?: unknown };
+    const { models, pricing } = entry as {
+      models?: unknown;
+      pricing?: unknown;
+    };
     result[name] = {
       models:
         models === undefined ? {} : parseExecutorModels(name, models, prefix),
+      ...(pricing === undefined
+        ? {}
+        : { pricing: parseExecutorPricing(name, pricing, prefix) }),
     };
   }
   return result;
@@ -1133,10 +1186,17 @@ export function updateConfig(
   }
   if (patch.executors !== undefined) {
     for (const [name, entry] of Object.entries(patch.executors)) {
-      if (entry.models === undefined) continue;
-      const models = parseExecutorModels(name, entry.models, 'invalid patch');
-      for (const [role, value] of Object.entries(models)) {
-        doc.setIn(['executors', name, 'models', role], value);
+      if (entry.models !== undefined) {
+        const models = parseExecutorModels(name, entry.models, 'invalid patch');
+        for (const [role, value] of Object.entries(models)) {
+          doc.setIn(['executors', name, 'models', role], value);
+        }
+      }
+      if (entry.pricing !== undefined) {
+        doc.setIn(
+          ['executors', name, 'pricing'],
+          parseExecutorPricing(name, entry.pricing, 'invalid patch')
+        );
       }
     }
   }

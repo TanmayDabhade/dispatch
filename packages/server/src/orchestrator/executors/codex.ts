@@ -1,4 +1,5 @@
-import { CORE_VERSION } from '@dispatch/core';
+import type { ExecutorPricing } from '@dispatch/core';
+import { CORE_VERSION, loadConfig } from '@dispatch/core';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -96,6 +97,52 @@ export function codexUserMcpServerNames(): string[] {
     return servers === undefined ? [] : Object.keys(servers);
   } catch {
     return [];
+  }
+}
+
+interface CodexTokenTotal {
+  totalTokens: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+}
+
+function tokenTotal(value: unknown): CodexTokenTotal | undefined {
+  const total = objectValue(value);
+  if (total === undefined) return undefined;
+  const count = (key: string): number =>
+    typeof total[key] === 'number' ? (total[key]) : 0;
+  return {
+    totalTokens: count('totalTokens'),
+    inputTokens: count('inputTokens'),
+    cachedInputTokens: count('cachedInputTokens'),
+    outputTokens: count('outputTokens'),
+  };
+}
+
+// Codex reports tokens, never dollars; the project's configured per-million
+// rates turn them into a cost. Codex counts cached input inside inputTokens.
+export function codexCostUsd(
+  total: CodexTokenTotal,
+  pricing: ExecutorPricing
+): number {
+  const cached = Math.min(total.cachedInputTokens, total.inputTokens);
+  const uncached = total.inputTokens - cached;
+  const cachedRate = pricing.cachedInput ?? pricing.input;
+  return (
+    (uncached * pricing.input +
+      cached * cachedRate +
+      total.outputTokens * pricing.output) /
+    1_000_000
+  );
+}
+
+// The project's pricing for Codex, if configured; unreadable config means none.
+function codexPricingFor(projectRoot: string): ExecutorPricing | undefined {
+  try {
+    return loadConfig(projectRoot).executors?.codex?.pricing;
+  } catch {
+    return undefined;
   }
 }
 
@@ -313,12 +360,17 @@ export interface CodexExecutorOptions {
   cartoSpec?: (projectRoot: string) => StdioServerSpec | null;
   /** The user's own MCP server names, injectable so tests never read ~/.codex. */
   userMcpServers?: () => string[];
+  /** Per-million token rates for the project, injectable for tests. */
+  pricing?: (projectRoot: string) => ExecutorPricing | undefined;
 }
 
 export class CodexExecutor implements Executor {
   readonly profile = CODEX_EXECUTOR_PROFILE;
   private readonly cartoSpec: (projectRoot: string) => StdioServerSpec | null;
   private readonly userMcpServers: () => string[];
+  private readonly pricing: (
+    projectRoot: string
+  ) => ExecutorPricing | undefined;
 
   constructor(
     private readonly spawnProcess?: SpawnCodexAppServer,
@@ -326,6 +378,7 @@ export class CodexExecutor implements Executor {
   ) {
     this.cartoSpec = options.cartoSpec ?? cartoMcpSpec;
     this.userMcpServers = options.userMcpServers ?? codexUserMcpServerNames;
+    this.pricing = options.pricing ?? codexPricingFor;
   }
 
   start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
@@ -337,6 +390,8 @@ export class CodexExecutor implements Executor {
       );
     }
     const server = new CodexAppServer(opts.cwd, this.spawnProcess);
+    const pricing = this.pricing(opts.projectRoot ?? opts.cwd);
+    let lastUsage: CodexTokenTotal | undefined;
     let threadId: string | undefined;
     let turnId: string | undefined;
     let terminal = false;
@@ -377,7 +432,16 @@ export class CodexExecutor implements Executor {
       if (terminal || interrupted) return;
       terminal = true;
       pendingApprovals.clear();
-      events.onFinish({ ...result, sessionId: threadId, turns: 1 });
+      const costUsd =
+        pricing !== undefined && lastUsage !== undefined
+          ? codexCostUsd(lastUsage, pricing)
+          : undefined;
+      events.onFinish({
+        ...result,
+        sessionId: threadId,
+        turns: 1,
+        ...(costUsd === undefined ? {} : { costUsd }),
+      });
       server.close();
     };
 
@@ -455,12 +519,17 @@ export class CodexExecutor implements Executor {
       if (message.method === 'thread/tokenUsage/updated') {
         const params = objectValue(message.params);
         if (params?.threadId !== threadId || params?.turnId !== turnId) return;
-        const total = objectValue(objectValue(params?.tokenUsage)?.total);
+        const total = tokenTotal(objectValue(params?.tokenUsage)?.total);
         if (total === undefined) return;
+        lastUsage = total;
+        const cost =
+          pricing === undefined
+            ? ''
+            : ` ≈ $${codexCostUsd(total, pricing).toFixed(4)}`;
         events.onEntry({
           ts: new Date().toISOString(),
           kind: 'usage',
-          text: `tokens: ${String(total.totalTokens)} total (${String(total.inputTokens)} in, ${String(total.outputTokens)} out)`,
+          text: `tokens: ${String(total.totalTokens)} total (${String(total.inputTokens)} in, ${String(total.outputTokens)} out)${cost}`,
         });
         return;
       }

@@ -91,4 +91,47 @@ describe('executors config', () => {
     ).toThrow(ConfigError);
     expect(() => updateConfig(dir, { executor: ' ' })).toThrow(ConfigError);
   });
+
+  it('parses, validates and patches per-executor pricing', () => {
+    const cfg = loadConfig(
+      root(
+        'executors:\n  codex:\n    pricing:\n      input: 1.25\n      cachedInput: 0.125\n      output: 10\n'
+      )
+    );
+    expect(cfg.executors?.codex).toEqual({
+      models: {},
+      pricing: { input: 1.25, cachedInput: 0.125, output: 10 },
+    });
+    expect(() =>
+      loadConfig(root('executors:\n  codex:\n    pricing:\n      input: 1\n'))
+    ).toThrow(ConfigError);
+    expect(() =>
+      loadConfig(
+        root(
+          'executors:\n  codex:\n    pricing:\n      input: 1\n      output: -2\n'
+        )
+      )
+    ).toThrow(ConfigError);
+    expect(() =>
+      loadConfig(
+        root(
+          'executors:\n  codex:\n    pricing:\n      input: 1\n      output: 2\n      reasoning: 3\n'
+        )
+      )
+    ).toThrow(ConfigError);
+
+    const dir = root();
+    updateConfig(dir, {
+      executors: { codex: { pricing: { input: 2, output: 8 } } },
+    });
+    expect(loadConfig(dir).executors?.codex?.pricing).toEqual({
+      input: 2,
+      output: 8,
+    });
+    expect(() =>
+      updateConfig(dir, {
+        executors: { codex: { pricing: { input: 2 } as never } },
+      })
+    ).toThrow(ConfigError);
+  });
 });

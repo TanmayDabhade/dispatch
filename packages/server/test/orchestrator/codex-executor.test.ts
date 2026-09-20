@@ -143,6 +143,9 @@ function startHarness(
   options: {
     cartoSpec?: (projectRoot: string) => StdioServerSpec | null;
     userMcpServers?: () => string[];
+    pricing?: () =>
+      | { input: number; cachedInput?: number; output: number }
+      | undefined;
   } = {}
 ): {
   entries: NormalizedEntry[];
@@ -158,6 +161,7 @@ function startHarness(
   const executor = new CodexExecutor(() => process, {
     cartoSpec: options.cartoSpec ?? (() => null),
     userMcpServers: options.userMcpServers ?? (() => []),
+    pricing: options.pricing ?? (() => undefined),
   });
   const run = executor.start(
     {
@@ -298,6 +302,43 @@ describe('codexUserMcpServerNames', () => {
 });
 
 describe('CodexExecutor', () => {
+  it('prices token usage with the configured rates and reports the cost on finish', async () => {
+    const process = scriptedProcess({
+      afterTurn(fake) {
+        fake.notify('thread/tokenUsage/updated', {
+          threadId: 'thread-new',
+          turnId: 'turn-1',
+          tokenUsage: {
+            total: {
+              totalTokens: 1200,
+              inputTokens: 1000,
+              cachedInputTokens: 500,
+              outputTokens: 200,
+            },
+          },
+        });
+        fake.notify('turn/completed', {
+          threadId: 'thread-new',
+          turn: { id: 'turn-1', status: 'completed', error: null },
+        });
+      },
+    });
+    const harness = startHarness(process, undefined, undefined, {
+      pricing: () => ({ input: 2, cachedInput: 0.2, output: 8 }),
+    });
+    await waitFor(() => harness.finishes.length === 1);
+    // 500 uncached × $2 + 500 cached × $0.20 + 200 out × $8, per million.
+    expect(harness.finishes[0]).toEqual({
+      state: 'finished',
+      sessionId: 'thread-new',
+      turns: 1,
+      costUsd: 0.0027,
+    });
+    expect(harness.entries.find((entry) => entry.kind === 'usage')?.text).toBe(
+      'tokens: 1200 total (1000 in, 200 out) ≈ $0.0027'
+    );
+  });
+
   it("switches off the user's own MCP servers for the run and says so", async () => {
     const process = scriptedProcess();
     const harness = startHarness(process, undefined, undefined, {
