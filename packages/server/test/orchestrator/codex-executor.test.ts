@@ -7,7 +7,11 @@ import {
   type CodexAppServerProcess,
 } from '../../src/orchestrator/codexAppServer.js';
 import type { StdioServerSpec } from '../../src/orchestrator/dispatchMcp.js';
-import { CodexExecutor } from '../../src/orchestrator/executors/codex.js';
+import {
+  CODEX_EXECUTOR_PROFILE,
+  CodexExecutor,
+  codexPermission,
+} from '../../src/orchestrator/executors/codex.js';
 import type {
   ExecutorEvents,
   NormalizedEntry,
@@ -296,40 +300,161 @@ describe('CodexExecutor', () => {
     process.kill();
   });
 
-  it('rejects unsupported permission modes before starting the App Server', () => {
-    for (const permissionMode of [
-      'default',
-      'acceptEdits',
-      'dontAsk',
-      'plan',
-      'bypassPermissions',
-    ]) {
-      const process = scriptedProcess();
-      let spawnCalls = 0;
-      const executor = new CodexExecutor(() => {
-        spawnCalls += 1;
-        return process;
+  it('maps every Dispatch permission mode onto Codex approvals and sandboxing', () => {
+    expect(codexPermission('auto')).toEqual({
+      approvalPolicy: 'on-request',
+      approvalsReviewer: 'auto_review',
+      sandbox: 'workspace-write',
+    });
+    for (const mode of ['default', 'acceptEdits']) {
+      expect(codexPermission(mode)).toEqual({
+        approvalPolicy: 'on-request',
+        approvalsReviewer: 'user',
+        sandbox: 'workspace-write',
       });
-
-      expect(() =>
-        executor.start(
-          {
-            cwd: 'C:\\worktree',
-            prompt: 'make the change',
-            permissionMode,
-          },
-          {
-            onEntry: () => {},
-            onApprovalRequest: () => {},
-            onFinish: () => {},
-          }
-        )
-      ).toThrow(
-        `Codex currently supports Dispatch permission mode "auto" only; configured mode is "${permissionMode}"`
-      );
-      expect(spawnCalls).toBe(0);
-      expect(process.requests).toEqual([]);
     }
+    expect(codexPermission('dontAsk')).toEqual({
+      approvalPolicy: 'never',
+      approvalsReviewer: 'user',
+      sandbox: 'workspace-write',
+    });
+    expect(codexPermission('bypassPermissions')).toEqual({
+      approvalPolicy: 'never',
+      approvalsReviewer: 'user',
+      sandbox: 'danger-full-access',
+    });
+    expect(codexPermission('plan')).toEqual({
+      approvalPolicy: 'never',
+      approvalsReviewer: 'user',
+      sandbox: 'read-only',
+    });
+    expect(codexPermission('wombat')).toBeNull();
+    expect(CODEX_EXECUTOR_PROFILE.permissionRefusal('auto')).toBeNull();
+    expect(CODEX_EXECUTOR_PROFILE.permissionRefusal('wombat')).toContain(
+      'wombat'
+    );
+    expect(CODEX_EXECUTOR_PROFILE.reportsCost).toBe(false);
+    expect(CODEX_EXECUTOR_PROFILE.enforcesCaps).toBe(false);
+  });
+
+  it('refuses an unmapped permission mode before starting the App Server', () => {
+    const process = scriptedProcess();
+    let spawnCalls = 0;
+    const executor = new CodexExecutor(() => {
+      spawnCalls += 1;
+      return process;
+    });
+    expect(executor.profile).toBe(CODEX_EXECUTOR_PROFILE);
+    expect(() =>
+      executor.start(
+        {
+          cwd: 'C:\\worktree',
+          prompt: 'make the change',
+          permissionMode: 'wombat',
+        },
+        {
+          onEntry: () => {},
+          onApprovalRequest: () => {},
+          onFinish: () => {},
+        }
+      )
+    ).toThrow('Codex has no mapping for permissionMode "wombat"');
+    expect(spawnCalls).toBe(0);
+    expect(process.requests).toEqual([]);
+  });
+
+  it('starts a plan-mode run read-only and never asking', async () => {
+    const process = scriptedProcess();
+    const executor = new CodexExecutor(() => process, {
+      cartoSpec: () => null,
+    });
+    executor.start(
+      {
+        cwd: 'C:\\worktree',
+        prompt: 'look around',
+        permissionMode: 'plan',
+        maxBudgetUsd: 5,
+      },
+      {
+        onEntry: () => {},
+        onApprovalRequest: () => {},
+        onFinish: () => {},
+      }
+    );
+    await waitFor(() =>
+      process.requests.some((request) => request.method === 'thread/start')
+    );
+    const start = process.requests.find(
+      (request) => request.method === 'thread/start'
+    );
+    expect(start?.params).toMatchObject({
+      approvalPolicy: 'never',
+      approvalsReviewer: 'user',
+      sandbox: 'read-only',
+    });
+    process.kill();
+  });
+
+  it('notes caps it cannot enforce and reports token usage for its own turn', async () => {
+    const process = scriptedProcess({
+      afterTurn(fake) {
+        fake.notify('thread/tokenUsage/updated', {
+          threadId: 'other-thread',
+          turnId: 'turn-1',
+          tokenUsage: {
+            total: { totalTokens: 9, inputTokens: 9, outputTokens: 0 },
+          },
+        });
+        fake.notify('thread/tokenUsage/updated', {
+          threadId: 'thread-new',
+          turnId: 'turn-1',
+          tokenUsage: {
+            total: { totalTokens: 1200, inputTokens: 1000, outputTokens: 200 },
+            last: { totalTokens: 1200, inputTokens: 1000, outputTokens: 200 },
+          },
+        });
+        fake.notify('turn/completed', {
+          threadId: 'thread-new',
+          turn: { id: 'turn-1', status: 'completed', error: null },
+        });
+      },
+    });
+    const entries: NormalizedEntry[] = [];
+    const finishes: Parameters<ExecutorEvents['onFinish']>[0][] = [];
+    const executor = new CodexExecutor(() => process, {
+      cartoSpec: () => null,
+    });
+    executor.start(
+      {
+        cwd: 'C:\\worktree',
+        prompt: 'make the change',
+        permissionMode: 'auto',
+        maxBudgetUsd: 5,
+        maxTurns: 40,
+      },
+      {
+        onEntry: (entry) => entries.push(entry),
+        onApprovalRequest: () => {},
+        onFinish: (finish) => finishes.push(finish),
+      }
+    );
+    await waitFor(() => finishes.length === 1);
+    expect(entries[0]).toMatchObject({
+      kind: 'system',
+      text: 'maxBudgetUsd 5 and maxTurns 40 not enforced for Codex runs',
+    });
+    const usage = entries.filter((entry) => entry.kind === 'usage');
+    expect(usage).toEqual([
+      expect.objectContaining({
+        text: 'tokens: 1200 total (1000 in, 200 out)',
+      }),
+    ]);
+    expect(finishes[0]).toEqual({
+      state: 'finished',
+      sessionId: 'thread-new',
+      turns: 1,
+    });
+    expect(finishes[0]?.costUsd).toBeUndefined();
   });
 
   it('handles immediate turn notifications, maps useful entries, and finishes once', async () => {
@@ -475,7 +600,7 @@ describe('CodexExecutor', () => {
         'assistant',
       ]);
       expect(harness.finishes).toEqual([
-        { state: 'finished', sessionId: 'thread-new' },
+        { state: 'finished', sessionId: 'thread-new', turns: 1 },
       ]);
     } finally {
       if (oldMcpBin === undefined) delete process.env.DISPATCH_MCP_BIN;
@@ -582,7 +707,7 @@ describe('CodexExecutor', () => {
       }),
     ]);
     expect(harness.finishes).toEqual([
-      { state: 'finished', sessionId: 'thread-new' },
+      { state: 'finished', sessionId: 'thread-new', turns: 1 },
     ]);
   });
 
@@ -672,7 +797,7 @@ describe('CodexExecutor', () => {
       });
       await waitFor(() => harness.finishes.length === 1);
       expect(harness.finishes).toEqual([
-        { state: 'finished', sessionId: 'thread-new' },
+        { state: 'finished', sessionId: 'thread-new', turns: 1 },
       ]);
     }
   });
@@ -732,7 +857,7 @@ describe('CodexExecutor', () => {
     });
     await waitFor(() => harness.finishes.length === 1);
     expect(harness.finishes).toEqual([
-      { state: 'finished', sessionId: 'thread-new' },
+      { state: 'finished', sessionId: 'thread-new', turns: 1 },
     ]);
   });
 
@@ -825,7 +950,35 @@ describe('CodexExecutor', () => {
     }
   });
 
-  it('fails on early exit, malformed output, resume mismatch, and unsupported server requests', async () => {
+  it('declines a server request it does not support and lets the turn status decide', async () => {
+    const process = scriptedProcess({
+      afterTurn(fake) {
+        fake.stdout.write(
+          `${JSON.stringify({ method: 'item/tool/requestUserInput', id: 'question-1', params: {} })}\n`
+        );
+        fake.notify('turn/completed', {
+          threadId: 'thread-new',
+          turn: { id: 'turn-1', status: 'completed', error: null },
+        });
+      },
+    });
+    const harness = startHarness(process);
+    await waitFor(() => harness.finishes.length === 1);
+    expect(harness.finishes[0]?.state).toBe('finished');
+    expect(
+      harness.entries.some(
+        (entry) =>
+          entry.kind === 'system' &&
+          entry.text?.includes('item/tool/requestUserInput') === true
+      )
+    ).toBe(true);
+    const declined = process.requests.find(
+      (request) => request.id === 'question-1'
+    );
+    expect(declined?.error).toMatchObject({ code: -32601 });
+  });
+
+  it('fails on early exit, malformed output and resume mismatch', async () => {
     const cases: Array<{
       process: FakeCodexProcess;
       resume?: string;
@@ -854,22 +1007,6 @@ describe('CodexExecutor', () => {
       process: mismatch,
       resume: 'thread-existing',
       expected: 'instead of thread-existing',
-    });
-
-    const unsupported = scriptedProcess({
-      afterTurn(fake) {
-        fake.stdout.write(
-          `${JSON.stringify({ method: 'item/tool/requestUserInput', id: 'question-1', params: {} })}\n`
-        );
-        fake.notify('turn/completed', {
-          threadId: 'thread-new',
-          turn: { id: 'turn-1', status: 'completed', error: null },
-        });
-      },
-    });
-    cases.push({
-      process: unsupported,
-      expected: 'Unsupported Codex server request',
     });
 
     for (const testCase of cases) {

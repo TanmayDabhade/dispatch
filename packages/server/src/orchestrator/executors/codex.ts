@@ -12,6 +12,7 @@ import type {
   ApprovalDecision,
   Executor,
   ExecutorEvents,
+  ExecutorProfile,
   ExecutorRun,
   ExecutorStartOptions,
   NormalizedEntry,
@@ -215,6 +216,68 @@ function closeDescription(close: {
   return close.stderr === '' ? reason : `${reason}: ${close.stderr}`;
 }
 
+export interface CodexPermission {
+  approvalPolicy: 'on-request' | 'never';
+  approvalsReviewer: 'auto_review' | 'user';
+  sandbox: 'read-only' | 'workspace-write' | 'danger-full-access';
+}
+
+// Dispatch's permission vocabulary is the Claude SDK's; this is what each
+// mode means to Codex. `auto` lets Codex's own reviewer answer approvals,
+// the two asking modes route them to Dispatch's approval flow, the two
+// unattended modes never ask, and `plan` cannot write at all.
+export function codexPermission(
+  permissionMode: string
+): CodexPermission | null {
+  switch (permissionMode) {
+    case 'auto':
+      return {
+        approvalPolicy: 'on-request',
+        approvalsReviewer: 'auto_review',
+        sandbox: 'workspace-write',
+      };
+    case 'default':
+    case 'acceptEdits':
+      return {
+        approvalPolicy: 'on-request',
+        approvalsReviewer: 'user',
+        sandbox: 'workspace-write',
+      };
+    case 'dontAsk':
+      return {
+        approvalPolicy: 'never',
+        approvalsReviewer: 'user',
+        sandbox: 'workspace-write',
+      };
+    case 'bypassPermissions':
+      return {
+        approvalPolicy: 'never',
+        approvalsReviewer: 'user',
+        sandbox: 'danger-full-access',
+      };
+    case 'plan':
+      return {
+        approvalPolicy: 'never',
+        approvalsReviewer: 'user',
+        sandbox: 'read-only',
+      };
+    default:
+      return null;
+  }
+}
+
+// Codex reports token usage but no dollar cost, runs one turn per prompt,
+// and has no equivalent of the SDK's turn/budget caps.
+export const CODEX_EXECUTOR_PROFILE: ExecutorProfile = {
+  reportsCost: false,
+  reportsTurns: true,
+  enforcesCaps: false,
+  permissionRefusal: (mode) =>
+    codexPermission(mode) === null
+      ? `Codex has no mapping for permissionMode "${mode}"`
+      : null,
+};
+
 /** One Codex App Server process, one persisted thread, and one Codex turn. */
 export interface CodexExecutorOptions {
   /** Carto discovery, injectable so tests never depend on a local carto. */
@@ -222,6 +285,7 @@ export interface CodexExecutorOptions {
 }
 
 export class CodexExecutor implements Executor {
+  readonly profile = CODEX_EXECUTOR_PROFILE;
   private readonly cartoSpec: (projectRoot: string) => StdioServerSpec | null;
 
   constructor(
@@ -232,9 +296,11 @@ export class CodexExecutor implements Executor {
   }
 
   start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
-    if (opts.permissionMode !== 'auto') {
+    const permission = codexPermission(opts.permissionMode);
+    if (permission === null) {
       throw new Error(
-        `Codex currently supports Dispatch permission mode "auto" only; configured mode is "${opts.permissionMode}"`
+        CODEX_EXECUTOR_PROFILE.permissionRefusal(opts.permissionMode) ??
+          `unsupported permissionMode ${opts.permissionMode}`
       );
     }
     const server = new CodexAppServer(opts.cwd, this.spawnProcess);
@@ -243,7 +309,6 @@ export class CodexExecutor implements Executor {
     let terminal = false;
     let interrupted = false;
     let stopping = false;
-    let protocolFailure: string | undefined;
     const queuedSteers: string[] = [];
     let turnStartPending = false;
     const bufferedTurnMessages: CodexAppServerMessage[] = [];
@@ -279,7 +344,7 @@ export class CodexExecutor implements Executor {
       if (terminal || interrupted) return;
       terminal = true;
       pendingApprovals.clear();
-      events.onFinish({ ...result, sessionId: threadId });
+      events.onFinish({ ...result, sessionId: threadId, turns: 1 });
       server.close();
     };
 
@@ -306,12 +371,14 @@ export class CodexExecutor implements Executor {
 
     const handleMessage = (message: CodexAppServerMessage): void => {
       if (terminal || interrupted) return;
+      // A server request nothing claimed (a question tool, an elicitation,
+      // an auth refresh) was already answered method-not-found by the
+      // transport; Codex carries on and the turn's own status still decides.
       if (message.id !== undefined) {
-        protocolFailure ??= `Unsupported Codex server request: ${message.method}`;
         events.onEntry({
           ts: new Date().toISOString(),
           kind: 'system',
-          text: protocolFailure,
+          text: `Codex asked for ${message.method}, which Dispatch does not support; declined`,
         });
         return;
       }
@@ -331,6 +398,7 @@ export class CodexExecutor implements Executor {
         turnId === undefined &&
         (message.method === 'item/started' ||
           message.method === 'item/completed' ||
+          message.method === 'thread/tokenUsage/updated' ||
           message.method === 'turn/completed')
       ) {
         if (objectValue(message.params)?.threadId === threadId) {
@@ -351,6 +419,18 @@ export class CodexExecutor implements Executor {
         if (entry !== undefined) events.onEntry(entry);
         return;
       }
+      if (message.method === 'thread/tokenUsage/updated') {
+        const params = objectValue(message.params);
+        if (params?.threadId !== threadId || params?.turnId !== turnId) return;
+        const total = objectValue(objectValue(params?.tokenUsage)?.total);
+        if (total === undefined) return;
+        events.onEntry({
+          ts: new Date().toISOString(),
+          kind: 'usage',
+          text: `tokens: ${String(total.totalTokens)} total (${String(total.inputTokens)} in, ${String(total.outputTokens)} out)`,
+        });
+        return;
+      }
       if (message.method !== 'turn/completed') return;
       const params = objectValue(message.params);
       const turn = objectValue(params?.turn);
@@ -359,10 +439,6 @@ export class CodexExecutor implements Executor {
         turn?.id !== turnId ||
         typeof turn?.status !== 'string'
       ) {
-        return;
-      }
-      if (protocolFailure !== undefined) {
-        finish({ state: 'failed', error: protocolFailure });
         return;
       }
       if (turn.status === 'completed') {
@@ -391,6 +467,21 @@ export class CodexExecutor implements Executor {
 
     const run = async (): Promise<void> => {
       try {
+        const caps = [
+          ...(opts.maxBudgetUsd !== undefined
+            ? [`maxBudgetUsd ${String(opts.maxBudgetUsd)}`]
+            : []),
+          ...(opts.maxTurns !== undefined
+            ? [`maxTurns ${String(opts.maxTurns)}`]
+            : []),
+        ];
+        if (caps.length > 0) {
+          events.onEntry({
+            ts: new Date().toISOString(),
+            kind: 'system',
+            text: `${caps.join(' and ')} not enforced for Codex runs`,
+          });
+        }
         await server.request('initialize', {
           clientInfo: {
             name: 'dispatch',
@@ -416,17 +507,13 @@ export class CodexExecutor implements Executor {
                 threadId: opts.resumeSessionId,
                 model: opts.model,
                 cwd: opts.cwd,
-                sandbox: 'workspace-write',
-                approvalPolicy: 'on-request',
-                approvalsReviewer: 'auto_review',
+                ...permission,
                 config,
               }
             : {
                 model: opts.model,
                 cwd: opts.cwd,
-                approvalPolicy: 'on-request',
-                approvalsReviewer: 'auto_review',
-                sandbox: 'workspace-write',
+                ...permission,
                 config,
               }
         );
