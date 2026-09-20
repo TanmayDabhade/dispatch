@@ -226,6 +226,8 @@ export type {
   ConfigPatch,
   DispatchConfig,
   EscalationStep,
+  ExecutorConfig,
+  ExecutorModels,
   FixLoopConfig,
   LinearConfig,
   ModelConfig,
