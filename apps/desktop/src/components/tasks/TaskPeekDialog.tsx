@@ -1,23 +1,26 @@
-import { Maximize2 } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 
 import { ErrorBoundary } from '../shell/ErrorBoundary';
 import type { TaskDetailPanelProps } from './detail';
-import { TaskDetailPanel } from './detail';
-import { Button } from '@/ui/button';
+import { TaskPage } from './detail';
 import { Dialog, DialogContent, DialogTitle } from '@/ui/dialog';
 
 /**
- * The task peek: `TaskDetailPanel` in a centered `Dialog`, opened from the board/list without
- * leaving the current view. Adds only what a peek needs beyond the panel itself — the dialog
- * shell, Escape-to-close, and an expand affordance (button + ⌘/Ctrl+Enter) that hands off to
- * the full task view via `onExpand`.
+ * The task peek: `TaskPage` in peek mode inside a centred 12px-radius dialog, opened from
+ * the board/list without leaving the current view. Adds only what a peek needs beyond the
+ * page itself — the dialog shell, Escape-to-close, and the ⌘/Ctrl+Enter chord that hands
+ * off to the full task view via `onExpand` (the page draws the expand button).
  */
 export function TaskPeekDialog({
   onClose,
   onExpand,
+  projectName,
   ...panelProps
-}: TaskDetailPanelProps & { onClose: () => void; onExpand: () => void }) {
+}: TaskDetailPanelProps & {
+  onClose: () => void;
+  onExpand: () => void;
+  projectName?: string | null;
+}) {
   const contentRef = useRef<HTMLDivElement>(null);
   // Cmd/Ctrl+Enter grows the peek into the full task view.
   useEffect(() => {
@@ -38,14 +41,14 @@ export function TaskPeekDialog({
       }}
     >
       <DialogContent
-        className="flex h-[85vh] max-h-[760px] w-[min(960px,94vw)] flex-col gap-0 overflow-hidden p-0 sm:max-w-[960px]"
+        className="flex h-[85vh] max-h-[760px] w-[min(960px,94vw)] flex-col overflow-hidden sm:max-w-[960px]"
         aria-describedby={undefined}
-        // The default open-autofocus lands on the first tabbable descendant — which is
-        // the (pre-filled) title field — and browsers select a text input's full value when
-        // it's focused this way, not just place a caret. Left alone, opening this dialog and
-        // pressing any key (even Space) would silently wipe the task's title. Focus the
-        // content root itself instead (the popup carries `tabIndex={-1}` for exactly this) —
-        // Tab still reaches the title field normally, just without the drive-by select-all.
+        showCloseButton={false}
+        // The default open-autofocus lands on the first tabbable descendant — the
+        // (pre-filled) title field — and browsers select a text input's full value when
+        // it's focused this way. Left alone, opening this dialog and pressing any key would
+        // silently wipe the task's title. Focus the content root itself instead (the popup
+        // carries `tabIndex={-1}` for exactly this) — Tab still reaches the title normally.
         ref={contentRef}
         initialFocus={contentRef}
       >
@@ -53,19 +56,12 @@ export function TaskPeekDialog({
           {panelProps.doc.meta.title || 'Task detail'}
         </DialogTitle>
         <ErrorBoundary label="this dialog">
-          <TaskDetailPanel
+          <TaskPage
+            mode="peek"
+            projectName={projectName}
+            onExpand={onExpand}
+            onClose={onClose}
             {...panelProps}
-            headerTrailing={
-              <Button
-                variant="ghost"
-                size="xs"
-                onClick={onExpand}
-                aria-label="Expand to full view"
-                title="Expand (⌘↵)"
-              >
-                <Maximize2 className="size-3.5" />
-              </Button>
-            }
           />
         </ErrorBoundary>
       </DialogContent>

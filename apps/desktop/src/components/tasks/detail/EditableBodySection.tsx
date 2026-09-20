@@ -1,37 +1,102 @@
-import { useEffect, useState } from 'react';
+import type { KeyboardEvent, ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
-import { MainSection } from './MainSection';
+import { cn } from '@/lib/utils';
 import { Textarea } from '@/ui/textarea';
 
-// An inline-editable body section (Description, Acceptance Criteria): renders
-// as borderless prose until focused, auto-grows to its content, and commits on
-// blur only when the text actually changed — so reading the task costs nothing
-// and editing is one click into the text. `value` is the section's current
-// persisted text; the local draft resets whenever it (or the task) changes.
+// The click-to-edit wrapper the task page's prose sections share (Description, Acceptance
+// criteria): at rest it shows `children` — the rendered markdown, or `placeholder` in muted
+// ink when there is nothing yet — and one click swaps in a borderless textarea at the same
+// metrics, so reading costs nothing and editing is one click into the text. Commits on
+// blur, `⌘⏎` and Escape (every control on this page saves rather than discards), and only
+// when the text actually changed. `value` is the persisted section text; the draft resets
+// whenever it (or the task) changes.
 export function EditableBodySection({
-  title,
   value,
   placeholder,
   onSave,
+  label,
+  children,
+  className,
 }: {
-  title: string;
   value: string;
   placeholder: string;
   onSave: (next: string) => void;
+  /** Accessible name for the textarea and the read-mode button. */
+  label: string;
+  /** The rendered read-mode body. */
+  children?: ReactNode;
+  className?: string;
 }) {
+  const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
+  const fieldRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => setDraft(value), [value]);
-  return (
-    <MainSection title={title}>
+  // The click that opened the editor is what the caret follows, so focus moves into the
+  // field the moment it mounts (with the caret at the end, not a select-all).
+  useEffect(() => {
+    if (!editing) return;
+    const field = fieldRef.current;
+    if (field === null) return;
+    field.focus();
+    field.setSelectionRange(field.value.length, field.value.length);
+  }, [editing]);
+
+  function commit() {
+    setEditing(false);
+    if (draft !== value) onSave(draft);
+  }
+
+  // Escape is left to bubble (the peek dialog closes on it, after this commit); ⌘⏎ is
+  // stopped so the peek's expand chord does not also fire.
+  function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === 'Escape') {
+      event.currentTarget.blur();
+      return;
+    }
+    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.currentTarget.blur();
+    }
+  }
+
+  if (editing) {
+    return (
       <Textarea
-        className="text-foreground/90 hover:bg-muted/30 focus-visible:bg-muted/40 -mx-2 min-h-[2.25rem] resize-none rounded-md border-transparent bg-transparent px-2 py-1.5 text-[13.5px] leading-relaxed shadow-none transition-colors duration-150 focus-visible:border-transparent focus-visible:ring-0 dark:bg-transparent"
+        ref={fieldRef}
+        variant="borderless"
+        aria-label={label}
+        data-slot="editable-body"
+        data-editing
+        className={cn(
+          'min-h-6 resize-none text-[15px] leading-6 font-book text-foreground',
+          className
+        )}
         value={draft}
         placeholder={placeholder}
         onChange={(e) => setDraft(e.target.value)}
-        onBlur={() => {
-          if (draft !== value) onSave(draft);
-        }}
+        onBlur={commit}
+        onKeyDown={onKeyDown}
       />
-    </MainSection>
+    );
+  }
+
+  const empty = value.trim() === '';
+  return (
+    <button
+      type="button"
+      aria-label={`Edit ${label.toLowerCase()}`}
+      data-slot="editable-body"
+      data-empty={empty || undefined}
+      onClick={() => setEditing(true)}
+      className={cn(
+        'block min-h-6 w-full cursor-text rounded-control text-left text-[15px] leading-6 font-book outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        empty ? 'text-muted-foreground' : 'text-foreground',
+        className
+      )}
+    >
+      {empty ? placeholder : children}
+    </button>
   );
 }

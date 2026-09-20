@@ -2,34 +2,29 @@ import type { RunMeta } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
 import { computeStack } from '@dispatch/core/graph';
 import type { TaskStack } from '@dispatch/core/graph';
-import { GitPullRequest, Layers2 } from 'lucide-react';
+import { GitPullRequest } from 'lucide-react';
 
-import { MergeLadderDot } from '../runs/MergeLadderDot';
 import { RunStatePill } from '../runs/RunStatePill';
 import { StatusIcon } from './StatusIcon';
-import { cn } from '@/lib/utils';
-import { Badge } from '@/ui/badge';
-import { Button } from '@/ui/button';
-import { Separator } from '@/ui/separator';
+import { ListRow } from '@/ui/ai/list-row';
 
-export interface StackRailProps {
+interface StackRailProps {
   /** Full project task list — the stack is derived from it internally (see
    * `getStackByTaskId` below), so callers never precompute or pass a `TaskStack` of
    * their own. */
   tasks: TaskDoc[];
   /** The task whose stack to render — this task's own row is highlighted in the rail. */
   taskId: string;
-  /** Per-task latest run, for the small run-state/PR chip next to each stack row's title. */
+  /** Per-task latest run, for the small run-state/PR mark next to each stack row's title. */
   latestRunByTaskId: Map<string, RunMeta>;
   /** Re-points the caller at a different task in the stack (e.g. re-peeks the detail
-   * dialog at the clicked row). Omitted renders every title as plain, non-clickable text. */
+   * dialog at the clicked row). Omitted renders every row as plain, non-clickable text. */
   onOpenTask?: (taskId: string) => void;
 }
 
 // Per-(tasks array identity) cache of every task's `TaskStack`, keyed by task id — shared by
-// every `StackRail`/`StackBadge` instance rendered against the same `tasks` reference (e.g.
-// one `StackBadge` per row in a single `TasksListView` render). See `getStackByTaskId`'s own
-// comment for why a plain per-call `computeStack` isn't used here.
+// every `StackRail` instance rendered against the same `tasks` reference. See
+// `getStackByTaskId`'s own comment for why a plain per-call `computeStack` isn't used here.
 const stackCache = new WeakMap<TaskDoc[], Map<string, TaskStack>>();
 
 /**
@@ -82,13 +77,14 @@ function getStackByTaskId(tasks: TaskDoc[]): Map<string, TaskStack> {
 }
 
 /**
- * The right-hand-rail companion to a task's "Blocked by" section: the full chain of tasks
- * this one is connected to through blockedBy edges (its "stack"), topologically ordered
- * blocker before dependent — one row per task with a status dot, a connector line down to the
- * next row, the title (clickable when `onOpenTask` is given), and, if that task has ever had a
- * run, a small run-state chip (plus a PR glyph once it has an open PR). The current task's own
- * row is highlighted. Renders nothing for a task with no stack — a lone task isn't a "stack"
- * of one.
+ * The rail's companion to "Blocked by": the full chain of tasks this one is connected to
+ * through blockedBy edges (its "stack"), topologically ordered blocker before dependent, as
+ * 36px `ListRow`s — the first at the root, every later one nested a step in with the tree
+ * connector so the chain reads top-down. Each row carries the status glyph, the title
+ * (clickable when `onOpenTask` is given), and, if that task has ever had a run, the
+ * compact run-state mark (plus a PR glyph once it has an open PR). The current task's own
+ * row is the selected one. Renders nothing for a task with no stack — a lone task isn't a
+ * "stack" of one.
  */
 export function StackRail({
   tasks,
@@ -102,7 +98,7 @@ export function StackRail({
   const byId = new Map(tasks.map((t) => [t.meta.id, t]));
 
   return (
-    <div className="flex flex-col px-2">
+    <div data-slot="stack-rail" className="flex flex-col">
       {stack.order.map((id, i) => {
         const rowDoc = byId.get(id);
         // `order` only ever contains ids that were present in `tasks` when the stack was
@@ -111,86 +107,36 @@ export function StackRail({
         if (rowDoc === undefined) return null;
         const isCurrent = id === taskId;
         const run = latestRunByTaskId.get(id);
-        const isLast = i === stack.order.length - 1;
         return (
-          <div key={id} className="flex gap-2">
-            <div className="flex flex-col items-center pt-1">
-              <StatusIcon status={rowDoc.meta.status} />
-              {!isLast && (
-                <Separator
-                  orientation="vertical"
-                  className="my-0.5 flex-1"
-                  aria-hidden="true"
-                />
-              )}
-            </div>
-            <div
-              className={cn(
-                'mb-0.5 flex min-w-0 flex-1 items-center justify-between gap-2 rounded-md px-1.5 py-1',
-                isCurrent && 'bg-accent/60'
-              )}
-            >
-              {onOpenTask !== undefined ? (
-                <Button
-                  type="button"
-                  variant="link"
-                  size="xs"
-                  onClick={() => onOpenTask(id)}
-                  title={rowDoc.meta.title}
-                  className="text-foreground h-auto min-w-0 flex-1 justify-start truncate p-0 text-left text-[13px] font-normal"
-                >
-                  {rowDoc.meta.title}
-                </Button>
-              ) : (
-                <span
-                  className="min-w-0 flex-1 truncate text-[13px]"
-                  title={rowDoc.meta.title}
-                >
-                  {rowDoc.meta.title}
-                </span>
-              )}
-              <MergeLadderDot meta={run} />
-              {run !== undefined && (
-                <span className="flex shrink-0 items-center gap-1">
-                  <RunStatePill meta={run} />
+          <ListRow
+            key={id}
+            data-stack-id={id}
+            indent={i === 0 ? 0 : 1}
+            selected={isCurrent}
+            status={<StatusIcon status={rowDoc.meta.status} />}
+            title={<span title={rowDoc.meta.title}>{rowDoc.meta.title}</span>}
+            trailing={
+              run !== undefined ? (
+                <>
+                  <RunStatePill meta={run} compact />
                   {run.prUrl !== undefined && (
                     <GitPullRequest
-                      className="text-primary size-3"
-                      aria-hidden="true"
+                      className="text-muted-foreground size-3.5"
+                      aria-label="Has a pull request"
                     />
                   )}
-                </span>
-              )}
-            </div>
-          </div>
+                </>
+              ) : undefined
+            }
+            onClick={
+              onOpenTask !== undefined && !isCurrent
+                ? () => onOpenTask(id)
+                : undefined
+            }
+            className="px-2"
+          />
         );
       })}
     </div>
-  );
-}
-
-/**
- * A compact "N/M" pill for a task's position within its stack (e.g. "2/4") — used on board
- * cards and list rows so a stacked task's place in its chain reads at a glance without opening
- * the detail dialog. Renders nothing for a task with no stack.
- */
-export function StackBadge({
-  tasks,
-  taskId,
-}: {
-  tasks: TaskDoc[];
-  taskId: string;
-}) {
-  const stack = getStackByTaskId(tasks).get(taskId);
-  if (stack === undefined) return null;
-  return (
-    <Badge
-      variant="outline"
-      className="border-border/60 text-muted-foreground gap-0.5 px-1.5 py-0 font-mono text-[10px] [&>svg]:size-2.5"
-      title={`Stack position ${stack.index + 1} of ${stack.order.length}`}
-    >
-      <Layers2 />
-      {stack.index + 1}/{stack.order.length}
-    </Badge>
   );
 }
