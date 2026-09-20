@@ -53,6 +53,12 @@ import { InboxStore } from './inbox.js';
 import type { InboxClusterer } from './inboxClusterer.js';
 import { createJudgmentClient } from './judgments/client.js';
 import type { JudgmentClient } from './judgments/client.js';
+import {
+  InboxTriageScheduler,
+  InboxTriageSnapshotStore,
+  judgedKindChanges,
+  triageInbox,
+} from './judgments/inboxTriage.js';
 import { computeChecklist } from './judgments/landingChecklist.js';
 import { LedgerStore } from './ledger.js';
 import type { LedgerStorePort } from './ledger.js';
@@ -1092,6 +1098,31 @@ async function bootServer(
   // has already read one should never serve an inbox that is missing it — a half-migrated state
   // is the one outcome worth ruling out entirely.
   const inboxStore = new InboxStore(rootDir, actorContext.member.handle);
+  // The inbox's judgment pass, run in the background on every capture and
+  // text edit (see judgments/inboxTriage.ts). Incremental: only items whose
+  // text changed are sent, so a capture costs one call for that item. A
+  // first-time reading also replaces the capture-time regex kind guess.
+  const triageStore = new InboxTriageSnapshotStore(rootDir);
+  const inboxTriage = new InboxTriageScheduler(async () => {
+    if (judgments === null) return;
+    const previous = triageStore.load();
+    const next = await triageInbox(
+      judgments,
+      inboxStore.listAll(),
+      cache.query(),
+      previous
+    );
+    if (next === null) return;
+    triageStore.save(next);
+    for (const { id, kind } of judgedKindChanges(
+      inboxStore.list(),
+      previous,
+      next
+    )) {
+      inboxStore.update(id, { kind });
+    }
+    events.broadcast({ type: 'inbox.changed' });
+  });
   const migratedLegacy = inboxStore.migrateLegacy();
   if (migratedLegacy > 0) {
     console.log(
@@ -1248,6 +1279,7 @@ async function bootServer(
     startedAt,
     noteStore: new NoteStore(rootDir),
     inboxStore,
+    inboxTriage,
     findingStore,
     ledgerStore,
     reviewRunner,

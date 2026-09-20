@@ -318,10 +318,17 @@ export class InboxStore {
   /** Adds `text` as ONE item — a dump is one thought, however many lines it
    * takes — and prepends it, newest capture first. */
   add(input: AddInboxInput): InboxItem[] {
-    const text = normalizeCapture(input.text);
-    if (text === '') return [];
-    const created: InboxItem[] = [
-      {
+    return this.addMany([input]);
+  }
+
+  /** Several captures in one write, kept in the given order at the top of
+   *  the file — what a paste the judgment split into thoughts becomes. */
+  addMany(inputs: AddInboxInput[]): InboxItem[] {
+    const created: InboxItem[] = [];
+    for (const input of inputs) {
+      const text = normalizeCapture(input.text);
+      if (text === '') continue;
+      created.push({
         id: generateId(),
         kind: input.kind ?? inferKind(text),
         text,
@@ -329,8 +336,9 @@ export class InboxStore {
         linkedTaskId: null,
         createdByRunId: input.createdByRunId ?? null,
         created: '',
-      },
-    ];
+      });
+    }
+    if (created.length === 0) return [];
     const existing = this.read();
     this.write([...created, ...existing]);
     return created;

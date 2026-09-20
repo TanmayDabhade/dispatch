@@ -1351,6 +1351,11 @@ export function useDispatchProject(
             void queryClient.invalidateQueries({ queryKey: runDiffQueryKey });
           } else if (event.type === 'inbox.changed') {
             void queryClient.invalidateQueries({ queryKey: inboxQueryKey });
+            // The daemon triages captures in the background and announces
+            // the result on the same event, so the hints refresh with the rows.
+            void queryClient.invalidateQueries({
+              queryKey: inboxTriageQueryKey,
+            });
           } else if (event.type === 'git.changed') {
             // Prefix match: invalidates every query useGit.ts builds in one call.
             void queryClient.invalidateQueries({ queryKey: gitQueryRootKey });
@@ -1541,6 +1546,7 @@ export function useDispatchProject(
     draftsQueryKey,
     agentSessionsQueryKey,
     inboxQueryKey,
+    inboxTriageQueryKey,
     reviewQueryKey,
     runDiffQueryKey,
     epicProgressKeyPrefix,

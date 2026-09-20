@@ -225,6 +225,20 @@ export function BrainDumpView({
           title: `${res.converted} tasks created`,
         });
       }
+      // The triage's duplicate reading rides on the result: the task exists
+      // either way, so this is a nudge to go look, never a block.
+      for (const result of res.results) {
+        if (result.duplicateOf === undefined) continue;
+        const duplicateOf = result.duplicateOf;
+        toasts.push({
+          tone: 'info',
+          title: `Looks like a duplicate of ${duplicateOf}`,
+          action: {
+            label: 'View existing',
+            onClick: () => onOpenTask(duplicateOf),
+          },
+        });
+      }
     });
   }
 

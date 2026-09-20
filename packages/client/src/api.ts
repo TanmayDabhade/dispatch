@@ -1106,6 +1106,9 @@ export interface InboxItem {
 export interface InboxConvertResult {
   id: string;
   taskId?: string;
+  /** An existing task the triage judged this capture a duplicate of; the
+   * task was still created — this is a heads-up, not a refusal. */
+  duplicateOf?: string;
   error?: string;
 }
 
