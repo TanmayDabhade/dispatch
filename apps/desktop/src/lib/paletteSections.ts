@@ -1,6 +1,9 @@
 // Groups the command menu's ranked rows into Linear's sectioned layout: a fixed section
-// order (Inbox, Tasks, Views, Navigation, Actions), a cap on how many rows each section
-// shows, and recently-run rows floated to the top of their section while the query is empty.
+// order (Inbox, Tasks, Views, Navigation, Actions) while browsing, a cap on how many rows
+// each section shows, and recently-run rows floated to the top of their section while the
+// query is empty. While searching, the section holding the best fuzzy hit moves first: cmdk
+// re-selects the first rendered row on every search change (also under a controlled
+// `value`), so rendering the best hit first is what makes Enter run it.
 
 import type { PaletteEntry, PaletteSection } from './paletteEntries';
 
@@ -10,8 +13,8 @@ export interface PaletteSectionSlice<T extends PaletteEntry = PaletteEntry> {
   items: T[];
 }
 
-/** Sections in the order the menu lists them. */
-export const PALETTE_SECTION_ORDER: readonly PaletteSection[] = [
+/** Sections in the order the menu lists them while browsing. */
+const PALETTE_SECTION_ORDER: readonly PaletteSection[] = [
   'inbox',
   'tasks',
   'views',
@@ -19,7 +22,7 @@ export const PALETTE_SECTION_ORDER: readonly PaletteSection[] = [
   'actions',
 ];
 
-export const PALETTE_SECTION_HEADINGS: Record<PaletteSection, string> = {
+const PALETTE_SECTION_HEADINGS: Record<PaletteSection, string> = {
   inbox: 'Inbox',
   tasks: 'Tasks',
   views: 'Views',
@@ -49,9 +52,9 @@ export interface GroupPaletteSectionsOptions {
 /**
  * Slices `ranked` (already in `rankPaletteItems` order) into sections. With an empty
  * query the sections come in `PALETTE_SECTION_ORDER` and recently-run rows lead their
- * section; with a query the sections are ordered by their best-ranked row, so the menu's
- * first row is still the best fuzzy match. Each section keeps at most its cap; empty
- * sections are dropped.
+ * section; with a query the sections are ordered by their best-ranked row (see the file
+ * comment), so the menu's first row is the best fuzzy match. Each section keeps at most
+ * its cap; empty sections are dropped.
  */
 export function groupPaletteSections<T extends PaletteEntry>(
   ranked: readonly T[],

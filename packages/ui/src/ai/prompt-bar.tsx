@@ -122,7 +122,7 @@ export function PromptBar({
   return (
     <div
       className={cn(
-        'bg-surface-quaternary rounded-card ease-out-expo flex flex-col gap-1.5 border-[0.5px] border-(--border-strong) p-1.5 transition-[box-shadow] duration-100',
+        'bg-surface-quaternary rounded-card ease-out-expo flex flex-col gap-1.5 border-[0.5px] border-border-strong p-1.5 transition-[box-shadow] duration-100',
         'focus-within:ring-1 focus-within:ring-ring'
       )}
     >

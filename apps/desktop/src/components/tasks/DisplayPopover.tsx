@@ -8,6 +8,7 @@ import {
 import type { ReactNode } from 'react';
 
 import { showArchiveToggle } from '../../lib/archiveToggle';
+import { boardGroupingFor } from '../../lib/boardGrouping';
 import {
   TASK_PROPERTIES,
   type TaskProperty,
@@ -99,7 +100,8 @@ function Row({
   );
 }
 
-// A `Status ⌄` select pill opening a radio menu of the options.
+// A `Status ⌄` select pill opening a radio menu of the options; an option can be disabled
+// on its own (greyed but listed) when the current layout has no use for it.
 function SelectMenu<T extends string>({
   label,
   value,
@@ -109,7 +111,7 @@ function SelectMenu<T extends string>({
 }: {
   label: string;
   value: T;
-  options: { id: T; label: string }[];
+  options: { id: T; label: string; disabled?: boolean }[];
   onChange: (value: T) => void;
   disabled?: boolean;
 }) {
@@ -128,7 +130,11 @@ function SelectMenu<T extends string>({
           onValueChange={(next) => onChange(next as T)}
         >
           {options.map((option) => (
-            <DropdownMenuRadioItem key={option.id} value={option.id}>
+            <DropdownMenuRadioItem
+              key={option.id}
+              value={option.id}
+              disabled={option.disabled}
+            >
               {option.label}
             </DropdownMenuRadioItem>
           ))}
@@ -197,6 +203,15 @@ export function DisplayPopover({
     value: TasksDisplayPrefs[K]
   ) => onPrefsChange({ ...prefs, [key]: value });
   const ascending = prefs.orderDir === 'asc';
+  // The board only lanes by epic (see `boardGroupingFor`): its pill shows the layout it is
+  // actually drawing and the list-only groupings are greyed out, so a `Milestone` chosen on
+  // the list never reads as a lane layout the board does not have.
+  const grouping =
+    mode === 'board' ? boardGroupingFor(prefs.grouping) : prefs.grouping;
+  const groupings = GROUPINGS.map((option) => ({
+    ...option,
+    disabled: mode === 'board' && boardGroupingFor(option.id) !== option.id,
+  }));
 
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
@@ -222,9 +237,9 @@ export function DisplayPopover({
           <Row label="Grouping">
             <SelectMenu
               label="Grouping"
-              value={prefs.grouping}
-              options={GROUPINGS}
-              onChange={(grouping) => set('grouping', grouping)}
+              value={grouping}
+              options={groupings}
+              onChange={(next) => set('grouping', next)}
               disabled={mode === 'milestones'}
             />
           </Row>
@@ -243,9 +258,10 @@ export function DisplayPopover({
               options={ORDERINGS}
               onChange={(ordering) => set('ordering', ordering)}
             />
+            {/* An action-style label (what a click does), so no `aria-pressed` — a toggle
+                would need one stable name instead. */}
             <IconButton
               label={ascending ? 'Sort descending' : 'Sort ascending'}
-              aria-pressed={!ascending}
               onClick={() => set('orderDir', ascending ? 'desc' : 'asc')}
             >
               {ascending ? (

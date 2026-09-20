@@ -41,6 +41,8 @@ export function ControlRibbon({
             key={state}
             type="button"
             aria-pressed={active}
+            // Label and count are two spans; the name keeps them from reading as one word.
+            aria-label={`${FEED_STATE_LABEL[state]}, ${counts[state]}`}
             data-active={active || undefined}
             data-state={state}
             onClick={() => onSelect(state)}

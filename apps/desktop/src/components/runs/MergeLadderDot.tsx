@@ -43,7 +43,3 @@ export function MergeLadderPill({
     </LabelPill>
   );
 }
-
-/** The pre-pill name, kept so the row and card call sites compile until they move to
- * `MergeLadderPill` in a trailing slot. */
-export { MergeLadderPill as MergeLadderDot };

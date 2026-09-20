@@ -23,19 +23,26 @@ const buttonVariants = cva(
         link: 'rounded-control text-primary underline-offset-4 hover:underline',
       },
       // Every control is 28px; `xs` is the 24px chip-height button, `lg` 32px. The icon
-      // sizes are round and take the control fill on hover.
+      // sizes are round; only the ghost ones take the control fill on hover (below), so
+      // a filled variant keeps its own hover colour.
       size: {
         default: 'h-7 px-3 has-[>svg]:px-2.5',
         xs: "h-6 gap-1 px-2 text-[11px] has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3",
         sm: 'h-7 px-2.5 has-[>svg]:px-2',
         lg: 'h-8 px-4 has-[>svg]:px-3',
-        icon: 'size-7 rounded-pill hover:bg-surface-control',
-        'icon-xs':
-          "size-6 rounded-pill hover:bg-surface-control [&_svg:not([class*='size-'])]:size-3",
-        'icon-sm': 'size-7 rounded-pill hover:bg-surface-control',
-        'icon-lg': 'size-8 rounded-pill hover:bg-surface-control',
+        icon: 'size-7 rounded-pill',
+        'icon-xs': "size-6 rounded-pill [&_svg:not([class*='size-'])]:size-3",
+        'icon-sm': 'size-7 rounded-pill',
+        'icon-lg': 'size-8 rounded-pill',
       },
     },
+    compoundVariants: [
+      {
+        variant: 'ghost',
+        size: ['icon', 'icon-xs', 'icon-sm', 'icon-lg'],
+        class: 'hover:bg-surface-control',
+      },
+    ],
     defaultVariants: {
       variant: 'default',
       size: 'default',

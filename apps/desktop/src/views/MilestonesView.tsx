@@ -5,12 +5,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { useShellActions } from '../components/shell/ShellActionsContext';
-import { StatusIcon } from '../components/tasks/StatusIcon';
+import { pieDashOffset, StatusIcon } from '../components/tasks/StatusIcon';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import {
-  COLLAPSED_GROUPS_STORAGE_KEY,
   readCollapsedGroups,
   toggleCollapsedGroup,
+  TOGGLED_MILESTONES_STORAGE_KEY,
   writeCollapsedGroups,
 } from '../lib/collapsedEpics';
 import { groupTasks, visibleRowIds } from '../lib/listGrouping';
@@ -43,10 +43,15 @@ interface MilestonesViewProps {
   onRequestDisplay?: () => void;
 }
 
-// A milestone's progress glyph: an r=6 ring with a pie that fills as children land — the
-// `◔ 2/5` Linear draws in a sub-issues header, at 12px.
+// The pie's full arc is `StatusIcon`'s (Linear's) dash length — `pieDashOffset(0)` hides all
+// of it, so it is that length; reading it back keeps the two glyphs on one recipe.
+const PIE_DASH = pieDashOffset(0);
+const PIE_DASHARRAY = `${PIE_DASH} ${PIE_DASH * 2}`;
+
+// A milestone's progress glyph at 12px: `StatusIcon`'s r=6 ring and r=2 pie, the pie filled
+// to `fraction` by the same dashoffset the status icons use — the `◔ 2/5` Linear draws in a
+// sub-issues header.
 function ProgressGlyph({ fraction }: { fraction: number }) {
-  const circumference = 2 * Math.PI * 4;
   return (
     <svg
       viewBox="0 0 14 14"
@@ -61,7 +66,8 @@ function ProgressGlyph({ fraction }: { fraction: number }) {
         r="2"
         stroke="currentColor"
         strokeWidth="4"
-        strokeDasharray={`${circumference * fraction} ${circumference}`}
+        strokeDasharray={PIE_DASHARRAY}
+        strokeDashoffset={pieDashOffset(fraction)}
         transform="rotate(-90 7 7)"
       />
     </svg>
@@ -91,10 +97,10 @@ export function MilestonesView({
   const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
   const [picker, setPicker] = useState<OpenPicker | null>(null);
   // Milestones the user has flipped away from their default fold (unfinished start open,
-  // finished start collapsed), keyed like the list's groups so the fold survives a view
-  // switch.
+  // finished start collapsed). Session-scoped under this page's own key so the fold survives
+  // a view switch; the list's key stores "collapsed", which would read backwards here.
   const [toggled, setToggled] = useState<ReadonlySet<string>>(() =>
-    readCollapsedGroups(COLLAPSED_GROUPS_STORAGE_KEY)
+    readCollapsedGroups(TOGGLED_MILESTONES_STORAGE_KEY)
   );
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -141,14 +147,16 @@ export function MilestonesView({
     }
   }, [orderedIds, focusedTaskId]);
 
-  useEffect(() => {
-    if (focusedTaskId === null) return;
-    listRef.current
-      ?.querySelector(`[data-row-id="${focusedTaskId}"]`)
-      ?.scrollIntoView({ block: 'nearest' });
-  }, [focusedTaskId]);
+  const daemonReady =
+    !data.portLoading && !data.portError && data.client !== null;
+  const showList = daemonReady && groups.length > 0;
 
-  if (data.portLoading || data.portError || data.client === null) {
+  // The grid takes focus once it is on screen so j/k/s/p work without a click first.
+  useEffect(() => {
+    if (showList) listRef.current?.focus();
+  }, [showList]);
+
+  if (!daemonReady) {
     return (
       <DaemonUnavailable
         starting={data.portLoading}
@@ -161,21 +169,32 @@ export function MilestonesView({
   function toggle(key: string) {
     setToggled((prev) => {
       const next = toggleCollapsedGroup(prev, key);
-      writeCollapsedGroups(COLLAPSED_GROUPS_STORAGE_KEY, next);
+      writeCollapsedGroups(TOGGLED_MILESTONES_STORAGE_KEY, next);
       return next;
     });
+  }
+
+  // Only a keyboard move scrolls — a hover that set the cursor must not shift the list under
+  // the pointer.
+  function moveCursor(id: string | null) {
+    setFocusedTaskId(id);
+    if (id === null) return;
+    listRef.current
+      ?.querySelector(`[data-row-id="${id}"]`)
+      ?.scrollIntoView({ block: 'nearest' });
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLDivElement>) {
     handleTaskListKeyDown(e, {
       orderedIds,
       focusedTaskId,
-      setFocusedTaskId,
+      setFocusedTaskId: moveCursor,
       onOpen: onOpenTask,
       onPeek: shell.peekTask,
       onDispatch: (id) => {
         if (data.readyIds.has(id)) void data.handleDispatch(id);
       },
+      onCopyId: shell.copyTaskId,
       setPicker,
       onEscape: () => {
         if (picker === null) return false;
@@ -187,7 +206,7 @@ export function MilestonesView({
     });
   }
 
-  if (groups.length === 0) {
+  if (!showList) {
     return (
       <EmptyState
         icon={Target}
@@ -247,6 +266,7 @@ export function MilestonesView({
                 <>
                   <span
                     data-slot="milestone-progress"
+                    aria-label={`${done} of ${children.length} landed`}
                     className="flex shrink-0 items-center gap-1 text-[12px] font-medium text-(--text-secondary)"
                   >
                     <ProgressGlyph

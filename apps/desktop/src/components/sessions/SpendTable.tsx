@@ -41,8 +41,9 @@ const NUMBER_CLASS =
  * The "sessions + spend, grouped by X" table the Sessions hub renders for both its "spend by
  * model" and "spend by project" sections — one shared component owns the markup, each caller
  * only supplies its own rows and the label for the grouping column. Optionally clickable (see
- * `onRowClick`) so the same table doubles as the project filter control. Heads are 12px
- * sentence case, numbers 12px sans with tabular digits, rows 36px.
+ * `onRowClick`) so the same table doubles as the project filter control; clickable rows are
+ * focusable buttons (Enter/Space toggle) that expose the active filter as `aria-pressed`.
+ * Heads are 12px sentence case, numbers 12px sans with tabular digits, rows 36px.
  */
 export function SpendTable({
   columnLabel,
@@ -71,7 +72,20 @@ export function SpendTable({
           <TableRow
             key={row.key}
             onClick={onRowClick ? () => onRowClick(row.key) : undefined}
-            aria-selected={onRowClick ? activeKey === row.key : undefined}
+            onKeyDown={
+              onRowClick
+                ? (event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      onRowClick(row.key);
+                    }
+                  }
+                : undefined
+            }
+            role={onRowClick ? 'button' : undefined}
+            tabIndex={onRowClick ? 0 : undefined}
+            aria-pressed={onRowClick ? activeKey === row.key : undefined}
+            data-active={activeKey === row.key ? '' : undefined}
             className={cn(
               'h-9 hover:bg-transparent',
               onRowClick &&

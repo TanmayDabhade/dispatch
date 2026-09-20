@@ -112,4 +112,11 @@ test('the id is sans with Linear tracking, not mono', () => {
   const id = container.querySelector('[data-slot="list-row-id"]');
   expect(id?.className).toContain('tracking-(--id-tracking)');
   expect(id?.className).not.toContain('font-mono');
+  expect(id?.className).not.toContain('text-muted-foreground/70');
+});
+
+test('a nested row dims its id', () => {
+  const { container } = render(<ListRow title="Child" id="DIS-6" indent={1} />);
+  const id = container.querySelector('[data-slot="list-row-id"]');
+  expect(id?.className).toContain('text-muted-foreground/70');
 });

@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test';
 
 import {
   applyTaskFilters,
-  clauseLabel,
+  clauseParts,
   defaultOpFor,
   EMPTY_TASK_FILTER_SET,
   hasActiveTaskFilters,
@@ -250,23 +250,30 @@ describe('storage', () => {
 });
 
 describe('labels', () => {
+  const sentence = (parts: ReturnType<typeof clauseParts>) =>
+    `${parts.facet} ${parts.op} ${parts.values}`;
+
   test('a chip reads `Status is In progress`', () => {
     expect(
-      clauseLabel({ facet: 'status', op: 'is', values: ['working'] })
+      sentence(clauseParts({ facet: 'status', op: 'is', values: ['working'] }))
     ).toBe('Status is Working');
     expect(
-      clauseLabel({ facet: 'labels', op: 'includes', values: ['ui', 'api'] })
+      sentence(
+        clauseParts({ facet: 'labels', op: 'includes', values: ['ui', 'api'] })
+      )
     ).toBe('Labels includes ui, api');
     expect(
-      clauseLabel(
-        { facet: 'epic', op: 'is', values: ['e-1'] },
-        {
-          epicTitleById: new Map([['e-1', 'Payments']]),
-        }
+      sentence(
+        clauseParts(
+          { facet: 'epic', op: 'is', values: ['e-1'] },
+          {
+            epicTitleById: new Map([['e-1', 'Payments']]),
+          }
+        )
       )
     ).toBe('Epic is Payments');
-    expect(clauseLabel({ facet: 'epic', op: 'is', values: ['none'] })).toBe(
-      'Epic is No epic'
-    );
+    expect(
+      sentence(clauseParts({ facet: 'epic', op: 'is', values: ['none'] }))
+    ).toBe('Epic is No epic');
   });
 });

@@ -1,12 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 
+import { splitKeycaps } from '../lib/keycaps';
 import type { SearchGroup, SearchItem } from './search';
-import {
-  filterGroups,
-  moveActive,
-  resolveActiveId,
-  splitKeycaps,
-} from './search';
+import { filterGroups, moveActive, resolveActiveId } from './search';
 
 const GROUPS: SearchGroup[] = [
   {

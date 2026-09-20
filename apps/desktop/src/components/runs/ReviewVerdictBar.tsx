@@ -259,6 +259,7 @@ export function ReviewVerdictBar({
             variant="borderless"
             value={summary}
             onChange={(e) => setSummary(e.target.value)}
+            aria-label="Review summary"
             placeholder="Anything the agent should know overall…"
             className="min-w-0 flex-1 text-[13px]"
           />
@@ -351,6 +352,7 @@ export function ReviewVerdictBar({
         variant="borderless"
         value={summary}
         onChange={(e) => setSummary(e.target.value)}
+        aria-label="Review summary"
         placeholder="Anything the agent should know overall…"
         className="mt-2 min-h-[64px] w-full resize-y text-[13px]"
       />

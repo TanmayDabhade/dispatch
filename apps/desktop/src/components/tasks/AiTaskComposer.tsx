@@ -19,6 +19,8 @@ import { Textarea } from '@/ui/textarea';
 
 interface AiTaskComposerProps {
   data: DispatchProjectData;
+  /** The crumb's project chip (`[project] › New task`); the app name until a project is open. */
+  projectName?: string;
   /** The unwrapped start call — rejects on failure (unlike `data.handleStartDraft`) so the
    * composer can keep the typed prompt on screen with an inline error instead of losing it. */
   onStartDraft: (prompt: string) => Promise<DraftRecord>;
@@ -34,6 +36,7 @@ interface AiTaskComposerProps {
  * progress, and review/save happens later from there. */
 export function AiTaskComposer({
   data,
+  projectName = 'Dispatch',
   onStartDraft,
   onQuickAdd,
   onClose,
@@ -71,7 +74,7 @@ export function AiTaskComposer({
         className="top-[12%] w-[min(1024px,92vw)] max-w-none translate-y-0 sm:max-w-none"
       >
         <DialogChrome>
-          <Pill>Dispatch</Pill>
+          <Pill>{projectName}</Pill>
           <span aria-hidden>›</span>
           <span className="text-(--text-secondary)">New task</span>
         </DialogChrome>

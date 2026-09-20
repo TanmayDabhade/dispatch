@@ -1,8 +1,9 @@
 import { SearchIcon } from 'lucide-react';
-import { type KeyboardEvent, type ReactNode, useState } from 'react';
+import { type KeyboardEvent, type ReactNode, useId, useState } from 'react';
 
 import { EmptyState } from '../chrome/empty-state';
 import { Kbd } from '../kbd';
+import { splitKeycaps } from '../lib/keycaps';
 import { cn } from '../lib/utils';
 
 export type SearchItem = {
@@ -59,12 +60,6 @@ function flattenItems(groups: SearchGroup[]): SearchItem[] {
   return groups.flatMap((group) => group.items);
 }
 
-/** Splits a shortcut string into its keycaps on whitespace: `G S` → two caps, `⌘1` → one.
- * Pure, unit-tested. */
-export function splitKeycaps(kbd: string): string[] {
-  return kbd.split(/\s+/).filter(Boolean);
-}
-
 /** Resolves `activeId` against the current flat `items` list: if it's still present,
  * keep it; otherwise fall back to the first item (or null when the list is empty).
  * Covers both the "reset to top result on a new query" case and a stale id left over
@@ -99,8 +94,9 @@ export function moveActive(
  * (search icon, hairline below, optional trailing hint) over grouped, keyboard-navigable
  * 40px rows under 12px/500 sentence-case headings. Arrow keys move the active row
  * (`bg-surface-active`, wrapping at either end); Enter selects it; hovering a row also
- * makes it active. Shows an `EmptyState` heading + `emptyHint` when nothing matches.
- * Fully controlled — `query`/`onQueryChange` live with the caller. */
+ * makes it active. A long label truncates before the hint or keycaps give way. Shows an
+ * `EmptyState` heading + `emptyHint` when nothing matches. Fully controlled —
+ * `query`/`onQueryChange` live with the caller. */
 export function SearchPanel({
   query,
   onQueryChange,
@@ -115,6 +111,7 @@ export function SearchPanel({
   const flat = flattenItems(filtered);
   const [activeId, setActiveId] = useState<string | null>(flat[0]?.id ?? null);
   const resolvedActiveId = resolveActiveId(flat, activeId);
+  const inputHintId = useId();
 
   // Recomputes the match set for the next query synchronously (rather than via an
   // effect) so the active row resets to the top result in the same event that changes
@@ -158,10 +155,12 @@ export function SearchPanel({
           aria-activedescendant={
             resolvedActiveId ? `search-item-${resolvedActiveId}` : undefined
           }
+          aria-describedby={inputHint !== undefined ? inputHintId : undefined}
           className="text-foreground placeholder:text-muted-foreground font-book min-w-0 flex-1 bg-transparent text-[13px] outline-none"
         />
         {inputHint !== undefined && (
           <div
+            id={inputHintId}
             data-slot="search-input-hint"
             className="text-muted-foreground flex shrink-0 items-center gap-1.5 text-[12px]"
           >
@@ -213,11 +212,11 @@ export function SearchPanel({
                           {item.icon}
                         </span>
                       )}
-                      <span className="text-foreground truncate">
+                      <span className="text-foreground min-w-0 truncate">
                         {item.label}
                       </span>
                       {item.hint && (
-                        <span className="text-muted-foreground min-w-0 flex-1 truncate">
+                        <span className="text-muted-foreground shrink-0">
                           {item.hint}
                         </span>
                       )}

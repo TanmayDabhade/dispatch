@@ -19,7 +19,8 @@ export function TaskPeekDialog({
 }: TaskDetailPanelProps & {
   onClose: () => void;
   onExpand: () => void;
-  projectName?: string | null;
+  /** The active project's display name, the first crumb (`null` when none is active). */
+  projectName: string | null;
 }) {
   const contentRef = useRef<HTMLDivElement>(null);
   // Cmd/Ctrl+Enter grows the peek into the full task view.
@@ -41,7 +42,7 @@ export function TaskPeekDialog({
       }}
     >
       <DialogContent
-        className="flex h-[85vh] max-h-[760px] w-[min(960px,94vw)] flex-col overflow-hidden sm:max-w-[960px]"
+        className="flex h-[85vh] w-[min(960px,94vw)] flex-col overflow-hidden sm:max-w-[960px]"
         aria-describedby={undefined}
         showCloseButton={false}
         // The default open-autofocus lands on the first tabbable descendant — the

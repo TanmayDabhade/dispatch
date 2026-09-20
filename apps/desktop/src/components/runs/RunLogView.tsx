@@ -50,8 +50,8 @@ function ChatMessageBubble({ entry }: { entry: NormalizedEntry }) {
 
   if (toUser) {
     return (
-      <div className="bg-accent-tint rounded-card flex w-full flex-col gap-0.5 px-3 py-2">
-        <div className="text-primary flex items-center gap-1.5 text-[12px] font-medium">
+      <div className="bg-surface-quaternary border-border-strong rounded-card flex w-full flex-col gap-0.5 border-[0.5px] px-3 py-2">
+        <div className="flex items-center gap-1.5 text-[12px] font-medium text-(--text-secondary)">
           <Megaphone className="size-3" />
           To you
           <span className="text-muted-foreground font-book">

@@ -41,23 +41,22 @@ export function parseViewMode(stored: string | null): TasksViewMode {
 }
 
 /**
- * The Tasks view mode as state: read once from storage (or from `initial`, which the page
- * header's owner passes when a parent already resolved it), written only on an explicit
- * change — never on mount, which is exactly the auto-save-the-default flaw that poisoned
- * the v1 key (see `VIEW_MODE_STORAGE_KEY`).
+ * The Tasks view mode as state: read once from storage, written only on an explicit change —
+ * never on mount, which is exactly the auto-save-the-default flaw that poisoned the v1 key
+ * (see `VIEW_MODE_STORAGE_KEY`). `initial` is the first-launch default only: it applies when
+ * nothing is stored yet, so a remembered choice survives the view unmounting and remounting
+ * under a parent that resolved `initial` once and never again.
  */
 export function useTasksViewMode(
   initial?: TasksViewMode
 ): [TasksViewMode, (mode: TasksViewMode) => void] {
-  const [mode, setMode] = useState<TasksViewMode>(
-    () =>
-      initial ??
-      parseViewMode(
-        typeof window === 'undefined'
-          ? null
-          : window.localStorage.getItem(VIEW_MODE_STORAGE_KEY)
-      )
-  );
+  const [mode, setMode] = useState<TasksViewMode>(() => {
+    const stored =
+      typeof window === 'undefined'
+        ? null
+        : window.localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+    return stored !== null ? parseViewMode(stored) : (initial ?? 'board');
+  });
   const set = useCallback((next: TasksViewMode) => {
     setMode(next);
     window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, next);

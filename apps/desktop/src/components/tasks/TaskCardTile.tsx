@@ -149,7 +149,8 @@ export function TaskCardTile({
       data-focused={focused}
       className={cn(
         'group bg-surface-quaternary rounded-card shadow-card flex w-[322px] max-w-full cursor-pointer flex-col gap-1.5 p-3 text-left transition-[background-color,box-shadow] duration-100',
-        'hover:bg-[color-mix(in_srgb,var(--surface-quaternary),#fff_3%)]',
+        // 3% of the text colour into the card surface: a lift in dark, a dip in light.
+        'hover:bg-[color-mix(in_srgb,var(--surface-quaternary),var(--text-primary)_3%)]',
         'focus-visible:shadow-raised focus-visible:outline-none',
         'data-[focused=true]:shadow-raised',
         drag?.isDragging === true && 'opacity-40',
@@ -189,7 +190,11 @@ export function TaskCardTile({
             <span aria-hidden className="shrink-0">
               ›
             </span>
-            <span className="min-w-0 truncate" title={epicTitle}>
+            <span
+              data-slot="task-card-crumb"
+              className="min-w-0 truncate"
+              title={epicTitle}
+            >
               {epicTitle}
             </span>
           </>

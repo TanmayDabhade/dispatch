@@ -310,6 +310,7 @@ export function ReviewThread({
               onKeyDown={(e) => {
                 if (e.key === 'Enter') void sendReply();
               }}
+              aria-label="Reply"
               placeholder={REPLY_PLACEHOLDER[destination]}
               className="min-w-0 flex-1 text-[13px]"
             />
@@ -486,6 +487,7 @@ export function ReviewComposer({
             handleSuggest();
           }
         }}
+        aria-label={`Comment on line ${line}`}
         placeholder={COMPOSER_PLACEHOLDER[destination]}
         className="mt-1.5 min-h-[52px] w-full resize-y text-[13px]"
       />

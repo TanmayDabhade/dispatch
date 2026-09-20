@@ -105,8 +105,8 @@ export function SnippetComposer({
       />
 
       <div className="flex items-center justify-between gap-3 px-0.5 pb-0.5">
-        {/* `NativeSelect`, not the Radix-backed `@/ui/select`: that primitive mounts its
-            options only once opened (a `Presence`-gated portal), which breaks
+        {/* `NativeSelect`, not the Base UI-backed `@/ui/select`: that primitive mounts its
+            options only once opened, which breaks
             `ReviewChatPanel`'s coverage of which targets are offered — it reads
             `role="option"` right after mount, never opening the dropdown. A real `<select>`
             keeps that assertion honest while still landing on a shared primitive. */}

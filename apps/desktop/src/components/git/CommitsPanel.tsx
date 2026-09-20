@@ -34,13 +34,14 @@ export function CommitsPanel({
   }
 
   return (
-    <div className="flex flex-col px-1 py-1" role="table">
+    <div className="flex flex-col px-1 py-1" role="list" aria-label="Commits">
       {commits.map((commit, index) => (
         <ListRow
           key={commit.sha}
           data-git-selected={index === selectedIndex ? 'true' : undefined}
           onClick={() => onSelectIndex(index)}
-          selected={index === selectedIndex}
+          focused={index === selectedIndex}
+          role="listitem"
           id={commit.shortSha}
           title={commit.subject}
           trailing={

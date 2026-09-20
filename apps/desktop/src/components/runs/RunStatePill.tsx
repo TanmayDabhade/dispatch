@@ -6,13 +6,11 @@ import { cn } from '@/lib/utils';
 import { Pill } from '@/ui/ai/pill';
 import { StateMark } from '@/ui/chrome/state-mark';
 
-// Mirrors `statusTone` in lib/taskDisplay.ts's spirit (map a fixed enum to a
-// deliberate color) but for RunState rather than a task's tracker-config
-// status — a run's six states are fixed by the orchestrator (spec-exact
-// strings), never project-configurable, so this can switch on them directly
-// instead of falling back to gray for anything unrecognized.
-// The whose-move vocabulary's words, not process states: a run parked on an
-// approval says "Approve" (the ask), a finished one says "Review".
+// A run's states are fixed by the orchestrator (spec-exact strings), never
+// project-configurable, so unlike `StatusIcon`'s tracker statuses this can map
+// them exhaustively with no fallback. The whose-move vocabulary's words, not
+// process states: a run parked on an approval says "Approve" (the ask), a
+// finished one says "Review".
 const RUN_STATE_LABEL: Record<RunState, string> = {
   provisioning: 'Provisioning',
   running: 'Working',

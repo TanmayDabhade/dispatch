@@ -397,6 +397,7 @@ export function PrReviewPanel({
                   is the call the server 409s on a PR that is not open. */}
               <Textarea
                 rows={2}
+                aria-label="Comment"
                 placeholder="Leave a comment…"
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
@@ -446,6 +447,7 @@ export function PrReviewPanel({
                 ))}
               <Textarea
                 rows={2}
+                aria-label="Review comment"
                 placeholder="Leave a review comment…"
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}

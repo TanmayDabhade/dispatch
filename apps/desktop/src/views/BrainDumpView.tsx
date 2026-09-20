@@ -39,11 +39,18 @@ const KIND_DOT: Partial<Record<InboxKind, string>> = {
   bug: 'var(--red)',
   idea: 'var(--status-progress)',
 };
+const KIND_LABEL: Partial<Record<InboxKind, string>> = {
+  bug: 'Bug',
+  idea: 'Idea',
+};
 
-// The comment-card surface (§8) the capture composer, the inline editor and the group cards
-// all sit on: quaternary, 8px radius, a half-pixel strong ring.
+// The comment-card surface (§8) the capture composer and the inline editor sit on:
+// quaternary, 8px radius, a half-pixel strong ring.
 const CARD_CLASS =
   'bg-surface-quaternary rounded-card border-border-strong border-[0.5px] p-3';
+// Group cards take the board card's surface (§5) instead: the half-pixel light ring and
+// soft drop of `shadow-card`.
+const GROUP_CARD_CLASS = 'bg-surface-quaternary rounded-card shadow-card p-3';
 
 /**
  * Brain dump — everything you notice, before you decide whether it matters.
@@ -393,7 +400,11 @@ export function BrainDumpView({
                       grouping || openItemIds.length < CLUSTER_MIN_ITEMS
                     }
                   >
-                    <RefreshCw className={cn(grouping && 'animate-spin')} />
+                    <RefreshCw
+                      className={cn(
+                        grouping && 'animate-spin motion-reduce:animate-none'
+                      )}
+                    />
                     {grouping ? 'Grouping…' : 'Group'}
                   </PillButton>
                 </span>
@@ -404,7 +415,7 @@ export function BrainDumpView({
             ) : (
               <ul className="flex flex-col gap-2">
                 {groups.map((g) => (
-                  <li key={g.epicTitle} className={CARD_CLASS}>
+                  <li key={g.epicTitle} className={GROUP_CARD_CLASS}>
                     <div className="text-[13px] font-medium">{g.epicTitle}</div>
                     <p className="font-book text-muted-foreground mt-1 text-[12px] leading-5">
                       {g.reason}
@@ -673,7 +684,7 @@ function Key({ combo, what }: { combo: string; what: string }) {
 function KindPill({ kind }: { kind: InboxKind }) {
   const dot = KIND_DOT[kind];
   if (dot === undefined) return null;
-  return <LabelPill color={dot}>{kind}</LabelPill>;
+  return <LabelPill color={dot}>{KIND_LABEL[kind] ?? kind}</LabelPill>;
 }
 
 function InboxRow({
@@ -731,6 +742,7 @@ function InboxRow({
               yourself from what something else noticed for you. */}
           {item.createdByRunId !== null && (
             <span
+              role="img"
               className="shrink-0"
               title={`Flagged by ${item.createdByRunId}`}
               aria-label={`Flagged by agent run ${item.createdByRunId}`}

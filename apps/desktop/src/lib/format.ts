@@ -1,9 +1,6 @@
 // The relative-time formatters moved to @dispatch/ui (packages/ui), whose components render
 // them; re-exported so app callers keep their `@/lib/format` import path.
 export { formatRelativeTime, formatRelativeTimeFromIso } from '@/ui/lib/format';
-// The absolute task dates (`Sep 13`, `Created Sep 13`) live in taskDates.ts; re-exported here
-// so a view can pull every date formatter from one path.
-export { formatCreated, formatShortDate } from './taskDates';
 
 /** A session's best available display name: Claude Code's own auto-generated title first
  * (matches "Session name" in `claude`'s `/status` and `--resume` picker), falling back to

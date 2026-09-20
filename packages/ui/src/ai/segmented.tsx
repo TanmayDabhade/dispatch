@@ -1,5 +1,6 @@
-import type { ReactNode } from 'react';
+import type { KeyboardEvent, ReactNode } from 'react';
 
+import { focusRovingItem, nextRovingIndex } from '../lib/roving';
 import { cn } from '../lib/utils';
 
 export type SegmentedOption = {
@@ -19,7 +20,8 @@ export type SegmentedControlProps = {
 
 /** The List | Board switch at the top of the Display popover: equal cells inside one
  * half-pixel ring, icon above label, the active cell lifted onto `bg-surface-active`. A
- * radiogroup, so a screen reader hears one choice rather than N buttons. */
+ * radiogroup, so a screen reader hears one choice rather than N buttons — and like a
+ * radio group it is one tab stop, with arrows/Home/End moving the selection. */
 export function SegmentedControl({
   options,
   value,
@@ -27,6 +29,15 @@ export function SegmentedControl({
   label,
   className,
 }: SegmentedControlProps) {
+  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    const current = options.findIndex((option) => option.id === value);
+    const next = nextRovingIndex(event.key, current, options.length);
+    if (next === null) return;
+    event.preventDefault();
+    onChange(options[next]!.id);
+    focusRovingItem(event.currentTarget, '[role="radio"]', next);
+  }
+
   return (
     <div
       role="radiogroup"
@@ -36,6 +47,7 @@ export function SegmentedControl({
         'grid auto-cols-fr grid-flow-col gap-0.5 rounded-control border-[0.5px] border-border-chip bg-surface-secondary p-0.5',
         className
       )}
+      onKeyDown={handleKeyDown}
     >
       {options.map((option) => {
         const active = option.id === value;
@@ -45,6 +57,7 @@ export function SegmentedControl({
             type="button"
             role="radio"
             aria-checked={active}
+            tabIndex={active ? 0 : -1}
             data-active={active || undefined}
             onClick={() => onChange(option.id)}
             className={cn(

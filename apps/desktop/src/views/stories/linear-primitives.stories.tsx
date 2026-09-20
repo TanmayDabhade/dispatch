@@ -160,8 +160,13 @@ function ListRowsDemo() {
       date="Sep 13"
     />
   );
+  // Rows default to `role="row"`, so the list itself must be the grid.
   return (
-    <div className="bg-surface-panel rounded-card flex w-full flex-col p-2">
+    <div
+      role="grid"
+      aria-label="Tasks"
+      className="bg-surface-panel rounded-card flex w-full flex-col p-2"
+    >
       <GroupHeader
         tint="var(--status-progress)"
         icon={<ProgressGlyph color="var(--status-progress)" />}
@@ -265,7 +270,7 @@ export const linearPrimitiveStories: GalleryStory[] = [
   {
     id: 'list-rows',
     title: 'List rows — 36px, hover checkbox, nested child',
-    note: 'A status-tinted group header over three ListRows: priority glyph, sans id with -0.26px tracking, status glyph, title, label pill, sub-task count pill, 18px avatar, date. The checkbox appears on hover, focus or selection; the third row nests with a tree connector.',
+    note: 'A status-tinted group header over three ListRows inside a role="grid" list (rows default to role="row"): priority glyph, sans id with -0.26px tracking, status glyph, title, label pill, sub-task count pill, 18px avatar, date. The checkbox appears on hover, focus or selection; the third row nests with a tree connector and a dimmer id.',
     render: () => <ListRowsDemo />,
   },
   {

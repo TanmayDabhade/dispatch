@@ -43,6 +43,9 @@ function DialogOverlay({
   );
 }
 
+// The corner close is a fallback for dialogs without a `DialogChrome` row: once a
+// chrome row is anywhere inside the popup, its own close takes over and the corner one
+// hides, so consumers do not need to pass `showCloseButton={false}` to avoid two.
 function DialogContent({
   className,
   children,
@@ -65,8 +68,8 @@ function DialogContent({
         {children}
         {showCloseButton && (
           <DialogPrimitive.Close
-            data-slot="dialog-close"
-            className="absolute top-2 right-2"
+            data-slot="dialog-corner-close"
+            className="absolute top-2 right-2 [[data-slot=dialog-content]:has([data-slot=dialog-chrome])>&]:hidden"
             render={<IconButton label="Close" />}
           >
             <XIcon />
@@ -78,8 +81,8 @@ function DialogContent({
 }
 
 // The 40px chrome row at the top of a dialog: a 12px crumb (`[team] › New issue`) on the
-// left, expand and close icon buttons on the right. Pass `showCloseButton={false}` to
-// `DialogContent` when using it, so the close lives here and nowhere else.
+// left, expand and close icon buttons on the right. Its presence hides
+// `DialogContent`'s corner close, so the close lives here and nowhere else.
 function DialogChrome({
   className,
   children,

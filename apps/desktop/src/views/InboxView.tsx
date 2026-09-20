@@ -15,12 +15,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { ApprovalCard } from '../components/runs/ApprovalCard';
 import { QuestionCard } from '../components/runs/QuestionCard';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
+import type { NotificationInbox } from '../components/shell/NotificationInboxContext';
 import { useNotificationInbox } from '../components/shell/NotificationInboxContext';
 import { useShellActions } from '../components/shell/ShellActionsContext';
 import { TaskSpecView } from '../components/tasks/TaskSpecView';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { TaskTab } from '../lib/appNav';
 import type { FeedState } from '../lib/feedState';
+import { tintForState } from '../lib/feedState';
 import { formatRelativeTimeFromIso } from '../lib/format';
 import type {
   InboxBadge,
@@ -78,7 +80,8 @@ interface InboxViewProps {
   project: DispatchProjectData;
   /** The first crumb segment; the page is `Inbox`. */
   projectName?: string | null;
-  /** Keys the per-project read state in local storage. */
+  /** Keys the per-project read state in local storage; without one, read state lives only
+   * for the life of the view. */
   projectRoot?: string | null;
   /** Opens the full task view on a given tab, pinned to one run. Defaults to the shell's
    * `openTask`. */
@@ -102,6 +105,26 @@ function firstOpenQuestion(
 ): RunQuestion | undefined {
   if (questions === undefined || questions.length === 0) return undefined;
   return questions.find((q) => q.answer === null) ?? questions[0];
+}
+
+/** The live rows' read keys, tagged with the project they were loaded for so a project
+ * switch can tell a set still waiting to be reloaded from the one it may persist. */
+interface ReadState {
+  root: string | null;
+  ids: ReadonlySet<string>;
+}
+
+function loadReadState(root: string | null): ReadState {
+  const ids =
+    root === null || typeof window === 'undefined'
+      ? new Set<string>()
+      : loadReadIds(root, window.localStorage);
+  return { root, ids };
+}
+
+/** The DOM id `aria-activedescendant` points at for one row. */
+function rowDomId(key: string): string {
+  return `inbox-${key}`;
 }
 
 const BADGE_ICON: Record<InboxBadge, typeof Check> = {
@@ -138,18 +161,24 @@ export function InboxView({
     retryEnsureDispatchd: onRetry,
   } = project;
   const inbox = useNotificationInbox();
+  // Per-entry `markRead` lands on the seam in WP2; a notification read here is remembered in
+  // `readIds` either way, and told to the seam as soon as it can hear it.
+  const seam: NotificationInbox & { markRead?: (id: string) => void } = inbox;
   const shell = useShellActions();
   const openTask = onOpenTask ?? shell.openTask;
-  const readRoot = projectRoot ?? 'default';
+  const readRoot = projectRoot ?? null;
 
   const [filter, setFilter] = useState<InboxFilter>('all');
   const [groupByKind, setGroupByKind] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [readIds, setReadIds] = useState<ReadonlySet<string>>(() =>
-    typeof window === 'undefined'
-      ? new Set()
-      : loadReadIds(readRoot, window.localStorage)
+  const [readState, setReadState] = useState<ReadState>(() =>
+    loadReadState(readRoot)
   );
+  const readIds = readState.ids;
+  const addReadId = (key: string) =>
+    setReadState((prev) =>
+      prev.ids.has(key) ? prev : { ...prev, ids: new Set([...prev.ids, key]) }
+    );
 
   const items = useMemo(
     () => buildInboxItems(data, inbox.entries),
@@ -168,16 +197,24 @@ export function InboxView({
   );
   const unread = unreadInboxCount(items, readIds);
 
-  // Read state persists per project; keys of items no longer listed are dropped on save.
+  // A project switch reloads the set for the new root rather than carrying the old one over.
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (readState.root !== readRoot) setReadState(loadReadState(readRoot));
+  }, [readRoot, readState.root]);
+
+  // Read state persists per project; keys of items no longer listed are dropped on save. Not
+  // while the set is still the previous project's, and not before the daemon has answered —
+  // the empty list before the first load would prune every stored key.
+  useEffect(() => {
+    if (readRoot === null || readState.root !== readRoot) return;
+    if (portLoading || client === null || typeof window === 'undefined') return;
     saveReadIds(
       readRoot,
       readIds,
       new Set(items.map((item) => item.key)),
       window.localStorage
     );
-  }, [readRoot, readIds, items]);
+  }, [readRoot, readState.root, readIds, items, portLoading, client]);
 
   // Runs whose latest merge-queue attempt failed. The feed indexes only live queue entries
   // (controlRoom.ts), so a run the queue bounced comes back here as an ordinary review row
@@ -215,10 +252,13 @@ export function InboxView({
 
   const selected = visible.find((item) => item.key === selectedKey) ?? null;
 
+  // Selecting a row reads it: live rows by key, notifications through the seam as well so
+  // the persisted record agrees.
   function select(item: InboxItem) {
     setSelectedKey(item.key);
-    if (item.kind !== 'notification' && !readIds.has(item.key)) {
-      setReadIds((prev) => new Set([...prev, item.key]));
+    addReadId(item.key);
+    if (item.kind === 'notification' && !item.entry.read) {
+      seam.markRead?.(item.entry.id);
     }
   }
 
@@ -241,7 +281,10 @@ export function InboxView({
 
   function markAllRead() {
     inbox.markAllRead();
-    setReadIds((prev) => markAllItemsRead(items, prev));
+    setReadState((prev) => {
+      const ids = markAllItemsRead(items, prev.ids);
+      return ids === prev.ids ? prev : { ...prev, ids };
+    });
   }
 
   function onListKeyDown(event: KeyboardEvent<HTMLDivElement>) {
@@ -383,6 +426,9 @@ export function InboxView({
           <div
             role="listbox"
             aria-label="Inbox"
+            aria-activedescendant={
+              selected !== null ? rowDomId(selected.key) : undefined
+            }
             tabIndex={0}
             onKeyDown={onListKeyDown}
             className="min-h-0 flex-1 overflow-y-auto px-2 py-1 outline-none"
@@ -402,9 +448,19 @@ export function InboxView({
               />
             ) : (
               groups.map((group) => (
-                <div key={group.id} data-inbox-group={group.id}>
+                <div
+                  key={group.id}
+                  role="group"
+                  aria-label={group.label}
+                  data-inbox-group={group.id}
+                >
                   {groupByKind && (
                     <GroupHeader
+                      tint={
+                        group.state !== null
+                          ? tintForState(group.state)
+                          : undefined
+                      }
                       icon={
                         group.state !== null ? (
                           <StateMark state={group.state} />
@@ -521,6 +577,7 @@ function InboxRow({
   const Badge = BADGE_ICON[inboxItemBadge(item)];
   return (
     <div
+      id={rowDomId(item.key)}
       role="option"
       aria-selected={selected}
       data-slot="inbox-row"
@@ -529,12 +586,6 @@ function InboxRow({
       tabIndex={-1}
       onClick={onSelect}
       onDoubleClick={onOpen}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') {
-          event.preventDefault();
-          onOpen();
-        }
-      }}
       className={cn(
         'group/row flex h-12 cursor-pointer items-center gap-3 rounded-control px-2 transition-colors duration-100 hover:bg-surface-hover',
         selected && 'bg-surface-selected hover:bg-surface-selected'
@@ -557,6 +608,7 @@ function InboxRow({
         <span className="flex min-w-0 items-center gap-1.5 text-[13px] leading-4">
           {!read && (
             <span
+              role="img"
               aria-label="Unread"
               data-slot="unread-dot"
               className="bg-primary size-1.5 shrink-0 rounded-full"

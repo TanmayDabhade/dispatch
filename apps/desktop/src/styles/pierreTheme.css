@@ -29,7 +29,7 @@
   /* The line between the number gutter and the code: Pierre's default is a 2px
      band of the background; a half-pixel hairline is the app's rule. */
   --diffs-gap-style: 0.5px solid var(--border-default);
-  --diffs-bg-separator-override: var(--surface-quaternary);
+  --diffs-bg-separator-override: var(--surface-secondary);
   --diffs-fg-number-override: var(--text-ghost);
 
   /* @pierre/trees (FileTree) — these are single override slots rather than
@@ -38,8 +38,12 @@
   --trees-bg-override: var(--surface-panel);
   --trees-fg-override: var(--text-primary);
   --trees-fg-muted-override: var(--text-muted);
-  --trees-bg-muted-override: var(--surface-quaternary);
+  --trees-bg-muted-override: var(--surface-hover);
   --trees-border-color-override: var(--border-subtle);
   --trees-border-radius-override: var(--radius-control);
   --trees-accent-override: var(--accent);
+  /* Pierre would otherwise mix the accent into the selected row; selection
+     stays neutral grey and the accent is kept for the focus ring. */
+  --trees-selected-bg-override: var(--surface-selected);
+  --trees-selected-fg-override: var(--text-primary);
 }

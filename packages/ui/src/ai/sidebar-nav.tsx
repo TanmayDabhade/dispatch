@@ -1,5 +1,5 @@
 import { ChevronDownIcon } from 'lucide-react';
-import { Fragment, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 
 import { cn } from '../lib/utils';
 
@@ -13,16 +13,11 @@ export type SidebarNavItem = {
   /** Blocks selection and greys the row out — the "Overview" row before a project has
    * resolved, for example. */
   disabled?: boolean;
-  /** Trailing content after the count. */
-  hint?: ReactNode;
   /** Accessible name when the visible label is not the whole story — a row whose name
    * should fold in its count ("Inbox (4)"). Falls back to `label` when omitted. */
   ariaLabel?: string;
   /** Nested one level (16px), as a team's Home/Issues/Projects rows sit under the team. */
   indent?: 1;
-  /** Extra content rendered directly below the row — a nested control that belongs to
-   * this destination. */
-  children?: ReactNode;
 };
 
 export type SidebarNavSection = {
@@ -41,11 +36,11 @@ export type SidebarNavSection = {
 };
 
 export type SidebarNavProps = {
+  /** The top strip above the sections — the project switcher row in the app. */
   header?: ReactNode;
   sections: SidebarNavSection[];
   activeId: string;
   onSelect: (id: string) => void;
-  footer?: ReactNode;
   className?: string;
 };
 
@@ -66,7 +61,6 @@ export function SidebarNav({
   sections,
   activeId,
   onSelect,
-  footer,
   className,
 }: SidebarNavProps) {
   return (
@@ -110,7 +104,7 @@ export function SidebarNav({
                   <div className="flex flex-col gap-px">
                     {section.items.map((item) => {
                       const isActive = item.id === activeId;
-                      const row = (
+                      return (
                         <button
                           key={item.id}
                           type="button"
@@ -152,16 +146,7 @@ export function SidebarNav({
                               {item.count}
                             </span>
                           )}
-                          {item.hint}
                         </button>
-                      );
-                      return item.children !== undefined ? (
-                        <Fragment key={item.id}>
-                          {row}
-                          {item.children}
-                        </Fragment>
-                      ) : (
-                        row
                       );
                     })}
                   </div>
@@ -170,7 +155,6 @@ export function SidebarNav({
           );
         })}
       </nav>
-      {footer !== undefined && <div>{footer}</div>}
     </div>
   );
 }

@@ -1,4 +1,3 @@
-import { CircleCheck, SearchX } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { ControlRibbon } from '../components/overview/ControlRibbon';
@@ -9,7 +8,11 @@ import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { buildFeed } from '../lib/controlRoom';
 import type { FeedState } from '../lib/feedState';
-import { FEED_STATE_LABEL, feedTier, isUrgentState } from '../lib/feedState';
+import {
+  FEED_STATE_LABEL,
+  isUrgentState,
+  tintForState,
+} from '../lib/feedState';
 import { GroupHeader } from '@/ui/ai/group-header';
 import { PageHeader } from '@/ui/ai/page-header';
 import { EmptyState } from '@/ui/chrome/empty-state';
@@ -45,19 +48,6 @@ const COLLAPSIBLE_GROUPS: readonly FeedState[] = [
   'checking',
   'landing',
 ];
-
-// The group header's tint: the tier's colour, the same hue its rows' glyphs carry.
-const TIER_TINT = {
-  you: 'var(--state-waiting-fg)',
-  broken: 'var(--state-failed-fg)',
-  machine: 'var(--state-working-fg)',
-  resting: 'var(--state-ready-fg)',
-} as const;
-
-/** The status colour a feed state's group header is tinted with. */
-export function tintForState(state: FeedState): string {
-  return TIER_TINT[feedTier(state)];
-}
 
 /**
  * The Control room — the app's landing view and its answer to "what the hell is going on with
@@ -280,17 +270,48 @@ export function OverviewView({
 function EmptyFeed({ filtered }: { filtered: boolean }) {
   return filtered ? (
     <EmptyState
-      icon={SearchX}
+      illustration={<FilteredOutArt />}
       heading="Nothing matches that filter"
       description="Every row is hidden by the current filter. Clear it to see the feed."
       className="flex-1 py-16"
     />
   ) : (
     <EmptyState
-      icon={CircleCheck}
+      illustration={<AllQuietArt />}
       heading="All quiet"
       description="Nothing running, nothing waiting on you."
       className="flex-1 py-16"
     />
+  );
+}
+
+const ART_PROPS = {
+  viewBox: '0 0 60 60',
+  fill: 'none',
+  stroke: 'currentColor',
+  strokeWidth: 1,
+  strokeLinecap: 'round',
+  strokeLinejoin: 'round',
+  'aria-hidden': true,
+} as const;
+
+/** §14's line-art for a filtered-out feed: a 60px magnifier with a struck-through lens. */
+function FilteredOutArt() {
+  return (
+    <svg {...ART_PROPS}>
+      <circle cx="26" cy="26" r="15" />
+      <path d="M37 37 L49 49" />
+      <path d="M20 20 L32 32 M32 20 L20 32" />
+    </svg>
+  );
+}
+
+/** §14's line-art for a quiet feed: a 60px circle carrying a check. */
+function AllQuietArt() {
+  return (
+    <svg {...ART_PROPS}>
+      <circle cx="30" cy="30" r="20" />
+      <path d="M21 30 L27 36 L39 24" />
+    </svg>
   );
 }

@@ -55,7 +55,7 @@ export function CommentComposer({
           filled
           disabled={text === null}
           onClick={submit}
-          className="data-[ready]:bg-primary data-[ready]:text-white"
+          className="data-[ready]:bg-primary data-[ready]:text-primary-foreground"
           data-ready={text !== null || undefined}
         >
           <ArrowUp />

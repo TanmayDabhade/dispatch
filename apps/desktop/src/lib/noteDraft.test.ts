@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
+import { parseActivity } from './activityFeed';
 import { isSubmitChord, noteFromDraft, notePatch } from './noteDraft';
 
 describe('noteFromDraft', () => {
@@ -28,6 +29,23 @@ describe('notePatch', () => {
     expect(patch?.appendActivity).toBe(
       '2026-09-20T10:00:00.000Z first\nsecond'
     );
+  });
+
+  it('round-trips a multi-line comment through the feed as one comment', () => {
+    // The wire shape core's appendActivity writes for the patch: `- <line> — <actor>`,
+    // newlines kept. (The node entry that exports appendActivity is off-limits to the
+    // webview, so the shape is spelled out here.)
+    const patch = notePatch('first\nsecond', now);
+    if (patch?.appendActivity === undefined) throw new Error('no patch');
+    const section = `- ${patch.appendActivity} — ${patch.activityActor}\n`;
+    expect(parseActivity(section)).toEqual([
+      {
+        at: '2026-09-20T10:00:00.000Z',
+        text: 'first\nsecond',
+        actor: 'human',
+        kind: 'comment',
+      },
+    ]);
   });
 
   it('is null for an empty draft', () => {

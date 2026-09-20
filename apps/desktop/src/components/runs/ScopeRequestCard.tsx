@@ -79,7 +79,7 @@ export function ScopeRequestCard({
   return (
     <div
       data-slot="scope-request-card"
-      className="animate-in fade-in-0 flex flex-col gap-2 duration-100"
+      className="animate-in fade-in-0 flex flex-col gap-2 duration-100 motion-reduce:animate-none"
     >
       <ApprovalCard
         // Full-width in the transcript; `reason` is agent-authored text, so it renders as

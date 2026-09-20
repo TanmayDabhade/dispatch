@@ -186,6 +186,7 @@ export function LandingRow({
   return (
     <ListRow
       data-landing-row={row.id}
+      role="listitem"
       id={pr !== undefined ? `#${pr.number}` : undefined}
       title={row.title}
       crumb={crumbWithRuns}
@@ -288,7 +289,7 @@ function QueueRetryButton({ onRetry }: { onRetry: () => Promise<void> }) {
   }
 
   return (
-    <PillButton disabled={busy} className="h-6" onClick={() => void retry()}>
+    <PillButton disabled={busy} onClick={() => void retry()}>
       Retry
     </PillButton>
   );
@@ -375,7 +376,6 @@ function WorktreeCell({
         <PopoverTrigger
           render={
             <PillButton
-              className="h-6"
               disabled={client === null || busy}
               onClick={() => {
                 if (pr.isCrossRepository) setAskingFork(true);
@@ -405,12 +405,7 @@ function WorktreeCell({
       <StatusPill tone={sync.tone}>{sync.label}</StatusPill>
       <DropdownMenu>
         <DropdownMenuTrigger
-          render={
-            <IconButton
-              label={`Worktree actions for #${pr.number}`}
-              className="size-6"
-            />
-          }
+          render={<IconButton label={`Worktree actions for #${pr.number}`} />}
         >
           <MoreHorizontal />
         </DropdownMenuTrigger>

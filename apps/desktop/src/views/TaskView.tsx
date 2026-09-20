@@ -43,8 +43,10 @@ export interface TaskViewProps {
   /** Opens `ImpactView` with a subject preselected — reaches the Diff tab's review case
    * panel, which is where the retired Review page used to offer this. */
   onOpenImpact: (subject: ImpactSubjectRef) => void;
-  /** The active project's display name, the first crumb of the page header. */
-  projectName?: string | null;
+  /** The active project's display name, the first crumb of the page header (`null` only
+   * when no project is active). Required so a mount that forgets it fails `tsc` instead
+   * of silently dropping the segment. */
+  projectName: string | null;
 }
 
 /**

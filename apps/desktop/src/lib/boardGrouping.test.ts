@@ -1,7 +1,7 @@
 import type { TaskDoc, TaskMeta } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
-import { groupTasksByStatus } from './boardGrouping';
+import { boardGroupingFor, groupTasksByStatus } from './boardGrouping';
 
 function makeTask(id: string, status: string): TaskDoc {
   const meta: TaskMeta = {
@@ -55,5 +55,16 @@ describe('groupTasksByStatus', () => {
     const tasks = [makeTask('z', 'ready'), makeTask('a', 'ready')];
     const groups = groupTasksByStatus(tasks, ['ready']);
     expect(groups[0].tasks.map((t) => t.meta.id)).toEqual(['z', 'a']);
+  });
+});
+
+describe('boardGroupingFor', () => {
+  test('only epic lanes the board; every list-only grouping is the flat status kanban', () => {
+    expect(boardGroupingFor('epic')).toBe('epic');
+    expect(boardGroupingFor('status')).toBe('status');
+    expect(boardGroupingFor('milestone')).toBe('status');
+    expect(boardGroupingFor('assignee')).toBe('status');
+    expect(boardGroupingFor('priority')).toBe('status');
+    expect(boardGroupingFor('none')).toBe('status');
   });
 });

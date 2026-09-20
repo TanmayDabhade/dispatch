@@ -135,7 +135,7 @@ export function TaskListRow({
             {...pickerProps('assignee')}
           />
         ) : (
-          <AssigneeAvatar assignee={doc.meta.assignee} />
+          <AssigneeAvatar assignee={doc.meta.assignee} size={16} />
         ))}
     </>
   );
@@ -211,6 +211,8 @@ export interface TaskListKeyHandlers {
   onPeek: (id: string) => void;
   onSelectToggle?: (id: string) => void;
   onDispatch?: (id: string) => void;
+  /** `⌘C` with nothing selected on the page copies the focused row's id. */
+  onCopyId?: (id: string) => void;
   setPicker: (picker: OpenPicker | null) => void;
   /** Escape: clear whatever is selected. Return false when there was nothing to clear so
    * the key falls through to the shell. */
@@ -220,15 +222,19 @@ export interface TaskListKeyHandlers {
 }
 
 /** The keydown handler for a list container: `j/k`/arrows move the cursor, Enter/`o` open,
- * Space peeks, `x` selects, `s p a e m` open the focused row's picker, `d` dispatches, `f`
- * and `⇧V` ask the page for its filter/display menus, Escape clears. A keystroke that landed
- * on a real control inside a row (a picker trigger, the checkbox) belongs to that control. */
+ * Space peeks, `x` selects, `s p a e m` open the focused row's picker, `d` dispatches, `⌘C`
+ * copies the id, `f` and `⇧V` ask the page for its filter/display menus, Escape clears.
+ * `l` (labels) has no picker yet and falls through untouched. A keystroke that landed on a
+ * real control inside a row (a picker trigger, the checkbox) belongs to that control, and
+ * one from a portaled popup (an open picker menu, a dialog) — which React still bubbles
+ * here — belongs to that popup. */
 export function handleTaskListKeyDown(
   e: KeyboardEvent<HTMLDivElement>,
   h: TaskListKeyHandlers
 ): void {
   const target = e.target as HTMLElement;
   if (target !== e.currentTarget) {
+    if (!e.currentTarget.contains(target)) return;
     const control = target.closest('button, a, input, textarea, select');
     if (
       control !== null &&
@@ -238,11 +244,23 @@ export function handleTaskListKeyDown(
       return;
     }
   }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'c') {
+    // A text selection keeps the native copy; only a bare ⌘C takes the row's id.
+    if (
+      h.onCopyId !== undefined &&
+      h.focusedTaskId !== null &&
+      (window.getSelection()?.toString() ?? '') === ''
+    ) {
+      e.preventDefault();
+      h.onCopyId(h.focusedTaskId);
+    }
+    return;
+  }
   const command: ListKeyCommand | null = resolveListKeyCommand(
     { key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey },
     { isTyping: false }
   );
-  if (command === null) return;
+  if (command === null || command === 'list-set-labels') return;
   if (command === 'list-escape') {
     if (h.onEscape()) e.preventDefault();
     return;
@@ -298,8 +316,6 @@ export function handleTaskListKeyDown(
       return;
     case 'list-dispatch':
       h.onDispatch?.(id);
-      return;
-    default:
       return;
   }
 }

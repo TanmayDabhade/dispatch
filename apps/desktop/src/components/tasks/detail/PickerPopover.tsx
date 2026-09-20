@@ -1,3 +1,4 @@
+import { Check } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
 
@@ -17,6 +18,7 @@ interface PickerItem {
   /** Muted trailing text (a task id); also searched. */
   hint?: string;
   glyph?: ReactNode;
+  /** The current value — drawn with a trailing check. */
   selected?: boolean;
 }
 
@@ -93,7 +95,6 @@ export function PickerPopover({
                 <CommandItem
                   key={item.value}
                   value={`${item.label} ${item.hint ?? ''}`}
-                  data-selected-value={item.selected || undefined}
                   onSelect={() => {
                     onSelect(item.value);
                     setOpen(false);
@@ -106,6 +107,9 @@ export function PickerPopover({
                     <span className="text-muted-foreground ml-2 shrink-0 text-[12px]">
                       {item.hint}
                     </span>
+                  )}
+                  {item.selected === true && (
+                    <Check className="ml-auto size-3 shrink-0" />
                   )}
                 </CommandItem>
               ))}

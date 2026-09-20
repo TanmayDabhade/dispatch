@@ -28,7 +28,8 @@ export function IconButton({
       data-active={active || undefined}
       className={cn(
         "inline-flex size-7 shrink-0 items-center justify-center rounded-pill text-muted-foreground transition-colors duration-100 outline-none hover:bg-surface-control hover:text-(--text-secondary) disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-3.5 [&_svg]:shrink-0",
-        filled && 'bg-surface-control text-(--text-secondary)',
+        filled &&
+          'bg-surface-control text-(--text-secondary) hover:bg-surface-active',
         active && 'text-foreground',
         className
       )}

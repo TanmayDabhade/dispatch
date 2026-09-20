@@ -41,7 +41,10 @@ describe('PropertyControls', () => {
         variant="row"
       />
     );
-    const trigger = screen.getByRole('button', { name: 'Change status' });
+    const trigger = screen.getByRole('button', {
+      name: 'Change status',
+      description: 'Working',
+    });
     expect(trigger.dataset['variant']).toBe('row');
     expect(trigger.className).toContain('h-8');
     expect(trigger.className).toContain('rounded-control');
@@ -53,10 +56,15 @@ describe('PropertyControls', () => {
 
   test('an inline control is the glyph alone in a 20px hit area', () => {
     render(<PriorityControl value="high" onChange={() => {}} />);
-    const trigger = screen.getByRole('button', { name: 'Change priority' });
+    const trigger = screen.getByRole('button', {
+      name: 'Change priority',
+      description: 'High',
+    });
     expect(trigger.dataset['variant']).toBe('inline');
     expect(trigger.className).toContain('size-5');
-    expect(trigger.textContent).toBe('');
+    // The value is there for a screen reader only.
+    expect(trigger.querySelector('.sr-only')?.textContent).toBe('High');
+    expect(trigger.querySelector('.truncate')).toBeNull();
     expect(trigger.querySelector('svg')?.getAttribute('aria-label')).toBe(
       'High'
     );
@@ -64,7 +72,10 @@ describe('PropertyControls', () => {
 
   test('an unset priority reads as the action that sets it, muted', () => {
     render(<PriorityControl value="none" onChange={() => {}} variant="row" />);
-    const trigger = screen.getByRole('button', { name: 'Change priority' });
+    const trigger = screen.getByRole('button', {
+      name: 'Change priority',
+      description: 'Set priority',
+    });
     expect(trigger.textContent).toBe('Set priority');
     expect(trigger.dataset['unset']).toBe('true');
     expect(trigger.className).toContain('text-muted-foreground');

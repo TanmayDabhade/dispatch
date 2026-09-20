@@ -641,6 +641,7 @@ export function BranchesView({
               value={textFilter}
               onChange={(e) => setTextFilter(e.target.value)}
               placeholder="Filter files and branches (/)"
+              aria-label="Filter files and branches"
               className="h-auto px-0 text-[12px] md:text-[12px]"
             />
           </InputGroup>
@@ -688,7 +689,7 @@ export function BranchesView({
                   type="button"
                   aria-pressed={panelState.focused === panel}
                   onClick={() => setPanelState((s) => focusGitPanel(s, panel))}
-                  className="flex h-full min-w-0 flex-1 items-center gap-2 text-left outline-none"
+                  className="rounded-control focus-visible:ring-ring flex h-full min-w-0 flex-1 items-center gap-2 text-left outline-none focus-visible:ring-2"
                 >
                   <Kbd>{PANEL_DIGIT[panel]}</Kbd>
                   <span className="min-w-0 truncate text-[13px] font-medium text-(--text-secondary)">
@@ -1189,8 +1190,8 @@ function ConfirmDialog({
       </div>
     ) : (
       <>
-        <span className="font-mono">{pending.stash.message}</span> — dropping a
-        stash discards it permanently.
+        <span>{pending.stash.message}</span> — dropping a stash discards it
+        permanently.
       </>
     );
 

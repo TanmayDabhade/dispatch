@@ -372,14 +372,18 @@ export function filterValueLabel(
   }
 }
 
-/** The applied-filter chip's text: `Status is In progress`, `Labels includes ui, api`,
- * `Created after Sep 1`. */
-export function clauseLabel(
+/** The three spans of an applied-filter chip — `Status` / `is` / `In progress`, `Labels` /
+ * `includes` / `ui, api`, `Created` / `after` / `Sep 1` — kept apart so the chip can make
+ * the operator interactive; joined with spaces they read as the sentence. */
+export function clauseParts(
   clause: FilterClause,
   ctx: FilterContext = {}
-): string {
-  const values = clause.values
-    .map((v) => filterValueLabel(clause.facet, v, ctx))
-    .join(', ');
-  return `${facetLabel(clause.facet)} ${clause.op} ${values}`;
+): { facet: string; op: FilterOp; values: string } {
+  return {
+    facet: facetLabel(clause.facet),
+    op: clause.op,
+    values: clause.values
+      .map((v) => filterValueLabel(clause.facet, v, ctx))
+      .join(', '),
+  };
 }

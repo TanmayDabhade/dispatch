@@ -59,10 +59,24 @@ export function parseActivityLine(line: string): ActivityEntry {
   return { at, text, actor, kind };
 }
 
-/** The whole section, oldest first, blank lines dropped. */
+/** Whether a line opens a new bullet (`- …` / `* …`) rather than continuing the last one. */
+function isBulletLine(line: string): boolean {
+  return /^\s*[-*]\s+/.test(line);
+}
+
+/**
+ * The whole section, oldest first, blank lines dropped. A multi-line comment is one bullet
+ * whose later lines carry no marker (core's appendActivity keeps the newlines and puts the
+ * actor suffix after the last line), so continuation lines are folded back into the entry
+ * they belong to before the actor and timestamp are read.
+ */
 export function parseActivity(section: string): ActivityEntry[] {
-  return section
-    .split('\n')
-    .filter((line) => line.trim() !== '')
-    .map(parseActivityLine);
+  const entries: string[] = [];
+  for (const line of section.split('\n')) {
+    if (line.trim() === '') continue;
+    const last = entries.length - 1;
+    if (isBulletLine(line) || last < 0) entries.push(line);
+    else entries[last] = `${entries[last]}\n${line}`;
+  }
+  return entries.map(parseActivityLine);
 }

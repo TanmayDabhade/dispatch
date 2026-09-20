@@ -124,8 +124,11 @@ export function sortTasks(
 }
 
 /** Lays a sorted group out as rows: with `nestedSubtasks`, a task whose parent is also in
- * the group moves directly under that parent at indent 1 (children keep their sorted order);
- * otherwise every task is a top-level row in sorted order. */
+ * the group moves directly under that parent (children keep their sorted order, and their
+ * own children follow them, depth-first); otherwise every task is a top-level row in sorted
+ * order. `indent` is at most 1 — the `ListRow` API draws one tree level — so a deeper
+ * descendant sits at the same indent as its parent, but never vanishes. A row whose parent
+ * chain never reaches a top-level row (a cycle) falls back to the top level. */
 export function nestRows(
   sorted: TaskDoc[],
   prefs: TasksDisplayPrefs
@@ -147,12 +150,15 @@ export function nestRows(
     }
   }
   const rows: ListGroupRow[] = [];
-  for (const doc of top) {
-    rows.push({ doc, indent: 0 });
-    for (const child of childrenByParent.get(doc.meta.id) ?? []) {
-      rows.push({ doc: child, indent: 1 });
-    }
-  }
+  const emitted = new Set<string>();
+  const emit = (doc: TaskDoc, indent: 0 | 1) => {
+    if (emitted.has(doc.meta.id)) return;
+    emitted.add(doc.meta.id);
+    rows.push({ doc, indent });
+    for (const child of childrenByParent.get(doc.meta.id) ?? []) emit(child, 1);
+  };
+  for (const doc of top) emit(doc, 0);
+  for (const doc of sorted) emit(doc, 0);
   return rows;
 }
 

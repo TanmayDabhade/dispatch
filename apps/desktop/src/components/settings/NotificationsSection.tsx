@@ -123,7 +123,8 @@ export function NotificationsSection({
           <SettingsRow
             title={
               <>
-                Configured: <span>{stored}</span>
+                Configured:{' '}
+                <span className="text-(--text-secondary)">{stored}</span>
               </>
             }
             subtitle="The stored URL is a credential and is only ever shown by its origin. Replace to enter a new one, Clear to remove it."

@@ -156,3 +156,15 @@ test('numeric inputs are not monospaced', () => {
   expect(input.className).not.toContain('font-mono');
   expect(input.className).toContain('tabular-nums');
 });
+
+// The permission radios paint on Linear's indigo (`--color-primary` → `--accent`), not the
+// `accent-accent` alias that resolves to the near-transparent hover wash.
+test('the permission radios paint with the primary accent', () => {
+  render(<AgentsSection config={config} onSave={async () => {}} />);
+  const radios = screen.getAllByRole('radio');
+  expect(radios.length).toBeGreaterThan(0);
+  for (const radio of radios) {
+    expect(radio.className).toContain('accent-primary');
+    expect(radio.className).not.toContain('accent-accent');
+  }
+});

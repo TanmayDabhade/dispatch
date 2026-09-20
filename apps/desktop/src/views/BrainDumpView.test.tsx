@@ -301,7 +301,7 @@ test('inbox rows are 36px ListRows with a kind pill and no dense classes', () =>
   // The kind is a label pill with a dot, and the unremarkable kinds get none.
   const pills = document.querySelectorAll('[data-slot=label-pill]');
   expect(pills).toHaveLength(1);
-  expect(pills[0]?.textContent).toBe('bug');
+  expect(pills[0]?.textContent).toBe('Bug');
   expect(document.querySelector('.dense-meta')).toBeNull();
   expect(document.querySelector('.dense-label')).toBeNull();
   expect(document.querySelector('.line-through')).toBeNull();

@@ -1,6 +1,6 @@
 import type { Assignee, Priority, TaskDoc } from '@dispatch/core/browser';
 import { Check, Milestone } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { type ReactNode, useId } from 'react';
 
 import {
   assigneeLabel,
@@ -36,8 +36,9 @@ const NO_EPIC = '__none__';
 
 export type ControlVariant = 'inline' | 'row';
 
-/** Open state a list row or the task page can drive from the `s`/`p`/`a`/`l` keys. Leave
- * both out and the picker manages itself. */
+/** Open state a list row or the task page can drive from the `s`/`p`/`a`/`e` keys (the
+ * label picker is `LabelEditor`, not one of these). Leave both out and the picker manages
+ * itself. */
 export interface ControlledOpen {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -52,7 +53,8 @@ interface Option {
 // The trigger + menu shared by every control. Inline, the trigger is the selected option's
 // glyph in a 20px hit area; in the rail it is the glyph plus its label on a 32px ghost row,
 // and an unset value reads as the action that fills it (`Set priority`, `Assign`). The
-// menu opens with a header naming the picker and its single-key shortcut, then one 32px
+// trigger's accessible name stays the action (`Change status`) and its current value rides
+// along as the accessible description, so a screen reader hears both. The menu opens with a header naming the picker and its single-key shortcut, then one 32px
 // item per option with a 12px check on the current one. Clicks and pointer-downs are
 // stopped from propagating so opening/using the picker never also selects the card or row
 // it sits on (both are themselves clickable, and the menu is portaled — its clicks would
@@ -86,6 +88,7 @@ function PropertyDropdown({
   const selected = options.find((o) => o.value === value);
   const rowLabel =
     unset && unsetLabel !== undefined ? unsetLabel : selected?.label;
+  const valueId = useId();
   return (
     <DropdownMenu
       open={open}
@@ -95,6 +98,7 @@ function PropertyDropdown({
     >
       <DropdownMenuTrigger
         aria-label={ariaLabel}
+        aria-describedby={valueId}
         data-slot="property-control"
         data-variant={variant}
         data-unset={unset || undefined}
@@ -109,7 +113,12 @@ function PropertyDropdown({
         )}
       >
         {selected?.glyph}
-        {variant === 'row' && <span className="truncate">{rowLabel}</span>}
+        <span
+          id={valueId}
+          className={variant === 'row' ? 'truncate' : 'sr-only'}
+        >
+          {rowLabel}
+        </span>
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"

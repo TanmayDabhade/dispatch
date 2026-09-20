@@ -43,13 +43,14 @@ export function StashesPanel({
   }
 
   return (
-    <div className="flex flex-col px-1 py-1" role="table">
+    <div className="flex flex-col px-1 py-1" role="list" aria-label="Stashes">
       {stashes.map((stash, index) => (
         <ListRow
           key={stash.ref}
           data-git-selected={index === selectedIndex ? 'true' : undefined}
           onClick={() => onSelectIndex(index)}
-          selected={index === selectedIndex}
+          focused={index === selectedIndex}
+          role="listitem"
           title={stash.message}
           trailing={
             <>
@@ -58,7 +59,6 @@ export function StashesPanel({
                   render={
                     <IconButton
                       label="Pop (S)"
-                      className="size-6"
                       disabled={busy}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -76,7 +76,7 @@ export function StashesPanel({
                   render={
                     <IconButton
                       label="Drop"
-                      className="hover:text-state-failed size-6"
+                      className="hover:text-state-failed"
                       disabled={busy}
                       onClick={(e) => {
                         e.stopPropagation();

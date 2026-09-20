@@ -85,8 +85,18 @@ function dataWith(
   } as unknown as DispatchProjectData;
 }
 
+interface ShellLog {
+  presets: CreateTaskPreset[];
+  peeked: string[];
+  copied: string[];
+}
+
+function shellLog(): ShellLog {
+  return { presets: [], peeked: [], copied: [] };
+}
+
 /** The shell seam the list needs: `+` presets, peek, copy id. Records what it was asked. */
-function shellWith(log: { presets: CreateTaskPreset[]; peeked: string[] }) {
+function shellWith(log: ShellLog) {
   const noop = () => {};
   const actions = {
     openTask: noop,
@@ -102,7 +112,7 @@ function shellWith(log: { presets: CreateTaskPreset[]; peeked: string[] }) {
     setProjectView: noop,
     setGlobalView: noop,
     openShortcuts: noop,
-    copyTaskId: noop,
+    copyTaskId: (id: string) => log.copied.push(id),
   } satisfies ShellActions;
   return function Shell({ children }: { children: ReactNode }) {
     return (
@@ -114,7 +124,7 @@ function shellWith(log: { presets: CreateTaskPreset[]; peeked: string[] }) {
 function renderList(
   data: DispatchProjectData,
   onSelectTask: (id: string) => void = () => {},
-  log = { presets: [] as CreateTaskPreset[], peeked: [] as string[] }
+  log = shellLog()
 ) {
   const Shell = shellWith(log);
   const result = render(
@@ -327,6 +337,50 @@ test('the single-key set: j/k move, x selects, Enter opens, Space peeks, s opens
       .querySelector('[aria-label="Change status"]')
       ?.getAttribute('aria-expanded')
   ).toBe('false');
+
+  fireEvent.keyDown(grid, { key: 'c', metaKey: true });
+  expect(log.copied).toEqual(['t-1']);
+});
+
+// The flagship edit flow: `s`, arrows, Enter. The picker menu is portaled, so React still
+// bubbles its keydowns up to the grid — those belong to the menu, never to the row cursor.
+test('keys inside an open picker menu do not reach the list (s then Enter picks, never opens)', async () => {
+  const opened: string[] = [];
+  const moved: [string, string][] = [];
+  const data = dataWith([task('t-1', 'First task')]);
+  data.moveTaskStatus = async (id: string, status: string) => {
+    moved.push([id, status]);
+  };
+  renderList(data, (id) => opened.push(id));
+  const grid = screen.getByRole('grid', { name: 'Tasks' });
+
+  fireEvent.keyDown(grid, { key: 's' });
+  const menu = await screen.findByRole('menu');
+  const item = within(menu).getByRole('menuitem', { name: /todo/i });
+  expect(grid.contains(item)).toBe(false);
+
+  fireEvent.keyDown(item, { key: 'Enter' });
+  fireEvent.keyDown(item, { key: 'j' });
+  fireEvent.keyDown(item, { key: ' ' });
+  expect(opened).toEqual([]);
+  expect(rowOf('First task').getAttribute('data-focused')).toBe('true');
+  fireEvent.click(item);
+  expect(moved).toEqual([['t-1', 'todo']]);
+  expect(opened).toEqual([]);
+});
+
+test('collapsing the only group keeps its header so it can be expanded again', () => {
+  const { container } = renderList(dataWith([task('t-1', 'Only task')]));
+
+  fireEvent.click(screen.getByRole('button', { name: 'Collapse group' }));
+
+  expect(screen.queryByText('Only task')).toBeNull();
+  expect(screen.queryByText('No tasks match')).toBeNull();
+  expect(
+    container.querySelectorAll('[data-slot="group-header"]').length
+  ).toBe(1);
+  fireEvent.click(screen.getByRole('button', { name: 'Expand group' }));
+  expect(screen.getByText('Only task')).not.toBeNull();
 });
 
 test('the context menu offers the property submenus, open/peek/dispatch/copy, archive and drop', async () => {
@@ -382,7 +436,7 @@ test('collapsing a group hides its rows and takes them out of the keyboard order
 
 test('display prefs drive grouping and which properties a row shows', () => {
   const epic = task('e-1', 'Payments epic', { kind: 'epic' });
-  const Shell = shellWith({ presets: [], peeked: [] });
+  const Shell = shellWith(shellLog());
   const { container } = render(
     <Shell>
       <TasksListView
@@ -413,7 +467,7 @@ test('display prefs drive grouping and which properties a row shows', () => {
 });
 
 test('an empty filter result shows the no-match empty state', () => {
-  const Shell = shellWith({ presets: [], peeked: [] });
+  const Shell = shellWith(shellLog());
   render(
     <Shell>
       <TasksListView

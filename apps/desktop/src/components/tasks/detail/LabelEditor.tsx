@@ -61,7 +61,7 @@ export function LabelEditor({
       )}
       <PickerPopover
         triggerLabel="Add label"
-        triggerClassName={railRowClass(true)}
+        triggerClassName={railRowClass({ unset: true })}
         placeholder="Label…"
         items={items}
         onSelect={add}

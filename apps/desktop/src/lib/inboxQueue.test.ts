@@ -298,6 +298,17 @@ describe('inbox items', () => {
     expect(unreadInboxCount(items, seen)).toBe(2);
   });
 
+  test('a notification read on the page is read by key before its record catches up', () => {
+    const items = buildInboxItems(data(), [entry({ read: false })]);
+    const notification = items[3];
+    if (notification?.kind !== 'notification')
+      throw new Error('no notification');
+    expect(isInboxItemRead(notification, new Set())).toBe(false);
+    expect(isInboxItemRead(notification, new Set([notification.key]))).toBe(
+      true
+    );
+  });
+
   test('a row that changes state comes back unread', () => {
     const before = buildInboxItems(data(), []);
     const read = markAllItemsRead(before, new Set());

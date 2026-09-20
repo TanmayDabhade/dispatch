@@ -2,8 +2,8 @@ import { Command as CommandPrimitive } from 'cmdk';
 import { SearchIcon } from 'lucide-react';
 import * as React from 'react';
 
-import { splitKeycaps } from './ai/search';
 import { Kbd } from './kbd';
+import { splitKeycaps } from './lib/keycaps';
 import { cn } from './lib/utils';
 
 // The root carries no surface of its own: the popover or dialog that holds it already
@@ -25,7 +25,8 @@ function Command({
 }
 
 // The 40px input row: a quiet search glyph, the borderless input, and an optional
-// trailing `hint` slot (Linear's `Ask Linear  Tab`) kept clear of the text.
+// trailing `hint` slot (Linear's `Ask Linear  Tab`) kept clear of the text. The hint is
+// wired to the input through `aria-describedby`, so a screen reader hears it too.
 function CommandInput({
   className,
   hint,
@@ -33,6 +34,7 @@ function CommandInput({
 }: React.ComponentProps<typeof CommandPrimitive.Input> & {
   hint?: React.ReactNode;
 }) {
+  const hintId = React.useId();
   return (
     <div
       data-slot="command-input-wrapper"
@@ -44,6 +46,7 @@ function CommandInput({
       />
       <CommandPrimitive.Input
         data-slot="command-input"
+        aria-describedby={hint !== undefined ? hintId : undefined}
         className={cn(
           'text-foreground placeholder:text-muted-foreground font-book flex h-10 min-w-0 flex-1 bg-transparent text-[13px] outline-hidden disabled:cursor-not-allowed disabled:opacity-50',
           className
@@ -52,6 +55,7 @@ function CommandInput({
       />
       {hint !== undefined && (
         <div
+          id={hintId}
           data-slot="command-input-hint"
           className="text-muted-foreground flex shrink-0 items-center gap-1.5 text-[12px]"
         >

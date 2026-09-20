@@ -94,6 +94,7 @@ function entry(over: Partial<InboxEntry> = {}): InboxEntry {
 interface Log {
   opened: string[];
   markAllRead: number;
+  markedRead: string[];
   navigated: string[];
 }
 
@@ -114,15 +115,22 @@ function providersWith(log: Log, entries: InboxEntry[] = []) {
     openShortcuts: noop,
     copyTaskId: noop,
   } as unknown as ShellActions;
-  // Stateful like the real seam: mark-all flips every entry's own read flag.
+  // Stateful like the real seam: mark-all flips every entry's own read flag. `markRead` is
+  // the per-entry call the seam grows in WP2; the view already speaks it when present.
   return function Providers({ children }: { children: ReactNode }) {
     const [current, setCurrent] = useState(entries);
-    const inbox: NotificationInbox = {
+    const inbox: NotificationInbox & { markRead: (id: string) => void } = {
       entries: current,
       unreadCount: current.filter((e) => !e.read).length,
       markAllRead: () => {
         log.markAllRead += 1;
         setCurrent((prev) => prev.map((e) => ({ ...e, read: true })));
+      },
+      markRead: (id) => {
+        log.markedRead.push(id);
+        setCurrent((prev) =>
+          prev.map((e) => (e.id === id ? { ...e, read: true } : e))
+        );
       },
       navigate: (target) => log.navigated.push(target.kind),
     };
@@ -136,19 +144,29 @@ function providersWith(log: Log, entries: InboxEntry[] = []) {
   };
 }
 
+const ROOT = '/tmp/dispatch';
+const READ_KEY = `dispatch:inbox-read:${ROOT}`;
+
 function renderInbox(
   data: InboxData,
   {
     project = projectWith(),
     entries = [],
     onOpenPr = () => {},
+    projectRoot = ROOT,
   }: {
     project?: DispatchProjectData;
     entries?: InboxEntry[];
     onOpenPr?: (n: number) => void;
+    projectRoot?: string | null;
   } = {}
 ) {
-  const log: Log = { opened: [], markAllRead: 0, navigated: [] };
+  const log: Log = {
+    opened: [],
+    markAllRead: 0,
+    markedRead: [],
+    navigated: [],
+  };
   const Providers = providersWith(log, entries);
   const result = render(
     <Providers>
@@ -156,7 +174,7 @@ function renderInbox(
         data={data}
         project={project}
         projectName="dispatch"
-        projectRoot="/tmp/dispatch"
+        projectRoot={projectRoot}
         onOpenPr={onOpenPr}
       />
     </Providers>
@@ -296,14 +314,99 @@ test('j/k move the selection and Enter opens the selected task', () => {
     ])
   );
   const list = screen.getByRole('listbox');
+  expect(list.getAttribute('aria-activedescendant')).toBeNull();
   fireEvent.keyDown(list, { key: 'j' });
   expect(rowOf('First').getAttribute('aria-selected')).toBe('true');
+  // AT learns where j/k landed through the listbox's active descendant.
+  expect(list.getAttribute('aria-activedescendant')).toBe(rowOf('First').id);
   fireEvent.keyDown(list, { key: 'j' });
   expect(rowOf('Second').getAttribute('aria-selected')).toBe('true');
   fireEvent.keyDown(list, { key: 'k' });
   expect(rowOf('First').getAttribute('aria-selected')).toBe('true');
   fireEvent.keyDown(list, { key: 'Enter' });
   expect(log.opened).toEqual(['t-b']);
+});
+
+test('Enter on a clicked (focused) row opens it exactly once', () => {
+  const { log } = renderInbox(
+    dataWith([{ state: 'review', rows: [row({ title: 'Only' })] }])
+  );
+  const target = rowOf('Only');
+  fireEvent.click(target);
+  fireEvent.keyDown(target, { key: 'Enter' });
+  expect(log.opened).toEqual(['t-1']);
+});
+
+test('selecting a notification row reads it: dot gone, seam told', () => {
+  const { log } = renderInbox(dataWith([]), {
+    entries: [entry({ id: 'n-1', title: 'Merged', target: { kind: 'queue' } })],
+  });
+  expect(
+    rowOf('Merged').querySelector('[data-slot="unread-dot"]')
+  ).not.toBeNull();
+  fireEvent.click(rowOf('Merged'));
+  expect(rowOf('Merged').querySelector('[data-slot="unread-dot"]')).toBeNull();
+  expect(
+    rowOf('Merged').querySelector('[data-slot="inbox-title"]')?.className
+  ).toContain('text-muted-foreground');
+  expect(log.markedRead).toEqual(['n-1']);
+});
+
+// Read state persists per project, pruned to the rows on screen — so it must not be written
+// from the empty list the daemon has not answered yet, nor from a set loaded for another root.
+test('read state is not persisted while the daemon is still loading', () => {
+  window.localStorage.setItem(READ_KEY, JSON.stringify(['review:t-1:r-1']));
+  renderInbox(dataWith([]), { project: projectWith({ portLoading: true }) });
+  expect(window.localStorage.getItem(READ_KEY)).toBe(
+    JSON.stringify(['review:t-1:r-1'])
+  );
+});
+
+test('read state persists once the rows are live, and only for the given root', () => {
+  window.localStorage.setItem(READ_KEY, JSON.stringify(['review:t-1:r-1']));
+  const { rerender } = renderInbox(
+    dataWith([{ state: 'review', rows: [row({ title: 'Seen before' })] }])
+  );
+  // Loaded from storage: the stored key renders read.
+  expect(
+    rowOf('Seen before').querySelector('[data-slot="unread-dot"]')
+  ).toBeNull();
+
+  // Another project mounts over it: its own (empty) set loads, and the first project's
+  // stored set survives untouched.
+  const Providers = providersWith(
+    { opened: [], markAllRead: 0, markedRead: [], navigated: [] },
+    []
+  );
+  rerender(
+    <Providers>
+      <InboxView
+        data={dataWith([{ state: 'review', rows: [row({ title: 'Other' })] }])}
+        project={projectWith()}
+        projectName="other"
+        projectRoot="/tmp/other"
+        onOpenPr={() => {}}
+      />
+    </Providers>
+  );
+  expect(window.localStorage.getItem(READ_KEY)).toBe(
+    JSON.stringify(['review:t-1:r-1'])
+  );
+  expect(
+    rowOf('Other').querySelector('[data-slot="unread-dot"]')
+  ).not.toBeNull();
+});
+
+test('without a project root, read state stays in memory only', () => {
+  renderInbox(
+    dataWith([{ state: 'review', rows: [row({ title: 'Ephemeral' })] }]),
+    { projectRoot: null }
+  );
+  fireEvent.click(rowOf('Ephemeral'));
+  expect(
+    rowOf('Ephemeral').querySelector('[data-slot="unread-dot"]')
+  ).toBeNull();
+  expect(window.localStorage.length).toBe(0);
 });
 
 test('the Open pill opens the selected task through the shell', () => {
@@ -399,6 +502,10 @@ test('display groups the list by kind under group headers', async () => {
     'Review1',
     'Earlier1',
   ]);
+  // A state-backed group carries the Control room's status tint; the record group does not.
+  expect((headers[0] as HTMLElement).className).toContain('status-tint');
+  expect((headers[1] as HTMLElement).className).not.toContain('status-tint');
+  expect(screen.getByRole('group', { name: 'Review' })).toBeDefined();
 });
 
 // The merge affordances: the header ghost queues everything ready; each review row can

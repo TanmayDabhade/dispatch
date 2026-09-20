@@ -13,7 +13,14 @@ import {
   Target,
   User,
 } from 'lucide-react';
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  type KeyboardEvent,
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import {
   facetLabel,
@@ -151,6 +158,33 @@ function matches(query: string, text: string): boolean {
   return text.toLowerCase().includes(query.trim().toLowerCase());
 }
 
+// The arrow-key roving a `role="menu"` promises: ArrowDown/ArrowUp move focus between the
+// menu's items (wrapping), Home/End jump to the ends. Tab still leaves the menu.
+function moveMenuFocus(e: KeyboardEvent<HTMLElement>) {
+  const step =
+    e.key === 'ArrowDown'
+      ? 1
+      : e.key === 'ArrowUp'
+        ? -1
+        : e.key === 'Home' || e.key === 'End'
+          ? 0
+          : null;
+  if (step === null) return;
+  const items = Array.from(
+    e.currentTarget.querySelectorAll<HTMLElement>('[role^="menuitem"]')
+  );
+  if (items.length === 0) return;
+  e.preventDefault();
+  const current = items.indexOf(document.activeElement as HTMLElement);
+  const next =
+    e.key === 'Home'
+      ? 0
+      : e.key === 'End'
+        ? items.length - 1
+        : (current + step + items.length) % items.length;
+  items[next]?.focus();
+}
+
 /**
  * Linear's Filter menu (§7) off the header's funnel (or `f`): a 180px popover with an
  * `Add filter…` search, then one row per facet — Status, Priority, Assignee, Labels, Epic,
@@ -179,8 +213,27 @@ export function FilterMenu({
     }
   }, [open]);
 
+  const clauseFor = (f: FilterFacet) =>
+    filters.clauses.find((c) => c.facet === f);
   const selectedValues = (f: FilterFacet): ReadonlySet<string> =>
-    new Set(filters.clauses.find((c) => c.facet === f)?.values ?? []);
+    new Set(clauseFor(f)?.values ?? []);
+  // A date pick stores a resolved ISO bound, so its row can't match on value: the checked
+  // row is the pick with the clause's operator whose `days` is nearest to how old that
+  // bound is now (the bound was "now minus `days`" when it was picked).
+  const pickedDateValue = (f: 'created' | 'updated'): string | null => {
+    const clause = clauseFor(f);
+    const bound = Date.parse(clause?.values[0] ?? '');
+    if (clause === undefined || Number.isNaN(bound)) return null;
+    const ageDays = (Date.now() - bound) / DAY_MS;
+    const nearest = DATE_PICKS.filter((pick) => pick.op === clause.op).sort(
+      (a, b) => Math.abs(a.days - ageDays) - Math.abs(b.days - ageDays)
+    )[0];
+    return nearest === undefined ? null : `${nearest.op}:${nearest.days}`;
+  };
+  const isPicked = (f: FilterFacet, value: string): boolean =>
+    f === 'created' || f === 'updated'
+      ? pickedDateValue(f) === value
+      : selectedValues(f).has(value);
 
   function pick(f: FilterFacet, value: string) {
     if (f === 'created' || f === 'updated') {
@@ -207,7 +260,7 @@ export function FilterMenu({
   }, [query, context]);
 
   const optionRow = (f: FilterFacet, option: FacetOption, crumb: boolean) => {
-    const selected = selectedValues(f).has(option.value);
+    const selected = isPicked(f, option.value);
     return (
       <button
         key={`${f}:${option.value}`}
@@ -271,6 +324,7 @@ export function FilterMenu({
             <div
               role="menu"
               aria-label="Filter facets"
+              onKeyDown={moveMenuFocus}
               className="flex max-h-80 flex-col overflow-y-auto p-1"
             >
               {searchRows === null ? (
@@ -336,7 +390,16 @@ export function FilterMenu({
             </div>
           </>
         ) : (
-          <>
+          // Escape inside a facet steps back to the facet list rather than closing the
+          // popover — stopped here so the popover's own dismiss never sees it.
+          <div
+            onKeyDown={(e) => {
+              if (e.key !== 'Escape') return;
+              e.preventDefault();
+              e.stopPropagation();
+              setFacet(null);
+            }}
+          >
             <div className="shadow-hairline-bottom flex h-9 items-center gap-1 px-1">
               <IconButton
                 label="Back to filters"
@@ -351,6 +414,7 @@ export function FilterMenu({
             <div
               role="menu"
               aria-label={`${facetLabel(facet)} values`}
+              onKeyDown={moveMenuFocus}
               className="flex max-h-80 flex-col overflow-y-auto p-1"
             >
               {optionsFor(facet, context).length === 0 ? (
@@ -363,7 +427,7 @@ export function FilterMenu({
                 )
               )}
             </div>
-          </>
+          </div>
         )}
       </PopoverContent>
     </Popover>

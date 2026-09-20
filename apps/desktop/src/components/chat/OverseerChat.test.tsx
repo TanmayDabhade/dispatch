@@ -589,15 +589,19 @@ test('the opening composer offers the model picker and an open conversation name
   expect(screen.getByText(/Fable 5\.1/)).toBeDefined();
 });
 
-// Card headings are 12px sentence case, never uppercase tracked labels, and the
-// tool id beside them is sans.
-test('the confirm card heading is sentence case and its tool id is not monospaced', () => {
+// Card headings are 12px/500 sentence case, never uppercase tracked labels, and the
+// tool id beside them is book-weight sans.
+test('the confirm card heading is 12px sentence case and its tool id is sans', () => {
   const overseer = overseerSession({
     conversationId: 'w-1',
     record: overseerRecord({ pendingActions: [overseerAction()] }),
   });
   render(<OverseerChat overseer={overseer} />);
   const heading = screen.getByText('Needs your approval');
+  expect(heading.className).toContain('text-[12px]');
+  expect(heading.className).toContain('font-medium');
   expect(heading.className).not.toContain('uppercase');
-  expect(screen.getByText('cancel_run').className).not.toContain('font-mono');
+  const toolId = screen.getByText('cancel_run');
+  expect(toolId.className).toContain('font-book');
+  expect(toolId.className).not.toContain('font-mono');
 });

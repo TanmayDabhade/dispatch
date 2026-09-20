@@ -217,13 +217,14 @@ export function filterInboxItems(
   return items.filter((item) => item.kind === 'notification');
 }
 
-/** A notification carries its own read flag; a live item is read once its key has been
- * seen (`readIds`, persisted per project by the view). */
+/** An item is read once its key has been seen (`readIds`, persisted per project by the
+ * view); a notification is also read when its own record says so (mark-all, or opened
+ * from another surface). */
 export function isInboxItemRead(
   item: InboxItem,
   readIds: ReadonlySet<string>
 ): boolean {
-  if (item.kind === 'notification') return item.entry.read;
+  if (item.kind === 'notification' && item.entry.read) return true;
   return readIds.has(item.key);
 }
 

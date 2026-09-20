@@ -1,5 +1,18 @@
 import type { TaskDoc } from '@dispatch/core/browser';
 
+import type { TasksGrouping } from './tasksPrefs';
+
+/** The two layouts the board has: status columns, or those columns under one lane per epic. */
+export type BoardGrouping = 'status' | 'epic';
+
+/** The board layout a Display › Grouping choice lands on. The list groups six ways; the board
+ * only lanes by epic, so every other grouping (a list-only choice, kept in the shared prefs)
+ * renders the flat status kanban — and the Display popover disables those options on the
+ * board rather than let the pill claim a layout the board never draws. */
+export function boardGroupingFor(grouping: TasksGrouping): BoardGrouping {
+  return grouping === 'epic' ? 'epic' : 'status';
+}
+
 export interface BoardColumnGroup {
   status: string;
   tasks: TaskDoc[];

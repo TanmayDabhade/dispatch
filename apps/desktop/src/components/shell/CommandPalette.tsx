@@ -36,9 +36,10 @@ interface CommandPaletteProps {
 }
 
 /** The 14px glyph a row shows when its entry brings none: one per section, with the
- * "Dispatch …" task rows getting a play glyph so they read as verbs. */
+ * "Dispatch …" task rows (`dispatch-<task id>` in `buildPaletteEntries`) getting a play
+ * glyph so they read as verbs. */
 function defaultIcon(entry: PaletteEntry): ReactNode {
-  if (entry.section === 'tasks' && entry.kind === 'action') return <PlayIcon />;
+  if (entry.id.startsWith('dispatch-')) return <PlayIcon />;
   switch (entry.section) {
     case 'inbox':
       return <InboxIcon />;
@@ -61,7 +62,7 @@ function defaultIcon(entry: PaletteEntry): ReactNode {
  * `shouldFilter={false}`); cmdk owns arrow-key selection, wraparound and Enter; `Dialog`
  * owns the backdrop, focus trap and Escape, which reaches `onClose` once through
  * `onOpenChange`. `Tab` with a non-empty query hands the text to the Overseer instead of
- * running a row.
+ * running a row. A long title truncates; the task id and keycaps keep their width.
  */
 export function CommandPalette({
   isOpen,
@@ -124,7 +125,7 @@ export function CommandPalette({
             }
           />
           <CommandList className="max-h-none flex-1">
-            <CommandEmpty>
+            <CommandEmpty className="p-0">
               <EmptyState
                 heading="No results"
                 description="Try another task id or title, or press Tab to ask the Overseer."
@@ -140,9 +141,9 @@ export function CommandPalette({
                     onSelect={() => runEntry(entry)}
                   >
                     {entry.icon ?? defaultIcon(entry)}
-                    <span className="truncate">{entry.label}</span>
+                    <span className="min-w-0 truncate">{entry.label}</span>
                     {entry.sublabel !== undefined && (
-                      <span className="text-muted-foreground min-w-0 flex-1 truncate">
+                      <span className="text-muted-foreground shrink-0">
                         {entry.sublabel}
                       </span>
                     )}

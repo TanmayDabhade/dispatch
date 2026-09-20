@@ -31,3 +31,19 @@ test('the primary button and keycap carry the Linear geometry', () => {
   expect(kbdClasses).toContain('rounded-chip');
   expect(kbdClasses).toContain('border-[0.5px]');
 });
+
+// Only ghost icon buttons take the control fill on hover; a filled variant keeps its
+// own hover so an indigo icon button does not turn grey.
+test('the icon sizes take the control hover only on ghost', () => {
+  render(
+    <>
+      <Button variant="ghost" size="icon" aria-label="Ghost" />
+      <Button size="icon" aria-label="Primary" />
+    </>
+  );
+  const ghost = screen.getByRole('button', { name: 'Ghost' }).className;
+  const primary = screen.getByRole('button', { name: 'Primary' }).className;
+  expect(ghost.split(/\s+/)).toContain('hover:bg-surface-control');
+  expect(primary.split(/\s+/)).not.toContain('hover:bg-surface-control');
+  expect(primary.split(/\s+/)).toContain('hover:bg-[var(--accent-hover)]');
+});

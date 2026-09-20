@@ -69,6 +69,8 @@ export const CREATE_TASK_DESCRIPTION_KEY = 'dispatch:create-task-description';
 interface CreateTaskModalProps {
   statuses: string[];
   epics: TaskDoc[];
+  /** The crumb's project chip (`[project] › New task`); the app name until a project is open. */
+  projectName?: string;
   /** Pre-selects the status — kept for callers that pass it directly; the shell's
    * `createPreset` (a `+` on a status group or board column) fills the same slot. */
   initialStatus?: string;
@@ -115,7 +117,7 @@ function PropertyChip({
           />
         }
       >
-        {unset ? label : selected?.label}
+        {unset ? label : (selected?.label ?? value)}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="max-h-72 min-w-[184px]">
         <DropdownMenuGroup>
@@ -227,6 +229,7 @@ function TextChip({
 export function CreateTaskModal({
   statuses,
   epics,
+  projectName = 'Dispatch',
   initialStatus,
   onCreate,
   onClose,
@@ -345,7 +348,7 @@ export function CreateTaskModal({
         }
       >
         <DialogChrome onExpand={() => setExpanded((v) => !v)}>
-          <Pill>Dispatch</Pill>
+          <Pill>{projectName}</Pill>
           <span aria-hidden>›</span>
           <span className="text-(--text-secondary)">New task</span>
         </DialogChrome>
@@ -439,14 +442,11 @@ export function CreateTaskModal({
             </IconButton>
           }
         >
-          <span className="font-book flex items-center gap-2 text-[13px] text-(--text-secondary)">
-            Create more
-            <Switch
-              aria-label="Create more"
-              checked={createMore}
-              onCheckedChange={(next) => setCreateMore(next)}
-            />
-          </span>
+          <Switch
+            label="Create more"
+            checked={createMore}
+            onCheckedChange={(next) => setCreateMore(next)}
+          />
           {title.trim() !== '' && (
             <Button
               variant="ghost"

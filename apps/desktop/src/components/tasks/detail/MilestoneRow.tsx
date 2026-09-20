@@ -37,7 +37,7 @@ export function MilestoneRow({
   return (
     <PickerPopover
       triggerLabel="Change milestone"
-      triggerClassName={railRowClass(value === null)}
+      triggerClassName={railRowClass({ unset: value === null })}
       placeholder="Milestone…"
       items={items}
       onSelect={(next) => onChange(next === '' ? null : next)}

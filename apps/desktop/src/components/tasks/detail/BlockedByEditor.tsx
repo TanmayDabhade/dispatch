@@ -64,7 +64,7 @@ export function BlockedByEditor({
       {addable.length > 0 && (
         <PickerPopover
           triggerLabel="Add blocker"
-          triggerClassName={railRowClass(true)}
+          triggerClassName={railRowClass({ unset: true })}
           placeholder="Task…"
           items={addable.map((t) => ({
             value: t.meta.id,

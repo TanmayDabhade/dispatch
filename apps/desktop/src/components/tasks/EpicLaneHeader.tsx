@@ -17,8 +17,7 @@ import {
 } from '../../lib/epicConcurrency';
 import { rollupMilestoneStatus } from '../../lib/milestoneRollup';
 import { EpicDagModal } from './EpicDagModal';
-import { statusColor, StatusIcon } from './StatusIcon';
-import { cn } from '@/lib/utils';
+import { pieDashOffset, statusColor, StatusIcon } from './StatusIcon';
 import { GroupHeader } from '@/ui/ai/group-header';
 import { IconButton } from '@/ui/ai/icon-button';
 import { LabelPill, PillButton, SelectPill } from '@/ui/ai/pill';
@@ -26,7 +25,8 @@ import { Alert, AlertDescription } from '@/ui/alert';
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
@@ -65,14 +65,20 @@ interface EpicLaneHeaderProps {
   onAdd?: () => void;
 }
 
-// The `◔ 3/7` progress glyph: an r=6 ring with a pie that fills as children land, at 12px.
+// The pie's full arc is `StatusIcon`'s (Linear's) dash length — `pieDashOffset(0)` hides all
+// of it, so it is that length; reading it back keeps the two glyphs on one recipe.
+const PIE_DASH = pieDashOffset(0);
+const PIE_DASHARRAY = `${PIE_DASH} ${PIE_DASH * 2}`;
+
+// The `◔ 3/7` progress glyph at 12px: `StatusIcon`'s r=6 ring and r=2 pie, the pie filled
+// to `fraction` by the same dashoffset the status icons use.
 function ProgressGlyph({ fraction }: { fraction: number }) {
-  const circumference = 2 * Math.PI * 4;
   return (
     <svg
       viewBox="0 0 14 14"
       fill="none"
       aria-hidden
+      data-slot="epic-progress-glyph"
       className="size-3 shrink-0 text-(--text-secondary)"
     >
       <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.5" />
@@ -82,7 +88,8 @@ function ProgressGlyph({ fraction }: { fraction: number }) {
         r="2"
         stroke="currentColor"
         strokeWidth="4"
-        strokeDasharray={`${circumference * fraction} ${circumference}`}
+        strokeDasharray={PIE_DASHARRAY}
+        strokeDashoffset={pieDashOffset(fraction)}
         transform="rotate(-90 7 7)"
       />
     </svg>
@@ -237,17 +244,21 @@ export function EpicLaneHeader({
                     {concurrencyLabel(concurrency)}
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="min-w-[96px]">
-                    {concurrencyChoices(concurrencyDefault).map((choice) => (
-                      <DropdownMenuItem
-                        key={choice}
-                        data-selected={choice === concurrency || undefined}
-                        onClick={() =>
-                          setConcurrency(clampConcurrencyInput(String(choice)))
-                        }
-                      >
-                        {concurrencyLabel(choice)}
-                      </DropdownMenuItem>
-                    ))}
+                    <DropdownMenuRadioGroup
+                      value={String(concurrency)}
+                      onValueChange={(value) =>
+                        setConcurrency(clampConcurrencyInput(String(value)))
+                      }
+                    >
+                      {concurrencyChoices(concurrencyDefault).map((choice) => (
+                        <DropdownMenuRadioItem
+                          key={choice}
+                          value={String(choice)}
+                        >
+                          {concurrencyLabel(choice)}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
                   </DropdownMenuContent>
                 </DropdownMenu>
               )}
@@ -290,9 +301,7 @@ export function EpicLaneHeader({
       {error !== null && (
         <Alert
           variant="destructive"
-          className={cn(
-            'bg-destructive/10 mb-2 flex items-center gap-1.5 rounded-control border-0 px-2 py-1 text-[12px] has-[>svg]:gap-x-1.5 [&>svg]:translate-y-0'
-          )}
+          className="bg-destructive/10 rounded-control mb-2 flex items-center gap-1.5 border-0 px-2 py-1 text-[12px] has-[>svg]:gap-x-1.5 [&>svg]:translate-y-0"
         >
           <AlertCircle className="size-3 shrink-0" />
           <AlertDescription className="truncate text-[12px]">

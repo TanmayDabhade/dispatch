@@ -115,6 +115,33 @@ test('ViewTabs are 28px pills and the active one is lifted', () => {
   expect(picked).toBe('list');
 });
 
+// One tab stop: only the active tab is tabbable and arrows move (and select) with wrap.
+test('ViewTabs rove with the arrow keys and wrap at the ends', () => {
+  let picked = '';
+  render(
+    <ViewTabs
+      tabs={[
+        { id: 'active', label: 'Active' },
+        { id: 'backlog', label: 'Backlog' },
+        { id: 'all', label: 'All issues' },
+      ]}
+      active="all"
+      onChange={(id) => (picked = id)}
+    />
+  );
+  const all = screen.getByRole('tab', { name: 'All issues' });
+  expect(all.tabIndex).toBe(0);
+  expect(screen.getByRole('tab', { name: 'Active' }).tabIndex).toBe(-1);
+  fireEvent.keyDown(all, { key: 'ArrowRight' });
+  expect(picked).toBe('active');
+  fireEvent.keyDown(all, { key: 'ArrowLeft' });
+  expect(picked).toBe('backlog');
+  fireEvent.keyDown(all, { key: 'Home' });
+  expect(picked).toBe('active');
+  fireEvent.keyDown(all, { key: 'Enter' });
+  expect(picked).toBe('active');
+});
+
 test('the triad shows a dot only while a filter is active', () => {
   const { container: idle } = render(<HeaderIconTriad />);
   expect(idle.querySelector('[data-slot="filter-active-dot"]')).toBeNull();

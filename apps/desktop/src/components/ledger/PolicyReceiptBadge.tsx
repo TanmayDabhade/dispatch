@@ -9,7 +9,7 @@ import { LabelPill } from '@/ui/ai/pill';
 export function PolicyReceiptBadge({ entry }: { entry: LedgerEntry }) {
   if (!isPolicyReceipt(entry)) return null;
   return (
-    <LabelPill color="var(--status-green)" data-slot="policy-receipt">
+    <LabelPill color="var(--status-green)" data-receipt="policy">
       Auto-decided
     </LabelPill>
   );

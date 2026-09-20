@@ -33,7 +33,6 @@ import {
   laneKey,
   statusFromDropZoneId,
 } from '../../lib/boardGrouping';
-import { sortTasks } from '../../lib/listGrouping';
 import type { TaskAttention } from '../../lib/taskAttention';
 import { statusLabel } from '../../lib/taskDisplay';
 import {
@@ -55,6 +54,8 @@ import {
 } from '@/ui/dropdown-menu';
 
 interface TaskBoardProps {
+  /** The cards, already in the order a column shows them (`BoardView` sorts once with
+   * `sortTasks` so its j/k cursor and these columns walk the same sequence). */
   tasks: TaskDoc[];
   /** The status columns to render, in config order — already narrowed by the Display
    * popover's `Show empty groups` and any session-hidden columns (see `visibleBoardColumns`). */
@@ -78,8 +79,8 @@ interface TaskBoardProps {
   /** One lane per epic (Display › Grouping: Epic) vs one flat set of status columns with
    * an epic crumb on each card (the default). */
   groupByEpic?: boolean;
-  /** The Display popover's model — the card properties and the ordering inside a column.
-   * Defaults to `DEFAULT_TASKS_DISPLAY`. */
+  /** The Display popover's model — the card properties. Defaults to `DEFAULT_TASKS_DISPLAY`;
+   * the ordering is applied by the caller (see `tasks`). */
   display?: TasksDisplayPrefs;
   /** Lane keys (see `laneKey`) whose epic is folded up right now. */
   collapsedLaneKeys: ReadonlySet<string>;
@@ -325,21 +326,15 @@ export function TaskBoard({
   const shell = useShellActions();
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
 
-  // Column order follows the Display popover's ordering; done rows sink when asked.
-  const orderedTasks = useMemo(
-    () => sortTasks(tasks, display),
-    [tasks, display]
-  );
-
   // The same lanes `BoardView` derives for its j/k order, from the same pure function and the
-  // same inputs — deliberately recomputed here rather than passed down, so the two never have to
-  // be kept in sync as a pair of props that could disagree.
+  // same (pre-sorted) input — deliberately recomputed here rather than passed down, so the two
+  // never have to be kept in sync as a pair of props that could disagree.
   const lanes = useMemo<BoardLane[]>(() => {
-    if (groupByEpic) return groupTasksByEpicLane(orderedTasks, statuses, epics);
+    if (groupByEpic) return groupTasksByEpicLane(tasks, statuses, epics);
     // Flat board: one headerless lane holding every task (epics are lane headings in the
     // grouped board, so they have no card to show here either).
     const columns = groupTasksByStatus(
-      orderedTasks.filter((t) => t.meta.kind !== 'epic'),
+      tasks.filter((t) => t.meta.kind !== 'epic'),
       statuses
     );
     return [
@@ -350,7 +345,7 @@ export function TaskBoard({
         total: columns.reduce((n, c) => n + c.tasks.length, 0),
       },
     ];
-  }, [orderedTasks, statuses, epics, groupByEpic]);
+  }, [tasks, statuses, epics, groupByEpic]);
   const statusCounts = useMemo(
     () => countLaneStatuses(lanes, statuses),
     [lanes, statuses]

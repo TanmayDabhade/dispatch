@@ -79,4 +79,39 @@ describe('parseActivity', () => {
     );
     expect(entries.map((e) => e.text)).toEqual(['dispatched', 'a note']);
   });
+
+  it('folds continuation lines into one comment', () => {
+    // core's appendActivity keeps the composer's newlines and credits the whole
+    // bullet after its last line.
+    const entries = parseActivity(
+      '- 2026-09-13T10:00:00.000Z dispatched\n' +
+        '- 2026-09-20T10:00:00.000Z first\nsecond — human\n' +
+        '- 2026-09-20T11:00:00.000Z merged\n'
+    );
+    expect(entries).toEqual([
+      {
+        at: '2026-09-13T10:00:00.000Z',
+        text: 'dispatched',
+        actor: null,
+        kind: 'event',
+      },
+      {
+        at: '2026-09-20T10:00:00.000Z',
+        text: 'first\nsecond',
+        actor: 'human',
+        kind: 'comment',
+      },
+      {
+        at: '2026-09-20T11:00:00.000Z',
+        text: 'merged',
+        actor: null,
+        kind: 'event',
+      },
+    ]);
+  });
+
+  it('keeps a leading unmarked line as its own entry', () => {
+    const entries = parseActivity('legacy note\n- 2026-09-13T10:00:00.000Z x');
+    expect(entries.map((e) => e.text)).toEqual(['legacy note', 'x']);
+  });
 });

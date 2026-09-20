@@ -60,9 +60,10 @@ export function PillButton({ className, ...props }: ButtonPrimitive.Props) {
   );
 }
 
-/** A `PillButton` with a trailing 12px chevron — the face of a select or menu. Pass it
- * as a Base UI trigger's `render` (`<SelectTrigger render={<SelectPill />}>`) and the
- * trigger's props merge onto it. */
+/** A `PillButton` with a trailing 12px chevron — the face of a menu or popover. Pass
+ * it as a Base UI trigger's `render` (`<DropdownMenuTrigger render={<SelectPill />}>`,
+ * `<PopoverTrigger render={<SelectPill />}>`) and the trigger's props merge onto it.
+ * `SelectTrigger` is already this pill and draws its own chevron, so do not wrap it. */
 export function SelectPill({
   className,
   children,

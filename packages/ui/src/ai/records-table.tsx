@@ -8,6 +8,7 @@ import { Fragment, type ReactNode } from 'react';
 
 import { cn } from '../lib/utils';
 import { GroupHeader } from './group-header';
+import { colorForLabel, formatShortDate } from './list-format';
 import { ListRow } from './list-row';
 import { LabelPill } from './pill';
 
@@ -154,46 +155,15 @@ export function sortRows(
     .map(({ row }) => row);
 }
 
-const MONTHS = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-];
-
-/** A time cell's absolute label — `Sep 13`, with the year once it is not the current one.
- * Exported for the test that pins the row's date treatment. */
+/** A time cell's absolute label — `Sep 13`, with the year once it is not the current one —
+ * or `null` for an empty/unparseable value so the slot renders nothing. Exported for the
+ * test that pins the row's date treatment. */
 export function formatRecordsDate(
   value: unknown,
   now: Date = new Date()
 ): string | null {
   const ms = toTimestamp(value);
-  if (ms === 0) return null;
-  const date = new Date(ms);
-  const label = `${MONTHS[date.getMonth()] ?? ''} ${date.getDate()}`;
-  return date.getFullYear() === now.getFullYear()
-    ? label
-    : `${label}, ${date.getFullYear()}`;
-}
-
-const LABEL_COLOR_COUNT = 8;
-
-// Hashes a tag onto the eight categorical `--project-color-*` tokens so the same tag always
-// wears the same dot.
-function colorForTag(tag: string): string {
-  let hash = 0;
-  for (let i = 0; i < tag.length; i++) {
-    hash = (hash * 33 + tag.charCodeAt(i)) >>> 0;
-  }
-  return `var(--project-color-${(hash % LABEL_COLOR_COUNT) + 1})`;
+  return ms === 0 ? null : formatShortDate(ms, now);
 }
 
 const STRENGTH_BAR_HEIGHTS = ['h-1.5', 'h-2.5', 'h-3.5'];
@@ -228,7 +198,7 @@ function RecordsTagsCell({ value }: { value: unknown }) {
   return (
     <>
       {tags.map((tag) => (
-        <LabelPill key={tag} color={colorForTag(tag)}>
+        <LabelPill key={tag} color={colorForLabel(tag)}>
           {tag}
         </LabelPill>
       ))}

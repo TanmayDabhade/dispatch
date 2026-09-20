@@ -4,8 +4,14 @@ import {
   PanelRightIcon,
   SlidersHorizontalIcon,
 } from 'lucide-react';
-import { createContext, type ReactNode, useContext } from 'react';
+import {
+  createContext,
+  type KeyboardEvent,
+  type ReactNode,
+  useContext,
+} from 'react';
 
+import { focusRovingItem, nextRovingIndex } from '../lib/roving';
 import { cn } from '../lib/utils';
 import { IconButton, type IconButtonProps } from './icon-button';
 
@@ -153,7 +159,8 @@ export const VIEW_TAB_INACTIVE_CLASS =
   'bg-surface-control text-muted-foreground hover:text-(--text-secondary)';
 
 /** The view tabs under a page title — `Active` `Backlog` `All issues` — as 28px pills
- * with no shared track: the active one lifts to `bg-surface-active`. */
+ * with no shared track: the active one lifts to `bg-surface-active`. One tab stop:
+ * only the active tab is tabbable and arrows/Home/End move (and select) between them. */
 export function ViewTabs({
   tabs,
   active,
@@ -161,12 +168,22 @@ export function ViewTabs({
   label = 'Views',
   className,
 }: ViewTabsProps) {
+  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    const current = tabs.findIndex((tab) => tab.id === active);
+    const next = nextRovingIndex(event.key, current, tabs.length);
+    if (next === null) return;
+    event.preventDefault();
+    onChange(tabs[next]!.id);
+    focusRovingItem(event.currentTarget, '[role="tab"]', next);
+  }
+
   return (
     <div
       role="tablist"
       aria-label={label}
       data-slot="view-tabs"
       className={cn('flex items-center gap-1', className)}
+      onKeyDown={handleKeyDown}
     >
       {tabs.map((tab) => {
         const selected = tab.id === active;
@@ -176,6 +193,7 @@ export function ViewTabs({
             type="button"
             role="tab"
             aria-selected={selected}
+            tabIndex={selected ? 0 : -1}
             data-active={selected || undefined}
             onClick={() => onChange(tab.id)}
             className={cn(

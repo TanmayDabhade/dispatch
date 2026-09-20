@@ -460,7 +460,8 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
                 <RefreshCw
                   className={cn(
                     'size-3.5',
-                    (syncing || linearStatus.syncing) && 'animate-spin'
+                    (syncing || linearStatus.syncing) &&
+                      'animate-spin motion-reduce:animate-none'
                   )}
                 />
                 {syncing || linearStatus.syncing ? 'Syncing…' : 'Sync now'}

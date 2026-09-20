@@ -53,7 +53,7 @@ function CheckRunRow({ run }: { run: PrCheckRun }) {
       <span className="font-book min-w-0 flex-1 truncate text-[13px]">
         {run.name}
       </span>
-      <span className={cn(META_CLASS, 'shrink-0 lowercase')}>
+      <span className={cn(META_CLASS, 'shrink-0')}>
         {run.conclusion.toLowerCase()}
       </span>
       {run.url !== '' && (

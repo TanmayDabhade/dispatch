@@ -271,12 +271,11 @@ interface PlanTaskRowProps {
   onExpand: (index: number) => void;
 }
 
-/** One card of the proposal review list, in the ai components' RecommendationCard shape:
- * a round accent-tinted badge (the task's number) beside the editable title and muted
- * description, then one inset top-bordered footer strip holding the blocked-by chips on the
- * left and the priority/expand/remove controls on the right. Blocker titles are looked up
- * live off the current draft so an edited blocker's new title shows immediately in its
- * dependents' rows. */
+/** One card of the proposal review list: a quaternary `shadow-card` card with a sans `Pill`
+ * index beside the borderless editable title and muted description, then a hairline-topped
+ * footer holding the blocked-by pills on the left and the priority/expand/remove controls on
+ * the right. Blocker titles are looked up live off the current draft so an edited blocker's
+ * new title shows immediately in its dependents' rows. */
 function PlanTaskRow({
   task,
   index,

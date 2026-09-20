@@ -152,8 +152,8 @@ test('auto-commit renders as a switch named by its row title', () => {
   expect(screen.queryByRole('checkbox')).toBeNull();
 });
 
-// Every group is a 15px sentence-case heading over its card; no uppercase labels.
-test('the section headings are sentence case', () => {
+// Every group is a 15px/600 sentence-case heading over its card; no uppercase labels.
+test('the section headings are 15px semibold sentence case', () => {
   render(<GeneralSection config={config} onSave={() => Promise.resolve()} />);
   const headings = screen.getAllByRole('heading', { level: 2 });
   expect(headings.map((h) => h.textContent)).toEqual([
@@ -161,6 +161,8 @@ test('the section headings are sentence case', () => {
     'How to run this project',
   ]);
   for (const heading of headings) {
+    expect(heading.className).toContain('text-[15px]');
+    expect(heading.className).toContain('font-semibold');
     expect(heading.className).not.toContain('uppercase');
   }
 });

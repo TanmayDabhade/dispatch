@@ -26,7 +26,8 @@ function task(
   title: string,
   status: string,
   parent: string | null = null,
-  kind = 'task'
+  kind = 'task',
+  priority = 'medium'
 ): TaskDoc {
   return {
     meta: {
@@ -34,7 +35,7 @@ function task(
       title,
       status,
       kind,
-      priority: 'medium',
+      priority,
       parent,
       milestone: null,
       labels: [],
@@ -254,6 +255,53 @@ test('the view tabs switch the layout and remember it; the mode prop is only the
   expect(screen.getByLabelText('Display')).not.toBeNull();
 });
 
+// The regression this guards: the cursor's order was built from the unsorted task list while
+// the columns rendered `sortTasks` order, so j jumped around a column instead of walking it.
+test('j walks a column in its displayed (priority) order, not data order', () => {
+  const opened: string[] = [];
+  const tasks = [
+    task('t-low', 'Low card', 'todo', null, 'task', 'low'),
+    task('t-urgent', 'Urgent card', 'todo', null, 'task', 'urgent'),
+    task('t-high', 'High card', 'todo', null, 'task', 'high'),
+  ];
+  render(
+    view('board', {
+      data: boardData(tasks),
+      onSelectTask: (taskId) => opened.push(taskId),
+    })
+  );
+  const column = el('[data-slot=board-column]');
+  expect(
+    Array.from(column.querySelectorAll('[data-slot=task-card]')).map((card) =>
+      card.textContent?.replace(/\s+/g, ' ')
+    )
+  ).toEqual([
+    expect.stringContaining('Urgent card'),
+    expect.stringContaining('High card'),
+    expect.stringContaining('Low card'),
+  ]);
+  const anchor = cardRoot('Low card');
+  pressNav('j', anchor);
+  expect(focusedCardText()).toContain('Urgent card');
+  pressNav('j', anchor);
+  expect(focusedCardText()).toContain('High card');
+  pressNav('Enter', cardRoot('High card'));
+  expect(new Set(opened)).toEqual(new Set(['t-high']));
+});
+
+// The regression this guards: `initial` used to win over storage, so App's never-updated
+// `mode` prop put the board back on Board every time the view remounted (a trip to Git and
+// back) after the user had chosen List.
+test('a remembered layout wins over the opening mode prop', () => {
+  window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, 'list');
+  render(view('board'));
+  expect(document.querySelector('[data-slot=list-row]')).not.toBeNull();
+  expect(document.querySelector('[data-slot=task-card]')).toBeNull();
+  expect(screen.getByRole('tab', { name: 'List' }).dataset['active']).toBe(
+    'true'
+  );
+});
+
 test('the board opens on the flat kanban with every task in a status column', () => {
   mount();
   expect(screen.queryByText('Card one')).not.toBeNull();
@@ -360,6 +408,52 @@ test('the Filter menu lists facets and applies a Status chip under the header', 
   fireEvent.click(screen.getByRole('button', { name: 'Remove Status filter' }));
   expect(document.querySelector('[data-slot=filter-chip]')).toBeNull();
   expect(screen.queryByText('Card one')).not.toBeNull();
+});
+
+test('the Filter menu walks with arrow keys, and Escape in a facet steps back', async () => {
+  mount();
+  await settle(() => {
+    fireEvent.click(screen.getByLabelText('Filter'));
+  });
+  const menu = el('[data-slot=filter-menu]');
+  const facets = within(menu).getAllByRole('menuitem');
+  facets[0].focus();
+  fireEvent.keyDown(within(menu).getByRole('menu'), { key: 'ArrowDown' });
+  expect(document.activeElement).toBe(facets[1]);
+  fireEvent.keyDown(within(menu).getByRole('menu'), { key: 'ArrowUp' });
+  expect(document.activeElement).toBe(facets[0]);
+  fireEvent.keyDown(within(menu).getByRole('menu'), { key: 'End' });
+  expect(document.activeElement).toBe(facets[facets.length - 1]);
+
+  await settle(() => {
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Created' }));
+  });
+  const picks = within(menu).getAllByRole('menuitemcheckbox');
+  expect(picks.map((p) => p.getAttribute('aria-checked'))).not.toContain(
+    'true'
+  );
+  await settle(() => {
+    fireEvent.click(
+      within(menu).getByRole('menuitemcheckbox', { name: 'In the last week' })
+    );
+  });
+  // A date pick stores a resolved bound, yet its own row reads as the checked one.
+  expect(
+    within(menu)
+      .getAllByRole('menuitemcheckbox')
+      .map((p) => [p.textContent, p.getAttribute('aria-checked')])
+  ).toEqual([
+    ['In the last day', 'false'],
+    ['In the last week', 'true'],
+    ['In the last month', 'false'],
+    ['More than a week ago', 'false'],
+    ['More than a month ago', 'false'],
+  ]);
+  await settle(() => {
+    fireEvent.keyDown(within(menu).getByRole('menu'), { key: 'Escape' });
+  });
+  expect(document.querySelector('[data-slot=filter-menu]')).not.toBeNull();
+  expect(within(menu).getByRole('menuitem', { name: 'Status' })).not.toBeNull();
 });
 
 test('a v1 chip filter migrates into an applied clause', () => {

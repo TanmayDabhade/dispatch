@@ -121,7 +121,7 @@ export function PropertiesRail({
           {...pickerProps('assignee')}
         />
         {/* Kind is fixed at creation (task vs epic) — the one read-only property. */}
-        <div data-slot="kind-row" className={railRowClass()}>
+        <div data-slot="kind-row" className={railRowClass({ readOnly: true })}>
           <Layers className="text-muted-foreground" />
           <span className="truncate">{kindLabel(doc.meta.kind)}</span>
         </div>

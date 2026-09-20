@@ -11,7 +11,6 @@ import type {
   UpdatePatch,
 } from '@dispatch/core/browser';
 import { parseExternal } from '@dispatch/core/browser';
-import { computeStack } from '@dispatch/core/graph';
 import {
   Archive,
   Ban,
@@ -71,6 +70,7 @@ import { MainSection } from '../detail/MainSection';
 import { VerificationSection } from '../detail/VerificationSection';
 import { EnrichReview } from '../EnrichReview';
 import { EpicDagModal } from '../EpicDagModal';
+import { getStackByTaskId } from '../StackRail';
 import { ActivitySection } from './ActivitySection';
 import { PropertiesRail, type RailPicker } from './PropertiesRail';
 import { SessionsBlock } from './SessionsBlock';
@@ -160,8 +160,8 @@ export interface TaskDetailPanelProps {
 interface TaskPageProps extends TaskDetailPanelProps {
   /** `page` draws the two-row `PageHeader`; `peek` draws a 40px dialog chrome row instead. */
   mode: 'page' | 'peek';
-  /** The active project's display name, the first crumb. */
-  projectName?: string | null;
+  /** The active project's display name, the first crumb (`null` when none is active). */
+  projectName: string | null;
   /** Page mode: the Details / Chat / Diff `ViewTabs` for the header's second row. */
   tabs?: ReactNode;
   /** Page mode: the header's second-row controls (the session select). */
@@ -365,11 +365,9 @@ export function TaskPage({
   }
 
   // Whether this task belongs to a stack (a connected chain of blockedBy edges) — gates
-  // the rail's Stack section so a lone task never shows an empty heading.
-  const stack = useMemo(
-    () => computeStack(tasks, doc.meta.id),
-    [tasks, doc.meta.id]
-  );
+  // the rail's Stack section so a lone task never shows an empty heading. Read from the
+  // same per-`tasks` cache StackRail draws from, so the adjacency is built once.
+  const hasStack = getStackByTaskId(tasks).has(doc.meta.id);
 
   // This epic's children (the sub-tasks block and the graph dialog), and — for a plain
   // task — the tasks it blocks, which get the same block titled `Blocks`.
@@ -521,7 +519,7 @@ export function TaskPage({
   );
 
   const crumb: ReactNode[] = [
-    ...(projectName !== undefined && projectName !== null ? [projectName] : []),
+    ...(projectName !== null ? [projectName] : []),
     'Tasks',
     <TaskCrumb key="task" id={doc.meta.id} title={doc.meta.title} />,
   ];
@@ -776,7 +774,7 @@ export function TaskPage({
       ref={rootRef}
       data-slot="task-page"
       data-mode={mode}
-      className="flex h-full min-h-0 flex-col"
+      className="@container/task-page flex h-full min-h-0 flex-col"
     >
       {mode === 'page' ? (
         <PageHeader
@@ -814,12 +812,14 @@ export function TaskPage({
       <div className="flex min-h-0 flex-1">
         <div
           data-slot="task-main"
-          className="@container min-w-0 flex-1 overflow-y-auto"
+          className="min-w-0 flex-1 overflow-y-auto"
         >
           {children !== undefined ? (
             <div className="flex h-full min-h-0 flex-col">{children}</div>
           ) : (
-            <div className="px-6 py-6 @min-[1100px]:pl-[120px]">
+            // The 120px inset is measured against the whole panel (page or peek), not
+            // the column left over beside the rail, so a 1440px laptop still gets it.
+            <div className="px-6 py-6 @min-[1100px]/task-page:pl-[120px]">
               <div className="max-w-[800px]">{detailsBody}</div>
             </div>
           )}
@@ -832,7 +832,7 @@ export function TaskPage({
             tasks={tasks}
             run={run}
             latestRunByTaskId={latestRunByTaskId}
-            hasStack={stack !== null}
+            hasStack={hasStack}
             onChangeStatus={(status) => void changeStatus(status)}
             onPatch={(next) => void patch(next)}
             onOpenTask={onOpenTask}

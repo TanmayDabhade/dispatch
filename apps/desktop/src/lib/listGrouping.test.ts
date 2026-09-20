@@ -107,6 +107,34 @@ describe('nested sub-tasks', () => {
     ]);
   });
 
+  // The default prefs nest, and a task under a task under an epic is an ordinary shape — a
+  // three-deep chain in one group must keep every row (the grandchild once fell off).
+  test('a grandchild in the same group follows its parent, clamped to one indent', () => {
+    const epic = task('e-1', { kind: 'epic' });
+    const member = task('t-1', { parent: 'e-1' });
+    const sub = task('t-2', { parent: 't-1' });
+    const loose = task('t-3');
+    const groups = groupTasks([loose, sub, member, epic], prefs(), {
+      statuses: STATUSES,
+      epics: [epic],
+    });
+    expect(groups[0]?.rows.map((r) => [r.doc.meta.id, r.indent])).toEqual([
+      ['t-3', 0],
+      ['e-1', 0],
+      ['t-1', 1],
+      ['t-2', 1],
+    ]);
+  });
+
+  test('a parent cycle still renders every row at the top level', () => {
+    const a = task('a', { parent: 'b' });
+    const b = task('b', { parent: 'a' });
+    expect(nestRows([a, b], prefs()).map((r) => r.doc.meta.id)).toEqual([
+      'a',
+      'b',
+    ]);
+  });
+
   test('a child in another group is its own top-level row', () => {
     const epic = task('e-1', { kind: 'epic', status: 'ready' });
     const child = task('t-1', { parent: 'e-1', status: 'working' });

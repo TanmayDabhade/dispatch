@@ -135,11 +135,63 @@ test('rows carry an icon, a sans task id, and keycaps — never the kind text', 
   expect(keycaps).toEqual(['⌘1', 'G', 'S', 'C']);
 });
 
-test('the input shows the Ask Overseer Tab hint', () => {
+test('the input shows the Ask Overseer Tab hint and is described by it', () => {
   mount();
   const hint = document.querySelector('[data-slot="command-input-hint"]');
   expect(hint?.textContent).toContain('Ask Overseer');
   expect(hint?.querySelector('[data-slot="kbd"]')?.textContent).toBe('Tab');
+  expect(hint?.id).not.toBe('');
+  expect(input().getAttribute('aria-describedby')).toBe(hint?.id);
+});
+
+test('the first row is the 40px active row', () => {
+  mount();
+  const first = document.querySelector<HTMLElement>(
+    '[data-slot="command-item"]'
+  );
+  expect(first?.dataset.selected).toBe('true');
+  expect(first?.className).toContain('h-10');
+  expect(first?.className).toContain('data-[selected=true]:bg-surface-active');
+});
+
+test('a long title truncates while the task id and keycaps keep their width', () => {
+  const ran: string[] = [];
+  render(
+    <ShellActionsProvider value={shellActions()}>
+      <CommandPalette
+        isOpen
+        entries={[
+          ...entries(ran),
+          {
+            id: 'task-t-long',
+            label:
+              'A title so long it would push the id clean off the row '.repeat(
+                4
+              ),
+            sublabel: 't-long',
+            kind: 'task',
+            section: 'tasks',
+            shortcut: 'G L',
+            run: () => {},
+          },
+        ]}
+        onClose={() => {}}
+      />
+    </ShellActionsProvider>
+  );
+  const row = Array.from(
+    document.querySelectorAll<HTMLElement>('[data-slot="command-item"]')
+  ).find((r) => r.textContent?.includes('t-long'));
+  const spans = Array.from(row?.querySelectorAll('span') ?? []);
+  const label = spans.find((span) => span.textContent?.startsWith('A title'));
+  const id = spans.find((span) => span.textContent === 't-long');
+  expect(label?.className).toContain('min-w-0');
+  expect(label?.className).toContain('truncate');
+  expect(id?.className).toContain('shrink-0');
+  expect(id?.className).not.toContain('flex-1');
+  expect(
+    row?.querySelector('[data-slot="command-shortcut"]')?.className
+  ).toContain('shrink-0');
 });
 
 test('the dialog is the 720×450 menu pinned 121px from the top', () => {
@@ -164,6 +216,10 @@ test('Tab with a query hands it to the Overseer and closes; an empty query lets 
   expect(closed).toBe(0);
 
   fireEvent.change(input(), { target: { value: 'why is the build red ' } });
+  fireEvent.keyDown(input(), { key: 'Tab', shiftKey: true });
+  expect(prompts).toEqual([]);
+  expect(closed).toBe(0);
+
   fireEvent.keyDown(input(), { key: 'Tab' });
   expect(prompts).toEqual(['why is the build red']);
   expect(closed).toBe(1);
@@ -184,8 +240,8 @@ test('selecting a row closes the menu, runs the entry, and floats it to the top 
   const row = Array.from(
     document.querySelectorAll<HTMLElement>('[data-slot="command-item"]')
   ).find((r) => r.textContent?.includes('Go to Settings'));
-  expect(row).toBeDefined();
-  fireEvent.click(row as HTMLElement);
+  if (row === undefined) throw new Error('Go to Settings row not rendered');
+  fireEvent.click(row);
   expect(ran).toEqual(['go-settings']);
   expect(closed).toBe(1);
 
@@ -213,4 +269,8 @@ test('shows the empty state when nothing matches', () => {
   );
   const empty = document.querySelector('[data-slot="empty-state"]');
   expect(empty?.textContent).toContain('No results');
+  // The EmptyState brings its own padding; the cmdk empty slot adds none on top.
+  const slot = document.querySelector('[data-slot="command-empty"]');
+  expect(slot?.className).toContain('p-0');
+  expect(slot?.className).not.toContain('py-8');
 });

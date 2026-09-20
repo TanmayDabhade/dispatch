@@ -390,6 +390,8 @@ export function Sidebar({
         sections.collapse('try');
         if (id === 'try-plan') onSetProjectView('plans');
         else if (id === 'try-capture') onQuickCapture();
+        // Lands on Settings' first page: `SettingsView` keeps its page in local state and
+        // has no initial-page prop yet, so Settings › Integrations is not addressable here.
         else onSetGlobalView('settings');
         return;
       }

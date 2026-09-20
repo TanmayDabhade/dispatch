@@ -15,9 +15,11 @@ export interface AssigneeAvatarProps {
   className?: string;
 }
 
+// 18px is `InitialsAvatar`'s own size, so only the 16px variant overrides — restating
+// `leading-none` because tailwind-merge drops the primitive's when a `text-[…]` size lands.
 const SIZE_CLASS: Record<16 | 18, string> = {
-  16: 'size-4 text-[8px]',
-  18: 'size-[18px] text-[9px]',
+  16: 'size-4 text-[8px] leading-none',
+  18: '',
 };
 
 /**

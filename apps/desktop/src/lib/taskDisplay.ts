@@ -11,28 +11,6 @@ import { parseActorRef } from '@dispatch/core/browser';
 // type.
 type Tone = 'green' | 'blue' | 'red' | 'amber' | 'gray' | 'accent';
 
-/** Maps a task status to a Pill tone. The six built-in statuses
- * (backlog/todo/in-progress/in-review/done/cancelled) get a deliberate
- * color; anything else — a custom status from a project's
- * `.dispatch/config.yml` — falls back to neutral gray so a board column
- * header never renders unstyled. */
-export function statusTone(status: string): Tone {
-  switch (status) {
-    case 'working':
-      return 'blue';
-    case 'review':
-      return 'amber';
-    case 'landing':
-      return 'blue';
-    case 'landed':
-      return 'green';
-    case 'dropped':
-      return 'red';
-    default:
-      return 'gray';
-  }
-}
-
 /** Renders a raw config status id as a human label — `in-progress` becomes `In Progress`.
  * The board's flat columns and its swim-lane columns previously formatted the same status two
  * different ways (one raw lowercase, one CSS-uppercased), so both now route through here. */

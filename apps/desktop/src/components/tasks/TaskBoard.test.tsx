@@ -293,6 +293,62 @@ test('a finished epic swaps Work for a Land button that lands it', async () => {
   expect(landed).toEqual(['e-1']);
 });
 
+// The regression this guards: a dash length computed from a wider circle than the pie is
+// drawn on filled the disk at twice the real fraction (a full disk at 50%).
+test('the ◔ progress pie exposes exactly the done fraction of its arc', () => {
+  const progress = new Map([
+    [
+      'e-1',
+      {
+        epicId: 'e-1',
+        active: false,
+        children: [
+          { id: 't-1', title: 'Card one', status: 'landed' },
+          { id: 't-2', title: 'Card two', status: 'ready' },
+        ],
+        liveRuns: [],
+      },
+    ],
+  ]);
+  render(<Harness epicProgressById={progress} />);
+  expect(document.querySelector('[data-slot=epic-progress]')?.textContent).toBe(
+    '1/2'
+  );
+  const pie = document.querySelector(
+    '[data-slot=epic-progress-glyph] circle[r="2"]'
+  );
+  const [dash] = (pie?.getAttribute('stroke-dasharray') ?? '').split(' ');
+  const offset = Number(pie?.getAttribute('stroke-dashoffset'));
+  // The pie is `StatusIcon`'s: a 12.19 arc, half of it hidden by the offset at 1/2 done.
+  expect(Number(dash)).toBeCloseTo(12.19, 2);
+  expect(offset).toBeCloseTo(6.09, 2);
+});
+
+test('the concurrency pill opens a radio menu with the current choice checked', async () => {
+  render(<Harness />);
+  await settle(() => {
+    fireEvent.click(
+      screen.getAllByLabelText('Epic dispatch concurrency for e-1')[0]
+    );
+  });
+  const items = screen.getAllByRole('menuitemradio');
+  expect(items.map((item) => item.textContent)).toEqual([
+    '1×',
+    '2×',
+    '3×',
+    '4×',
+  ]);
+  expect(
+    items.map((item) => item.getAttribute('aria-checked') === 'true')
+  ).toEqual([false, false, true, false]);
+  await settle(() => {
+    fireEvent.click(items[0]);
+  });
+  expect(
+    screen.getAllByLabelText('Epic dispatch concurrency for e-1')[0].textContent
+  ).toBe('1×');
+});
+
 test('no Land button renders without land wiring or finished progress', () => {
   render(<Harness />);
   expect(screen.queryByRole('button', { name: 'Land' })).toBeNull();
@@ -417,7 +473,9 @@ test('the flat board has no lane headers and crumbs each card with its epic', ()
   render(<Harness groupByEpic={false} />);
   expect(document.querySelector('[data-slot=group-header]')).toBeNull();
   const card = screen.getByText('Card one').closest('[data-slot=task-card]');
-  expect(card?.querySelector('[data-slot=task-card-meta]')?.textContent).toBe(
-    't-1›Payments epic'
+  const meta = card?.querySelector('[data-slot=task-card-meta]');
+  expect(meta?.textContent).toContain('t-1');
+  expect(meta?.querySelector('[data-slot=task-card-crumb]')?.textContent).toBe(
+    'Payments epic'
   );
 });

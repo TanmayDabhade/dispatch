@@ -228,5 +228,5 @@ test('a decision the policy engine auto-decided carries the receipt badge', () =
       ]}
     />
   );
-  expect(screen.getAllByText('auto-decided')).toHaveLength(1);
+  expect(screen.getAllByText('Auto-decided')).toHaveLength(1);
 });

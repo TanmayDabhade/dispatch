@@ -42,7 +42,7 @@ export function SectionLabel({
       {rule && (
         <span
           aria-hidden
-          className="h-px flex-1 bg-[linear-gradient(to_right,var(--border-default),transparent_70%)]"
+          className="h-[0.5px] flex-1 bg-[linear-gradient(to_right,var(--border-default),transparent_70%)]"
         />
       )}
       {trailing}

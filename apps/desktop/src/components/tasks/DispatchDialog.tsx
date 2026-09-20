@@ -72,11 +72,15 @@ export function DispatchDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // 1…10, stretched to include a configured default above that so it stays selectable.
+  // 1…10, stretched to include a configured default above that so it stays selectable —
+  // keyed on the default, not the current pick, so choosing a lower value can't drop it.
   const concurrencyOptions = useMemo(() => {
-    const top = Math.max(CONCURRENCY_MAX, concurrency);
+    const top = Math.max(
+      CONCURRENCY_MAX,
+      Math.max(1, Math.floor(defaultConcurrency) || 1)
+    );
     return Array.from({ length: top }, (_, i) => i + 1);
-  }, [concurrency]);
+  }, [defaultConcurrency]);
 
   const preview = useMemo(
     () =>

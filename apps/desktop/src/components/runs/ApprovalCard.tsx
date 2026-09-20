@@ -134,7 +134,7 @@ export function ApprovalCard({
   return (
     <div
       data-slot="tool-approval-card"
-      className="animate-in fade-in-0 flex flex-col gap-2 duration-100"
+      className="animate-in fade-in-0 flex flex-col gap-2 duration-100 motion-reduce:animate-none"
     >
       <AiApprovalCard
         // Full-width in the transcript — the primitive's gallery default is `max-w-sm`. The
@@ -193,6 +193,7 @@ export function ApprovalCard({
         <CollapsibleContent className="flex flex-col gap-2">
           <Textarea
             autoFocus
+            aria-label="Reason for denying"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             placeholder="Why not? The agent gets this as the reason it was refused."

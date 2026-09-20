@@ -52,11 +52,17 @@ export function StatusPanel({
       {status.upstream !== null && (
         <div className="text-muted-foreground font-book flex items-center gap-3 text-[12px] tabular-nums">
           <span className="truncate">{status.upstream}</span>
-          <span className="flex items-center gap-1">
+          <span
+            className="flex items-center gap-1"
+            aria-label={`${status.ahead} ahead`}
+          >
             <ArrowUp className="size-3" />
             {status.ahead}
           </span>
-          <span className="flex items-center gap-1">
+          <span
+            className="flex items-center gap-1"
+            aria-label={`${status.behind} behind`}
+          >
             <ArrowDown className="size-3" />
             {status.behind}
           </span>

@@ -50,7 +50,7 @@ export type GlobalKeyCommand =
   | 'zoom-reset'
   /** Open the quick brain-dump capture modal. */
   | 'brain-dump'
-  /** Hide or show the sidebar (`[`). */
+  /** Hide or show the sidebar (`[`; ⌘B is the alias shadcn's sidebar taught). */
   | 'toggle-sidebar'
   /** Open the task creator (`c`). */
   | 'new-task'
@@ -120,16 +120,12 @@ export function resolveGlobalKeyCommand(
   if (combo && input.key === '-') return 'zoom-out';
   if (combo && input.key === '0') return 'zoom-reset';
 
-  // Quick capture (⌘D — "dump"). Carries a modifier but still deliberately dead while
-  // typing and while any modal is up — opening a second layer over an open dialog helps
-  // nobody.
-  if (
-    combo &&
-    input.key.toLowerCase() === 'd' &&
-    !ctx.isTyping &&
-    !ctx.modalOpen
-  ) {
-    return 'brain-dump';
+  // Quick capture (⌘D — "dump") and the ⌘B sidebar alias. They carry a modifier but are
+  // still deliberately dead while typing and while any modal is up — opening a second layer
+  // over an open dialog, or shifting the frame under one, helps nobody.
+  if (combo && !ctx.isTyping && !ctx.modalOpen) {
+    if (input.key.toLowerCase() === 'd') return 'brain-dump';
+    if (input.key.toLowerCase() === 'b') return 'toggle-sidebar';
   }
 
   // Every other global shortcut below is a bare letter/symbol — never hijack normal typing,

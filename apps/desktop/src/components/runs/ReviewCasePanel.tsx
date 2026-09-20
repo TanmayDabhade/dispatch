@@ -205,7 +205,9 @@ export function ReviewCasePanel({
                     <Check className="text-state-review size-3 shrink-0" />
                   )}
                   <span className="min-w-0 flex-1 truncate">{m.guard}</span>
-                  <span className={cn(META_CLASS, 'shrink-0')}>{m.file}</span>
+                  <span className="text-muted-foreground shrink-0 font-mono text-[12px]">
+                    {m.file}
+                  </span>
                   <span
                     className={cn(
                       META_CLASS,
@@ -354,7 +356,7 @@ function FindingRow({
         <TriangleAlert className="text-state-waiting size-3 shrink-0 self-center" />
         <span className="min-w-0 flex-1 font-medium">{finding.title}</span>
         {finding.file !== null && (
-          <span className={cn(META_CLASS, 'shrink-0')}>
+          <span className="text-muted-foreground shrink-0 font-mono text-[12px]">
             {finding.file}
             {finding.line !== null && `:${finding.line}`}
           </span>

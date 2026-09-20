@@ -52,9 +52,11 @@ function shellActions(createPreset: CreateTaskPreset | null): ShellActions {
 
 function mount({
   preset = null,
+  projectName,
   onCreate = () => Promise.resolve(),
 }: {
   preset?: CreateTaskPreset | null;
+  projectName?: string;
   onCreate?: (input: CreateInput) => Promise<void>;
 } = {}) {
   const created: CreateInput[] = [];
@@ -65,6 +67,7 @@ function mount({
         <CreateTaskModal
           statuses={STATUSES}
           epics={[epic('e-1', 'Search index')]}
+          projectName={projectName}
           onCreate={(input) => {
             created.push(input);
             return onCreate(input);
@@ -168,7 +171,12 @@ test('⌘⏎ creates from any field', async () => {
 
 test('Create more keeps the dialog open and clears title and description', async () => {
   const { created, closed } = mount();
-  fireEvent.click(screen.getByRole('switch', { name: 'Create more' }));
+  // The words are the toggle's `<label>`, so clicking them flips it. (Clicking the switch
+  // itself double-fires under happy-dom, which ignores the preventDefault Base UI uses
+  // to stop the wrapping label's activation; browsers honour it.)
+  const toggle = screen.getByRole('switch', { name: 'Create more' });
+  fireEvent.click(screen.getByText('Create more'));
+  expect(toggle.getAttribute('aria-checked')).toBe('true');
   fireEvent.change(titleField(), { target: { value: 'First' } });
   fireEvent.change(screen.getByLabelText('Description'), {
     target: { value: 'body' },
@@ -197,7 +205,7 @@ test('Save as draft appears once a title exists and files the task as draft', as
   expect(created[0]?.status).toBe('draft');
 });
 
-test('a failed create keeps the dialog open with the title intact', async () => {
+test('a failed create keeps the dialog open with the title intact and says why', async () => {
   const { closed } = mount({
     onCreate: () => Promise.reject(new Error('daemon said no')),
   });
@@ -208,4 +216,13 @@ test('a failed create keeps the dialog open with the title intact', async () => 
   expect(closed()).toBe(0);
   expect(titleField().value).toBe('Keep me');
   expect(createButton().disabled).toBe(false);
+  // The error surfaces as a toast (`create::D57`) rather than vanishing.
+  expect(await screen.findByText('Could not create task')).toBeTruthy();
+  expect(await screen.findByText('daemon said no')).toBeTruthy();
+});
+
+test('the crumb reads the project name when one is given', () => {
+  mount({ projectName: 'Audiobook' });
+  expect(screen.getByText('Audiobook')).toBeTruthy();
+  expect(screen.queryByText('Dispatch')).toBeNull();
 });

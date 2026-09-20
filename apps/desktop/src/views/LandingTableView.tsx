@@ -277,7 +277,11 @@ export function LandingTableView({
               }
             />
           ) : (
-            <div className="flex flex-col gap-0.5" role="table">
+            <div
+              className="flex flex-col gap-0.5"
+              role="list"
+              aria-label="Pull requests"
+            >
               {visibleRows.map((entry) =>
                 entry.type === 'group' ? (
                   <GroupHeader
@@ -380,7 +384,7 @@ function LandedList({
   }
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 py-2">
-      <div className="flex flex-col gap-0.5" role="table">
+      <div className="flex flex-col gap-0.5" role="list" aria-label="Landed">
         {landed.map((entry) => {
           // The queue's own history enriches a row with how it landed,
           // when this daemon session still remembers it.
@@ -388,6 +392,7 @@ function LandedList({
           return (
             <ListRow
               key={entry.id}
+              role="listitem"
               title={entry.title}
               trailing={
                 queueEntry !== undefined ? (
@@ -457,7 +462,6 @@ function FailedAttemptRow({
         className="hover:bg-transparent"
         trailing={
           <PillButton
-            className="h-6"
             disabled={retryDisabled}
             onClick={(event) => {
               event.stopPropagation();

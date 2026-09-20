@@ -42,7 +42,6 @@ import { colorForEpic } from '../lib/projectColor';
 import { assigneeLabel, priorityLabel, statusLabel } from '../lib/taskDisplay';
 import {
   DEFAULT_TASKS_DISPLAY,
-  type TaskProperty,
   type TasksDisplayPrefs,
 } from '../lib/tasksPrefs';
 import {
@@ -80,30 +79,7 @@ interface TasksListViewProps {
   onRequestFilter?: () => void;
   /** `⇧V` on the list: the page header opens its Display popover. No-op until wired. */
   onRequestDisplay?: () => void;
-  /** The retired Display-menu column set; folded into `display.properties` until the page
-   * passes `display` itself. */
-  hiddenColumns?: ReadonlySet<string>;
 }
-
-/** The retired Display menu's column list — still imported by `BoardView` until its Display
- * popover moves to `TasksDisplayPrefs`. */
-export const HIDEABLE_LIST_COLUMNS: { key: string; label: string }[] = [
-  { key: 'priority', label: 'Priority' },
-  { key: 'id', label: 'ID' },
-  { key: 'status', label: 'Status' },
-  { key: 'tags', label: 'Labels' },
-  { key: 'assignee', label: 'Assignee' },
-  { key: 'updated', label: 'Updated' },
-];
-
-const LEGACY_COLUMN_PROPERTY: Record<string, TaskProperty> = {
-  priority: 'priority',
-  id: 'id',
-  status: 'status',
-  tags: 'labels',
-  assignee: 'assignee',
-  updated: 'updated',
-};
 
 const PRIORITIES = Object.keys(PRIORITY_ORDER) as Priority[];
 const ASSIGNEES: Assignee[] = ['agent', 'human', 'none'];
@@ -115,10 +91,10 @@ const ASSIGNEES: Assignee[] = ['agent', 'human', 'none'];
  * (labels, epic chip, sub-task count, live run mark, assignee) and the absolute date. The
  * grouping/ordering/properties come from `display` (`groupTasks`), the same model the board
  * and Milestones read. A right-click menu and the single-key shortcuts (`s p a e` pickers,
- * `x` select, `d` dispatch, `o`/Enter open, Space peek, `j/k`) work on the focused row; bulk
- * selection surfaces a dispatch bar at the bottom. The caller owns the page header, view
- * tabs and filter/display controls; this only renders once the project has tasks, so its
- * own empty state covers "the filter matched nothing".
+ * `x` select, `d` dispatch, `o`/Enter open, Space peek, `⌘C` copy id, `j/k`) work on the
+ * focused row; bulk selection surfaces a dispatch bar at the bottom. The caller owns the
+ * page header, view tabs and filter/display controls; this only renders once the project
+ * has tasks, so its own empty state covers "the filter matched nothing".
  */
 export function TasksListView({
   data,
@@ -127,19 +103,9 @@ export function TasksListView({
   display,
   onRequestFilter,
   onRequestDisplay,
-  hiddenColumns,
 }: TasksListViewProps) {
   const shell = useShellActions();
-  const prefs = useMemo<TasksDisplayPrefs>(() => {
-    const base = display ?? DEFAULT_TASKS_DISPLAY;
-    if (hiddenColumns === undefined || hiddenColumns.size === 0) return base;
-    const properties = new Set(base.properties);
-    for (const column of hiddenColumns) {
-      const property = LEGACY_COLUMN_PROPERTY[column];
-      if (property !== undefined) properties.delete(property);
-    }
-    return { ...base, properties };
-  }, [display, hiddenColumns]);
+  const prefs = display ?? DEFAULT_TASKS_DISPLAY;
 
   const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() =>
@@ -274,27 +240,31 @@ export function TasksListView({
     }
   }, [orderedIds, focusedTaskId]);
 
-  useEffect(() => {
-    if (focusedTaskId === null) return;
-    listRef.current
-      ?.querySelector(`[data-row-id="${focusedTaskId}"]`)
-      ?.scrollIntoView({ block: 'nearest' });
-  }, [focusedTaskId]);
-
   function dispatchOne(taskId: string) {
     if (!data.readyIds.has(taskId)) return;
     void data.handleDispatch(taskId);
+  }
+
+  // Only a keyboard move scrolls — a hover that set the cursor must not shift the list under
+  // the pointer (which would hand the cursor to the next row and scroll again).
+  function moveCursor(id: string | null) {
+    setFocusedTaskId(id);
+    if (id === null) return;
+    listRef.current
+      ?.querySelector(`[data-row-id="${id}"]`)
+      ?.scrollIntoView({ block: 'nearest' });
   }
 
   function handleListKeyDown(e: KeyboardEvent<HTMLDivElement>) {
     handleTaskListKeyDown(e, {
       orderedIds,
       focusedTaskId,
-      setFocusedTaskId,
+      setFocusedTaskId: moveCursor,
       onOpen: onSelectTask,
       onPeek: shell.peekTask,
       onSelectToggle: toggleSelected,
       onDispatch: dispatchOne,
+      onCopyId: shell.copyTaskId,
       setPicker,
       onEscape: () => {
         if (selectedIds.size === 0 && picker === null) return false;
@@ -340,11 +310,13 @@ export function TasksListView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {orderedIds.length === 0 ? (
+      {/* Keyed on the groups, not the visible rows: collapsing every group must leave the
+          headers (and their chevrons) in place. */}
+      {groups.length === 0 ? (
         <EmptyState
           icon={SearchX}
           heading="No tasks match"
-          description="Nothing passes the current filter. Clear it, or expand a collapsed group."
+          description="Nothing passes the current filter. Clear it to see the project's tasks."
           className="flex-1"
         />
       ) : (

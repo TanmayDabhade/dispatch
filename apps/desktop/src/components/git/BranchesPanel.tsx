@@ -81,7 +81,7 @@ export function BranchesPanel({
           No branches match this filter.
         </div>
       ) : (
-        <div className="flex flex-col" role="table">
+        <div className="flex flex-col" role="list" aria-label="Branches">
           {rows.map((row, index) => {
             const chip =
               row.worktree !== undefined
@@ -93,7 +93,8 @@ export function BranchesPanel({
                 key={row.name}
                 data-git-selected={index === selectedIndex ? 'true' : undefined}
                 onClick={() => onSelectIndex(index)}
-                selected={index === selectedIndex}
+                focused={index === selectedIndex}
+                role="listitem"
                 leading={
                   row.isCurrent ? (
                     <Check className="text-state-review" />
@@ -147,7 +148,6 @@ export function BranchesPanel({
                           render={
                             <IconButton
                               label="Dispatch agent"
-                              className="size-6"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 onDispatchAgent(row.name);

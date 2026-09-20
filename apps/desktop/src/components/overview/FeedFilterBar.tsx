@@ -2,7 +2,7 @@ import { Search } from 'lucide-react';
 
 import type { FeedState } from '@/lib/feedState';
 import { FEED_STATE_LABEL, FEED_STATE_ORDER } from '@/lib/feedState';
-import { FilterIconButton, HeaderIconTriad } from '@/ui/ai/page-header';
+import { FilterIconButton } from '@/ui/ai/page-header';
 import { Button } from '@/ui/button';
 import {
   DropdownMenu,
@@ -35,7 +35,7 @@ interface FeedFilterBarProps {
 
 /**
  * The Control room header's second-row controls: the search field, a `Collapse all` ghost
- * and the header triad's funnel (there is no display popover or side panel here). The funnel
+ * and the funnel icon button (there is no display popover or side panel here). The funnel
  * opens a small facet menu — state, epic, needs-you — sharing its selection with the ribbon
  * above, so the two can never disagree; the dot on it says a filter is applied.
  */
@@ -71,68 +71,60 @@ export function FeedFilterBar({
       <Button variant="ghost" onClick={onToggleCollapseAll}>
         {allCollapsed ? 'Expand all' : 'Collapse all'}
       </Button>
-      <HeaderIconTriad
-        filter={
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={<FilterIconButton active={filtered} />}
-            />
-            <DropdownMenuContent align="end" className="min-w-[200px]">
-              <DropdownMenuCheckboxItem
-                checked={needsYouOnly}
-                onCheckedChange={(checked) => onNeedsYouChange(checked)}
-              >
-                Needs you
-              </DropdownMenuCheckboxItem>
+      {/* The feed has one layout and no side panel; only the triad's funnel earns a button. */}
+      <DropdownMenu>
+        <DropdownMenuTrigger render={<FilterIconButton active={filtered} />} />
+        <DropdownMenuContent align="end" className="min-w-[200px]">
+          <DropdownMenuCheckboxItem
+            checked={needsYouOnly}
+            onCheckedChange={(checked) => onNeedsYouChange(checked)}
+          >
+            Needs you
+          </DropdownMenuCheckboxItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel>State</DropdownMenuLabel>
+          {FEED_STATE_ORDER.map((state) => (
+            <DropdownMenuCheckboxItem
+              key={state}
+              checked={activeStates.has(state)}
+              onCheckedChange={() => onToggleState(state)}
+            >
+              {FEED_STATE_LABEL[state]}
+            </DropdownMenuCheckboxItem>
+          ))}
+          {epics.length > 0 && (
+            <>
               <DropdownMenuSeparator />
-              <DropdownMenuLabel>State</DropdownMenuLabel>
-              {FEED_STATE_ORDER.map((state) => (
+              <DropdownMenuLabel>Epic</DropdownMenuLabel>
+              {epics.map((epic) => (
                 <DropdownMenuCheckboxItem
-                  key={state}
-                  checked={activeStates.has(state)}
-                  onCheckedChange={() => onToggleState(state)}
+                  key={epic}
+                  checked={activeEpic === epic}
+                  onCheckedChange={(checked) =>
+                    onEpicChange(checked ? epic : null)
+                  }
                 >
-                  {FEED_STATE_LABEL[state]}
+                  {epic}
                 </DropdownMenuCheckboxItem>
               ))}
-              {epics.length > 0 && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuLabel>Epic</DropdownMenuLabel>
-                  {epics.map((epic) => (
-                    <DropdownMenuCheckboxItem
-                      key={epic}
-                      checked={activeEpic === epic}
-                      onCheckedChange={(checked) =>
-                        onEpicChange(checked ? epic : null)
-                      }
-                    >
-                      {epic}
-                    </DropdownMenuCheckboxItem>
-                  ))}
-                </>
-              )}
-              {filtered && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    onClick={() => {
-                      onClearStates();
-                      onEpicChange(null);
-                      onNeedsYouChange(false);
-                    }}
-                  >
-                    Clear filters
-                  </DropdownMenuItem>
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        }
-        // The feed has one layout and no side panel; only the funnel earns a button.
-        display={<></>}
-        sidePanel={<></>}
-      />
+            </>
+          )}
+          {filtered && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() => {
+                  onClearStates();
+                  onEpicChange(null);
+                  onNeedsYouChange(false);
+                }}
+              >
+                Clear filters
+              </DropdownMenuItem>
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }

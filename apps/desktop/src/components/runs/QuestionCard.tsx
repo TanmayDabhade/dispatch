@@ -61,7 +61,7 @@ export function QuestionCard({
   return (
     <div
       data-slot="question-card"
-      className="animate-in fade-in-0 flex flex-col gap-2 duration-100"
+      className="animate-in fade-in-0 flex flex-col gap-2 duration-100 motion-reduce:animate-none"
     >
       <ApprovalCard
         // Full-width in the transcript, and the question is agent-authored text — render it
@@ -81,6 +81,7 @@ export function QuestionCard({
       {error !== null && <div className="text-red text-[12px]">{error}</div>}
       <div className="flex items-end gap-2">
         <Textarea
+          aria-label="Your answer"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {

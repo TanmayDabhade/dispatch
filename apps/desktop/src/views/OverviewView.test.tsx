@@ -3,7 +3,8 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
-import { OverviewView, tintForState } from './OverviewView';
+import { tintForState } from '../lib/feedState';
+import { OverviewView } from './OverviewView';
 
 function run(over: Partial<RunMeta> = {}): RunMeta {
   return {
@@ -86,6 +87,8 @@ test('the header crumb, state pills and tinted group headers over 36px rows', ()
   const working = within(ribbon).getByRole('button', { name: /^Working/ });
   expect(working.className).toContain('rounded-pill');
   expect(working.className).not.toContain('uppercase');
+  // The count is a separate muted span; the accessible name keeps the two apart.
+  expect(working.getAttribute('aria-label')).toBe('Working, 1');
   expect(working.textContent).toBe('Working1');
 
   const groups = container.querySelectorAll('[data-slot="group-header"]');

@@ -211,6 +211,29 @@ describe('resolveGlobalKeyCommand', () => {
     ).toBeNull();
     expect(resolveGlobalKeyCommand(key('d'), baseGlobalCtx)).toBeNull();
   });
+
+  test('⌘B aliases the sidebar toggle with the same typing and modal guards', () => {
+    expect(
+      resolveGlobalKeyCommand(key('b', { metaKey: true }), baseGlobalCtx)
+    ).toBe('toggle-sidebar');
+    expect(
+      resolveGlobalKeyCommand(key('B', { ctrlKey: true }), baseGlobalCtx)
+    ).toBe('toggle-sidebar');
+    expect(
+      resolveGlobalKeyCommand(key('b', { metaKey: true }), {
+        ...baseGlobalCtx,
+        isTyping: true,
+      })
+    ).toBeNull();
+    expect(
+      resolveGlobalKeyCommand(key('b', { metaKey: true }), {
+        ...baseGlobalCtx,
+        modalOpen: true,
+      })
+    ).toBeNull();
+    // A bare "b" is ordinary typing.
+    expect(resolveGlobalKeyCommand(key('b'), baseGlobalCtx)).toBeNull();
+  });
 });
 
 const baseListCtx: ListKeyboardContext = { isTyping: false };

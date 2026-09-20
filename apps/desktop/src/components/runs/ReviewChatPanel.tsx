@@ -145,8 +145,6 @@ export function ReviewChatPanel({
   }
 
   return (
-    // Panel's own border replaces the hand-spelled `border-border ... rounded-md border` —
-    // same swap as the review threads above, not a diff-rendering change.
     <Panel className="mt-2 flex max-h-[45%] shrink-0 flex-col gap-2 p-2">
       <div className="flex h-7 items-center gap-2">
         <MessageSquare className="text-muted-foreground size-3.5 shrink-0" />

@@ -15,7 +15,7 @@ export interface TaskFilters {
   priorities: string[];
 }
 
-export type TasksLayout = 'list' | 'board' | 'milestones';
+type TasksLayout = 'list' | 'board' | 'milestones';
 export type TasksGrouping =
   | 'status'
   | 'epic'
@@ -30,7 +30,7 @@ export type TasksOrdering =
   | 'created'
   | 'title'
   | 'manual';
-export type TasksOrderDir = 'asc' | 'desc';
+type TasksOrderDir = 'asc' | 'desc';
 /** The row/card properties the Display popover's toggle-chips switch on and off. */
 export type TaskProperty =
   | 'id'
@@ -44,7 +44,7 @@ export type TaskProperty =
   | 'created'
   | 'updated'
   | 'run';
-export type TaskDateField = 'created' | 'updated';
+type TaskDateField = 'created' | 'updated';
 
 export interface TasksDisplayPrefs {
   layout: TasksLayout;
@@ -259,70 +259,4 @@ export function matchesTaskFilters(
     return false;
   }
   return true;
-}
-
-// ---------------------------------------------------------------------------------------------
-// Retired board/list column prefs. `BoardView` still reads these until the Display popover
-// (WP5) writes `TasksDisplayPrefs` instead; nothing else should import them, and they go with
-// that change. `showEmptyGroups` replaces `hideEmpty`; `compact` and `hidden` have no successor.
-// ---------------------------------------------------------------------------------------------
-
-export interface BoardColumnPrefs {
-  hideEmpty: boolean;
-  hidden: string[];
-  groupByEpic: boolean;
-  compact: boolean;
-}
-
-export const BOARD_COLUMNS_STORAGE_KEY = 'dispatch:board-columns-v1';
-export const LIST_COLUMNS_STORAGE_KEY = 'dispatch:list-hidden-columns-v1';
-
-export const DEFAULT_BOARD_COLUMN_PREFS: BoardColumnPrefs = {
-  hideEmpty: true,
-  hidden: ['landed', 'dropped'],
-  groupByEpic: false,
-  compact: true,
-};
-
-export function parseBoardColumnPrefs(stored: string | null): BoardColumnPrefs {
-  if (stored === null) return DEFAULT_BOARD_COLUMN_PREFS;
-  try {
-    const parsed: unknown = JSON.parse(stored);
-    if (typeof parsed !== 'object' || parsed === null) {
-      return DEFAULT_BOARD_COLUMN_PREFS;
-    }
-    const record = parsed as Record<string, unknown>;
-    return {
-      hideEmpty: bool(record.hideEmpty, true),
-      hidden: stringArray(record.hidden),
-      groupByEpic: bool(record.groupByEpic, false),
-      compact: bool(record.compact, true),
-    };
-  } catch {
-    return DEFAULT_BOARD_COLUMN_PREFS;
-  }
-}
-
-export function parseHiddenListColumns(stored: string | null): string[] {
-  if (stored === null) return [];
-  try {
-    return stringArray(JSON.parse(stored));
-  } catch {
-    return [];
-  }
-}
-
-export function visibleBoardStatuses(
-  statuses: string[],
-  prefs: BoardColumnPrefs,
-  countByStatus: ReadonlyMap<string, number>
-): string[] {
-  const hidden = new Set(prefs.hidden);
-  return statuses.filter((status) => {
-    if (hidden.has(status)) return false;
-    if (prefs.hideEmpty && (countByStatus.get(status) ?? 0) === 0) {
-      return false;
-    }
-    return true;
-  });
 }

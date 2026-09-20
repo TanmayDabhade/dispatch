@@ -200,7 +200,7 @@ export function AgentsSection({ config, onSave }: AgentsSectionProps) {
                   value={mode}
                   checked={config.orchestrator.permissionMode === mode}
                   onChange={() => void onSave({ permissionMode: mode })}
-                  className="accent-accent size-3.5"
+                  className="accent-primary size-3.5"
                 />
                 <span>{label}</span>
               </label>

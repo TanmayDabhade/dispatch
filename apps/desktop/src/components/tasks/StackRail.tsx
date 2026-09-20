@@ -40,7 +40,7 @@ const stackCache = new WeakMap<TaskDoc[], Map<string, TaskStack>>();
  * `tasks` array's own identity, so a fresh task list (e.g. after a refetch) naturally
  * invalidates the old entry instead of ever serving a stale one.
  */
-function getStackByTaskId(tasks: TaskDoc[]): Map<string, TaskStack> {
+export function getStackByTaskId(tasks: TaskDoc[]): Map<string, TaskStack> {
   const cached = stackCache.get(tasks);
   if (cached !== undefined) return cached;
 
@@ -120,10 +120,10 @@ export function StackRail({
                 <>
                   <RunStatePill meta={run} compact />
                   {run.prUrl !== undefined && (
-                    <GitPullRequest
-                      className="text-muted-foreground size-3.5"
-                      aria-label="Has a pull request"
-                    />
+                    <span title="Has a pull request" className="flex">
+                      <GitPullRequest className="text-muted-foreground size-3.5" />
+                      <span className="sr-only">Has a pull request</span>
+                    </span>
                   )}
                 </>
               ) : undefined

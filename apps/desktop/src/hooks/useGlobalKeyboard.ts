@@ -17,28 +17,25 @@ export function isTypingTarget(target: EventTarget | null): boolean {
   return isTypingTagName(target.tagName, target.isContentEditable);
 }
 
-/** True while any dialog is currently open — either a legacy `Modal` (see
- * `components/ui/Modal.tsx`'s `data-modal="true"` marker) or a shadcn/Radix `Dialog`
- * (`@/ui/dialog`'s `DialogContent` renders with `data-slot="dialog-content"`, and Radix keeps
- * `data-state="open"` on it only while open — briefly `"closed"` during its exit animation, so
- * that state is checked too rather than just presence in the DOM). `AlertDialogContent` is the
- * same device under a different slot name (`data-slot="alert-dialog-content"`), so it is matched
- * too — a destructive confirm has to swallow the app's shortcuts exactly like any other modal
- * does (BranchesView's confirm is one). Checked live via a DOM
- * query at the moment a keydown fires, rather than threaded through as reactive React state —
- * every dialog instance (CreateTaskModal, SessionDetailModal, DiffModal, CommandPalette, …)
- * already only renders into the DOM while open, so the query itself is always exactly as
- * current as the state would be, without App.tsx needing to know about every modal that exists
- * anywhere in the component tree (including ones mounted deep inside the Sessions hub, which
- * App.tsx has no direct view into). CommandPalette is one of these now that it builds on
- * `Dialog` too, so a keydown reaching this listener while the palette is open resolves
- * `Escape` to `null` here — Radix's own Escape handling on `Dialog` already owns it, and
- * `CommandPalette`'s `onClose` prop is the only thing that closes it (see `appNav.ts`'s
- * `closePalette` case). */
+/** True while any dialog is currently open. Every dialog builds on Base UI (`@/ui/dialog`'s
+ * `DialogContent` renders `data-slot="dialog-content"`, and `Dialog.Popup` carries a bare
+ * `data-open` attribute only while open — it flips to `data-closed` for the exit animation, so
+ * presence in the DOM alone is not enough). `AlertDialogContent` is the same device under
+ * `data-slot="alert-dialog-content"`, so it is matched too — a destructive confirm has to
+ * swallow the app's shortcuts exactly like any other modal does (BranchesView's confirm is
+ * one). Checked live via a DOM query at the moment a keydown fires, rather than threaded
+ * through as reactive React state — every dialog instance (CreateTaskModal,
+ * SessionDetailModal, DiffModal, CommandPalette, …) only renders into the DOM while open, so
+ * the query is always exactly as current as the state would be, without App.tsx needing to
+ * know about every modal that exists anywhere in the component tree (including ones mounted
+ * deep inside the Sessions hub). CommandPalette is one of these too, so a keydown reaching
+ * this listener while the palette is open resolves `Escape` to `null` here — Base UI's own
+ * dismiss handling on `Dialog` already owns it, and `CommandPalette`'s `onClose` prop is the
+ * only thing that closes it (see `appNav.ts`'s `closePalette` case). */
 function isAnyModalOpen(): boolean {
   return (
     document.querySelector(
-      '[data-modal="true"], [data-slot="dialog-content"][data-state="open"], [data-slot="alert-dialog-content"][data-state="open"]'
+      '[data-slot="dialog-content"][data-open], [data-slot="alert-dialog-content"][data-open]'
     ) !== null
   );
 }
@@ -68,6 +65,11 @@ export function useGlobalKeyboard({
 }: UseGlobalKeyboardOptions): void {
   const pendingPrefix = useRef<ChordPrefix | null>(null);
   const prefixTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // App passes an inline `onCommand`, so the listener reads the latest one through a ref
+  // instead of re-subscribing on every render — a re-subscribe inside the chord window would
+  // clear an armed `g`.
+  const onCommandRef = useRef(onCommand);
+  onCommandRef.current = onCommand;
 
   useEffect(() => {
     function clearPrefix() {
@@ -85,9 +87,9 @@ export function useGlobalKeyboard({
     }
 
     function handleKeyDown(event: KeyboardEvent) {
-      // A Radix dismissable layer (Select/DropdownMenu popper) already preventDefaults Escape
-      // when it closes itself — without this guard the window-level listener below still saw
-      // the same keystroke and dispatched a second, unwanted "back" navigation on top of it.
+      // A Base UI popup (Select/Menu/Dialog) already preventDefaults Escape when it dismisses
+      // itself — without this guard the window-level listener below still saw the same
+      // keystroke and dispatched a second, unwanted "back" navigation on top of it.
       if (event.defaultPrevented) return;
       const input = {
         key: event.key,
@@ -120,7 +122,7 @@ export function useGlobalKeyboard({
       // Only commands the root layer actually resolves ever reach this point, so this never
       // suppresses a keystroke the root doesn't own (see C2 in the phase-8 fix report).
       event.preventDefault();
-      onCommand(command);
+      onCommandRef.current(command);
     }
 
     window.addEventListener('keydown', handleKeyDown);
@@ -128,7 +130,7 @@ export function useGlobalKeyboard({
       window.removeEventListener('keydown', handleKeyDown);
       clearPrefix();
     };
-  }, [onCommand, prefixTimeoutMs]);
+  }, [prefixTimeoutMs]);
 }
 
 // Bare modifier keydowns (`Shift` before a `?`) arrive as their own events.

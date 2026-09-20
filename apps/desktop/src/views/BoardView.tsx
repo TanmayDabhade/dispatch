@@ -10,6 +10,7 @@ import { TaskBoard } from '../components/tasks/TaskBoard';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { isTypingTarget } from '../hooks/useGlobalKeyboard';
 import {
+  boardGroupingFor,
   type BoardLane,
   groupTasksByEpicLane,
   groupTasksByStatus,
@@ -23,6 +24,7 @@ import {
   writeCollapsedGroups,
 } from '../lib/collapsedEpics';
 import { resolveListKeyCommand } from '../lib/keyboard';
+import { sortTasks } from '../lib/listGrouping';
 import { countMergeReady } from '../lib/mergeReady';
 import {
   applyTaskFilters,
@@ -65,7 +67,8 @@ const HIDDEN_COLUMNS_STORAGE_KEY = 'dispatch:board-hidden-columns';
 
 interface BoardViewProps {
   data: DispatchProjectData;
-  /** The layout to open in; the header's view tabs own it from there (and persist it). */
+  /** The layout to open in when nothing is remembered yet; the header's view tabs own it from
+   * there (and persist it), and a persisted choice wins over this on every later mount. */
   mode?: TasksViewMode;
   /** The active project's display name, the first crumb segment. */
   projectName?: string | null;
@@ -222,10 +225,10 @@ export function BoardView({
     [setMode]
   );
 
-  // Board lanes follow Display › Grouping: epic or milestone groups the columns into one
-  // lane per epic; anything else is the flat board with an epic crumb per card.
-  const groupByEpic =
-    prefs.grouping === 'epic' || prefs.grouping === 'milestone';
+  // Board lanes follow Display › Grouping: `epic` groups the columns into one lane per epic;
+  // the board's only other layout is the flat status kanban (see `boardGroupingFor` — the
+  // popover disables the groupings the board has no layout for).
+  const groupByEpic = boardGroupingFor(prefs.grouping) === 'epic';
   const toggleGroupByEpic = () =>
     setPrefs((prev) => ({
       ...prev,
@@ -279,6 +282,12 @@ export function BoardView({
           (doc) => doc.meta.parent === null || epicIds.has(doc.meta.parent)
         );
   }, [boardTasks, filters, filterContext, prefs.showSubtasks, epicIds]);
+  // The cards in the order a column shows them (Display › Ordering, done sinking when asked).
+  // Sorted here, once, so the j/k cursor below and `TaskBoard` walk the same sequence.
+  const orderedBoardTasks = useMemo(
+    () => sortTasks(filteredBoardTasks, prefs),
+    [filteredBoardTasks, prefs]
+  );
   // Card counts per status from the *unfiltered* board set — empty-column visibility is
   // decided from these, so a filter narrows cards without making columns vanish.
   const countByStatus = useMemo(() => {
@@ -301,19 +310,19 @@ export function BoardView({
         : [],
     [data.config, countByStatus, prefs.showEmptyGroups, hiddenColumns]
   );
-  // The same lanes `TaskBoard` renders, from the same pure functions — this copy exists only
-  // to give the j/k cursor an order that matches what is on screen.
+  // The same lanes `TaskBoard` renders, from the same pure functions over the same sorted
+  // input — this copy exists only to give the j/k cursor an order that matches the screen.
   const lanes = useMemo<BoardLane[]>(() => {
     if (data.config === null) return [];
     if (groupByEpic) {
       return groupTasksByEpicLane(
-        filteredBoardTasks,
+        orderedBoardTasks,
         visibleStatuses,
         data.epics
       );
     }
     const columns = groupTasksByStatus(
-      filteredBoardTasks.filter((t) => t.meta.kind !== 'epic'),
+      orderedBoardTasks.filter((t) => t.meta.kind !== 'epic'),
       visibleStatuses
     );
     return [
@@ -325,7 +334,7 @@ export function BoardView({
       },
     ];
   }, [
-    filteredBoardTasks,
+    orderedBoardTasks,
     data.config,
     visibleStatuses,
     data.epics,
@@ -542,7 +551,7 @@ export function BoardView({
             hiddenColumnCount={hiddenColumns.size}
             onShowHiddenColumns={() => setHiddenColumns(new Set())}
             onRequestWorkEpic={setDispatchEpicId}
-            tasks={filteredBoardTasks}
+            tasks={orderedBoardTasks}
             archivedTaskIds={archivedTaskIds}
             statuses={visibleStatuses}
             groupByEpic={groupByEpic}

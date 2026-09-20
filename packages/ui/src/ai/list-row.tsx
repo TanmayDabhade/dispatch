@@ -45,7 +45,11 @@ export type ListRowProps = {
 /** The 36px issue row: no background, no divider, a neutral wash on hover, focus and
  * selection. Slots read left to right in Linear's order — checkbox, priority, id,
  * status, title, crumb, then the right-aligned trailing group and date. Enter and Space
- * activate a clickable row; the checkbox is its own control and never opens the row. */
+ * activate a clickable row; the checkbox is its own control and never opens the row.
+ *
+ * The default `role="row"` needs a `role="grid"` (or `rowgroup` inside one) ancestor
+ * or it is an orphan ARIA row; a list that is not a grid should pass `role="button"`
+ * (clickable) or `role={undefined}`. A nested row (`indent={1}`) dims its id. */
 export function ListRow({
   leading,
   id,
@@ -135,7 +139,10 @@ export function ListRow({
       {id !== undefined && (
         <span
           data-slot="list-row-id"
-          className="font-book text-muted-foreground shrink-0 tracking-(--id-tracking) tabular-nums"
+          className={cn(
+            'font-book text-muted-foreground shrink-0 tracking-(--id-tracking) tabular-nums',
+            indent === 1 && 'text-muted-foreground/70'
+          )}
         >
           {id}
         </span>

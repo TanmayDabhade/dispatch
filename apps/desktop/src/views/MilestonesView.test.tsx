@@ -5,12 +5,17 @@ import { beforeEach, expect, test } from 'bun:test';
 import type { ReactNode } from 'react';
 
 import { testConfig } from '../components/settings/fixtures.test-helper';
+import { pieDashOffset } from '../components/tasks/StatusIcon';
 import {
   type CreateTaskPreset,
   type ShellActions,
   ShellActionsProvider,
 } from '../components/shell/ShellActionsContext';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import {
+  COLLAPSED_GROUPS_STORAGE_KEY,
+  TOGGLED_MILESTONES_STORAGE_KEY,
+} from '../lib/collapsedEpics';
 import { MilestonesView } from './MilestonesView';
 
 // Collapse state is session-scoped; start every test with nothing folded.
@@ -149,9 +154,20 @@ test('each milestone is a status-tinted GroupHeader with a ◔ n/m progress glyp
     header.querySelector('[data-slot="group-header-name"]')?.textContent
   ).toBe('Payments');
   expect(header.querySelector('[aria-label="Status: working"]')).not.toBeNull();
-  expect(
-    header.querySelector('[data-slot="milestone-progress"]')?.textContent
-  ).toBe('1/2');
+  const progress = header.querySelector<HTMLElement>(
+    '[data-slot="milestone-progress"]'
+  );
+  expect(progress?.textContent).toBe('1/2');
+  expect(progress?.getAttribute('aria-label')).toBe('1 of 2 landed');
+  // The pie is StatusIcon's r=2 circle, so a half milestone hides half of its dash.
+  const pie = progress?.querySelectorAll('circle')[1];
+  expect(pie?.getAttribute('stroke-dasharray')).toBe(
+    `${pieDashOffset(0)} ${pieDashOffset(0) * 2}`
+  );
+  expect(Number(pie?.getAttribute('stroke-dashoffset'))).toBeCloseTo(
+    pieDashOffset(0.5),
+    3
+  );
   // No progress bar, no card, no dimming.
   expect(container.querySelector('[role="progressbar"]')).toBeNull();
   expect(container.querySelector('.saturate-50')).toBeNull();
@@ -227,6 +243,14 @@ test('a finished milestone sinks to the bottom, starts collapsed, and reopens on
 
   fireEvent.click(screen.getByRole('button', { name: 'Expand group' }));
   expect(screen.getByText('Old work')).not.toBeNull();
+  // Stored as "flipped from default" under this page's own key — never the list's, where
+  // the same entry would mean "collapsed".
+  expect(window.sessionStorage.getItem(TOGGLED_MILESTONES_STORAGE_KEY)).toBe(
+    '["milestone:e-2"]'
+  );
+  expect(
+    window.sessionStorage.getItem(COLLAPSED_GROUPS_STORAGE_KEY)
+  ).toBeNull();
 });
 
 test('j/k and Enter walk and open the rows; + presets the milestone', () => {
@@ -243,6 +267,8 @@ test('j/k and Enter walk and open the rows; + presets the milestone', () => {
     (id) => opened.push(id)
   );
   const grid = screen.getByRole('grid', { name: 'Milestones' });
+  // The grid takes focus on mount so the keys work without a click first.
+  expect(document.activeElement).toBe(grid);
 
   fireEvent.keyDown(grid, { key: 'j' });
   fireEvent.keyDown(grid, { key: 'Enter' });

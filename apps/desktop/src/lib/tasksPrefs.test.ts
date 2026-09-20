@@ -6,14 +6,12 @@ import {
   EMPTY_TASK_FILTERS,
   hasActiveFilters,
   matchesTaskFilters,
-  parseBoardColumnPrefs,
   parseTaskFilters,
   parseTasksDisplay,
   serializeTasksDisplay,
   TASKS_DISPLAY_STORAGE_KEY,
   toggleDisplayProperty,
   toggleFilterValue,
-  visibleBoardStatuses,
 } from './tasksPrefs';
 
 function makeTask(status: string, priority = 'none'): TaskDoc {
@@ -158,32 +156,5 @@ describe('matchesTaskFilters', () => {
     expect(matchesTaskFilters(makeTask('working', 'high'), filters)).toBe(true);
     expect(matchesTaskFilters(makeTask('ready', 'low'), filters)).toBe(false);
     expect(matchesTaskFilters(makeTask('review', 'high'), filters)).toBe(false);
-  });
-});
-
-// The retired board-column prefs stay parseable only until BoardView's Display menu moves to
-// the display model; this pins that they still default sanely in the meantime.
-describe('retired board column prefs', () => {
-  it('parse with their old defaults', () => {
-    expect(parseBoardColumnPrefs(null)).toEqual({
-      hideEmpty: true,
-      hidden: ['landed', 'dropped'],
-      groupByEpic: false,
-      compact: true,
-    });
-  });
-
-  it('visibleBoardStatuses hides empty and explicitly hidden columns', () => {
-    const counts = new Map([
-      ['draft', 0],
-      ['ready', 5],
-    ]);
-    expect(
-      visibleBoardStatuses(
-        ['draft', 'ready'],
-        { hideEmpty: true, hidden: [], groupByEpic: false, compact: true },
-        counts
-      )
-    ).toEqual(['ready']);
   });
 });

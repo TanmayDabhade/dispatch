@@ -1,7 +1,7 @@
 import {
   ArrowRightIcon,
-  BotIcon,
   CircleDashedIcon,
+  LayersIcon,
   ZapIcon,
 } from 'lucide-react';
 import { useState } from 'react';
@@ -10,8 +10,8 @@ import { type SearchGroup, SearchPanel } from '@/ui/ai/search';
 import { Kbd } from '@/ui/kbd';
 import type { GalleryStory } from '@/views/galleryStories';
 
-// Dispatch-flavored groups in the command menu's own order: open tasks, live agents,
-// navigation and actions with their keycaps.
+// Dispatch-flavored groups in the command menu's own section order: open tasks, saved
+// views, navigation and actions with their keycaps.
 const SEARCH_GROUPS: SearchGroup[] = [
   {
     id: 'tasks',
@@ -38,21 +38,20 @@ const SEARCH_GROUPS: SearchGroup[] = [
     ],
   },
   {
-    id: 'agents',
-    label: 'Agents',
+    id: 'views',
+    label: 'Views',
     items: [
       {
-        id: 'a-overseer',
-        label: 'Overseer',
-        icon: <BotIcon aria-hidden />,
-        hint: 'Working',
-        kbd: 'G A',
+        id: 'v-my-tasks',
+        label: 'My tasks',
+        icon: <LayersIcon aria-hidden />,
+        hint: 'Assigned to me',
       },
       {
-        id: 'a-cartographer',
-        label: 'Cartographer',
-        icon: <BotIcon aria-hidden />,
-        hint: 'Idle',
+        id: 'v-landing',
+        label: 'Landing this week',
+        icon: <LayersIcon aria-hidden />,
+        hint: 'Saved view',
       },
     ],
   },

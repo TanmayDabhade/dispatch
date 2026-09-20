@@ -50,8 +50,10 @@ export function ExportControl({
   return (
     <div className="flex min-w-0 items-center gap-3">
       {state.status === 'saved' && (
-        <span className="text-muted-foreground font-book inline-flex min-w-0 items-center gap-2 text-[12px]">
-          <span className="truncate">Saved to {state.path}</span>
+        <span className="text-muted-foreground font-book inline-flex max-w-[320px] min-w-0 items-center gap-2 text-[12px]">
+          <span className="min-w-0 truncate" title={state.path}>
+            Saved to {state.path}
+          </span>
           <Button
             variant="link"
             size="xs"
@@ -64,7 +66,7 @@ export function ExportControl({
         </span>
       )}
       {state.status === 'error' && (
-        <span className="text-state-failed truncate text-[12px]">
+        <span className="text-state-failed max-w-[320px] truncate text-[12px]">
           {state.message}
         </span>
       )}

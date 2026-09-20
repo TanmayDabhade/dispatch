@@ -6,8 +6,9 @@ import type { InboxEntry, InboxTarget } from '../../lib/inbox';
  * The persisted notification record (`lib/inbox.ts`) and the two things a surface can do
  * with it, provided by `App` from `useDispatchProject`'s `notificationInbox` /
  * `markNotificationInboxRead` and its `navigateFromInbox` router. The Inbox page's
- * notification pane and the sidebar's Inbox count both read this one seam, so they can
- * never disagree about what is unread.
+ * notification pane reads it (and any later surface that lists notifications). The rail's
+ * Inbox count is a different number on purpose — `buildInbox`'s total, the queue of things
+ * waiting on a human — so the two are not expected to agree.
  */
 export interface NotificationInbox {
   /** Newest first. */

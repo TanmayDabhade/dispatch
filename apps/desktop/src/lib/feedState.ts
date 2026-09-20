@@ -6,6 +6,7 @@ import type {
 
 import { deriveRunDisposition } from './runState';
 import type { FeedState } from '@/ui/lib/feedState';
+import { feedTier } from '@/ui/lib/feedState';
 
 // The vocabulary (states, tiers, labels, order, TaskRow mapping) lives in
 // @dispatch/ui (packages/ui) with the components keyed on it. This module
@@ -21,6 +22,20 @@ export {
   isUrgentState,
   type FeedState,
 } from '@/ui/lib/feedState';
+
+// A group header's tint: the tier's colour, the same hue its rows' glyphs carry.
+const TIER_TINT = {
+  you: 'var(--state-waiting-fg)',
+  broken: 'var(--state-failed-fg)',
+  machine: 'var(--state-working-fg)',
+  resting: 'var(--state-ready-fg)',
+} as const;
+
+/** The status colour a feed state's `GroupHeader` is tinted with — shared by the Control
+ * room and the Inbox's group-by-kind headers so the same state never reads two ways. */
+export function tintForState(state: FeedState): string {
+  return TIER_TINT[feedTier(state)];
+}
 
 /** Queue states that have come to rest — the entry is out of the pipeline either way. */
 const TERMINAL_QUEUE_STATES: ReadonlySet<MergeQueueEntryState> =

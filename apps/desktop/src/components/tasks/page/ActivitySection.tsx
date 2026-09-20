@@ -14,14 +14,14 @@ function authorLabel(entry: ActivityEntry): string {
     : assigneeLabel(entry.actor);
 }
 
-// A 16px avatar for a feed line: the actor's own (agent/person initials) or a neutral
-// `D` for Dispatch.
+// A 16px avatar for a feed line: the actor's own (agent/person initials) or `DI` on a
+// muted fill for Dispatch — a token with white-ink contrast in both themes.
 function ActorAvatar({ entry }: { entry: ActivityEntry }) {
   if (entry.actor === null || entry.actor === 'none') {
     return (
       <InitialsAvatar
         name="Dispatch"
-        color="var(--surface-active)"
+        color="var(--text-muted)"
         className="size-4 text-[8px]"
       />
     );

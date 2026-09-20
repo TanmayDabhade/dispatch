@@ -1,4 +1,3 @@
-import { statusTone } from '../../lib/taskDisplay';
 import { cn } from '@/lib/utils';
 
 // Linear's status glyph, geometry read from its SVG DOM: a 14×14 viewBox, an outer ring at
@@ -36,19 +35,12 @@ const CUTOUT_FILL = 'var(--surface-page)';
 
 type StatusShape = 'backlog' | 'pie' | 'done' | 'cancelled';
 
-// The same six-tone vocabulary `statusTone` returns — reused here (not redeclared) so a
-// status's `tone` field below and its `statusTone()` fallback always speak the same language.
-type Tone = ReturnType<typeof statusTone>;
-
 interface StatusVisual {
   shape: StatusShape;
   /** Tailwind text-color class — the glyph strokes in `currentColor`. */
   colorClass: string;
   /** The same colour as a CSS value, for tinting a group header or a graph node. */
   color: string;
-  /** Which of `statusTone`'s six tones this status's colour corresponds to, for callers that
-   * key colour off a tone (EpicDagView) rather than off `currentColor` text. */
-  tone: Tone;
   /** Pie fill fraction (0..1) for the ring shapes; Linear draws the (empty) pie for backlog
    * and todo too, so both carry 0. */
   fraction?: number;
@@ -63,78 +55,60 @@ const KNOWN_STATUS_VISUALS: Record<string, StatusVisual> = {
     fraction: 0,
     colorClass: 'text-status-backlog',
     color: 'var(--status-backlog)',
-    tone: 'gray',
   },
   ready: {
     shape: 'pie',
     fraction: 0,
     colorClass: 'text-status-todo',
     color: 'var(--status-todo)',
-    tone: 'gray',
   },
   working: {
     shape: 'pie',
     fraction: 0.5,
     colorClass: 'text-status-progress',
     color: 'var(--status-progress)',
-    tone: 'amber',
   },
   review: {
     shape: 'pie',
     fraction: 0.75,
     colorClass: 'text-status-green',
     color: 'var(--status-green)',
-    tone: 'green',
   },
   landing: {
     shape: 'pie',
     fraction: 0.9,
     colorClass: 'text-teal',
     color: 'var(--teal)',
-    tone: 'blue',
   },
   landed: {
     shape: 'done',
     colorClass: 'text-status-done',
     color: 'var(--status-done)',
-    tone: 'accent',
   },
   dropped: {
     shape: 'cancelled',
     colorClass: 'text-status-cancelled',
     color: 'var(--status-cancelled)',
-    tone: 'gray',
   },
 };
 
-// Fallback palette for a custom tracker status (anything not in the built-ins above), keyed
-// by the tone `statusTone` returns for it, so a project's own `.dispatch/config.yml` status
-// list always renders an empty ring in a deliberate colour rather than an unstyled shape.
-const FALLBACK_TONE_COLOR: Record<Tone, { colorClass: string; color: string }> =
-  {
-    green: { colorClass: 'text-status-green', color: 'var(--status-green)' },
-    blue: { colorClass: 'text-teal', color: 'var(--teal)' },
-    amber: {
-      colorClass: 'text-status-progress',
-      color: 'var(--status-progress)',
-    },
-    red: { colorClass: 'text-status-blocked', color: 'var(--status-blocked)' },
-    gray: { colorClass: 'text-status-todo', color: 'var(--status-todo)' },
-    accent: { colorClass: 'text-status-done', color: 'var(--status-done)' },
-  };
+// A custom tracker status (anything not in the built-ins above, from a project's own
+// `.dispatch/config.yml` status list) renders as the empty todo ring, so it always has a
+// deliberate colour rather than an unstyled shape.
+const CUSTOM_STATUS_VISUAL: StatusVisual = {
+  shape: 'pie',
+  fraction: 0,
+  colorClass: 'text-status-todo',
+  color: 'var(--status-todo)',
+};
 
 /**
- * Resolves a status string to its full visual treatment — shape, colour, and (for custom
- * statuses) which of `statusTone`'s six tones it maps to. A call site that needs a status's
- * colour outside this component should use `statusColor` below rather than keep a second
+ * Resolves a status string to its shape and colour. A call site that needs a status's colour
+ * outside this component should use `statusColor` below rather than keep a second
  * status->colour map.
  */
 function resolveStatusVisual(status: string): StatusVisual {
-  const known = KNOWN_STATUS_VISUALS[status];
-  if (known !== undefined) return known;
-  const tone = statusTone(status);
-  const fallback = FALLBACK_TONE_COLOR[tone] ?? FALLBACK_TONE_COLOR.gray;
-  return { shape: 'pie', fraction: 0, tone, ...fallback };
+  return KNOWN_STATUS_VISUALS[status] ?? CUSTOM_STATUS_VISUAL;
 }
 
 /** The CSS colour a status paints with (`var(--status-progress)` for working, …) — what a

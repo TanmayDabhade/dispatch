@@ -878,7 +878,7 @@ function App() {
                     sidebarCollapsed && 'pl-2'
                   )}
                 >
-                  <main className="bg-background border-border-panel shadow-panel rounded-popover min-h-0 flex-1 overflow-auto border-[0.5px]">
+                  <main className="bg-background border-border-panel shadow-panel rounded-popover min-h-0 flex-1 overflow-hidden border-[0.5px]">
                     <ErrorBoundary label="this page">
                       {resolutionError !== null ? (
                         <div className="flex h-full flex-col items-center justify-center gap-3 text-center">

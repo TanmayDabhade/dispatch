@@ -72,8 +72,9 @@ interface Log {
   presets: unknown[];
 }
 
-// The exact key set `App.tsx`'s `buildTaskPanelProps` returns — this literal is the
-// compile-time contract check: a key added or dropped on either side fails `tsc`.
+// A full `TaskDetailPanelProps` literal, so every key the interface declares is exercised
+// here; the contract with `App.tsx`'s `buildTaskPanelProps` is checked by App.tsx's own
+// typecheck against that interface.
 function panelProps(
   doc: TaskDoc,
   log: Log,
@@ -238,7 +239,14 @@ describe('TaskPage', () => {
 
   test('clicking the description swaps in a borderless editor that saves on blur', () => {
     const log = mountPage();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit description' }));
+    const prose = document.querySelector(
+      '[data-slot="editable-body"][data-field="Description"]'
+    );
+    if (prose === null) throw new Error('description not rendered');
+    // Rendered prose is not a <button>: it is selectable and reads as itself.
+    expect(prose.tagName).toBe('DIV');
+    expect(prose.getAttribute('aria-label')).toBeNull();
+    fireEvent.click(prose);
     const editor = screen.getByLabelText<HTMLTextAreaElement>('Description');
     expect(editor.dataset['variant']).toBe('borderless');
     fireEvent.change(editor, { target: { value: 'New body' } });

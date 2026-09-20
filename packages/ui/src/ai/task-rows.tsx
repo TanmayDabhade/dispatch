@@ -28,11 +28,12 @@ const MARK_STATE: Record<TaskRowState, FeedState> = {
   queued: 'ready',
 };
 
-/** One 36px row in a task/run list: a 14px `StateMark`, the task's title and agent, a
- * `detail` line that shimmers while running, an optional `progress` caption, a
- * trailing `elapsedLabel`, and a hover-revealed `actions` slot. No wash on failed
- * rows — the red mark carries it. Renders as a clickable row (keyboard operable) when
- * `onClick` is given, a static row otherwise — `actions`, if any, stays a sibling
+/** One 36px row in a task/run list (`min-h-9`; both text lines sit on a 16px leading
+ * so a title + `detail` pair still fits the 36px box): a 14px `StateMark`, the task's
+ * title and agent, a `detail` line that shimmers while running, an optional `progress`
+ * caption, a trailing `elapsedLabel`, and a hover-revealed `actions` slot. No wash on
+ * failed rows — the red mark carries it. Renders as a clickable row (keyboard operable)
+ * when `onClick` is given, a static row otherwise — `actions`, if any, stays a sibling
  * rather than nesting inside it, so callers can put real `<button>`s there without an
  * invalid button-in-button. */
 export function TaskRow({
@@ -62,13 +63,13 @@ export function TaskRow({
       tabIndex={interactive ? 0 : undefined}
       onClick={onClick}
       onKeyDown={interactive ? handleKeyDown : undefined}
-      className={`group/row ease-out-expo flex h-9 items-center gap-2.5 px-3 transition-colors duration-100 ${
+      className={`group/row ease-out-expo flex min-h-9 items-center gap-2.5 px-3 transition-colors duration-100 ${
         interactive ? 'hover:bg-surface-hover cursor-pointer' : ''
       }`}
     >
       <StateMark state={MARK_STATE[state]} />
       <div className="min-w-0 flex-1">
-        <div className="flex items-baseline gap-1.5">
+        <div className="flex items-baseline gap-1.5 leading-4">
           <span className="text-foreground truncate text-[13px] font-medium">
             {title}
           </span>
@@ -78,9 +79,11 @@ export function TaskRow({
         </div>
         {detail !== undefined &&
           (isRunning ? (
-            <ShimmerLabel className="block truncate">{detail}</ShimmerLabel>
+            <ShimmerLabel className="font-book block truncate text-[12px] leading-4">
+              {detail}
+            </ShimmerLabel>
           ) : (
-            <p className="text-muted-foreground font-book truncate text-[12px]">
+            <p className="text-muted-foreground font-book truncate text-[12px] leading-4">
               {detail}
             </p>
           ))}

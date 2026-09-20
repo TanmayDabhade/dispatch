@@ -1,4 +1,4 @@
-import type { KeyboardEvent, ReactNode } from 'react';
+import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 
 import { cn } from '@/lib/utils';
@@ -10,7 +10,9 @@ import { Textarea } from '@/ui/textarea';
 // metrics, so reading costs nothing and editing is one click into the text. Commits on
 // blur, `⌘⏎` and Escape (every control on this page saves rather than discards), and only
 // when the text actually changed. `value` is the persisted section text; the draft resets
-// whenever it (or the task) changes.
+// whenever it (or the task) changes. Rendered prose stays real prose: it can be selected
+// and copied, its links and checklist boxes keep working, and assistive tech reads the
+// text itself rather than an edit label.
 export function EditableBodySection({
   value,
   placeholder,
@@ -22,7 +24,7 @@ export function EditableBodySection({
   value: string;
   placeholder: string;
   onSave: (next: string) => void;
-  /** Accessible name for the textarea and the read-mode button. */
+  /** Accessible name for the textarea and the empty-state edit button. */
   label: string;
   /** The rendered read-mode body. */
   children?: ReactNode;
@@ -82,21 +84,51 @@ export function EditableBodySection({
     );
   }
 
-  const empty = value.trim() === '';
+  // A click on a link or a checklist box is that control's own; a click that ends a
+  // drag-select is a copy, not an edit request.
+  function onReadClick(event: MouseEvent<HTMLDivElement>) {
+    if (!(event.target instanceof Element)) return;
+    if (event.target.closest('a, input') !== null) return;
+    if (window.getSelection()?.isCollapsed === false) return;
+    setEditing(true);
+  }
+
+  function onReadKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.target !== event.currentTarget) return;
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    setEditing(true);
+  }
+
+  const readClass =
+    'block min-h-6 w-full rounded-control text-left text-[15px] leading-6 font-book outline-none focus-visible:ring-2 focus-visible:ring-ring';
+
+  if (value.trim() === '') {
+    return (
+      <button
+        type="button"
+        aria-label={`Edit ${label.toLowerCase()}`}
+        data-slot="editable-body"
+        data-empty
+        onClick={() => setEditing(true)}
+        className={cn(readClass, 'cursor-text text-muted-foreground', className)}
+      >
+        {placeholder}
+      </button>
+    );
+  }
+
   return (
-    <button
-      type="button"
-      aria-label={`Edit ${label.toLowerCase()}`}
+    <div
+      role="button"
+      tabIndex={0}
       data-slot="editable-body"
-      data-empty={empty || undefined}
-      onClick={() => setEditing(true)}
-      className={cn(
-        'block min-h-6 w-full cursor-text rounded-control text-left text-[15px] leading-6 font-book outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        empty ? 'text-muted-foreground' : 'text-foreground',
-        className
-      )}
+      data-field={label}
+      onClick={onReadClick}
+      onKeyDown={onReadKeyDown}
+      className={cn(readClass, 'cursor-text text-foreground', className)}
     >
-      {empty ? placeholder : children}
-    </button>
+      {children}
+    </div>
   );
 }

@@ -162,9 +162,9 @@ test('an empty ledger explains where receipts will land', async () => {
   );
 });
 
-// The floor heading is a sentence-case 12px row, never an uppercase tracked label,
-// and the receipt's task id is sans.
-test('the floor heading is sentence case and receipt ids are not monospaced', async () => {
+// The floor heading is a sentence-case 12px/500 row, never an uppercase tracked label,
+// and the receipt's task id is sans with the id tracking.
+test('the floor heading is 12px sentence case and receipt ids are tracked sans', async () => {
   render(
     <PolicySection
       config={configAt(2)}
@@ -173,7 +173,11 @@ test('the floor heading is sentence case and receipt ids are not monospaced', as
     />
   );
   const floor = screen.getByText('Irreversibility floor');
+  expect(floor.className).toContain('text-[12px]');
+  expect(floor.className).toContain('font-medium');
   expect(floor.className).not.toContain('uppercase');
   await screen.findByText('Scope extended for run r-x');
-  expect(screen.getByText('t-aaaaaa').className).not.toContain('font-mono');
+  const id = screen.getByText('t-aaaaaa');
+  expect(id.className).toContain('tracking-(--id-tracking)');
+  expect(id.className).not.toContain('font-mono');
 });

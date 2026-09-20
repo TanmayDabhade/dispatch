@@ -2,10 +2,9 @@ import { X } from 'lucide-react';
 import { Fragment } from 'react';
 
 import {
-  facetLabel,
+  clauseParts,
   type FilterClause,
   type FilterContext,
-  filterValueLabel,
   removeFilterClause,
   setFilterJoin,
   type TaskFilterSet,
@@ -71,59 +70,58 @@ export function AppliedFilters({
       data-slot="applied-filters"
       className={cn('flex flex-wrap items-center gap-1.5', className)}
     >
-      {filters.clauses.map((clause, index) => (
-        <Fragment key={`${clause.facet}:${index}`}>
-          {index > 0 && (
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={<SelectPill aria-label="Filter join" />}
-                className="h-6 px-2"
-              >
-                {filters.join}
-              </DropdownMenuTrigger>
-              <DropdownMenuContent className="min-w-[96px]">
-                <DropdownMenuRadioGroup
-                  value={filters.join}
-                  onValueChange={(join) =>
-                    onChange(
-                      setFilterJoin(filters, join === 'or' ? 'or' : 'and')
-                    )
-                  }
+      {filters.clauses.map((clause, index) => {
+        const parts = clauseParts(clause, context);
+        return (
+          <Fragment key={`${clause.facet}:${index}`}>
+            {index > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={<SelectPill aria-label="Filter join" />}
+                  className="h-6 px-2"
                 >
-                  <DropdownMenuRadioItem value="and">and</DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="or">or</DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-          <Pill
-            data-slot="filter-chip"
-            data-facet={clause.facet}
-            className="gap-1"
-          >
-            <span className="text-muted-foreground">
-              {facetLabel(clause.facet)}
-            </span>
-            <OpControl
-              clause={clause}
-              onToggle={() => onChange(toggleClauseNegation(filters, index))}
-            />
-            <span className="min-w-0 truncate">
-              {clause.values
-                .map((v) => filterValueLabel(clause.facet, v, context))
-                .join(', ')}
-            </span>
-            <button
-              type="button"
-              aria-label={`Remove ${facetLabel(clause.facet)} filter`}
-              onClick={() => onChange(removeFilterClause(filters, index))}
-              className="text-muted-foreground focus-visible:ring-ring -mr-1 flex size-4 items-center justify-center rounded-[4px] outline-none hover:text-(--text-secondary) focus-visible:ring-2"
+                  {filters.join}
+                </DropdownMenuTrigger>
+                <DropdownMenuContent className="min-w-[96px]">
+                  <DropdownMenuRadioGroup
+                    value={filters.join}
+                    onValueChange={(join) =>
+                      onChange(
+                        setFilterJoin(filters, join === 'or' ? 'or' : 'and')
+                      )
+                    }
+                  >
+                    <DropdownMenuRadioItem value="and">
+                      and
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="or">or</DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+            <Pill
+              data-slot="filter-chip"
+              data-facet={clause.facet}
+              className="gap-1"
             >
-              <X className="size-3" aria-hidden />
-            </button>
-          </Pill>
-        </Fragment>
-      ))}
+              <span className="text-muted-foreground">{parts.facet}</span>
+              <OpControl
+                clause={clause}
+                onToggle={() => onChange(toggleClauseNegation(filters, index))}
+              />
+              <span className="min-w-0 truncate">{parts.values}</span>
+              <button
+                type="button"
+                aria-label={`Remove ${parts.facet} filter`}
+                onClick={() => onChange(removeFilterClause(filters, index))}
+                className="text-muted-foreground focus-visible:ring-ring -mr-1 flex size-4 items-center justify-center rounded-[4px] outline-none hover:text-(--text-secondary) focus-visible:ring-2"
+              >
+                <X className="size-3" aria-hidden />
+              </button>
+            </Pill>
+          </Fragment>
+        );
+      })}
       {filters.clauses.length > 1 && (
         <PillButton
           onClick={() => onChange({ ...filters, clauses: [] })}

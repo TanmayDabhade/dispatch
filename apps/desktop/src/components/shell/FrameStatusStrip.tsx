@@ -63,11 +63,14 @@ export function FrameStatusStrip({
 
       {sync !== null && (
         <Tooltip>
+          {/* Focusable whenever there is a tooltip to reach, so the detail lines open on
+              Tab as well as hover; the same lines are mirrored for screen readers. */}
           <TooltipTrigger
             render={
               <Pill
                 data-slot="sync-pill"
-                className="h-6 max-w-[22rem] cursor-default gap-1.5 text-[11px]"
+                tabIndex={sync.detail.length > 0 ? 0 : undefined}
+                className="h-6 max-w-[22rem] cursor-default gap-1.5 text-[11px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             }
           >
@@ -79,6 +82,9 @@ export function FrameStatusStrip({
               )}
             />
             <span className="min-w-0 truncate">{sync.message}</span>
+            {sync.detail.length > 0 && (
+              <span className="sr-only">{sync.detail.join('. ')}</span>
+            )}
             {sync.canDisableAutoCommit && (
               <button
                 type="button"

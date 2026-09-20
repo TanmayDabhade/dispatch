@@ -106,7 +106,7 @@ describe('StatusIcon', () => {
     expect(svg.getAttribute('data-status-shape')).toBe('pie');
   });
 
-  test('a custom status falls back to an empty ring in its tone colour', () => {
+  test('a custom status falls back to the empty todo ring', () => {
     const { svg, pie } = circles('triage');
     expect(pie?.getAttribute('stroke-dashoffset')).toBe('12.189379495928398');
     expect(svg.classList.contains('text-status-todo')).toBe(true);

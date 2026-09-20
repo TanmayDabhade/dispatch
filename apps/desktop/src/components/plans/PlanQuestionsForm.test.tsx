@@ -65,7 +65,7 @@ describe('PlanQuestionsForm', () => {
 });
 
 describe('PlanQuestionsForm chrome', () => {
-  test('the heading is sentence case, not an uppercase tracked label', () => {
+  test('the heading is a 12px sentence-case row, not an uppercase tracked label', () => {
     render(
       <PlanQuestionsForm
         questions={[Q1]}
@@ -74,6 +74,8 @@ describe('PlanQuestionsForm chrome', () => {
       />
     );
     const heading = screen.getByText('The planner is asking you');
+    expect(heading.className).toContain('text-[12px]');
+    expect(heading.className).toContain('font-medium');
     expect(heading.className).not.toContain('uppercase');
     expect(heading.className).not.toContain('dense-label');
   });

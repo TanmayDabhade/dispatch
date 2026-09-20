@@ -8,23 +8,7 @@ import {
   priorityTone,
   sectionOrDash,
   statusLabel,
-  statusTone,
 } from './taskDisplay';
-
-describe('statusTone', () => {
-  test('maps each built-in status to its dedicated tone', () => {
-    expect(statusTone('working')).toBe('blue');
-    expect(statusTone('review')).toBe('amber');
-    expect(statusTone('landed')).toBe('green');
-    expect(statusTone('dropped')).toBe('red');
-  });
-
-  test('falls back to gray for backlog/todo and any custom status', () => {
-    expect(statusTone('draft')).toBe('gray');
-    expect(statusTone('ready')).toBe('gray');
-    expect(statusTone('triage')).toBe('gray');
-  });
-});
 
 describe('priorityTone', () => {
   test('urgent and high get a tone', () => {

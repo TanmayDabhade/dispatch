@@ -14,6 +14,9 @@
 export const COLLAPSED_EPICS_STORAGE_KEY = 'dispatch:board-collapsed-epics';
 /** The list's groups, keyed by `ListGroup.key` (`status:ready`, `epic:e-1`, …). */
 export const COLLAPSED_GROUPS_STORAGE_KEY = 'dispatch:list-collapsed-groups';
+/** The Milestones page's folds. Its own key because a stored milestone there means "flipped
+ * from its default" (finished ones start folded), not "collapsed" as the list's key does. */
+export const TOGGLED_MILESTONES_STORAGE_KEY = 'dispatch:milestones-toggled';
 
 /** Tolerates anything that isn't a JSON array of strings — a corrupt or hand-edited value means
  * "nothing is collapsed", never a thrown render. */
@@ -65,8 +68,3 @@ export function writeCollapsedGroups(
     // A blocked store just means the fold does not survive a view switch.
   }
 }
-
-// The board's epic-lane names for the same three helpers, kept for `TaskBoard`/`EpicLaneHeader`.
-export const parseCollapsedEpics = parseCollapsedGroups;
-export const serializeCollapsedEpics = serializeCollapsedGroups;
-export const toggleCollapsedEpic = toggleCollapsedGroup;
