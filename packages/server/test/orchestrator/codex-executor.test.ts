@@ -6,6 +6,7 @@ import {
   CodexAppServer,
   type CodexAppServerProcess,
 } from '../../src/orchestrator/codexAppServer.js';
+import type { StdioServerSpec } from '../../src/orchestrator/dispatchMcp.js';
 import { CodexExecutor } from '../../src/orchestrator/executors/codex.js';
 import type {
   ExecutorEvents,
@@ -130,7 +131,10 @@ function scriptedProcess(
 function startHarness(
   process: FakeCodexProcess,
   resumeSessionId?: string,
-  model?: string
+  model?: string,
+  options: {
+    cartoSpec?: (projectRoot: string) => StdioServerSpec | null;
+  } = {}
 ): {
   entries: NormalizedEntry[];
   approvals: Parameters<ExecutorEvents['onApprovalRequest']>[0][];
@@ -142,7 +146,9 @@ function startHarness(
   const approvals: Parameters<ExecutorEvents['onApprovalRequest']>[0][] = [];
   const sessions: string[] = [];
   const finishes: Parameters<ExecutorEvents['onFinish']>[0][] = [];
-  const executor = new CodexExecutor(() => process);
+  const executor = new CodexExecutor(() => process, {
+    cartoSpec: options.cartoSpec ?? (() => null),
+  });
   const run = executor.start(
     {
       cwd: 'C:\\worktree',
@@ -256,6 +262,40 @@ describe('CodexAppServer transport', () => {
 });
 
 describe('CodexExecutor', () => {
+  it('adds a carto server next to dispatch when carto is available', async () => {
+    const process = scriptedProcess();
+    startHarness(process, undefined, undefined, {
+      cartoSpec: (root) => ({
+        command: '/bin/sh',
+        args: ['-c', 'cd "$1" && exec "$2" serve', 'sh', root, '/opt/carto'],
+        env: { PATH: '/usr/bin' },
+      }),
+    });
+    await waitFor(() =>
+      process.requests.some((request) => request.method === 'thread/start')
+    );
+    const start = process.requests.find(
+      (request) => request.method === 'thread/start'
+    );
+    const servers = (
+      start?.params?.config as { mcp_servers: Record<string, unknown> }
+    ).mcp_servers;
+    expect(Object.keys(servers).sort()).toEqual(['carto', 'dispatch']);
+    expect(servers.carto).toEqual({
+      command: '/bin/sh',
+      args: [
+        '-c',
+        'cd "$1" && exec "$2" serve',
+        'sh',
+        'C:\\project',
+        '/opt/carto',
+      ],
+      env: { PATH: '/usr/bin' },
+      required: true,
+    });
+    process.kill();
+  });
+
   it('rejects unsupported permission modes before starting the App Server', () => {
     for (const permissionMode of [
       'default',

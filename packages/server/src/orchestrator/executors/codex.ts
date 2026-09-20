@@ -1,6 +1,4 @@
 import { CORE_VERSION } from '@dispatch/core';
-import { createRequire } from 'node:module';
-import { dirname, join } from 'node:path';
 
 import {
   CodexAppServer,
@@ -8,6 +6,8 @@ import {
   type CodexAppServerRequest,
   type SpawnCodexAppServer,
 } from '../codexAppServer.js';
+import type { StdioServerSpec } from '../dispatchMcp.js';
+import { cartoMcpSpec, dispatchMcpSpec } from '../dispatchMcp.js';
 import type {
   ApprovalDecision,
   Executor,
@@ -17,16 +17,6 @@ import type {
   NormalizedEntry,
 } from '../types.js';
 
-const MCP_ENV_PASSTHROUGH: readonly string[] = [
-  'PATH',
-  'HOME',
-  'TMPDIR',
-  'LANG',
-  'LC_ALL',
-  'BUN_INSTALL',
-  'DISPATCH_HOME',
-];
-const DISPATCH_MCP_TOOL_TIMEOUT_SEC = 31 * 60;
 const STOP_MESSAGE =
   'The user asked this run to stop. Finish the current operation, start no new work, summarize what is complete and what remains, then end the turn.';
 
@@ -69,49 +59,42 @@ interface CodexItem {
   error?: unknown;
 }
 
-function resolveMcpBin(): string {
-  const pkgJsonPath = createRequire(import.meta.url).resolve(
-    '@dispatch/mcp/package.json'
-  );
-  return join(dirname(pkgJsonPath), 'src', 'bin.ts');
+// Codex's `mcp_servers` table entry for one provider-neutral spec.
+function toCodexMcp(
+  spec: StdioServerSpec,
+  extra: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return {
+    command: spec.command,
+    args: spec.args,
+    env: spec.env,
+    required: true,
+    ...(spec.timeoutMs !== undefined
+      ? { tool_timeout_sec: Math.ceil(spec.timeoutMs / 1000) }
+      : {}),
+    ...extra,
+  };
 }
 
-/** Builds the run-scoped Dispatch MCP config re-supplied on start and resume. */
-function buildCodexDispatchMcpConfig(
+/** The run-scoped MCP servers re-supplied on thread start and resume. */
+function buildCodexMcpServers(
   cwd: string,
   projectRoot: string,
-  runId: string
+  runId: string,
+  cartoSpec: (projectRoot: string) => StdioServerSpec | null
 ): Record<string, unknown> {
-  const env: Record<string, string> = {};
-  for (const key of MCP_ENV_PASSTHROUGH) {
-    const value = process.env[key];
-    if (value !== undefined) env[key] = value;
-  }
-  env.DISPATCH_PROJECT_ROOT = projectRoot;
-  env.DISPATCH_RUN_ID = runId;
-
-  const packagedBin = process.env.DISPATCH_MCP_BIN;
-  const command =
-    packagedBin !== undefined && packagedBin !== '' ? packagedBin : 'bun';
-  const args =
-    packagedBin !== undefined && packagedBin !== ''
-      ? ['--root', cwd]
-      : [resolveMcpBin(), '--root', cwd];
+  const carto = cartoSpec(projectRoot);
   return {
     mcp_servers: {
-      dispatch: {
-        command,
-        args,
-        env,
-        required: true,
-        tool_timeout_sec: DISPATCH_MCP_TOOL_TIMEOUT_SEC,
+      dispatch: toCodexMcp(dispatchMcpSpec(cwd, projectRoot, runId), {
         tools: {
           task_comment: { approval_mode: 'approve' },
           record_evidence: { approval_mode: 'approve' },
           record_mutation: { approval_mode: 'approve' },
           ask_user: { approval_mode: 'approve' },
         },
-      },
+      }),
+      ...(carto === null ? {} : { carto: toCodexMcp(carto) }),
     },
   };
 }
@@ -233,8 +216,20 @@ function closeDescription(close: {
 }
 
 /** One Codex App Server process, one persisted thread, and one Codex turn. */
+export interface CodexExecutorOptions {
+  /** Carto discovery, injectable so tests never depend on a local carto. */
+  cartoSpec?: (projectRoot: string) => StdioServerSpec | null;
+}
+
 export class CodexExecutor implements Executor {
-  constructor(private readonly spawnProcess?: SpawnCodexAppServer) {}
+  private readonly cartoSpec: (projectRoot: string) => StdioServerSpec | null;
+
+  constructor(
+    private readonly spawnProcess?: SpawnCodexAppServer,
+    options: CodexExecutorOptions = {}
+  ) {
+    this.cartoSpec = options.cartoSpec ?? cartoMcpSpec;
+  }
 
   start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
     if (opts.permissionMode !== 'auto') {
@@ -407,10 +402,11 @@ export class CodexExecutor implements Executor {
         if (interrupted) return;
         server.notify('initialized');
 
-        const config = buildCodexDispatchMcpConfig(
+        const config = buildCodexMcpServers(
           opts.cwd,
           opts.projectRoot ?? opts.cwd,
-          opts.runId ?? ''
+          opts.runId ?? '',
+          this.cartoSpec
         );
         const resumed = opts.resumeSessionId !== undefined;
         const response = await server.request<CodexThreadResponse>(
