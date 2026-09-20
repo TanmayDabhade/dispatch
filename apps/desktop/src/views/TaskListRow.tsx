@@ -1,3 +1,4 @@
+import type { EpicProgressChild, FixLoopState } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
 import { Milestone, Play } from 'lucide-react';
 import type { KeyboardEvent } from 'react';
@@ -14,6 +15,13 @@ import {
 import { StatusIcon } from '../components/tasks/StatusIcon';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import {
+  formatUsd,
+  PHASE_LABEL,
+  phaseTint,
+  showsPhasePill,
+} from '../lib/epicSession';
+import { fixLoopStatusLabel } from '../lib/fixLoopStatus';
+import {
   isInteractiveControlTagName,
   type ListKeyCommand,
   resolveListKeyCommand,
@@ -24,6 +32,8 @@ import type { TaskProperty, TasksDisplayPrefs } from '../lib/tasksPrefs';
 import { cn } from '@/lib/utils';
 import { ListRow } from '@/ui/ai/list-row';
 import { LabelPill, Pill } from '@/ui/ai/pill';
+import { MetaText } from '@/ui/chrome';
+import { CountChip } from '@/ui/chrome/CountChip';
 
 // The task row and the single-key model the Tasks list and the Milestones page share, so a
 // task reads and edits identically under a status header and under a milestone header.
@@ -49,6 +59,10 @@ export interface TaskListRowProps {
   childCount?: number;
   /** Hide the ` › epic` chip — under an epic/milestone header it is redundant. */
   showEpicChip?: boolean;
+  /** Where this task stands in its milestone's fan-out, when the milestone has a session:
+   * a phase pill (only where the phase says more than the status glyph), the run's cost
+   * and the open findings count. */
+  phase?: EpicProgressChild;
   picker: OpenPicker | null;
   onPickerChange: (picker: OpenPicker | null) => void;
   selected: boolean;
@@ -57,6 +71,18 @@ export interface TaskListRowProps {
   onFocus: () => void;
   onContextMenu?: () => void;
   onSelectToggle?: () => void;
+}
+
+// A capped child reads its fix loop's own line (`Stopped at 3/3: rounds exhausted`) when
+// the loop state is known; every other phase prints its label.
+function phasePillLabel(
+  phase: EpicProgressChild,
+  loop: FixLoopState | undefined
+): string {
+  if (phase.phase === 'capped' && loop !== undefined) {
+    return fixLoopStatusLabel(loop);
+  }
+  return PHASE_LABEL[phase.phase];
 }
 
 /** One 36px task row: priority picker, sans id, status picker, title, then the right-aligned
@@ -71,6 +97,7 @@ export function TaskListRow({
   epic,
   childCount = 0,
   showEpicChip = true,
+  phase,
   picker,
   onPickerChange,
   selected,
@@ -127,6 +154,24 @@ export function TaskListRow({
         <LabelPill color="var(--state-waiting-fg)">Needs you</LabelPill>
       )}
       {has('run') && live && <RunStatePill meta={run} compact />}
+      {phase !== undefined && showsPhasePill(phase.phase) && (
+        <LabelPill
+          data-slot="phase-pill"
+          data-phase={phase.phase}
+          color={phaseTint(phase.phase) ?? 'var(--text-muted)'}
+          title={phase.reason}
+        >
+          {phasePillLabel(phase, data.fixLoops.get(id))}
+        </LabelPill>
+      )}
+      {phase?.costUsd !== undefined && (
+        <MetaText>{formatUsd(phase.costUsd)}</MetaText>
+      )}
+      {phase !== undefined && phase.openFindings > 0 && (
+        <span title="open findings" className="flex items-center">
+          <CountChip count={phase.openFindings} />
+        </span>
+      )}
       {has('assignee') &&
         (editable ? (
           <AssigneeControl

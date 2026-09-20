@@ -1,9 +1,15 @@
+import type {
+  EpicProgress,
+  EpicProgressChild,
+  EpicSession,
+} from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 import { type ReactNode, useState } from 'react';
 
 import { toggleCollapsedGroup } from '../../lib/collapsedEpics';
+import type { WorkEpicOptions } from '../../lib/epicSession';
 import {
   type CreateTaskPreset,
   type ShellActions,
@@ -39,6 +45,55 @@ function task(
 }
 
 const STATUSES = ['todo', 'in-progress', 'done'];
+
+// A progress row with the session/spend/wave halves defaulted, so a test states only the
+// children it cares about.
+function progressFor(
+  epicId: string,
+  children: Pick<EpicProgressChild, 'id' | 'title' | 'status'>[],
+  overrides: Partial<EpicProgress> = {}
+): EpicProgress {
+  return {
+    epicId,
+    active: false,
+    session: null,
+    spend: {
+      settledUsd: 0,
+      liveCount: 0,
+      estimatedLiveUsd: 0,
+      runsStarted: 0,
+      maxSpendUsd: null,
+      maxRuns: null,
+    },
+    children: children.map((c) => ({
+      ...c,
+      phase: c.status === 'landed' ? 'landed' : 'queued',
+      wave: 1,
+      openFindings: 0,
+    })),
+    waves: [],
+    liveRuns: [],
+    ...overrides,
+  };
+}
+
+function sessionWith(
+  state: EpicSession['state'],
+  overrides: Partial<EpicSession> = {}
+): EpicSession {
+  return {
+    epicId: 'e-1',
+    concurrency: 3,
+    executor: 'claude',
+    state,
+    maxSpendUsd: 60,
+    maxRuns: 20,
+    startedAt: '2026-09-20T00:00:00.000Z',
+    updatedAt: '2026-09-20T00:00:00.000Z',
+    active: state === 'active',
+    ...overrides,
+  };
+}
 
 const EPICS = [
   task('e-1', 'Payments epic', 'todo', null, 'epic'),
@@ -120,12 +175,13 @@ function Harness({
   );
 }
 
-// A menu positions itself a microtask after mount (floating-ui), so an open menu is
-// rendered — and its items clicked — inside an async `act` that lets that settle.
+// A menu positions itself a microtask after mount (floating-ui) and a header verb clears
+// its busy flag after its handler resolves, so both run inside an async `act` that lets the
+// queue drain before asserting.
 async function settle(work: () => void) {
   await act(async () => {
     work();
-    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
   });
 }
 
@@ -228,7 +284,11 @@ test('an archived card is not draggable', () => {
 
 test('the epic header carries the epic dispatch and graph controls as pills', () => {
   render(<Harness />);
+  // The id chip is the one open affordance; the shared controls' Open button stays off.
   expect(screen.queryByRole('button', { name: 'Open e-1' })).not.toBeNull();
+  expect(
+    screen.queryByRole('button', { name: 'Open Payments epic' })
+  ).toBeNull();
   expect(
     screen.queryByRole('button', { name: 'View dependency graph for e-1' })
   ).not.toBeNull();
@@ -239,7 +299,7 @@ test('the epic header carries the epic dispatch and graph controls as pills', ()
   expect(concurrency.textContent).toBe('3×');
   expect(concurrency.className).toContain('rounded-pill');
   // The "No epic" lane has nothing to dispatch, so it gets none of them.
-  const work = screen.getAllByRole('button', { name: 'Work' });
+  const work = screen.getAllByRole('button', { name: 'Send agents…' });
   expect(work).toHaveLength(2);
   expect(work[0]?.className).toContain('rounded-pill');
 });
@@ -247,8 +307,123 @@ test('the epic header carries the epic dispatch and graph controls as pills', ()
 test('the epic dispatch button routes through the confirmation preview', () => {
   const requested: string[] = [];
   render(<Harness onRequestWorkEpic={(id) => requested.push(id)} />);
-  fireEvent.click(screen.getAllByRole('button', { name: 'Work' })[0]);
+  fireEvent.click(screen.getAllByRole('button', { name: 'Send agents…' })[0]);
   expect(requested).toEqual(['e-1']);
+});
+
+test('without a preview handler Send agents… starts a session at the picked concurrency', async () => {
+  const worked: [string, WorkEpicOptions][] = [];
+  render(
+    <Harness
+      onWorkEpic={(id, opts) => {
+        worked.push([id, opts]);
+        return Promise.resolve();
+      }}
+    />
+  );
+  await settle(() => {
+    fireEvent.click(screen.getAllByRole('button', { name: 'Send agents…' })[0]);
+  });
+  expect(worked).toEqual([['e-1', { concurrency: 3 }]]);
+});
+
+test('an active session shows Pause and Stop, and a paused one Resume and Raise ceiling…', async () => {
+  const paused: string[] = [];
+  const resumed: string[] = [];
+  const raised: string[] = [];
+  const children = [
+    { id: 't-1', title: 'Card one', status: 'working' },
+    { id: 't-2', title: 'Card two', status: 'todo' },
+    { id: 't-3', title: 'Card three', status: 'done' },
+  ];
+  const { unmount } = render(
+    <Harness
+      epicProgressById={
+        new Map([
+          [
+            'e-1',
+            progressFor('e-1', children, {
+              active: true,
+              session: sessionWith('active'),
+            }),
+          ],
+        ])
+      }
+      onPauseEpic={(id) => {
+        paused.push(id);
+        return Promise.resolve();
+      }}
+      onResumeEpic={(id) => {
+        resumed.push(id);
+        return Promise.resolve();
+      }}
+      onRaiseCeilingEpic={(id) => raised.push(id)}
+    />
+  );
+  // The concurrency picker belongs to a fresh session; a live one chose it already.
+  expect(
+    screen.queryByLabelText('Epic dispatch concurrency for e-1')
+  ).toBeNull();
+  expect(screen.getAllByRole('button', { name: 'Send agents…' })).toHaveLength(
+    1
+  );
+  await settle(() => {
+    fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+  });
+  expect(paused).toEqual(['e-1']);
+  expect(screen.getByRole('button', { name: 'Stop' })).not.toBeNull();
+  unmount();
+
+  render(
+    <Harness
+      epicProgressById={
+        new Map([
+          [
+            'e-1',
+            progressFor('e-1', children, {
+              session: sessionWith('paused', { pausedReason: 'budget' }),
+            }),
+          ],
+        ])
+      }
+      onResumeEpic={(id) => {
+        resumed.push(id);
+        return Promise.resolve();
+      }}
+      onRaiseCeilingEpic={(id) => raised.push(id)}
+    />
+  );
+  expect(screen.getByText('Paused — budget ceiling')).not.toBeNull();
+  await settle(() => {
+    fireEvent.click(screen.getByRole('button', { name: 'Resume' }));
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Raise ceiling…' }));
+  expect(resumed).toEqual(['e-1']);
+  expect(raised).toEqual(['e-1']);
+});
+
+test('a header without pause wiring shows only Stop on an active session', () => {
+  render(
+    <Harness
+      epicProgressById={
+        new Map([
+          [
+            'e-1',
+            progressFor(
+              'e-1',
+              [{ id: 't-1', title: 'Card one', status: 'working' }],
+              {
+                active: true,
+                session: sessionWith('active'),
+              }
+            ),
+          ],
+        ])
+      }
+    />
+  );
+  expect(screen.queryByRole('button', { name: 'Pause' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Stop' })).not.toBeNull();
 });
 
 // The land affordance follows the server's own readiness rule (every child done or
@@ -258,16 +433,11 @@ test('a finished epic swaps Work for a Land button that lands it', async () => {
   const progress = new Map([
     [
       'e-1',
-      {
-        epicId: 'e-1',
-        active: false,
-        children: [
-          { id: 't-1', title: 'Card one', status: 'landed' },
-          { id: 't-2', title: 'Card two', status: 'dropped' },
-          { id: 't-3', title: 'Card three', status: 'landed' },
-        ],
-        liveRuns: [],
-      },
+      progressFor('e-1', [
+        { id: 't-1', title: 'Card one', status: 'landed' },
+        { id: 't-2', title: 'Card two', status: 'dropped' },
+        { id: 't-3', title: 'Card three', status: 'landed' },
+      ]),
     ],
   ]);
   render(
@@ -279,14 +449,16 @@ test('a finished epic swaps Work for a Land button that lands it', async () => {
       }}
     />
   );
-  // e-1 is finished, so its lane offers Land; e-2 (no progress yet) keeps Work.
+  // e-1 is finished, so its lane offers Land; e-2 (no progress yet) keeps Send agents….
   const land = screen.getAllByRole('button', { name: 'Land' });
   expect(land).toHaveLength(1);
-  expect(screen.getAllByRole('button', { name: 'Work' })).toHaveLength(1);
-  // The `◔ 3/3` progress glyph sits beside it.
-  expect(document.querySelector('[data-slot=epic-progress]')?.textContent).toBe(
-    '3/3'
+  expect(screen.getAllByRole('button', { name: 'Send agents…' })).toHaveLength(
+    1
   );
+  // The `◔ 3/3` progress glyph sits beside it.
+  expect(
+    document.querySelector('[data-slot=milestone-progress]')?.textContent
+  ).toBe('3/3');
   await settle(() => {
     fireEvent.click(land[0]);
   });
@@ -299,23 +471,18 @@ test('the ◔ progress pie exposes exactly the done fraction of its arc', () => 
   const progress = new Map([
     [
       'e-1',
-      {
-        epicId: 'e-1',
-        active: false,
-        children: [
-          { id: 't-1', title: 'Card one', status: 'landed' },
-          { id: 't-2', title: 'Card two', status: 'ready' },
-        ],
-        liveRuns: [],
-      },
+      progressFor('e-1', [
+        { id: 't-1', title: 'Card one', status: 'landed' },
+        { id: 't-2', title: 'Card two', status: 'ready' },
+      ]),
     ],
   ]);
   render(<Harness epicProgressById={progress} />);
-  expect(document.querySelector('[data-slot=epic-progress]')?.textContent).toBe(
-    '1/2'
-  );
+  expect(
+    document.querySelector('[data-slot=milestone-progress]')?.textContent
+  ).toBe('1/2');
   const pie = document.querySelector(
-    '[data-slot=epic-progress-glyph] circle[r="2"]'
+    '[data-slot=milestone-progress] circle[r="2"]'
   );
   const [dash] = (pie?.getAttribute('stroke-dasharray') ?? '').split(' ');
   const offset = Number(pie?.getAttribute('stroke-dashoffset'));

@@ -38,6 +38,7 @@ import {
   laneKey,
   statusFromDropZoneId,
 } from '../../lib/boardGrouping';
+import type { WorkEpicOptions } from '../../lib/epicSession';
 import type { TaskAttention } from '../../lib/taskAttention';
 import { statusLabel } from '../../lib/taskDisplay';
 import {
@@ -110,7 +111,13 @@ interface TaskBoardProps {
    * task in a column from the column's `···` › Dispatch all ready. Optional — omitting it
    * hides both. */
   onDispatch?: (taskId: string) => Promise<void>;
-  onWorkEpic: (epicId: string, concurrency: number) => Promise<void>;
+  /** The lane header's direct dispatch path — a session at the picker's concurrency. */
+  onWorkEpic: (epicId: string, opts: WorkEpicOptions) => Promise<void>;
+  /** Pause/Resume/Raise ceiling… on a lane with a session; a header without them shows
+   * only Stop. See EpicLaneHeader. */
+  onPauseEpic?: (epicId: string) => Promise<void>;
+  onResumeEpic?: (epicId: string) => Promise<void>;
+  onRaiseCeilingEpic?: (epicId: string) => void;
   onStopEpic: (epicId: string) => Promise<void>;
   /** Lands a finished epic branch on the default base — see EpicLaneHeader's Land button.
    * Optional for the same reason as `onDispatch`. */
@@ -323,6 +330,9 @@ export function TaskBoard({
   onSelect,
   onDispatch,
   onWorkEpic,
+  onPauseEpic,
+  onResumeEpic,
+  onRaiseCeilingEpic,
   onStopEpic,
   onLandEpic,
   onMoveStatus,
@@ -512,6 +522,9 @@ export function TaskBoard({
                       onOpenTask={onSelect}
                       onWork={onWorkEpic}
                       onRequestWork={onRequestWorkEpic}
+                      onPause={onPauseEpic}
+                      onResume={onResumeEpic}
+                      onRaiseCeiling={onRaiseCeilingEpic}
                       onStop={onStopEpic}
                       onLand={onLandEpic}
                       onAdd={() =>
