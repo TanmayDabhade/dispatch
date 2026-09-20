@@ -1,5 +1,7 @@
 import type { TaskDoc } from '@dispatch/core/browser';
 
+import { formatUsd } from './epicSession';
+
 /**
  * What a bulk dispatch is actually about to do.
  *
@@ -30,6 +32,14 @@ export interface DispatchPreview {
   runningNow: number;
   /** One sentence stating the arithmetic, so the dialog never makes the user do it. */
   summary: string;
+  /** The dollar range the runs about to start (now or queued) will settle at. */
+  estimateUsd: { low: number; high: number };
+  /** Selected tasks that declare no `writes` — the fan-out serialises those, one at a
+   * time, because an undeclared write conflicts with every live claim. */
+  undeclaredWrites: number;
+  /** Whether even the low estimate clears the spend ceiling, so the session would pause
+   * before every task has run. */
+  overCeiling: boolean;
 }
 
 export interface BuildDispatchPreviewInput {
@@ -41,6 +51,21 @@ export interface BuildDispatchPreviewInput {
   runningNow: number;
   /** The concurrency the user is about to dispatch with. */
   concurrency: number;
+  /** The per-run midpoint the estimate range is built around (`$10` → `$5–15`). */
+  runCostEstimateUsd?: number;
+  /** The spend ceiling the dispatch will carry; `null` or absent means none. */
+  ceilingUsd?: number | null;
+}
+
+// The estimate is a range around the midpoint — half to one-and-a-half — since a run's
+// cost swings with how much the agent has to read before it can write.
+const ESTIMATE_LOW_FACTOR = 0.5;
+const ESTIMATE_HIGH_FACTOR = 1.5;
+const DEFAULT_RUN_COST_USD = 10;
+
+// `$5–15`: one dollar sign for the range, as a price tag would print it.
+function usdRange(low: number, high: number): string {
+  return `${formatUsd(low)}–${formatUsd(high).slice(1)}`;
 }
 
 function sentence(
@@ -48,7 +73,10 @@ function sentence(
   queued: number,
   notReady: number,
   runningNow: number,
-  concurrency: number
+  concurrency: number,
+  estimate: { low: number; high: number },
+  perRun: { low: number; high: number },
+  ceilingUsd: number | null
 ): string {
   if (startsNow === 0 && queued === 0) {
     return notReady > 0
@@ -63,13 +91,24 @@ function sentence(
   if (notReady > 0) {
     parts.push(`${notReady} cannot start yet`);
   }
-  return `${parts.join(' · ')}.`;
+  parts.push(
+    `~${formatUsd(estimate.low)}–${formatUsd(estimate.high)} at ${usdRange(perRun.low, perRun.high)} per run`
+  );
+  if (ceilingUsd !== null) parts.push(`ceiling ${formatUsd(ceilingUsd)}`);
+  return parts.join(' · ');
 }
 
 export function buildDispatchPreview(
   input: BuildDispatchPreviewInput
 ): DispatchPreview {
-  const { tasks, readyIds, runningNow, concurrency } = input;
+  const {
+    tasks,
+    readyIds,
+    runningNow,
+    concurrency,
+    runCostEstimateUsd = DEFAULT_RUN_COST_USD,
+    ceilingUsd = null,
+  } = input;
   // A concurrency of 0 or less would silently start nothing; treat it as at least one so the
   // preview and the dispatch agree about what the button will do.
   const limit = Math.max(1, Math.round(concurrency));
@@ -92,12 +131,34 @@ export function buildDispatchPreview(
   const queued = rows.filter((r) => r.disposition === 'queued').length;
   const notReady = rows.filter((r) => r.disposition === 'not-ready').length;
 
+  const perRun = {
+    low: runCostEstimateUsd * ESTIMATE_LOW_FACTOR,
+    high: runCostEstimateUsd * ESTIMATE_HIGH_FACTOR,
+  };
+  const runs = startsNow + queued;
+  const estimateUsd = { low: runs * perRun.low, high: runs * perRun.high };
+  const undeclaredWrites = tasks.filter(
+    (task) => task.meta.writes.length === 0
+  ).length;
+
   return {
     rows,
     startsNow,
     queued,
     notReady,
     runningNow,
-    summary: sentence(startsNow, queued, notReady, runningNow, limit),
+    summary: sentence(
+      startsNow,
+      queued,
+      notReady,
+      runningNow,
+      limit,
+      estimateUsd,
+      perRun,
+      ceilingUsd
+    ),
+    estimateUsd,
+    undeclaredWrites,
+    overCeiling: ceilingUsd !== null && estimateUsd.low > ceilingUsd,
   };
 }
