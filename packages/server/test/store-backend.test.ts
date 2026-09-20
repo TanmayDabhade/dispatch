@@ -55,13 +55,18 @@ describe('resolveStoreBackend', () => {
     );
   }
 
-  it('defaults to files so a not-yet-imported project keeps its markdown', () => {
+  it('defaults to sqlite — a markdown board is imported on boot', () => {
     delete process.env.DISPATCH_STORE_BACKEND;
-    expect(resolveStoreBackend(dir)).toBe('files');
+    expect(resolveStoreBackend(dir)).toBe('sqlite');
   });
 
   it('treats an empty value as unset', () => {
     process.env.DISPATCH_STORE_BACKEND = '';
+    expect(resolveStoreBackend(dir)).toBe('sqlite');
+  });
+
+  it('honours files as the explicit escape hatch', () => {
+    process.env.DISPATCH_STORE_BACKEND = 'files';
     expect(resolveStoreBackend(dir)).toBe('files');
   });
 
@@ -70,9 +75,9 @@ describe('resolveStoreBackend', () => {
     expect(resolveStoreBackend(dir)).toBe('sqlite');
   });
 
-  it('falls back to files on a typo rather than failing boot', () => {
+  it('falls back to the default on a typo rather than failing boot', () => {
     process.env.DISPATCH_STORE_BACKEND = 'nonsense';
-    expect(resolveStoreBackend(dir)).toBe('files');
+    expect(resolveStoreBackend(dir)).toBe('sqlite');
   });
 
   // The split-brain fix: an auto-started daemon inherits whatever shell
@@ -94,7 +99,7 @@ describe('resolveStoreBackend', () => {
     delete process.env.DISPATCH_STORE_BACKEND;
     mkdirSync(join(dir, DISPATCH_DIR), { recursive: true });
     writeFileSync(join(dir, DISPATCH_DIR, 'storage.json'), '{ not json');
-    expect(resolveStoreBackend(dir)).toBe('files');
+    expect(resolveStoreBackend(dir)).toBe('sqlite');
   });
 
   // This used to be refused: an empty database opened beside a populated
