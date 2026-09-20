@@ -852,56 +852,55 @@ describe('Orchestrator.dispatchOrResume', () => {
     expect(meta.executor).toBe('claude');
   });
 
-  it('resolves execute models according to the selected executor', async () => {
+  it('resolves a fresh run model from the selected executor', async () => {
     const { orchestrator, store } = makeOrchestrator(repo);
     writeFileSync(
       join(repo, '.dispatch/config.yml'),
-      'models:\n  execute: configured-claude-model\n'
+      'models:\n  execute: configured-claude-model\n' +
+        'executors:\n  codex:\n    models:\n      execute: configured-codex-model\n'
     );
     const claude = new StallingExecutor();
     const codex = new StallingExecutor();
+    const bare = new StallingExecutor();
     orchestrator.registerExecutor('claude', claude);
     orchestrator.registerExecutor('codex', codex);
+    orchestrator.registerExecutor('bare', bare);
 
-    const defaultTask = store.create({ title: 'Default Claude model' });
-    const explicitClaudeTask = store.create({ title: 'Explicit Claude model' });
-    const namedClaudeModelTask = store.create({ title: 'Named Claude model' });
-    const implicitCodexTask = store.create({ title: 'Implicit Codex model' });
-    const explicitCodexTask = store.create({ title: 'Explicit Codex model' });
+    const dispatchWith = async (
+      title: string,
+      request: { executor?: string; model?: string }
+    ): Promise<string | undefined> => {
+      const task = store.create({ title });
+      const meta = await orchestrator.dispatchOrResume(task.meta.id, request);
+      return meta.model;
+    };
 
-    const defaultClaude = await orchestrator.dispatchOrResume(
-      defaultTask.meta.id
+    expect(await dispatchWith('Default', {})).toBe('configured-claude-model');
+    expect(await dispatchWith('Claude', { executor: 'claude' })).toBe(
+      'configured-claude-model'
     );
-    const explicitClaude = await orchestrator.dispatchOrResume(
-      explicitClaudeTask.meta.id,
-      { executor: 'claude' }
+    expect(
+      await dispatchWith('Named claude', {
+        executor: 'claude',
+        model: 'explicit-claude-model',
+      })
+    ).toBe('explicit-claude-model');
+    expect(await dispatchWith('Codex', { executor: 'codex' })).toBe(
+      'configured-codex-model'
     );
-    const namedClaudeModel = await orchestrator.dispatchOrResume(
-      namedClaudeModelTask.meta.id,
-      { executor: 'claude', model: 'explicit-claude-model' }
-    );
-    const implicitCodex = await orchestrator.dispatchOrResume(
-      implicitCodexTask.meta.id,
-      { executor: 'codex' }
-    );
-    const explicitCodex = await orchestrator.dispatchOrResume(
-      explicitCodexTask.meta.id,
-      { executor: 'codex', model: 'gpt-6-astra' }
-    );
-
-    expect(defaultClaude.model).toBe('configured-claude-model');
-    expect(explicitClaude.model).toBe('configured-claude-model');
-    expect(namedClaudeModel.model).toBe('explicit-claude-model');
-    expect(implicitCodex.model).toBeUndefined();
-    expect(explicitCodex.model).toBe('gpt-6-astra');
+    expect(
+      await dispatchWith('Named codex', { executor: 'codex', model: 'gpt-6' })
+    ).toBe('gpt-6');
+    expect(await dispatchWith('Bare', { executor: 'bare' })).toBeUndefined();
     expect(claude.started.map(({ model }) => model)).toEqual([
       'configured-claude-model',
       'configured-claude-model',
       'explicit-claude-model',
     ]);
     expect(codex.started.map(({ model }) => model)).toEqual([
-      undefined,
-      'gpt-6-astra',
+      'configured-codex-model',
+      'gpt-6',
     ]);
+    expect(bare.started.map(({ model }) => model)).toEqual([undefined]);
   });
 });

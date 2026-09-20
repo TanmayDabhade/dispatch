@@ -67,12 +67,12 @@ export interface OverseerToolContext {
   defaultExecutor?: string;
 }
 
-const DEFAULT_EXECUTOR = 'claude';
-
 // Resolves the executor a dispatch action runs on: an explicit choice, else
-// this project's configured default, else the same name api.ts falls back to.
+// this context's override, else the project's configured default executor.
 function executorFor(ctx: OverseerToolContext, chosen?: string): string {
-  return chosen ?? ctx.defaultExecutor ?? DEFAULT_EXECUTOR;
+  return (
+    chosen ?? ctx.defaultExecutor ?? ctx.orchestrator.defaultExecutorName()
+  );
 }
 
 // ---------------------------------------------------------------------------

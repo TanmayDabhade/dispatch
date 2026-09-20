@@ -87,7 +87,7 @@ describe('Activity attribution', () => {
     // agent:<human handle>/<executor name> — never the human operating the
     // daemon.
     expect(store.get(task.meta.id)!.body).toContain(
-      `[run ${meta.id}] finished: finished — 0 files, $0.00 — agent:test/fake`
+      `[run ${meta.id}] finished: finished — 0 files, cost n/a — agent:test/fake`
     );
   });
 

@@ -621,17 +621,12 @@ async function createRun(
     return errorResponse(400, 'invalid fresh: expected a boolean');
   }
   // Named vs defaulted is the whole distinction dispatchOrResume turns on, so
-  // the raw fields go through untouched and only the FALLBACKS are resolved
-  // here: omitting `model` still runs a fresh Claude dispatch on the project's
-  // configured `models.execute` (so a script or an older UI build lands where
-  // settings chose), while the orchestrator leaves it unset for Codex. Naming
-  // a model that the resumable run cannot honour sends the call down the fresh
-  // path in the first place.
+  // the raw fields go through untouched; the orchestrator resolves the
+  // executor's own default model for a fresh run.
   const meta = await ctx.orchestrator.dispatchOrResume(taskId, {
     executor: typeof executorField === 'string' ? executorField : undefined,
     model: typeof modelField === 'string' ? modelField : undefined,
     fresh: freshField === true,
-    defaults: { model: loadConfig(ctx.rootDir).models.execute },
   });
   return jsonResponse(meta, 201);
 }
