@@ -739,7 +739,7 @@ export function PlansView({
               )}
 
               {proposalView === 'graph' && draft.proposal.tasks.length > 1 ? (
-                <div className="bg-surface-quaternary rounded-card shadow-card p-4">
+                <div className="p-4">
                   <DependencyGraph
                     tasks={graphTasks}
                     refFor={(id) => `#${Number(id) + 1}`}

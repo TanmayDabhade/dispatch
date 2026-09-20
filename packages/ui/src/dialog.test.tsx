@@ -19,7 +19,9 @@ test('the corner close hides itself once a DialogChrome is present', () => {
     '[[data-slot=dialog-content]:has([data-slot=dialog-chrome])>&]:hidden'
   );
   expect(
-    document.querySelectorAll('[data-slot="dialog-chrome"] [data-slot="dialog-close"]')
+    document.querySelectorAll(
+      '[data-slot="dialog-chrome"] [data-slot="dialog-close"]'
+    )
   ).toHaveLength(1);
 });
 
@@ -31,5 +33,7 @@ test('showCloseButton={false} drops the corner close entirely', () => {
       </DialogContent>
     </Dialog>
   );
-  expect(document.querySelector('[data-slot="dialog-corner-close"]')).toBeNull();
+  expect(
+    document.querySelector('[data-slot="dialog-corner-close"]')
+  ).toBeNull();
 });

@@ -810,10 +810,7 @@ export function TaskPage({
       )}
 
       <div className="flex min-h-0 flex-1">
-        <div
-          data-slot="task-main"
-          className="min-w-0 flex-1 overflow-y-auto"
-        >
+        <div data-slot="task-main" className="min-w-0 flex-1 overflow-y-auto">
           {children !== undefined ? (
             <div className="flex h-full min-h-0 flex-col">{children}</div>
           ) : (

@@ -339,7 +339,7 @@ export const linearPrimitiveStories: GalleryStory[] = [
       <div className="flex items-center gap-2">
         <InitialsAvatar name="Wyat Soule" />
         <InitialsAvatar name="Claude" />
-        <InitialsAvatar name="Hadiur Thasin" />
+        <InitialsAvatar name="Priya Miranda" />
         <InitialsAvatar name="Dispatch" square color="#5e6ad2" />
       </div>
     ),

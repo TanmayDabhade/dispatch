@@ -34,6 +34,10 @@ import {
   useSidebarCollapsed,
   useTrafficLightInset,
 } from './components/shell/Sidebar';
+import {
+  taskToastDescription,
+  viewTaskLink,
+} from './components/shell/toastContract';
 import { useToasts } from './components/shell/Toasts';
 import { AiTaskComposer } from './components/tasks/AiTaskComposer';
 import { CreateTaskModal } from './components/tasks/CreateTaskModal';
@@ -370,7 +374,26 @@ function App() {
             description: message,
             tone: 'error',
           }),
-        (message) => toasts.push({ title: message, tone: 'success' })
+        (message, taskId) =>
+          toasts.push({
+            title: message,
+            tone: 'success',
+            ...(taskId !== undefined && {
+              description: taskToastDescription(
+                taskId,
+                rawData.tasks.find((t) => t.meta.id === taskId)?.meta.title ??
+                  taskId
+              ),
+              link: viewTaskLink(taskId, (id) =>
+                dispatchNav({
+                  type: 'openTask',
+                  taskId: id,
+                  tab: 'details',
+                  runId: rawData.latestRunByTaskId.get(id)?.id ?? null,
+                })
+              ),
+            }),
+          })
       ),
     [rawData, toasts]
   );
@@ -616,6 +639,7 @@ function App() {
     handleDispatch,
     notificationInbox,
     markNotificationInboxRead,
+    markNotificationRead,
   } = data;
 
   // Click-through for a notification row: a run transition opens that run's task; a target
@@ -653,9 +677,15 @@ function App() {
       entries: notificationInbox.entries,
       unreadCount: unreadCount(notificationInbox),
       markAllRead: markNotificationInboxRead,
+      markRead: markNotificationRead,
       navigate: navigateFromInbox,
     }),
-    [notificationInbox, markNotificationInboxRead, navigateFromInbox]
+    [
+      notificationInbox,
+      markNotificationInboxRead,
+      markNotificationRead,
+      navigateFromInbox,
+    ]
   );
 
   const peekTask = useCallback(
@@ -987,6 +1017,7 @@ function App() {
                         <>
                           {navState.projectView === 'overview' && (
                             <OverviewView
+                              projectName={activeProject?.name ?? null}
                               data={data}
                               onOpenTask={(taskId) =>
                                 dispatchNav({ type: 'openPeek', taskId })
@@ -1005,6 +1036,8 @@ function App() {
                           )}
                           {navState.projectView === 'inbox' && (
                             <InboxView
+                              projectName={activeProject?.name ?? null}
+                              projectRoot={activeProject?.path ?? null}
                               data={inboxData}
                               project={data}
                               onOpenTask={openTaskView}
@@ -1015,6 +1048,7 @@ function App() {
                           )}
                           {navState.projectView === 'landing' && (
                             <LandingTableView
+                              projectName={activeProject?.name ?? null}
                               data={data}
                               onOpenRun={(taskId, runId) =>
                                 openTaskView(taskId, 'diff', runId)
@@ -1027,6 +1061,7 @@ function App() {
                           {navState.projectView === 'pr' &&
                             navState.activePrNumber !== null && (
                               <PrReviewView
+                                projectName={activeProject?.name ?? null}
                                 key={navState.activePrNumber}
                                 data={data}
                                 prNumber={navState.activePrNumber}
@@ -1039,6 +1074,7 @@ function App() {
                             // view's local picker/filter state instead of reusing
                             // whatever was left over from the last subject.
                             <ImpactView
+                              projectName={activeProject?.name ?? null}
                               key={
                                 navState.impactSubject === null
                                   ? 'impact-empty'
@@ -1050,6 +1086,7 @@ function App() {
                           )}
                           {navState.projectView === 'board' && (
                             <BoardView
+                              projectName={activeProject?.name ?? null}
                               data={data}
                               mode={tasksViewMode}
                               onSelectTask={(taskId) =>
@@ -1067,6 +1104,7 @@ function App() {
                             navState.activeTaskId !== null &&
                             data.config !== null && (
                               <TaskView
+                                projectName={activeProject?.name ?? null}
                                 key={navState.activeTaskId}
                                 data={data}
                                 taskId={navState.activeTaskId}
@@ -1107,6 +1145,7 @@ function App() {
                             )}
                           {navState.projectView === 'branches' && (
                             <BranchesView
+                              projectName={activeProject?.name ?? null}
                               data={data}
                               onOpenRun={jumpToRun}
                               onOpenImpact={(subject) =>
@@ -1128,6 +1167,7 @@ function App() {
                           )}
                           {navState.projectView === 'plans' && (
                             <PlansView
+                              projectName={activeProject?.name}
                               data={data}
                               onGoToBoard={() => selectProjectView('board')}
                               initialPrompt={planSeed ?? undefined}
@@ -1137,6 +1177,7 @@ function App() {
                           {navState.projectView === 'draft' &&
                             (activeDraft !== null && data.config !== null ? (
                               <DraftView
+                                projectName={activeProject?.name}
                                 key={activeDraft.id}
                                 data={data}
                                 onCreate={rawData.handleCreate}
@@ -1200,6 +1241,7 @@ function App() {
               {selectedDoc !== null && data.config !== null && (
                 // Remount per task so per-task state (model choice, in-flight dispatch) can't leak across stack-rail navigation.
                 <TaskPeekDialog
+                  projectName={activeProject?.name ?? null}
                   key={selectedDoc.meta.id}
                   {...buildTaskPanelProps(selectedDoc)}
                   onClose={() => dispatchNav({ type: 'closePeek' })}
@@ -1209,6 +1251,7 @@ function App() {
 
               {showCreate && data.config !== null && (
                 <CreateTaskModal
+                  projectName={activeProject?.name}
                   statuses={data.config.statuses}
                   epics={data.epics}
                   initialStatus={createPreset?.status}
@@ -1219,6 +1262,7 @@ function App() {
 
               {aiComposerOpen && (
                 <AiTaskComposer
+                  projectName={activeProject?.name}
                   data={data}
                   onStartDraft={rawData.handleStartDraft}
                   onQuickAdd={() => {

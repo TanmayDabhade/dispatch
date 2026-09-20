@@ -41,7 +41,7 @@ function isAnyModalOpen(): boolean {
 }
 
 /** How long an armed chord prefix (`g`) waits for its second key. */
-export const CHORD_PREFIX_TIMEOUT_MS = 600;
+const CHORD_PREFIX_TIMEOUT_MS = 600;
 
 interface UseGlobalKeyboardOptions {
   onCommand: (command: GlobalKeyCommand) => void;

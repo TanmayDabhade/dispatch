@@ -11,7 +11,8 @@
 }
 
 .skeleton-pulse {
-  animation: skeleton-pulse calc(var(--dur-slow, 0.35s) * 4) ease-in-out infinite;
+  animation: skeleton-pulse calc(var(--dur-slow, 0.35s) * 4) ease-in-out
+    infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {

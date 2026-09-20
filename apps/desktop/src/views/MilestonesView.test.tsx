@@ -5,12 +5,12 @@ import { beforeEach, expect, test } from 'bun:test';
 import type { ReactNode } from 'react';
 
 import { testConfig } from '../components/settings/fixtures.test-helper';
-import { pieDashOffset } from '../components/tasks/StatusIcon';
 import {
   type CreateTaskPreset,
   type ShellActions,
   ShellActionsProvider,
 } from '../components/shell/ShellActionsContext';
+import { pieDashOffset } from '../components/tasks/StatusIcon';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import {
   COLLAPSED_GROUPS_STORAGE_KEY,

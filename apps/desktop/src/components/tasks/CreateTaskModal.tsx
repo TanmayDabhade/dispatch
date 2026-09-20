@@ -347,7 +347,10 @@ export function CreateTaskModal({
             : 'top-[12%] w-[min(1024px,92vw)] max-w-none translate-y-0 sm:max-w-none'
         }
       >
-        <DialogChrome onExpand={() => setExpanded((v) => !v)}>
+        <DialogChrome
+          expanded={expanded}
+          onExpand={() => setExpanded((v) => !v)}
+        >
           <Pill>{projectName}</Pill>
           <span aria-hidden>›</span>
           <span className="text-(--text-secondary)">New task</span>

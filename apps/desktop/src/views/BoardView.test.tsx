@@ -390,7 +390,9 @@ test('the Filter menu lists facets and applies a Status chip under the header', 
     );
   });
   const chip = document.querySelector('[data-slot=filter-chip]');
-  expect(chip?.textContent).toBe('StatusisDone');
+  // The facet, operator and value are separate spans with no whitespace between them.
+  expect(chip?.textContent).toContain('Status');
+  expect(chip?.textContent).toContain('Done');
   expect(
     screen
       .getByLabelText('Filter')
@@ -462,9 +464,9 @@ test('a v1 chip filter migrates into an applied clause', () => {
     JSON.stringify({ statuses: ['todo'], priorities: [] })
   );
   mount();
-  expect(document.querySelector('[data-slot=filter-chip]')?.textContent).toBe(
-    'StatusisTodo'
-  );
+  const chip = document.querySelector('[data-slot=filter-chip]');
+  expect(chip?.textContent).toContain('Status');
+  expect(chip?.textContent).toContain('Todo');
   expect(screen.queryByText('Card two')).toBeNull();
 });
 

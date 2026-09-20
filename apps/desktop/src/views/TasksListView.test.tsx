@@ -376,9 +376,9 @@ test('collapsing the only group keeps its header so it can be expanded again', (
 
   expect(screen.queryByText('Only task')).toBeNull();
   expect(screen.queryByText('No tasks match')).toBeNull();
-  expect(
-    container.querySelectorAll('[data-slot="group-header"]').length
-  ).toBe(1);
+  expect(container.querySelectorAll('[data-slot="group-header"]').length).toBe(
+    1
+  );
   fireEvent.click(screen.getByRole('button', { name: 'Expand group' }));
   expect(screen.getByText('Only task')).not.toBeNull();
 });

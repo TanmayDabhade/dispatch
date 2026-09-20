@@ -34,7 +34,7 @@ export function SegmentedControl({
     const next = nextRovingIndex(event.key, current, options.length);
     if (next === null) return;
     event.preventDefault();
-    onChange(options[next]!.id);
+    onChange(options[next].id);
     focusRovingItem(event.currentTarget, '[role="radio"]', next);
   }
 

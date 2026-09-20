@@ -28,10 +28,10 @@ test('clickable rows toggle from the keyboard and expose the active filter', () 
   expect(buttons[1]?.getAttribute('aria-pressed')).toBe('false');
   expect(buttons[0]?.hasAttribute('aria-selected')).toBe(false);
 
-  fireEvent.keyDown(buttons[1]!, { key: 'Enter' });
-  fireEvent.keyDown(buttons[1]!, { key: ' ' });
-  fireEvent.keyDown(buttons[1]!, { key: 'a' });
-  fireEvent.click(buttons[0]!);
+  fireEvent.keyDown(buttons[1], { key: 'Enter' });
+  fireEvent.keyDown(buttons[1], { key: ' ' });
+  fireEvent.keyDown(buttons[1], { key: 'a' });
+  fireEvent.click(buttons[0]);
   expect(clicked).toEqual(['beta', 'beta', 'alpha']);
 });
 

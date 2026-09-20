@@ -15,6 +15,8 @@ export interface NotificationInbox {
   entries: InboxEntry[];
   unreadCount: number;
   markAllRead: () => void;
+  /** Flips one entry to read — the Inbox page selecting a notification row. */
+  markRead: (id: string) => void;
   /** Routes to the entry's record or page and marks the inbox read. */
   navigate: (target: InboxTarget) => void;
 }

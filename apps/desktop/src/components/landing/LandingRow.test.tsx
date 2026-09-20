@@ -91,10 +91,10 @@ test('the gate pill leads with the gate colour and filters instead of opening', 
 
   const pill = container.querySelector('[data-slot=label-pill]');
   expect(pill?.textContent).toBe('Ready to land');
-  const dot = pill?.querySelector('span[aria-hidden]') as HTMLElement;
-  expect(dot.style.backgroundColor).toBe('var(--state-review-fg)');
+  const dot = pill?.querySelector<HTMLElement>('span[aria-hidden]');
+  expect(dot?.style.backgroundColor).toBe('var(--state-review-fg)');
 
-  fireEvent.click(pill as Element);
+  fireEvent.click(pill);
   expect(onFilterGate).toHaveBeenCalledWith('ready');
   expect(onOpenPr).not.toHaveBeenCalled();
 });
@@ -102,9 +102,7 @@ test('the gate pill leads with the gate colour and filters instead of opening', 
 test('clicking the row itself opens the PR', () => {
   const onOpenPr = mock((_n: number) => undefined);
   const { container } = renderRow(row(), { onOpenPr });
-  fireEvent.click(
-    container.querySelector('[data-slot=list-row-title]') as Element
-  );
+  fireEvent.click(container.querySelector('[data-slot=list-row-title]'));
   expect(onOpenPr).toHaveBeenCalledWith(123);
 });
 

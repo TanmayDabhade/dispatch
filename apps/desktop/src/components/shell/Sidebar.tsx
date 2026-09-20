@@ -127,7 +127,7 @@ function readStoredSections(): SectionState {
 }
 
 /** The persisted collapsed/expanded state of each rail section. */
-export function useSidebarSections(): {
+function useSidebarSections(): {
   collapsed: (id: SidebarSectionId) => boolean;
   toggle: (id: SidebarSectionId) => void;
   collapse: (id: SidebarSectionId) => void;

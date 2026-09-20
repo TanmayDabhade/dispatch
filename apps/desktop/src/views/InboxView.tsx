@@ -15,7 +15,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { ApprovalCard } from '../components/runs/ApprovalCard';
 import { QuestionCard } from '../components/runs/QuestionCard';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
-import type { NotificationInbox } from '../components/shell/NotificationInboxContext';
 import { useNotificationInbox } from '../components/shell/NotificationInboxContext';
 import { useShellActions } from '../components/shell/ShellActionsContext';
 import { TaskSpecView } from '../components/tasks/TaskSpecView';
@@ -161,9 +160,6 @@ export function InboxView({
     retryEnsureDispatchd: onRetry,
   } = project;
   const inbox = useNotificationInbox();
-  // Per-entry `markRead` lands on the seam in WP2; a notification read here is remembered in
-  // `readIds` either way, and told to the seam as soon as it can hear it.
-  const seam: NotificationInbox & { markRead?: (id: string) => void } = inbox;
   const shell = useShellActions();
   const openTask = onOpenTask ?? shell.openTask;
   const readRoot = projectRoot ?? null;
@@ -258,7 +254,7 @@ export function InboxView({
     setSelectedKey(item.key);
     addReadId(item.key);
     if (item.kind === 'notification' && !item.entry.read) {
-      seam.markRead?.(item.entry.id);
+      inbox.markRead(item.entry.id);
     }
   }
 

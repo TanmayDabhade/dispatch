@@ -87,10 +87,13 @@ function DialogChrome({
   className,
   children,
   onExpand,
+  expanded = false,
   showCloseButton = true,
   ...props
 }: React.ComponentProps<'div'> & {
   onExpand?: () => void;
+  /** Whether `onExpand` has already been taken up — flips the button's label to Collapse. */
+  expanded?: boolean;
   showCloseButton?: boolean;
 }) {
   return (
@@ -106,7 +109,11 @@ function DialogChrome({
         {children}
       </div>
       {onExpand !== undefined && (
-        <IconButton label="Expand" onClick={onExpand}>
+        <IconButton
+          label={expanded ? 'Collapse' : 'Expand'}
+          aria-pressed={expanded}
+          onClick={onExpand}
+        >
           <Maximize2Icon />
         </IconButton>
       )}

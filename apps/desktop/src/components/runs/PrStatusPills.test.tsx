@@ -43,8 +43,8 @@ test('a toned pill without an icon leads with the tone dot; muted has neither', 
   const [green, muted] = Array.from(
     container.querySelectorAll('[data-slot=pill]')
   );
-  const dot = green?.querySelector('span[aria-hidden]') as HTMLElement;
-  expect(dot.style.backgroundColor).toBe('var(--state-review-fg)');
+  const dot = green?.querySelector<HTMLElement>('span[aria-hidden]');
+  expect(dot?.style.backgroundColor).toBe('var(--state-review-fg)');
   expect(green?.className).toContain('h-6');
   expect(muted?.querySelector('span[aria-hidden]')).toBeNull();
   expect(muted?.querySelector('svg')).toBeNull();

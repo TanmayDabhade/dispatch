@@ -70,7 +70,7 @@ export function FrameStatusStrip({
               <Pill
                 data-slot="sync-pill"
                 tabIndex={sync.detail.length > 0 ? 0 : undefined}
-                className="h-6 max-w-[22rem] cursor-default gap-1.5 text-[11px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="focus-visible:ring-ring h-6 max-w-[22rem] cursor-default gap-1.5 text-[11px] outline-none focus-visible:ring-2"
               />
             }
           >

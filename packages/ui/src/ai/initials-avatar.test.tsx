@@ -18,7 +18,9 @@ test('a single word gives its first two letters; an empty name gives nothing', (
 test('the colour is stable per name and a valid oklch hue', () => {
   expect(colorFor('Wyat Soule')).toBe(colorFor('Wyat Soule'));
   expect(colorFor('Wyat Soule')).not.toBe(colorFor('Ada Lovelace'));
-  const hue = Number(/oklch\(0\.62 0\.16 (\d+)\)/.exec(colorFor('Wyat Soule'))?.[1]);
+  const hue = Number(
+    /oklch\(0\.62 0\.16 (\d+)\)/.exec(colorFor('Wyat Soule'))?.[1]
+  );
   expect(hue).toBeGreaterThanOrEqual(0);
   expect(hue).toBeLessThan(360);
 });

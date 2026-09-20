@@ -124,6 +124,9 @@ function PropertyDropdown({
         align="start"
         className="max-h-72 min-w-[184px]"
         onClick={(e) => e.stopPropagation()}
+        // Base UI portals the menu, but React still bubbles its keydowns up to the row or
+        // card the trigger sits in, whose roving j/k and single-key handlers must not react.
+        onKeyDown={(e) => e.stopPropagation()}
       >
         <DropdownMenuGroup>
           <DropdownMenuLabel className="flex items-center gap-2">

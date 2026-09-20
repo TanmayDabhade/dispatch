@@ -47,7 +47,7 @@ test('row 2 renders only when tabs or controls are given', () => {
 test('without the shell context there is no toggle, inset or drag region', () => {
   const { container } = render(<PageHeader crumb={['Tasks']} />);
   expect(screen.queryByRole('button', { name: 'Show sidebar' })).toBeNull();
-  const row = rows(container)[0]!;
+  const row = rows(container)[0];
   expect(row.className).not.toContain('pl-[76px]');
   expect(row.hasAttribute('data-tauri-drag-region')).toBe(false);
 });
@@ -67,7 +67,7 @@ test('a hidden sidebar adds the show-sidebar button and the traffic-light inset'
   );
   fireEvent.click(screen.getByRole('button', { name: 'Show sidebar' }));
   expect(toggles).toBe(1);
-  expect(rows(container)[0]!.className).toContain('pl-[76px]');
+  expect(rows(container)[0].className).toContain('pl-[76px]');
 });
 
 test('a visible sidebar shows no toggle and no inset even with traffic lights', () => {
@@ -79,7 +79,7 @@ test('a visible sidebar shows no toggle and no inset even with traffic lights', 
     </PageHeaderShellContext.Provider>
   );
   expect(screen.queryByRole('button', { name: 'Show sidebar' })).toBeNull();
-  expect(rows(container)[0]!.className).not.toContain('pl-[76px]');
+  expect(rows(container)[0].className).not.toContain('pl-[76px]');
 });
 
 test('dragRegion marks row 1 only', () => {
@@ -89,8 +89,8 @@ test('dragRegion marks row 1 only', () => {
     </PageHeaderShellContext.Provider>
   );
   const [first, second] = rows(container);
-  expect(first!.hasAttribute('data-tauri-drag-region')).toBe(true);
-  expect(second!.hasAttribute('data-tauri-drag-region')).toBe(false);
+  expect(first.hasAttribute('data-tauri-drag-region')).toBe(true);
+  expect(second.hasAttribute('data-tauri-drag-region')).toBe(false);
 });
 
 test('ViewTabs are 28px pills and the active one is lifted', () => {

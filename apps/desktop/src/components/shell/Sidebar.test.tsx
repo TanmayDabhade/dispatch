@@ -276,15 +276,13 @@ test('the hidden preference round-trips through its long-standing key', () => {
 test('project rows are disabled until a project resolves; fleet rows are not', () => {
   mount(true, { hasActiveProject: false });
   expect(
-    (screen.getByRole('button', { name: /^Control room/ }) as HTMLButtonElement)
+    screen.getByRole<HTMLButtonElement>('button', { name: /^Control room/ })
       .disabled
   ).toBe(true);
   expect(
-    (screen.getByRole('button', { name: 'New task' }) as HTMLButtonElement)
-      .disabled
+    screen.getByRole<HTMLButtonElement>('button', { name: 'New task' }).disabled
   ).toBe(true);
   expect(
-    (screen.getByRole('button', { name: 'Sessions' }) as HTMLButtonElement)
-      .disabled
+    screen.getByRole<HTMLButtonElement>('button', { name: 'Sessions' }).disabled
   ).toBe(false);
 });

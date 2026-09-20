@@ -111,7 +111,11 @@ export function EditableBodySection({
         data-slot="editable-body"
         data-empty
         onClick={() => setEditing(true)}
-        className={cn(readClass, 'cursor-text text-muted-foreground', className)}
+        className={cn(
+          readClass,
+          'cursor-text text-muted-foreground',
+          className
+        )}
       >
         {placeholder}
       </button>

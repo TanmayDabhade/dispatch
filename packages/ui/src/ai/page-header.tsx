@@ -173,7 +173,7 @@ export function ViewTabs({
     const next = nextRovingIndex(event.key, current, tabs.length);
     if (next === null) return;
     event.preventDefault();
-    onChange(tabs[next]!.id);
+    onChange(tabs[next].id);
     focusRovingItem(event.currentTarget, '[role="tab"]', next);
   }
 

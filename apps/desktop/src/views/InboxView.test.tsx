@@ -115,11 +115,10 @@ function providersWith(log: Log, entries: InboxEntry[] = []) {
     openShortcuts: noop,
     copyTaskId: noop,
   } as unknown as ShellActions;
-  // Stateful like the real seam: mark-all flips every entry's own read flag. `markRead` is
-  // the per-entry call the seam grows in WP2; the view already speaks it when present.
+  // Stateful like the real seam: mark-all flips every entry's own read flag, `markRead` one.
   return function Providers({ children }: { children: ReactNode }) {
     const [current, setCurrent] = useState(entries);
-    const inbox: NotificationInbox & { markRead: (id: string) => void } = {
+    const inbox: NotificationInbox = {
       entries: current,
       unreadCount: current.filter((e) => !e.read).length,
       markAllRead: () => {

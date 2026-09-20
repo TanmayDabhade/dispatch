@@ -12,13 +12,14 @@ import { expect, type Page, test } from '@playwright/test';
 // takes real navigation and its own content assertion — see the fixme'd
 // `review detail` block below.
 const VIEWS = [
-  { name: 'overview', key: 'Meta+1' },
-  { name: 'braindump', key: 'Meta+2' },
-  { name: 'plans', key: 'Meta+3' },
-  { name: 'tasks', key: 'Meta+4' },
-  { name: 'inbox', key: 'Meta+5' },
+  { name: 'inbox', key: 'Meta+1' },
+  { name: 'overview', key: 'Meta+2' },
+  { name: 'braindump', key: 'Meta+3' },
+  { name: 'plans', key: 'Meta+4' },
+  { name: 'tasks', key: 'Meta+5' },
   { name: 'impact', key: 'Meta+6' },
   { name: 'git', key: 'Meta+7' },
+  { name: 'landing', key: 'Meta+8' },
 ];
 
 // global-setup.ts resolves the daemon's per-run token before any test worker

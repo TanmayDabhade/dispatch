@@ -151,6 +151,11 @@ export function TaskView({
             selectedRun={selectedRun}
             onViewPr={onViewPr}
             onOpenImpact={onOpenImpact}
+            onDispatch={
+              data.readyIds.has(doc.meta.id)
+                ? () => void data.handleDispatch(doc.meta.id)
+                : undefined
+            }
           />
         </ErrorBoundary>
       ) : undefined}

@@ -22,7 +22,7 @@ import {
 } from '@/ui/dropdown-menu';
 
 /** A project offered in the switcher's submenu. */
-export interface SwitchProject {
+interface SwitchProject {
   path: string;
   name: string;
 }

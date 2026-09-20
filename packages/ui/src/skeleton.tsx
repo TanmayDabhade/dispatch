@@ -1,12 +1,14 @@
 import './skeleton.css';
-
 import { cn } from './lib/utils';
 
 function Skeleton({ className, ...props }: React.ComponentProps<'div'>) {
   return (
     <div
       data-slot="skeleton"
-      className={cn('skeleton-pulse rounded-control bg-surface-quaternary', className)}
+      className={cn(
+        'skeleton-pulse rounded-control bg-surface-quaternary',
+        className
+      )}
       {...props}
     />
   );
