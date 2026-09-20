@@ -91,7 +91,9 @@ export function PageHeader({
       {hasRow2 && (
         <div
           data-slot="page-header-row"
-          className="shadow-hairline-bottom flex h-11 items-center gap-2 px-4"
+          // `min-h` rather than a fixed height: a tab row that wraps at a narrow window grows
+          // the header instead of spilling over the crumb above and the list below.
+          className="shadow-hairline-bottom flex min-h-11 flex-wrap items-center gap-2 px-4 py-1.5"
         >
           {tabs}
           {controls !== undefined && (

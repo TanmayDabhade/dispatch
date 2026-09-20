@@ -40,7 +40,9 @@ test('row 2 renders only when tabs or controls are given', () => {
     <PageHeader crumb={['Tasks']} controls={<button type="button">x</button>} />
   );
   expect(rows(two)).toHaveLength(2);
-  for (const row of rows(two)) expect(row.className).toContain('h-11');
+  // Both rows sit on the 44px grid; the tab row may grow when its pills wrap.
+  expect(rows(two)[0]?.className).toContain('h-11');
+  expect(rows(two)[1]?.className).toContain('min-h-11');
 });
 
 // Outside the shell nothing about the window leaks in: no toggle, no inset, no drag.
