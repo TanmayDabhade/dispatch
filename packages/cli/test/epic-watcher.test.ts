@@ -3,6 +3,7 @@ import { describe, expect, it } from 'bun:test';
 import type { EpicProgress, ServerEvent } from '../src/apiClient.js';
 import { createEpicWatcher } from '../src/commands/plan.js';
 import { CliError } from '../src/context.js';
+import { formatEpicProgress } from '../src/orchestrateFormat.js';
 import type { SocketLike } from '../src/watch.js';
 
 function sleep(ms: number): Promise<void> {
@@ -55,10 +56,48 @@ function makeProgress(overrides: Partial<EpicProgress> = {}): EpicProgress {
   return {
     epicId: 'e-1',
     active: true,
+    session: null,
+    spend: {
+      settledUsd: 0,
+      liveCount: 0,
+      estimatedLiveUsd: 0,
+      runsStarted: 0,
+      maxSpendUsd: null,
+      maxRuns: null,
+    },
     children: [],
+    waves: [],
     liveRuns: [],
     ...overrides,
   };
+}
+
+// A snapshot the daemon reports once a spend ceiling paused the session:
+// `active` is false, so the watch ends on it, and the render says why.
+function makePausedProgress(): EpicProgress {
+  return makeProgress({
+    active: false,
+    session: {
+      epicId: 'e-1',
+      concurrency: 4,
+      executor: 'fake',
+      state: 'paused',
+      pausedReason: 'budget',
+      maxSpendUsd: 60,
+      maxRuns: null,
+      startedAt: '2026-07-20T00:00:00Z',
+      updatedAt: '2026-07-20T00:00:00Z',
+      active: false,
+    },
+    spend: {
+      settledUsd: 55,
+      liveCount: 1,
+      estimatedLiveUsd: 10,
+      runsStarted: 6,
+      maxSpendUsd: 60,
+      maxRuns: null,
+    },
+  });
 }
 
 describe('createEpicWatcher', () => {
@@ -144,6 +183,69 @@ describe('createEpicWatcher', () => {
     created[0].emitMessage({ type: 'run.changed' });
 
     await watcher.waitForExit();
+    watcher.dispose();
+  });
+
+  it('ends on a paused session (active: false) and renders the paused reason', async () => {
+    const created: FakeSocket[] = [];
+    const rendered: string[] = [];
+    let paused = false;
+    const watcher = createEpicWatcher(
+      'http://127.0.0.1:1',
+      () => Promise.resolve(paused ? makePausedProgress() : makeProgress()),
+      (progress) => rendered.push(formatEpicProgress(progress)),
+      {
+        createSocket: () => {
+          const s = new FakeSocket();
+          created.push(s);
+          return s;
+        },
+      }
+    );
+    created[0].emitOpen();
+    await sleep(5);
+    expect(rendered.at(-1)).toContain('epic e-1: active');
+
+    paused = true;
+    created[0].emitMessage({
+      type: 'epic.paused',
+      epicId: 'e-1',
+      reason: 'budget',
+    });
+
+    await watcher.waitForExit();
+    watcher.dispose();
+    expect(rendered.at(-1)).toContain('epic e-1: paused (concurrency 4)');
+    expect(rendered.at(-1)).toContain('paused — spend ceiling reached');
+    expect(rendered.at(-1)).toContain(
+      'spend $55.00 settled + ~$10.00 in flight of $60.00 · 6 runs'
+    );
+  });
+
+  it('refetches on epic.changed, not only task/run events', async () => {
+    const created: FakeSocket[] = [];
+    let fetches = 0;
+    const watcher = createEpicWatcher(
+      'http://127.0.0.1:1',
+      () => {
+        fetches++;
+        return Promise.resolve(makeProgress());
+      },
+      () => {},
+      {
+        createSocket: () => {
+          const s = new FakeSocket();
+          created.push(s);
+          return s;
+        },
+      }
+    );
+    created[0].emitOpen();
+    await sleep(5);
+    expect(fetches).toBe(1);
+    created[0].emitMessage({ type: 'epic.changed', epicId: 'e-1' });
+    await sleep(5);
+    expect(fetches).toBe(2);
     watcher.dispose();
   });
 
