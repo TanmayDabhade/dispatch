@@ -158,9 +158,10 @@ export interface StartServerOptions {
   // directly.
   storeBackend?: TaskStoreBackend;
   // Overrides which executors get registered on the orchestrator, in place
-  // of the production defaults (ClaudeExecutor as 'claude' and CodexExecutor
-  // as 'codex' — Phase 7 moved FakeExecutor behind bin.ts's DISPATCH_ENABLE_FAKES
-  // gate rather than always registering it here). Tests that dispatch
+  // of the production defaults (ClaudeExecutor as 'claude', CodexExecutor as
+  // 'codex' when the codex CLI is installed — Phase 7 moved FakeExecutor
+  // behind bin.ts's DISPATCH_ENABLE_FAKES gate rather than always registering
+  // it here). Tests that dispatch
   // through the real HTTP surface without exercising the real Agent SDK
   // (e.g. a request that omits `executor` and so defaults to 'claude') use
   // this to register a FakeExecutor under 'claude' too — the point being
@@ -731,8 +732,9 @@ async function bootServer(
     // nothing in the audit trail until an unrelated task edit came along.
     if (isReceiptEvent(event)) receiptsScheduler?.notifyChanged();
   });
-  // The orchestrator's own executor registry contains the real 'claude' and
-  // 'codex' backends. API calls still default to 'claude' when omitted.
+  // The orchestrator's own executor registry: the real 'claude' backend, plus
+  // 'codex' when its CLI is installed. A call that omits `executor` runs on
+  // the project's `orchestrator.executor` (see Orchestrator.defaultExecutorName).
   // FakeExecutor is NOT registered by default (Phase 7) — bin.ts registers
   // it under 'fake' only when DISPATCH_ENABLE_FAKES=1, a test/e2e-only hook.
   // Tests override this default entirely via `registerExecutors` (see its
