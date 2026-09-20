@@ -1,6 +1,13 @@
 import { defineConfig } from '@playwright/test';
 
-import { DAEMON_PORT, HOME, REPO, ROOT, VITE_PORT } from './e2e/paths';
+import {
+  APP_TOKEN,
+  DAEMON_PORT,
+  HOME,
+  REPO,
+  ROOT,
+  VITE_PORT,
+} from './e2e/paths';
 
 export default defineConfig({
   testDir: './e2e',
@@ -34,7 +41,7 @@ export default defineConfig({
       // drives the chat's confirm/deny flow through them, with no live LLM.
       // Nothing uses a fake unless a request names it, so the screenshot specs
       // see the same daemon they always did.
-      command: `DISPATCH_HOME=${HOME} DISPATCH_ENABLE_FAKES=1 bun ${REPO}/packages/server/src/bin.ts --root ${ROOT} --port ${DAEMON_PORT}`,
+      command: `DISPATCH_HOME=${HOME} DISPATCH_ENABLE_FAKES=1 DISPATCH_APP_TOKEN=${APP_TOKEN} bun ${REPO}/packages/server/src/bin.ts --root ${ROOT} --port ${DAEMON_PORT}`,
       port: DAEMON_PORT,
       reuseExistingServer: true,
     },

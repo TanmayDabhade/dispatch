@@ -52,14 +52,12 @@ function authedUrl(baseURL: string | undefined): string {
 // ends up on screen. A blank render must fail the suite, not become the new
 // baseline.
 async function assertFixtureDataLoaded(page: Page): Promise<void> {
-  // Named by the ControlRibbon stat tiles specifically (accessible name is
-  // "<count> <label>"), because "Failed"/"Needs review" alone also match the
+  // Named by the ControlRibbon pills specifically (accessible name is
+  // "<label>, <count>"), because "Failed"/"Review" alone also match the
   // feed's group header and per-row status text — this is the one spot that
   // pins down a real, non-zero fixture count rather than just some text.
-  await expect(page.getByRole('button', { name: '1 Failed' })).toBeVisible();
-  await expect(
-    page.getByRole('button', { name: '5 Needs review' })
-  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Failed, 1' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Review, 5' })).toBeVisible();
   await expect(
     page.getByText('Nothing running, nothing waiting on you.')
   ).toHaveCount(0);
@@ -87,7 +85,7 @@ async function assertFixtureDataLoaded(page: Page): Promise<void> {
 for (const view of VIEWS) {
   test(`${view.name} renders`, async ({ page, baseURL }) => {
     await page.goto(authedUrl(baseURL));
-    await page.getByText('Dispatch').first().waitFor();
+    await page.locator('#dispatch-sidebar').waitFor();
     await assertFixtureDataLoaded(page);
     await page.keyboard.press(view.key);
     // The pulse on in-flight rows is the only animation these surfaces have;
@@ -109,7 +107,17 @@ for (const view of VIEWS) {
       // 'the live rail keeps its column' test below covers that directly
       // instead — as measured geometry rather than as pixels, so it needs no
       // baseline of its own and stays honest through cosmetic rail edits.
-      mask: [page.locator('[data-testid="live-rail"]')],
+      // The frame's status strip is live chrome too: "Synced 1m ago" and the
+      // day's spend change with the clock and with every run the suite makes.
+      // The Git view's right pane renders the fixture repo's own working-tree
+      // diff, which every daemon boot and every run of this suite appends to
+      // (ledger lines, task frontmatter) — data, not layout. The file tree
+      // and the chrome around it are still compared.
+      mask: [
+        page.locator('[data-testid="live-rail"]'),
+        page.locator('[data-slot="frame-status-strip"]'),
+        page.locator('[data-slot="git-right-pane"]'),
+      ],
     });
   });
 }
@@ -140,46 +148,31 @@ test('the live rail keeps its column on a project view', async ({
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'dark', 'layout is theme-independent');
 
-  // '0' is expanded — the state the rail boots in for every screenshot above.
-  await page.addInitScript(() => {
-    window.localStorage.setItem('dispatch:live-rail', '0');
-  });
   await page.goto(authedUrl(baseURL));
-  await page.getByText('Dispatch').first().waitFor();
+  await page.locator('#dispatch-sidebar').waitFor();
   await assertFixtureDataLoaded(page);
 
-  const rail = page.getByTestId('live-rail');
+  // The rail is a fixed 244px column (Linear's `--sidebar-width`), painted on
+  // the frame beside the inset panel — see packages/ui/src/sidebar.tsx.
+  const rail = page.locator('#dispatch-sidebar');
   await expect(rail).toBeVisible();
   const railBox = await rail.boundingBox();
-  if (railBox === null) throw new Error('the live rail has no layout box');
+  if (railBox === null) throw new Error('the rail has no layout box');
+  expect(railBox.width).toBeCloseTo(244, 0);
 
-  // The invariant is `w-60` — 15rem — not a pixel count. global.css sets
-  // `html { font-size: clamp(16px, 0.55vw + 9.5px, 21px) }`, so 15rem is the
-  // 240px the mask reserved only while the viewport stays at or below roughly
-  // 1182px; playwright.config.ts pins 1036 today, but a later change there
-  // would fail this test with the rail perfectly correct. Measuring the root
-  // font-size and multiplying keeps the assertion on the rail's width rather
-  // than on the viewport the config happens to use.
-  const remPx = await page.evaluate(() =>
-    Number.parseFloat(getComputedStyle(document.documentElement).fontSize)
-  );
-  expect(railBox.width).toBeCloseTo(15 * remPx, 0);
-
-  // Nothing inside may spill past that column — a long task title or the tab
-  // strip overflowing is precisely what the mask would now hide.
+  // Nothing inside may spill past that column — a long task title in the
+  // Live agents section is precisely what the screenshot mask would now hide.
   const overflow = await rail.evaluate((el) => el.scrollWidth - el.clientWidth);
   expect(overflow).toBeLessThanOrEqual(0);
 
-  // The Overseer tab's composer is the tallest thing the rail has to fit, and
-  // the surface this branch added: it has to land inside the column, not be
-  // clipped out of it by the transcript above.
-  await page.getByRole('tab', { name: 'Overseer' }).click();
-  const composer = page.getByLabel('Overseer opening question');
-  await expect(composer).toBeVisible();
-  const composerBox = await composer.boundingBox();
-  if (composerBox === null) throw new Error('the rail composer has no box');
-  expect(composerBox.x).toBeGreaterThanOrEqual(railBox.x);
-  expect(composerBox.x + composerBox.width).toBeLessThanOrEqual(
+  // The live-agents section is the part that moves; it must sit inside the
+  // column rather than be clipped out of it.
+  const live = page.getByTestId('live-rail');
+  await expect(live).toBeVisible();
+  const liveBox = await live.boundingBox();
+  if (liveBox === null) throw new Error('the live-agents section has no box');
+  expect(liveBox.x).toBeGreaterThanOrEqual(railBox.x);
+  expect(liveBox.x + liveBox.width).toBeLessThanOrEqual(
     railBox.x + railBox.width
   );
 });
@@ -221,7 +214,7 @@ test.describe('review detail', () => {
       window.localStorage.setItem('dispatch:live-rail', '1');
     });
     await page.goto(authedUrl(baseURL));
-    await page.getByText('Dispatch').first().waitFor();
+    await page.locator('#dispatch-sidebar').waitFor();
     await assertFixtureDataLoaded(page);
     await page.keyboard.press('Meta+5');
 
@@ -303,7 +296,7 @@ test('a colour utility beats the dense type treatments', async ({
   baseURL,
 }) => {
   await page.goto(authedUrl(baseURL));
-  await page.getByText('Dispatch').first().waitFor();
+  await page.locator('#dispatch-sidebar').waitFor();
 
   const colours = await page.evaluate(() => {
     const read = (className: string) => {

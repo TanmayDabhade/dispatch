@@ -835,7 +835,7 @@ export function BranchesView({
           ))}
         </div>
 
-        <div className="min-h-0 overflow-hidden">
+        <div data-slot="git-right-pane" className="min-h-0 overflow-hidden">
           <GitRightPane
             pane={rightPane}
             status={status}
