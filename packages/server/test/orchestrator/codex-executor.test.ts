@@ -281,9 +281,10 @@ describe('CodexExecutor', () => {
     const start = process.requests.find(
       (request) => request.method === 'thread/start'
     );
-    const servers = (
-      start?.params?.config as { mcp_servers: Record<string, unknown> }
-    ).mcp_servers;
+    const config = (start?.params?.config ?? {}) as {
+      mcp_servers?: Record<string, unknown>;
+    };
+    const servers = config.mcp_servers ?? {};
     expect(Object.keys(servers).sort()).toEqual(['carto', 'dispatch']);
     expect(servers.carto).toEqual({
       command: '/bin/sh',
