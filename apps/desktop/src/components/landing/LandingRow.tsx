@@ -17,6 +17,7 @@ import { useState } from 'react';
 
 import { landingKey } from '../../hooks/useDispatchProject';
 import { describeError } from '../../lib/actionFeedback';
+import { checklistLabel } from '../../lib/judgmentBadges';
 import { gateChipLabel, relativeTime } from '../../lib/landingView';
 import {
   isRetryable,
@@ -28,6 +29,7 @@ import { ForkConfirm } from '../runs/PrReviewPanel';
 import { REVIEW_VERDICT, StatusPill } from '../runs/PrStatusPills';
 import { useToasts } from '../shell/Toasts';
 import { ChecksPopover } from './ChecksPopover';
+import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 import { StepStrip } from '@/ui/chrome/StepStrip';
 import {
@@ -219,6 +221,23 @@ export function LandingRow({
         {steps !== null && <StepStrip steps={steps} className="mt-1.5 w-24" />}
         {queue !== undefined && isRetryable(queue.entry.state) && (
           <QueueRetryButton onRetry={onRetryQueue} />
+        )}
+        {checklistLabel(row.checklist) !== null && (
+          <div
+            className={cn(
+              'dense-meta mt-1 truncate',
+              (row.checklist?.weak.length ?? 0) > 0
+                ? 'text-state-waiting-fg'
+                : 'text-muted-foreground'
+            )}
+            title={
+              (row.checklist?.weak.length ?? 0) > 0
+                ? `Weak: ${row.checklist?.weak.join(' · ')}`
+                : undefined
+            }
+          >
+            {checklistLabel(row.checklist)}
+          </div>
         )}
       </TableCell>
 

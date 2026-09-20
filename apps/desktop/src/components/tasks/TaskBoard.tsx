@@ -1,4 +1,9 @@
-import type { EpicProgress, RunMeta, RunState } from '@dispatch/client';
+import type {
+  EpicProgress,
+  ReadinessReading,
+  RunMeta,
+  RunState,
+} from '@dispatch/client';
 import type { TaskDoc, UpdatePatch } from '@dispatch/core/browser';
 import {
   closestCenter,
@@ -47,6 +52,8 @@ interface TaskBoardProps {
    * tints those cards amber. Optional so a board rendered without live run data (there
    * isn't one today) simply shows no highlights. */
   attentionByTaskId?: ReadonlyMap<string, TaskAttention>;
+  /** Readiness readings per task id (see `useReadinessById`); a card with none shows no badge. */
+  readinessById?: ReadonlyMap<string, ReadinessReading>;
   /** Epic dispatch progress per epic id, once fetched. */
   epicProgressById: Map<string, EpicProgress>;
   /** Default concurrency for a fresh epic dispatch session (config's `orchestrator.epicConcurrency`). */
@@ -206,6 +213,7 @@ export function TaskBoard({
   latestRunByTaskId,
   attentionByTaskId,
   epicProgressById,
+  readinessById,
   epicConcurrencyDefault,
   epics,
   groupByEpic = true,
@@ -442,6 +450,9 @@ export function TaskBoard({
                                         doc.meta.id
                                       )}
                                       run={latestRunByTaskId.get(doc.meta.id)}
+                                      readiness={readinessById?.get(
+                                        doc.meta.id
+                                      )}
                                       // Grouped board: the lane heading already names the
                                       // epic, so the card skips the breadcrumb. Flat board:
                                       // the breadcrumb is how a card keeps its epic.
@@ -507,6 +518,7 @@ export function TaskBoard({
               blocked={blockedIds.has(activeDoc.meta.id)}
               liveRunState={liveRunStateByTaskId.get(activeDoc.meta.id)}
               run={latestRunByTaskId.get(activeDoc.meta.id)}
+              readiness={readinessById?.get(activeDoc.meta.id)}
               statuses={statuses}
               onStatusChange={() => {}}
               onEditTask={() => {}}

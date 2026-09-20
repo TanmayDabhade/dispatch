@@ -9,6 +9,7 @@ import {
   BRAIN_DUMP_DRAFT_KEY,
   usePersistedDraft,
 } from '../hooks/usePersistedDraft';
+import { triageHints } from '../lib/judgmentBadges';
 import { buildMilestonePrompt } from '../lib/milestonePrompt';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
@@ -437,6 +438,7 @@ export function BrainDumpView({
               <Fragment key={it.id}>
                 <InboxRow
                   item={it}
+                  hints={triageHints(it, data.inboxTriage?.items[it.id])}
                   selected={selected.has(it.id)}
                   busy={busy}
                   editing={editing?.id === it.id}
@@ -664,6 +666,7 @@ function Key({ combo, what }: { combo: string; what: string }) {
 
 function InboxRow({
   item,
+  hints,
   selected,
   busy,
   editing,
@@ -675,6 +678,8 @@ function InboxRow({
   onDismiss,
 }: {
   item: InboxItem;
+  /** What the triage judged (see `triageHints`); empty when it agrees or has not run. */
+  hints: string[];
   selected: boolean;
   busy: boolean;
   /** Whether this row's own inline editor is open — disables just its "Add detail" button,
@@ -742,6 +747,14 @@ function InboxRow({
             <Bot className="text-muted-foreground size-3.5" />
           </span>
         )}
+        {hints.map((hint) => (
+          <span
+            key={hint}
+            className="dense-meta text-state-waiting-fg shrink-0"
+          >
+            {hint}
+          </span>
+        ))}
       </span>
       <span className="flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100">
         <BarButton onClick={onMakeTask} disabled={busy}>

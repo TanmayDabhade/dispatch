@@ -51,6 +51,8 @@ export interface InboxTriage {
   kindConfidence: number;
   /** Null when no listed epic won with confidence ≥ EPIC_CONFIDENCE. */
   epicId: string | null;
+  /** The winning epic's title at triage time, so a client needs no lookup. */
+  epicTitle: string | null;
   epicConfidence: number;
   /** Tasks or other inbox items this looks like a duplicate of, strongest first. */
   duplicates: { id: string; probability: number }[];
@@ -237,6 +239,7 @@ type TriageAnswers = {
 export function interpretTriage(
   itemId: string,
   hash: string,
+  epics: TriageEpic[],
   candidates: TriageCandidate[],
   answers: TriageAnswers
 ): InboxTriage {
@@ -264,6 +267,7 @@ export function interpretTriage(
     kind,
     kindConfidence: answers.kind.confidence,
     epicId,
+    epicTitle: epics.find((e) => e.id === epicId)?.title ?? null,
     epicConfidence: epic?.confidence ?? 0,
     duplicates,
   };
@@ -301,6 +305,7 @@ export async function triageInbox(
       return interpretTriage(
         item.id,
         triageHash(item),
+        epics,
         candidates,
         answers as TriageAnswers
       );

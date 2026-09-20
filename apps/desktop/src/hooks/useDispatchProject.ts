@@ -14,6 +14,7 @@ import type {
   MergeQueueSnapshot,
   PlanProposal,
   PlanRecord,
+  ReadinessReading,
   RepoPr,
   ReviewComment,
   RunDetail,
@@ -301,6 +302,12 @@ export interface DispatchProjectData {
    * page visit never bills a model call of its own. Null until fetched or when
    * no pass has ever run. */
   inboxClusters: import('@dispatch/client').InboxClusterSnapshot | null;
+  /** The persisted result of the last triage pass — kind, epic and possible
+   * duplicates per capture. Null until fetched or when no pass has run. */
+  inboxTriage: import('@dispatch/client').InboxTriageSnapshot | null;
+  /** Readiness readings by task id, for the tasks the daemon has judged
+   * (ready ones only — it judges as it serves `/api/tasks/ready`). */
+  readinessById: ReadonlyMap<string, ReadinessReading>;
   /** Every plan's summary, newest activity first — the Plans page's history,
    * persisted server-side so it survives restarts and spans windows. */
   plans: import('@dispatch/client').PlanSummary[];
@@ -695,6 +702,10 @@ export function useDispatchProject(
     () => ['dispatch-inbox-clusters', port],
     [port]
   );
+  const inboxTriageQueryKey = useMemo(
+    () => ['dispatch-inbox-triage', port],
+    [port]
+  );
   // The drafts list (`GET /api/tasks/drafts`) query key, invalidated below
   // on `draft.changed`.
   const draftsQueryKey = useMemo(() => ['dispatch-drafts', port], [port]);
@@ -1021,6 +1032,28 @@ export function useDispatchProject(
     },
     enabled: client !== null,
   });
+
+  // The last triage pass (kind, epic, duplicates per capture) — written by
+  // the same cluster call, so it shares that call's invalidation.
+  const { data: inboxTriage } = useQuery({
+    queryKey: inboxTriageQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchInboxTriage();
+    },
+    enabled: client !== null,
+  });
+
+  // Readiness readings by task id, straight off the ready-tasks response: the
+  // daemon judges stale tasks as it serves that route, so the board's badge
+  // costs no request of its own and refreshes with the ready set.
+  const readinessById = useMemo(() => {
+    const map = new Map<string, ReadinessReading>();
+    for (const task of readyTasks ?? []) {
+      if (task.readiness !== undefined) map.set(task.meta.id, task.readiness);
+    }
+    return map;
+  }, [readyTasks]);
 
   // Every dispatch worktree/branch on disk. Each row costs several `git`
   // shell-outs on the server (ahead count, merged check, dirty check), so this
@@ -2449,8 +2482,9 @@ export function useDispatchProject(
     // A successful pass was persisted server-side; refetch the snapshot so
     // every consumer renders the same result the call returned.
     void queryClient.invalidateQueries({ queryKey: inboxClustersQueryKey });
+    void queryClient.invalidateQueries({ queryKey: inboxTriageQueryKey });
     return res;
-  }, [client, queryClient, inboxClustersQueryKey]);
+  }, [client, queryClient, inboxClustersQueryKey, inboxTriageQueryKey]);
 
   // Retries every entry the queue is holding on a `blocked-environment` (a dirty checkout, a
   // staged index, the wrong branch). Deliberately queue-wide rather than per-entry, because the
@@ -2597,6 +2631,8 @@ export function useDispatchProject(
     handleDismissEnrich,
     handleClusterInbox,
     inboxClusters: inboxClusters ?? null,
+    inboxTriage: inboxTriage ?? null,
+    readinessById,
     plans: plans ?? [],
     reviewComments: reviewComments ?? [],
     handleAddReviewComment,

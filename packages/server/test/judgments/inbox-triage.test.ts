@@ -159,8 +159,10 @@ describe('interpretTriage', () => {
     { id: 'i2', title: 'B' },
   ];
 
+  const epics = [{ id: 'e1', title: 'Landing', summary: '' }];
+
   test('keeps a confident epic and confident duplicates, sorted', () => {
-    const got = interpretTriage('i1', 'h', candidates, {
+    const got = interpretTriage('i1', 'h', epics, candidates, {
       kind: {
         type: 'choice',
         choice: 'task',
@@ -182,6 +184,7 @@ describe('interpretTriage', () => {
       kind: 'task',
       kindConfidence: 0.8,
       epicId: 'e1',
+      epicTitle: 'Landing',
       epicConfidence: 0.9,
       duplicates: [
         { id: 'i2', probability: 0.95 },
@@ -191,7 +194,7 @@ describe('interpretTriage', () => {
   });
 
   test('drops an epic below 0.6, a none answer, and weak duplicates', () => {
-    const low = interpretTriage('i1', 'h', candidates, {
+    const low = interpretTriage('i1', 'h', epics, candidates, {
       kind: {
         type: 'choice',
         choice: 'note',
@@ -208,9 +211,10 @@ describe('interpretTriage', () => {
       dup_i2: { type: 'noul', noul: 0.1 },
     });
     expect(low.epicId).toBeNull();
+    expect(low.epicTitle).toBeNull();
     expect(low.duplicates).toEqual([]);
 
-    const none = interpretTriage('i1', 'h', [], {
+    const none = interpretTriage('i1', 'h', epics, [], {
       kind: {
         type: 'choice',
         choice: 'note',
@@ -247,6 +251,7 @@ describe('triageInbox', () => {
           kind: 'task' as const,
           kindConfidence: 1,
           epicId: 'e1',
+          epicTitle: 'E1',
           epicConfidence: 1,
           duplicates: [],
         },
@@ -288,6 +293,7 @@ describe('untriagedForClustering', () => {
           kind: 'task' as const,
           kindConfidence: 1,
           epicId: 'e1',
+          epicTitle: 'E1',
           epicConfidence: 1,
           duplicates: [],
         },
@@ -297,6 +303,7 @@ describe('untriagedForClustering', () => {
           kind: 'task' as const,
           kindConfidence: 1,
           epicId: null,
+          epicTitle: null,
           epicConfidence: 0,
           duplicates: [],
         },

@@ -1,4 +1,4 @@
-import type { RunMeta, RunState } from '@dispatch/client';
+import type { ReadinessReading, RunMeta, RunState } from '@dispatch/client';
 import type { TaskDoc, UpdatePatch } from '@dispatch/core/browser';
 import type {
   DraggableAttributes,
@@ -8,6 +8,7 @@ import { ArrowRight, ChevronRight } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { formatRelativeTimeFromIso } from '../../lib/format';
+import { readinessBadges } from '../../lib/judgmentBadges';
 import { resolveCardKeyAction } from '../../lib/keyboard';
 import { colorForEpic } from '../../lib/projectColor';
 import { MergeLadderDot } from '../runs/MergeLadderDot';
@@ -82,6 +83,9 @@ interface TaskCardTileProps {
    * line, id / epic / labels / age on the next. Run state and blocked collapse to glyphs
    * with a title tooltip. False renders the four-row comfortable card. */
   compact?: boolean;
+  /** The daemon's readiness reading for this task, when judged — a thin spec
+   * or a likely split shows as a badge beside the labels. */
+  readiness?: ReadinessReading;
 }
 
 // Only shows the first few label pills before collapsing the rest into a "+N" — Linear's own
@@ -114,6 +118,7 @@ export function TaskCardTile({
   archived = false,
   needsAttention = false,
   compact = false,
+  readiness,
 }: TaskCardTileProps) {
   const [dispatching, setDispatching] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -372,6 +377,16 @@ export function TaskCardTile({
                 +{hiddenLabelCount}
               </span>
             )}
+            {readinessBadges(readiness).map((badge) => (
+              <Badge
+                key={badge}
+                variant="outline"
+                title={readiness?.label}
+                className="text-state-waiting-fg h-4 rounded px-1.5 py-0 text-[10px] font-normal"
+              >
+                {badge}
+              </Badge>
+            ))}
             {liveRunState !== undefined && (
               <span
                 className={cn(

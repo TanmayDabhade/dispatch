@@ -1223,6 +1223,8 @@ export interface InboxTriage {
   kindConfidence: number;
   /** The open epic this belongs to, or null when none won with confidence. */
   epicId: string | null;
+  /** That epic's title at triage time, so a row can name it without a lookup. */
+  epicTitle: string | null;
   epicConfidence: number;
   /** Tasks or other captures this looks like a duplicate of, strongest first. */
   duplicates: { id: string; probability: number }[];
