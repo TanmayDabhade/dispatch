@@ -1,42 +1,40 @@
 import type { ReceiptsStatus, SyncStatus } from '@dispatch/client';
-import { useState } from 'react';
 
 import { formatRelativeTimeFromIso } from '@/lib/format';
-import { cn } from '@/lib/utils';
-import { Button } from '@/ui/button';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/ui/collapsible';
 
-interface SyncChipProps {
-  /** `null` until the first `GET /api/sync` resolves — nothing renders yet. */
-  status: SyncStatus | null;
-  /** Flips `.dispatch/config.yml`'s `autoCommit` off — the kill switch. */
-  onDisableAutoCommit: () => void;
+/** The dot colour in the status strip's sync pill, by run-state hue: green means synced,
+ * amber means something is waiting on a push, red means a conflict, grey means off. */
+export type SyncTone = 'review' | 'waiting' | 'failed' | 'blocked' | 'ready';
+
+export interface SyncSummary {
+  tone: SyncTone;
+  /** The one line the pill shows. */
+  message: string;
+  /** Extra lines for the pill's tooltip: pending counts, the merge-driver warning. */
+  detail: string[];
+  /** Whether "Auto-commit off" is worth offering — only while the board syncer is actually
+   * running (there is nothing to turn off on a receipts project or one already off). */
+  canDisableAutoCommit: boolean;
 }
 
-// Tailwind can't build class names at runtime, so this is spelled out rather
-// than templated — same reason StateDot.tsx keeps its own map.
-const DOT_CLASS: Record<SyncStatus['state'], string> = {
-  idle: 'bg-state-review',
-  'local-only': 'bg-state-waiting',
-  blocked: 'bg-state-failed',
-  disabled: 'bg-state-blocked',
-  off: 'bg-state-ready',
+const SYNC_TONE: Record<SyncStatus['state'], SyncTone> = {
+  idle: 'review',
+  'local-only': 'waiting',
+  blocked: 'failed',
+  disabled: 'blocked',
+  off: 'ready',
 };
 
-// The receipt log's own dot colours. A database-backed project has no board
+// The receipt log's own tones. A database-backed project has no board
 // syncer, so `status.state` is permanently `disabled` there and rendering it
 // would tell the user their sync is broken when it is working exactly as
 // designed — the audit trail just reaches git through the exporter instead.
-const RECEIPTS_DOT_CLASS: Record<ReceiptsStatus['state'], string> = {
-  committed: 'bg-state-ready',
-  clean: 'bg-state-ready',
-  failed: 'bg-state-failed',
-  idle: 'bg-state-review',
-  disabled: 'bg-state-blocked',
+const RECEIPTS_TONE: Record<ReceiptsStatus['state'], SyncTone> = {
+  committed: 'ready',
+  clean: 'ready',
+  failed: 'failed',
+  idle: 'review',
+  disabled: 'blocked',
 };
 
 // Whether this project's audit trail goes to the receipt log rather than to
@@ -68,12 +66,10 @@ function receiptsMessageFor(receipts: ReceiptsStatus): string {
   }
 }
 
-// One line a user can act on per state, per the plan's copy requirement:
-// `idle` says when, `local-only`/`blocked` say why (from `detail`),
-// `disabled` says what to do about it (a restart — see api.ts's
-// DISABLED_SYNC_DETAIL for why nothing here can recover it on its own), and
-// `off` says how to turn it on (Settings — this is the ordinary, expected
-// state for a project that has never opted in, not a problem to fix).
+// One line a user can act on per state: `idle` says when, `local-only`/`blocked` say why
+// (from `detail`), `disabled` says what to do about it (a restart — see api.ts's
+// DISABLED_SYNC_DETAIL for why nothing here can recover it on its own), and `off` says how
+// to turn it on (Settings — the ordinary state for a project that has never opted in).
 function messageFor(status: SyncStatus): string {
   switch (status.state) {
     case 'idle':
@@ -96,100 +92,35 @@ function messageFor(status: SyncStatus): string {
 }
 
 /**
- * The board syncer's status: a one-line chip in the sidebar footer showing
- * last-synced (or why it isn't), what's still pending in each direction, and
- * the kill switch for the `autoCommit` setting that drives it.
- *
- * Fed by `useDispatchProject`'s `syncStatus` (a plain `GET /api/sync` query,
- * refetched on the `board.sync` WS event) — this component itself does no
- * fetching, matching every other shell widget's props-in shape.
+ * The board syncer's status as the frame status strip's pill reads it: one line, a dot
+ * hue, and the detail lines that used to be a disclosure in the rail footer. A project has
+ * a board syncer or a receipts exporter, never both, so this reports whichever one is
+ * actually running. Fed by `useDispatchProject`'s `syncStatus` (a plain `GET /api/sync`
+ * query, refetched on the `board.sync` WS event).
  */
-export function SyncChip({ status, onDisableAutoCommit }: SyncChipProps) {
-  // Owned here (not `<details>`'s native toggle state) so the disclosure can be a controlled
-  // Collapsible — must run before the `status === null` early return, same as any other hook.
-  const [warningOpen, setWarningOpen] = useState(false);
-
-  if (status === null) return null;
-
-  // A project has a board syncer or a receipts exporter, never both, so the
-  // chip reports whichever one is actually running rather than always reading
-  // the board-sync fields.
-  const receipts = usesReceipts(status);
-  const message = receipts
-    ? receiptsMessageFor(status.receipts)
-    : messageFor(status);
-
-  return (
-    <div className="flex flex-col gap-1 px-2 pt-2 text-[11px]">
-      <div className="flex items-center gap-1.5">
-        <span
-          aria-hidden
-          className={cn(
-            'size-1.5 shrink-0 rounded-full',
-            receipts
-              ? RECEIPTS_DOT_CLASS[status.receipts.state]
-              : DOT_CLASS[status.state]
-          )}
-        />
-        <span
-          className="text-muted-foreground min-w-0 flex-1 truncate"
-          title={message}
-        >
-          {message}
-        </span>
-      </div>
-      {!receipts &&
-        (status.pendingOutgoing > 0 || status.pendingIncoming > 0) && (
-          <div className="text-muted-foreground/80 flex items-center gap-2 pl-3">
-            {status.pendingOutgoing > 0 && (
-              <span>{status.pendingOutgoing} to push</span>
-            )}
-            {status.pendingIncoming > 0 && (
-              <span>{status.pendingIncoming} incoming</span>
-            )}
-          </div>
-        )}
-      {/* A broken merge driver never blocks sync itself — git still resolves a
-          genuine conflict correctly without it — so this is a standalone
-          warning line, not folded into `message` above.
-
-          A disclosure rather than one truncated line: the warning is three
-          sentences and the sidebar is ~200px, so truncating showed about four
-          words and hid the remedy. The summary fits the width; the body wraps
-          instead of truncating. */}
-      {status.mergeDriverWarning !== null && (
-        <Collapsible
-          open={warningOpen}
-          onOpenChange={setWarningOpen}
-          className="pl-3"
-        >
-          <CollapsibleTrigger className="text-state-waiting cursor-pointer text-left">
-            <span className="underline decoration-dotted underline-offset-2">
-              Task merge driver not set up
-            </span>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <p className="text-muted-foreground mt-1 leading-snug text-pretty">
-              {status.mergeDriverWarning}
-            </p>
-          </CollapsibleContent>
-        </Collapsible>
-      )}
-      {/* No point offering the kill switch once sync is already off — flipping
-          autoCommit doesn't stop anything that isn't running. */}
-      {/* autoCommit drives the board syncer only — there is nothing for it to
-          turn off on a project whose trail goes to the receipt log. */}
-      {!receipts && status.state !== 'disabled' && status.state !== 'off' && (
-        <Button
-          type="button"
-          variant="link"
-          size="xs"
-          onClick={onDisableAutoCommit}
-          className="text-muted-foreground/70 hover:text-foreground h-auto self-start p-0 text-[10px] font-normal underline-offset-2"
-        >
-          Turn off auto-commit
-        </Button>
-      )}
-    </div>
-  );
+export function syncSummary(status: SyncStatus): SyncSummary {
+  if (usesReceipts(status)) {
+    return {
+      tone: RECEIPTS_TONE[status.receipts.state],
+      message: receiptsMessageFor(status.receipts),
+      detail: [],
+      canDisableAutoCommit: false,
+    };
+  }
+  const detail: string[] = [];
+  if (status.pendingOutgoing > 0)
+    detail.push(`${status.pendingOutgoing} to push`);
+  if (status.pendingIncoming > 0)
+    detail.push(`${status.pendingIncoming} incoming`);
+  // A broken merge driver never blocks sync itself — git still resolves a genuine
+  // conflict correctly without it — so it is a standalone line, not folded into `message`.
+  if (status.mergeDriverWarning !== null) {
+    detail.push(`Task merge driver not set up: ${status.mergeDriverWarning}`);
+  }
+  return {
+    tone: SYNC_TONE[status.state],
+    message: messageFor(status),
+    detail,
+    canDisableAutoCommit: status.state !== 'disabled' && status.state !== 'off',
+  };
 }

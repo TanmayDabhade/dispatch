@@ -14,17 +14,18 @@
    hand-rolled components. Only aliases — no literals — so tokens.css's own dark block flips
    these for free and this file never restates the palette. */
 :root {
-  --radius: 0.625rem;
+  /* 8px so `rounded-sm/md/lg/xl` land on 4/6/8/12. */
+  --radius: 8px;
 
   --background: var(--surface-page);
   --foreground: var(--text-primary);
   --card: var(--surface-card);
   --card-foreground: var(--text-primary);
-  --popover: var(--surface-card);
+  --popover: var(--surface-popover);
   --popover-foreground: var(--text-primary);
   --primary: var(--accent);
   --primary-foreground: var(--accent-contrast);
-  --secondary: var(--surface-muted);
+  --secondary: var(--surface-control);
   --secondary-foreground: var(--text-primary);
   --muted: var(--surface-muted);
   --muted-foreground: var(--text-muted);
@@ -38,15 +39,15 @@
   --destructive-foreground: var(--accent-contrast);
   --border: var(--border-default);
   --input: var(--border-default);
-  --ring: var(--accent);
-  --sidebar: var(--surface-page);
+  --ring: var(--focus-ring);
+  --sidebar: var(--surface-frame);
   --sidebar-foreground: var(--text-primary);
-  --sidebar-primary: var(--accent);
+  --sidebar-primary: var(--focus-ring);
   --sidebar-primary-foreground: var(--accent-contrast);
-  --sidebar-accent: var(--accent-muted);
+  --sidebar-accent: var(--surface-selected);
   --sidebar-accent-foreground: var(--text-primary);
   --sidebar-border: var(--border-default);
-  --sidebar-ring: var(--accent);
+  --sidebar-ring: var(--focus-ring);
 }
 
 @theme inline {
@@ -75,8 +76,18 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
 
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-sans:
+    'Inter Variable', 'SF Pro Display', -apple-system, BlinkMacSystemFont,
+    system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
+  /* Inter Variable's optical body weight: `font-book`. */
+  --font-weight-book: 450;
+
+  /* Tailwind's stock sizes snapped onto the Linear scale (micro/small/regular) so a bare
+     `text-xs`/`text-sm`/`text-base` sits on the same steps as the tokens.css scale. */
+  --text-xs: 11px;
+  --text-sm: 13px;
+  --text-base: 15px;
 
   /* Run-state palette, forwarded from tokens.css so dense rows can say
      `text-state-waiting bg-state-waiting-surface` instead of carrying an inline style object.
@@ -103,15 +114,27 @@
   --color-state-blocked-surface: var(--state-blocked-surface);
   --color-state-blocked-edge: var(--state-blocked-edge);
 
-  /* The only real colours left in the app — addition, deletion, conflict.
-     Re-exported here so a diff stat or a changed-line marker can say
-     `text-green` instead of carrying an inline style. Defined in tokens.css. */
+  /* Semantic hues — addition, deletion, conflict, landing — re-exported here so a diff stat
+     or a changed-line marker can say `text-green` instead of carrying an inline style.
+     Defined in tokens.css. */
   --color-green: var(--green);
   --color-red: var(--red);
   --color-blue: var(--blue);
+  --color-teal: var(--teal);
+
+  /* Status and priority glyph colours (Linear's status vocabulary), forwarded from
+     tokens.css. */
+  --color-status-backlog: var(--status-backlog);
+  --color-status-todo: var(--status-todo);
+  --color-status-progress: var(--status-progress);
+  --color-status-done: var(--status-done);
+  --color-status-cancelled: var(--status-cancelled);
+  --color-status-blocked: var(--status-blocked);
+  --color-status-green: var(--status-green);
+  --color-priority-urgent: var(--priority-urgent);
 
   /* The dense-row type treatments are `.dense-label` / `.dense-meta` in global.css, not
-     utilities here. Tailwind's `text-xs`/`text-sm` stay stock: 7 call sites rely on them. */
+     utilities here. */
 
   /* Hairline edges as shadow utilities: `shadow-hairline`, `shadow-hairline-bottom`, … */
   --shadow-hairline: var(--hairline);
@@ -121,13 +144,31 @@
   --shadow-hairline-left: var(--hairline-left);
   --shadow-hairline-right: var(--hairline-right);
 
-  /* Beautiful UI reskin surfaces/chrome, forwarded from tokens.css the same way the run-state
+  /* Linear surfaces and chrome, forwarded from tokens.css the same way the run-state
      palette above is: this block only re-exports, tokens.css owns the values. */
+  --color-frame: var(--surface-frame);
+  --color-surface-panel: var(--surface-panel);
+  --color-surface-secondary: var(--surface-secondary);
+  --color-surface-tertiary: var(--surface-tertiary);
+  --color-surface-quaternary: var(--surface-quaternary);
+  --color-surface-popover: var(--surface-popover);
+  --color-surface-control: var(--surface-control);
+  --color-surface-selected: var(--surface-selected);
+  --color-surface-active: var(--surface-active);
   --color-surface-hover: var(--surface-hover);
   --color-surface-hover-strong: var(--surface-hover-strong);
   --color-surface-inset: var(--surface-inset);
   --color-field: var(--field);
+  --color-border-subtle: var(--border-subtle);
+  --color-border-panel: var(--border-panel);
+  --color-border-chip: var(--border-chip);
+  --color-border-popover: var(--border-popover);
+  --color-border-strong: var(--border-strong);
+  /* Linear's secondary text as a named colour, so a label can say
+     `text-text-secondary` — `text-secondary` is already shadcn's control surface. */
+  --color-text-secondary: var(--text-secondary);
   --color-accent-tint: var(--accent-tint);
+  --color-focus-ring: var(--focus-ring);
   --color-tooltip-bg: var(--tooltip-bg);
   --color-tooltip-fg: var(--tooltip-fg);
   --color-tooltip-muted: var(--tooltip-muted);
@@ -136,7 +177,10 @@
   --radius-chip: var(--radius-chip);
   --radius-control: var(--radius-control);
   --radius-card: var(--radius-card);
+  --radius-popover: var(--radius-popover);
+  --radius-pill: var(--radius-pill);
 
+  --shadow-panel: var(--shadow-panel);
   --shadow-btn: var(--shadow-btn);
   --shadow-card: var(--shadow-card);
   --shadow-raised: var(--shadow-raised);

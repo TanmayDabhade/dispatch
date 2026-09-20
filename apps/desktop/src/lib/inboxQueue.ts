@@ -7,10 +7,13 @@ import type {
 } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
 
+import type { TaskSpec } from '../components/tasks/TaskSpecView';
 import type { FeedRowModel } from './controlRoom';
-import { buildFeed, FEED_GROUPS } from './controlRoom';
+import { buildFeed } from './controlRoom';
 import type { FeedState } from './feedState';
-import { isUrgentState } from './feedState';
+import { FEED_STATE_LABEL, isUrgentState } from './feedState';
+import type { InboxEntry } from './inbox';
+import { parseTaskSections } from './taskDisplay';
 
 /** Everything `buildFeed` needs that the Inbox actually varies on — the Inbox is the
  * Control room's urgent tiers re-surfaced as a to-do list, so it feeds the exact same
@@ -68,8 +71,6 @@ export function buildInbox(input: InboxInput): InboxData {
     query: '',
     activeStates: new Set(),
     collapsed: new Set(),
-    // No caps: an inbox that silently truncates its list isn't an inbox.
-    expanded: new Set(FEED_GROUPS),
   });
 
   const sections = feed.groups
@@ -130,7 +131,8 @@ function collectReadyToLand(input: InboxInput): FeedRowModel[] {
       (b.reviewedAt ?? b.updatedAt).localeCompare(a.reviewedAt ?? a.updatedAt)
     )
     .map((run) => {
-      const parentId = taskById.get(run.taskId)?.meta.parent ?? null;
+      const task = taskById.get(run.taskId);
+      const parentId = task?.meta.parent ?? null;
       return {
         runId: run.id,
         taskId: run.taskId,
@@ -138,10 +140,340 @@ function collectReadyToLand(input: InboxInput): FeedRowModel[] {
         state: 'landing' as const,
         epicTitle:
           parentId === null ? null : (epicTitleById.get(parentId) ?? null),
+        priority: task?.meta.priority ?? null,
         since: run.reviewedAt ?? run.updatedAt,
         activity: 'Reviewed, not landed',
         attention: null,
         fixLoop: null,
       };
     });
+}
+
+/**
+ * One row of the Inbox list. The live queue (`buildInbox`) and the persisted notification
+ * record (`lib/inbox.ts`) are two different things — an ask is still open, a notification
+ * already happened — but Linear's inbox shows both in one list, so they meet here as one
+ * item shape the list can render, filter, group and mark read without caring which it has.
+ */
+export type InboxItem =
+  | { kind: 'ask'; key: string; ts: string; row: FeedRowModel }
+  | { kind: 'landing'; key: string; ts: string; row: FeedRowModel }
+  | { kind: 'pr'; key: string; ts: string; pr: RepoPr }
+  | { kind: 'notification'; key: string; ts: string; entry: InboxEntry };
+
+/** The list-pane filter: everything, only what is still waiting on you, or only what
+ * already happened. */
+export type InboxFilter = 'all' | 'needs-you' | 'earlier';
+
+export const INBOX_FILTER_LABEL: Record<InboxFilter, string> = {
+  all: 'All',
+  'needs-you': 'Needs you',
+  earlier: 'Earlier',
+};
+
+// A live row's read key carries its state, so a task that moves from review to failed
+// comes back unread — the same task, a new thing to look at.
+function rowKey(row: FeedRowModel): string {
+  return `${row.state}:${row.taskId}:${row.runId}`;
+}
+
+/** Flattens the inbox into list items: asks in the feed's priority order, then ready-to-land,
+ * then unclaimed PRs, then the notification record newest first. */
+export function buildInboxItems(
+  data: InboxData,
+  entries: readonly InboxEntry[]
+): InboxItem[] {
+  const items: InboxItem[] = [];
+  for (const section of data.sections) {
+    for (const row of section.rows) {
+      items.push({ kind: 'ask', key: rowKey(row), ts: row.since, row });
+    }
+  }
+  for (const row of data.readyToLand) {
+    items.push({ kind: 'landing', key: rowKey(row), ts: row.since, row });
+  }
+  for (const pr of data.prs) {
+    items.push({ kind: 'pr', key: `pr:${pr.number}`, ts: pr.updatedAt, pr });
+  }
+  for (const entry of entries) {
+    items.push({
+      kind: 'notification',
+      key: `notification:${entry.id}`,
+      ts: entry.ts,
+      entry,
+    });
+  }
+  return items;
+}
+
+export function filterInboxItems(
+  items: readonly InboxItem[],
+  filter: InboxFilter
+): InboxItem[] {
+  if (filter === 'all') return [...items];
+  if (filter === 'needs-you') {
+    return items.filter((item) => item.kind !== 'notification');
+  }
+  return items.filter((item) => item.kind === 'notification');
+}
+
+/** An item is read once its key has been seen (`readIds`, persisted per project by the
+ * view); a notification is also read when its own record says so (mark-all, or opened
+ * from another surface). */
+export function isInboxItemRead(
+  item: InboxItem,
+  readIds: ReadonlySet<string>
+): boolean {
+  if (item.kind === 'notification' && item.entry.read) return true;
+  return readIds.has(item.key);
+}
+
+export function unreadInboxCount(
+  items: readonly InboxItem[],
+  readIds: ReadonlySet<string>
+): number {
+  return items.reduce(
+    (count, item) => (isInboxItemRead(item, readIds) ? count : count + 1),
+    0
+  );
+}
+
+/** `readIds` with every live item's key added; the notification half is marked read through
+ * `NotificationInbox.markAllRead`. Returns the same set when nothing changes. */
+export function markAllItemsRead(
+  items: readonly InboxItem[],
+  readIds: ReadonlySet<string>
+): ReadonlySet<string> {
+  const next = new Set(readIds);
+  for (const item of items) {
+    if (item.kind !== 'notification') next.add(item.key);
+  }
+  return next.size === readIds.size ? readIds : next;
+}
+
+export interface InboxGroup {
+  id: string;
+  label: string;
+  /** The state the group header's glyph and tint read from; `null` for the record. */
+  state: FeedState | null;
+  items: InboxItem[];
+}
+
+/** The "group by kind" display: one group per ask state (feed order), then Ready to land,
+ * Pull requests and Earlier. Empty groups are dropped. */
+export function groupInboxItems(items: readonly InboxItem[]): InboxGroup[] {
+  const byId = new Map<string, InboxGroup>();
+  const ensure = (id: string, label: string, state: FeedState | null) => {
+    let group = byId.get(id);
+    if (group === undefined) {
+      group = { id, label, state, items: [] };
+      byId.set(id, group);
+    }
+    return group;
+  };
+  for (const item of items) {
+    switch (item.kind) {
+      case 'ask':
+        ensure(
+          item.row.state,
+          FEED_STATE_LABEL[item.row.state],
+          item.row.state
+        ).items.push(item);
+        break;
+      case 'landing':
+        ensure('landing', 'Ready to land', 'landing').items.push(item);
+        break;
+      case 'pr':
+        ensure('pr', 'Pull requests', 'review').items.push(item);
+        break;
+      case 'notification':
+        ensure('earlier', 'Earlier', null).items.push(item);
+        break;
+    }
+  }
+  return [...byId.values()];
+}
+
+/** The tiny action badge on the row's avatar. */
+export type InboxBadge =
+  | 'check'
+  | 'hand'
+  | 'merge'
+  | 'mention'
+  | 'alert'
+  | 'pr';
+
+/** What the row's 12px badge and 14px state glyph say about an item: the badge names the
+ * action, the state names whose move it is. */
+export function inboxItemBadge(item: InboxItem): InboxBadge {
+  switch (item.kind) {
+    case 'ask':
+      switch (item.row.state) {
+        case 'answer':
+          return 'mention';
+        case 'approve':
+          return 'hand';
+        case 'unblock':
+        case 'failed':
+          return 'alert';
+        default:
+          return 'check';
+      }
+    case 'landing':
+      return 'merge';
+    case 'pr':
+      return 'pr';
+    case 'notification':
+      return notificationBadge(item.entry);
+  }
+}
+
+// The persisted record has no state of its own; it is read back off the title
+// `notificationEdges.ts` wrote, which is the one field every edge sets.
+function notificationBadge(entry: InboxEntry): InboxBadge {
+  const title = entry.title.toLowerCase();
+  if (title.startsWith('merged')) return 'merge';
+  if (title.includes('failed') || title.includes('blocked')) return 'alert';
+  if (title.includes('answer')) return 'mention';
+  return 'check';
+}
+
+export function inboxItemState(item: InboxItem): FeedState {
+  switch (item.kind) {
+    case 'ask':
+      return item.row.state;
+    case 'landing':
+      return 'landing';
+    case 'pr':
+      return 'review';
+    case 'notification': {
+      const title = item.entry.title.toLowerCase();
+      if (title.startsWith('merged')) return 'landing';
+      if (title.includes('blocked')) return 'unblock';
+      if (title.includes('failed')) return 'failed';
+      if (title.includes('answer')) return 'answer';
+      return 'review';
+    }
+  }
+}
+
+/** Whose avatar sits on the row: the agent for run work, the queue for merge outcomes, the
+ * planner for its questions, the PR's author for a PR. */
+export function inboxItemActor(item: InboxItem): string {
+  switch (item.kind) {
+    case 'ask':
+    case 'landing':
+      return 'Agent';
+    case 'pr':
+      return item.pr.author;
+    case 'notification':
+      switch (item.entry.target.kind) {
+        case 'queue':
+        case 'runs-page':
+          return 'Merge queue';
+        case 'draft':
+        case 'plan':
+          return 'Planner';
+        case 'run':
+          return 'Agent';
+        case 'task':
+          return 'Dispatch';
+      }
+  }
+}
+
+/** The row's title line and the 12px line under it. */
+export function inboxItemText(item: InboxItem): {
+  id: string | null;
+  title: string;
+  subtitle: string;
+} {
+  switch (item.kind) {
+    case 'ask': {
+      const reason = item.row.attention?.reason ?? item.row.activity;
+      const label = FEED_STATE_LABEL[item.row.state];
+      return {
+        id: item.row.taskId,
+        title: item.row.title,
+        subtitle: reason === null ? label : `${label} · ${reason}`,
+      };
+    }
+    case 'landing':
+      return {
+        id: item.row.taskId,
+        title: item.row.title,
+        subtitle: item.row.activity ?? 'Reviewed, not landed',
+      };
+    case 'pr':
+      return {
+        id: `#${item.pr.number}`,
+        title: item.pr.title,
+        subtitle: `Pull request by ${item.pr.author}`,
+      };
+    case 'notification':
+      return { id: null, title: item.entry.title, subtitle: item.entry.body };
+  }
+}
+
+// Read state for live items persists beside the notification record, one key per project.
+function readIdsKey(root: string): string {
+  return `dispatch:inbox-read:${root}`;
+}
+
+export function loadReadIds(
+  root: string,
+  storage: Pick<Storage, 'getItem'>
+): ReadonlySet<string> {
+  try {
+    const raw = storage.getItem(readIdsKey(root));
+    if (raw === null) return new Set();
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? new Set(parsed.filter((v): v is string => typeof v === 'string'))
+      : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+/** Keys of live items no longer in the list are dropped on save so the set cannot grow
+ * without bound; a row that comes back with the same key is new work anyway. */
+export function saveReadIds(
+  root: string,
+  readIds: ReadonlySet<string>,
+  liveKeys: ReadonlySet<string>,
+  storage: Pick<Storage, 'setItem'>
+): void {
+  try {
+    const kept = [...readIds].filter((key) => liveKeys.has(key));
+    storage.setItem(readIdsKey(root), JSON.stringify(kept));
+  } catch (err) {
+    console.warn('dispatch: failed to persist inbox read state', err);
+  }
+}
+
+/** Projects a `TaskDoc` onto the spec shape: description and acceptance criteria come out
+ * of the body's `##` sections, blockers resolve to titles through `tasks`. */
+export function specForTask(doc: TaskDoc, tasks: readonly TaskDoc[]): TaskSpec {
+  const sections = parseTaskSections(doc.body);
+  const titleById = new Map(tasks.map((t) => [t.meta.id, t.meta.title]));
+  const criteria = (sections.get('Acceptance Criteria') ?? '')
+    .split('\n')
+    .map((line) =>
+      line.replace(/^\s*(?:[-*]|\d+\.)\s*(?:\[[ xX]\]\s*)?/, '').trim()
+    )
+    .filter((line) => line !== '');
+  return {
+    title: doc.meta.title,
+    status: doc.meta.status,
+    priority: doc.meta.priority,
+    description: sections.get('Description') ?? '',
+    acceptanceCriteria: criteria,
+    writes: doc.meta.writes,
+    risk: doc.meta.risk,
+    blockedBy: doc.meta.blockedBy.map((id) => ({
+      key: id,
+      title: titleById.get(id) ?? id,
+    })),
+  };
 }

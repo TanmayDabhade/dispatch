@@ -15,7 +15,7 @@
   },
   "devDependencies": {
     "@dispatch/tokens": "workspace:*",
-    "@fontsource/inter": "catalog:",
+    "@fontsource-variable/inter": "catalog:",
     "@fontsource/jetbrains-mono": "catalog:",
     "@railway/cli": "catalog:",
     "@types/bun": "catalog:",

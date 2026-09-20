@@ -11,25 +11,25 @@ import {
 } from '../../lib/dagLayout';
 import { StatusIcon } from '../tasks/StatusIcon';
 import { cn } from '@/lib/utils';
+import { EmptyState } from '@/ui/chrome';
 
-// Fixed node footprint. Wide enough for two lines of a sans title at 12.5px (~28 chars per
-// line); fixed because the layout needs every node's box before anything renders, and the
-// card fills the box (`h-full`) so edges always meet its actual edge.
+// Fixed node footprint: a board card's 12px padding around a 16px id row and two 18px
+// title lines. Fixed because the layout needs every node's box before anything renders,
+// and the card fills the box (`h-full`) so edges always meet its actual edge.
 const CARD_WIDTH = 200;
-const CARD_HEIGHT = 76;
+const CARD_HEIGHT = 80;
 
 interface GraphNodeCardProps {
   node: DagNode;
-  /** Short mono header label (defaults to the status label). */
+  /** Short sans header label (defaults to the status label). */
   refLabel: string;
   /** Right side of the header — a priority glyph, a badge, anything small. */
   accessory?: ReactNode;
   onOpen?: () => void;
 }
 
-/** One graph node in the ContextCard visual language (inset surface, hairline, bordered
- * mono header) with graph-appropriate detail: status glyph + short mono ref in the header,
- * and the title in readable sans that wraps to two lines instead of truncating in mono.
+/** One graph node as a board card (quaternary surface, half-pixel ring): status glyph +
+ * short sans ref on the first row, then the title in 13px/500 wrapping to two lines.
  * Everything longer (description, criteria) lives behind the click-through, not on the
  * node — at graph scale the card's job is identity and scannability, not prose. */
 function GraphNodeCard({
@@ -40,9 +40,12 @@ function GraphNodeCard({
 }: GraphNodeCardProps) {
   const content = (
     <>
-      <div className="border-border flex min-w-0 items-center gap-1.5 border-b px-2.5 py-1.5">
+      <div className="flex min-w-0 items-center gap-1.5 leading-4">
         <StatusIcon status={node.status} className="size-3.5 shrink-0" />
-        <span className="text-muted-foreground min-w-0 truncate font-mono text-[11px]">
+        <span
+          data-slot="graph-node-ref"
+          className="text-muted-foreground font-book min-w-0 truncate text-[12px] tracking-(--id-tracking)"
+        >
           {refLabel}
         </span>
         {accessory !== undefined && (
@@ -51,16 +54,16 @@ function GraphNodeCard({
           </span>
         )}
       </div>
-      <p className="text-foreground line-clamp-2 px-2.5 py-1.5 text-left text-[12.5px] leading-snug font-medium">
+      <p className="text-foreground line-clamp-2 text-left text-[13px] leading-[18px] font-medium">
         {node.title}
       </p>
     </>
   );
 
   const className = cn(
-    'bg-surface-inset rounded-card shadow-hairline h-full w-full overflow-hidden text-left',
+    'bg-surface-quaternary rounded-card shadow-card flex h-full w-full flex-col gap-1 overflow-hidden p-3 text-left',
     onOpen !== undefined &&
-      'hover:ring-primary/40 ease-out-expo transition-shadow duration-100 hover:ring-1'
+      'hover:bg-surface-hover transition-colors duration-100'
   );
 
   if (onOpen !== undefined) {
@@ -107,7 +110,7 @@ function EdgePath({
   return (
     <path
       d={`M ${fromX} ${fromY} C ${fromX} ${midY}, ${toX} ${midY}, ${toX} ${toY}`}
-      className="stroke-border fill-none"
+      className="fill-none stroke-[var(--border-strong)]"
       strokeWidth={1.5}
       markerEnd="url(#dep-graph-arrow)"
     />
@@ -119,7 +122,7 @@ export interface DependencyGraphProps {
    * set (see dagLayout.ts's "real edges only" rule); a blockedBy id pointing outside it is
    * treated the same as a dangling one. */
   tasks: DagTask[];
-  /** Short mono header ref per node id (e.g. "#2" for plan drafts, a task id for epics).
+  /** Short header ref per node id (e.g. "#2" for plan drafts, a task id for epics).
    * Defaults to the status label. */
   refFor?: (id: string) => string | undefined;
   /** Small right-side header glyph per node id (e.g. a priority icon). */
@@ -132,7 +135,7 @@ export interface DependencyGraphProps {
 
 /**
  * True-branching dependency graph — the app's shared "mermaid-style" graph surface. Nodes
- * are compact cards in the ContextCard visual language (see `GraphNodeCard`), absolutely
+ * are compact board cards (see `GraphNodeCard`), absolutely
  * positioned by the hand-rolled `dagLayout` over an SVG layer that draws the curved edges —
  * no charting dependency, and the nodes stay real DOM (selectable text, focusable buttons)
  * instead of SVG text. Sized exactly to its content and left to the caller's container to
@@ -153,15 +156,12 @@ export function DependencyGraph({
 
   if (tasks.length === 0) {
     return (
-      <div
-        className={cn(
-          'text-muted-foreground flex flex-col items-center justify-center gap-2 py-12 text-center',
-          className
-        )}
-      >
-        <Waypoints className="size-5" />
-        <p className="text-[13px]">No tasks yet.</p>
-      </div>
+      <EmptyState
+        icon={Waypoints}
+        heading="No tasks yet"
+        description="Tasks under this epic show up here with their blocking edges."
+        className={className}
+      />
     );
   }
 
@@ -192,7 +192,10 @@ export function DependencyGraph({
               markerHeight={6}
               orient="auto-start-reverse"
             >
-              <path d="M 0 0 L 8 4 L 0 8 z" className="fill-border" />
+              <path
+                d="M 0 0 L 8 4 L 0 8 z"
+                className="fill-[var(--border-strong)]"
+              />
             </marker>
           </defs>
           {layout.edges.map((edge) => (

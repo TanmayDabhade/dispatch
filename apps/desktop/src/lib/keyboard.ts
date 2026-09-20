@@ -30,7 +30,14 @@ export interface GlobalKeyboardContext {
    * `escape` nav action and close whatever's stacked behind the modal (e.g. the task peek
    * panel) in the same keystroke. */
   modalOpen: boolean;
+  /** The chord prefix armed by the previous keystroke (`g`), or `null`. `useGlobalKeyboard`
+   * holds it for 600ms after a bare `g`; while armed, the next letter resolves to a
+   * `goto-*` chord instead of its own bare-key meaning. */
+  pendingPrefix: ChordPrefix | null;
 }
+
+/** The keys that start a two-key chord. Only `g` ("go to") today. */
+export type ChordPrefix = 'g';
 
 export type GlobalKeyCommand =
   | 'open-palette'
@@ -43,8 +50,44 @@ export type GlobalKeyCommand =
   | 'zoom-reset'
   /** Open the quick brain-dump capture modal. */
   | 'brain-dump'
+  /** Hide or show the sidebar (`[`; ⌘B is the alias shadcn's sidebar taught). */
+  | 'toggle-sidebar'
+  /** Open the task creator (`c`). */
+  | 'new-task'
+  /** Open the keyboard-shortcuts reference (`?`). */
+  | 'open-shortcuts'
+  /** The `g` chords: `g s` Settings, `g i` Inbox, `g t` Tasks, `g c` Control room, `g a`
+   * Overseer (Linear's "Agent"). */
+  | 'goto-settings'
+  | 'goto-inbox'
+  | 'goto-tasks'
+  | 'goto-control-room'
+  | 'goto-overseer'
   /** Jump straight to the Nth entry in the sidebar's primary rail. */
   | `goto-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`;
+
+// The second key of each `g` chord.
+const G_CHORDS: Record<string, GlobalKeyCommand> = {
+  s: 'goto-settings',
+  i: 'goto-inbox',
+  t: 'goto-tasks',
+  c: 'goto-control-room',
+  a: 'goto-overseer',
+};
+
+/** Whether this keystroke arms a chord prefix rather than resolving to a command on its
+ * own — a bare `g` outside a text field with no modal up. `useGlobalKeyboard` calls this
+ * only after `resolveGlobalKeyCommand` returned `null`, then holds the prefix for the next
+ * keystroke. */
+export function resolveChordPrefix(
+  input: KeyInput,
+  ctx: GlobalKeyboardContext
+): ChordPrefix | null {
+  if (input.metaKey || input.ctrlKey) return null;
+  if (ctx.isTyping || ctx.modalOpen) return null;
+  if (ctx.pendingPrefix !== null) return null;
+  return input.key === 'g' ? 'g' : null;
+}
 
 /** Maps one keydown to the app-root command it should trigger, or `null` if this keystroke
  * isn't a global shortcut right now. Never resolves a list-navigation command — those are
@@ -77,22 +120,32 @@ export function resolveGlobalKeyCommand(
   if (combo && input.key === '-') return 'zoom-out';
   if (combo && input.key === '0') return 'zoom-reset';
 
-  // Quick capture (⌘D — "dump"). Carries a modifier but still deliberately dead while
-  // typing and while any modal is up — opening a second layer over an open dialog helps
-  // nobody.
-  if (
-    combo &&
-    input.key.toLowerCase() === 'd' &&
-    !ctx.isTyping &&
-    !ctx.modalOpen
-  ) {
-    return 'brain-dump';
+  // Quick capture (⌘D — "dump") and the ⌘B sidebar alias. They carry a modifier but are
+  // still deliberately dead while typing and while any modal is up — opening a second layer
+  // over an open dialog, or shifting the frame under one, helps nobody.
+  if (combo && !ctx.isTyping && !ctx.modalOpen) {
+    if (input.key.toLowerCase() === 'd') return 'brain-dump';
+    if (input.key.toLowerCase() === 'b') return 'toggle-sidebar';
   }
 
-  // Every other global shortcut below is a bare letter/symbol — never hijack normal typing.
-  if (ctx.isTyping) return null;
+  // Every other global shortcut below is a bare letter/symbol — never hijack normal typing,
+  // and never claim a modifier chord that isn't listed above (⌘C is copy, not "new task").
+  if (ctx.isTyping || combo) return null;
 
   if (input.key === '/') return 'open-palette';
+
+  // The single-key shell shortcuts (Linear's set) stay dead while a modal is up: a dialog
+  // owns the keyboard, and hiding the sidebar or stacking a second dialog under it helps
+  // nobody. `/` above is exempt on purpose — the palette is itself the way out.
+  if (ctx.modalOpen) return null;
+
+  // An armed `g` resolves the chord's second key, or nothing — the hook drops the prefix
+  // either way, so a stray `g x` never leaks `x` into a later keystroke.
+  if (ctx.pendingPrefix === 'g') return G_CHORDS[input.key] ?? null;
+
+  if (input.key === '[') return 'toggle-sidebar';
+  if (input.key === 'c') return 'new-task';
+  if (input.key === '?') return 'open-shortcuts';
   return null;
 }
 
@@ -102,11 +155,61 @@ export interface ListKeyboardContext {
   isTyping: boolean;
 }
 
-export type ListKeyCommand = 'list-up' | 'list-down' | 'list-confirm';
+export type ListKeyCommand =
+  | 'list-up'
+  | 'list-down'
+  /** Enter on the focused row. */
+  | 'list-confirm'
+  /** `o` — open the focused row's full page. */
+  | 'list-open'
+  /** Space — peek the focused row. */
+  | 'list-peek'
+  /** `x` — add or remove the focused row from the selection. */
+  | 'list-select-toggle'
+  /** The single-key property shortcuts on a focused row (Linear's `s`/`p`/`a`/`l`, plus
+   * Dispatch's epic/milestone/dispatch). */
+  | 'list-set-status'
+  | 'list-set-priority'
+  | 'list-set-assignee'
+  | 'list-set-labels'
+  | 'list-set-epic'
+  | 'list-set-milestone'
+  | 'list-dispatch'
+  /** `f` — open the filter menu. */
+  | 'list-open-filter'
+  /** `⇧V` — open the display popover. */
+  | 'list-open-display'
+  /** Escape — clear the selection. */
+  | 'list-escape';
 
-/** Maps one keydown to a list view's own local navigation command (j/k/Enter), or `null`.
- * Called directly by a view's own `onKeyDown` handler on its list container — never wired to
- * the app-root `window` listener, so it only ever affects whichever list actually has focus. */
+// Every bare key a list view can act on. Views pick the subset they handle and let the
+// rest fall through (so a view with no selection model ignores `x`, say).
+const LIST_KEYS: Record<string, ListKeyCommand> = {
+  j: 'list-down',
+  ArrowDown: 'list-down',
+  k: 'list-up',
+  ArrowUp: 'list-up',
+  Enter: 'list-confirm',
+  o: 'list-open',
+  ' ': 'list-peek',
+  x: 'list-select-toggle',
+  s: 'list-set-status',
+  p: 'list-set-priority',
+  a: 'list-set-assignee',
+  l: 'list-set-labels',
+  e: 'list-set-epic',
+  m: 'list-set-milestone',
+  d: 'list-dispatch',
+  f: 'list-open-filter',
+  V: 'list-open-display',
+  Escape: 'list-escape',
+};
+
+/** Maps one keydown to a list view's own local command (j/k/arrows, Enter/`o`/Space, `x`,
+ * the property keys, `f`, `⇧V`, Escape), or `null`. Called directly by a view's own
+ * `onKeyDown` handler on its list container — never wired to the app-root `window`
+ * listener, so it only ever affects whichever list actually has focus. A view should
+ * switch on the commands it implements and return without `preventDefault` for the rest. */
 export function resolveListKeyCommand(
   input: KeyInput,
   ctx: ListKeyboardContext
@@ -115,10 +218,7 @@ export function resolveListKeyCommand(
   // browser/OS shortcuts, …) — never treat a combo as plain list navigation.
   if (input.metaKey || input.ctrlKey) return null;
   if (ctx.isTyping) return null;
-  if (input.key === 'j') return 'list-down';
-  if (input.key === 'k') return 'list-up';
-  if (input.key === 'Enter') return 'list-confirm';
-  return null;
+  return LIST_KEYS[input.key] ?? null;
 }
 
 /** The actual "does this tag name/contenteditable-ness count as typing" decision —

@@ -80,3 +80,27 @@ export function deriveMilestoneStatus(
     working,
   };
 }
+
+export interface MilestoneHealthPill {
+  label: string;
+  /** The 8px dot's colour — amber for a stall, the working yellow for live agents. */
+  tint: string;
+}
+
+/** The one `LabelPill` a milestone header wears: `At risk` when stalled, `N running` while
+ * agents are on it, nothing when idle or complete — the reason itself stays in the pill's
+ * tooltip (`reason`), so the header never shows a warning it cannot explain. */
+export function milestoneHealthPill(
+  status: MilestoneStatus
+): MilestoneHealthPill | null {
+  if (status.health === 'stalled') {
+    return { label: 'At risk', tint: 'var(--state-waiting-fg)' };
+  }
+  if (status.health === 'active') {
+    return {
+      label: `${status.working} running`,
+      tint: 'var(--state-working-fg)',
+    };
+  }
+  return null;
+}

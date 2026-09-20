@@ -50,15 +50,18 @@ function ChatMessageBubble({ entry }: { entry: NormalizedEntry }) {
 
   if (toUser) {
     return (
-      <div className="border-primary/40 bg-primary/10 flex w-full flex-col gap-0.5 rounded-md border px-3 py-2">
-        <div className="text-primary flex items-center gap-1.5 text-[11px] font-medium tracking-wide uppercase">
+      <div className="bg-surface-quaternary border-border-strong rounded-card flex w-full flex-col gap-0.5 border-[0.5px] px-3 py-2">
+        <div className="flex items-center gap-1.5 text-[12px] font-medium text-(--text-secondary)">
           <Megaphone className="size-3" />
           To you
-          <span className="text-muted-foreground/70 normal-case">
+          <span className="text-muted-foreground font-book">
             from {entry.fromLabel ?? 'an agent'}
           </span>
         </div>
-        <Markdown content={entry.text ?? ''} className="text-[13px]" />
+        <Markdown
+          content={entry.text ?? ''}
+          className="font-book text-[13px]"
+        />
       </div>
     );
   }
@@ -66,21 +69,21 @@ function ChatMessageBubble({ entry }: { entry: NormalizedEntry }) {
   return (
     <div
       className={cn(
-        'flex max-w-[90%] flex-col gap-0.5 rounded-md px-3 py-2',
+        'flex max-w-[90%] flex-col gap-0.5 rounded-card px-3 py-2',
         fromUser
-          ? 'bg-primary text-primary-foreground self-end'
-          : 'border-state-waiting-edge bg-state-waiting-surface self-start border'
+          ? 'bg-surface-quaternary self-end border-[0.5px] border-border-strong'
+          : 'bg-state-waiting-surface self-start'
       )}
     >
       <div
         className={cn(
-          'text-[11px] font-medium tracking-wide uppercase',
-          fromUser ? 'text-primary-foreground/70' : 'text-state-waiting'
+          'text-[12px] font-medium',
+          fromUser ? 'text-muted-foreground' : 'text-state-waiting'
         )}
       >
         {fromUser ? 'You' : `↳ ${entry.fromLabel ?? 'another agent'}`}
       </div>
-      <Markdown content={entry.text ?? ''} className="text-[13px]" />
+      <Markdown content={entry.text ?? ''} className="font-book text-[13px]" />
     </div>
   );
 }
@@ -230,7 +233,7 @@ export function RunLogView({
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-1">
         <div ref={contentRef} className="flex min-h-full flex-col gap-3">
           {meta.resumedFrom !== undefined && (
-            <div className="text-muted-foreground flex items-center justify-center gap-1.5 py-1 text-center text-[11px]">
+            <div className="text-muted-foreground font-book flex items-center justify-center gap-1.5 py-1 text-center text-[12px]">
               <Info className="size-3 shrink-0" />
               Resumed from run {meta.resumedFrom} — earlier conversation lives
               there.
@@ -251,7 +254,7 @@ export function RunLogView({
             ) : (
               <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-2 text-center">
                 <MessageSquare className="size-5" />
-                <p className="text-[13px]">No log entries yet.</p>
+                <p className="font-book text-[13px]">No log entries yet.</p>
               </div>
             ))}
           {/* Three levels of emphasis, which is what the flat version was missing. What the
@@ -263,7 +266,7 @@ export function RunLogView({
             group.kind === 'tools' ? (
               <div
                 key={i}
-                className="border-border/60 my-0.5 flex flex-col border-l pl-2"
+                className="border-border my-0.5 flex flex-col border-l-[0.5px] pl-2"
               >
                 {group.entries.map((entry, j) => (
                   <TranscriptRow key={j} entry={entry} live={isLive(entry)} />
@@ -286,7 +289,7 @@ export function RunLogView({
               chronologically the run's last event. */}
           {(meta.state === 'failed' || meta.state === 'interrupted-dirty') &&
             meta.error !== undefined && (
-              <div className="border-destructive/30 bg-destructive/10 text-destructive flex items-start gap-2 rounded-md border px-3 py-2 text-[12px]">
+              <div className="bg-state-failed-surface text-state-failed rounded-card font-book flex items-start gap-2 px-3 py-2 text-[12px]">
                 <Info className="size-3.5 shrink-0 translate-y-0.5" />
                 {meta.error}
               </div>
@@ -298,7 +301,7 @@ export function RunLogView({
               Cleared by the server the moment a later review completes. */}
           {meta.reviewedAt === undefined &&
             meta.reviewFailure !== undefined && (
-              <div className="border-destructive/30 bg-destructive/10 text-destructive flex items-start gap-2 rounded-md border px-3 py-2 text-[12px]">
+              <div className="bg-state-failed-surface text-state-failed rounded-card font-book flex items-start gap-2 px-3 py-2 text-[12px]">
                 <Info className="size-3.5 shrink-0 translate-y-0.5" />
                 <span className="whitespace-pre-wrap">
                   {meta.reviewFailure.action} failed:{' '}
@@ -311,7 +314,7 @@ export function RunLogView({
               survived and committed. Distinguishes "dead $0 run" from "the work actually
               landed, go look at the branch". */}
           {orphanWork !== null && (
-            <div className="border-state-review-edge bg-state-review-surface text-state-review flex items-start gap-2 rounded-md border px-3 py-2 text-[12px]">
+            <div className="bg-state-review-surface text-state-review rounded-card font-book flex items-start gap-2 px-3 py-2 text-[12px]">
               <Info className="size-3.5 shrink-0 translate-y-0.5" />
               {orphanWork}
             </div>
@@ -345,7 +348,7 @@ export function RunLogView({
                 onRestartDaemon={onRestartDaemon}
               />
             ) : (
-              <div className="border-border bg-muted/40 text-muted-foreground flex items-start gap-2 rounded-md border px-3 py-2 text-[12px]">
+              <div className="bg-surface-quaternary text-muted-foreground rounded-card border-border font-book flex items-start gap-2 border-[0.5px] px-3 py-2 text-[12px]">
                 <Info className="size-3.5 shrink-0 translate-y-0.5" />
                 This run is waiting on an approval this window didn&rsquo;t see
                 live — reopen it from a session that was connected when the
@@ -381,17 +384,17 @@ export function RunLogView({
       {error !== null && (
         <Alert
           variant="destructive"
-          className="border-destructive/30 bg-destructive/10 rounded-md px-3 py-2"
+          className="bg-state-failed-surface rounded-card border-none px-3 py-2"
         >
-          <AlertDescription className="text-destructive text-[12px]">
+          <AlertDescription className="text-state-failed font-book text-[12px]">
             {error}
           </AlertDescription>
         </Alert>
       )}
 
       {(canSend || terminal) && (
-        <div className="border-border flex flex-col gap-1.5 border-t pt-3">
-          <span className="text-muted-foreground text-[11px]">
+        <div className="shadow-hairline-top flex flex-col gap-1.5 pt-3">
+          <span className="text-muted-foreground font-book text-[12px]">
             {!terminal
               ? 'Talk to the agent. It reads this while it works.'
               : canContinue

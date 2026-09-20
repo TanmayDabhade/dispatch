@@ -1,38 +1,45 @@
 import type { RunMeta } from '@dispatch/client';
 
-import { mergeLadderLabel, mergeLadderState } from '@/lib/mergeLadder';
-import { cn } from '@/lib/utils';
+import {
+  mergeLadderLabel,
+  mergeLadderPillLabel,
+  mergeLadderState,
+  mergeLadderTint,
+} from '@/lib/mergeLadder';
+import { LabelPill } from '@/ui/ai/pill';
 
-const MERGE_LADDER_DOT: Record<ReturnType<typeof mergeLadderState>, string> = {
-  unmerged: 'bg-muted-foreground/40',
-  'merged-local': 'bg-amber-500/70',
-  'on-origin': 'bg-emerald-500',
-};
-
-interface MergeLadderDotProps {
+interface MergeLadderPillProps {
   meta: RunMeta | undefined;
+  /** Render the `Not merged` rung too. Off by default: a run that has not merged is the
+   * common case, and Linear says nothing where nothing has happened. */
+  showUnmerged?: boolean;
   className?: string;
 }
 
-/** Small dot marking a task's latest run on the merge ladder — unmerged (hollow-ish, muted),
- * merged-local (amber, squashed into the base branch but not yet on origin), or on-origin
- * (emerald, the merge commit has reached origin). Mirrors RunStatePill's structure: one shared
- * state -> color mapping, rendered as a bare dot with the full state as its `title`. */
-export function MergeLadderDot({ meta, className }: MergeLadderDotProps) {
+/** Where a task's latest run sits on the merge ladder, as a `LabelPill` whose 8px dot takes
+ * the rung's `--state-*` colour — amber once squashed into the base branch locally, the
+ * landing teal once the merge commit has reached origin. The full state (branch, sha, PR)
+ * is the pill's `title`. */
+export function MergeLadderPill({
+  meta,
+  showUnmerged = false,
+  className,
+}: MergeLadderPillProps) {
   const state = mergeLadderState(meta);
+  if (state === 'unmerged' && !showUnmerged) return null;
   return (
-    <span
+    <LabelPill
+      color={mergeLadderTint(state)}
+      data-merge-ladder={state}
       title={mergeLadderLabel(
         state,
         meta?.branch,
         meta?.mergeCommit,
         meta?.prUrl
       )}
-      className={cn(
-        'size-1.5 shrink-0 rounded-full',
-        MERGE_LADDER_DOT[state],
-        className
-      )}
-    />
+      className={className}
+    >
+      {mergeLadderPillLabel(state)}
+    </LabelPill>
   );
 }

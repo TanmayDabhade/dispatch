@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/ui/button';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -75,7 +76,7 @@ export function DispatchAgentDialog({
             dispatching from the board does.
           </DialogDescription>
         </DialogHeader>
-        <div className="flex flex-col gap-2">
+        <DialogBody className="gap-2">
           <Input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
@@ -89,9 +90,9 @@ export function DispatchAgentDialog({
             placeholder="What should the agent do?"
           />
           {error !== null && (
-            <p className="text-destructive text-[12px]">{error}</p>
+            <p className="text-state-failed font-book text-[12px]">{error}</p>
           )}
-        </div>
+        </DialogBody>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={submitting}>
             Cancel

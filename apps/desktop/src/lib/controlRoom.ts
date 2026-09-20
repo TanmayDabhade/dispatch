@@ -4,7 +4,7 @@ import type {
   RunKind,
   RunMeta,
 } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { Priority, TaskDoc } from '@dispatch/core/browser';
 
 import type { FeedState } from './feedState';
 import { deriveFeedState, FEED_STATE_ORDER } from './feedState';
@@ -12,7 +12,7 @@ import { deriveRunDisposition } from './runState';
 import { subagentActivity } from './subagentSummary';
 
 /**
- * The Control room's read model, derived here rather than in JSX so the grouping, capping and
+ * The Control room's read model, derived here rather than in JSX so the grouping and
  * filtering rules are testable without mounting React — the same "dumb view, smart derivation"
  * split lib/appNav.ts uses for routing.
  */
@@ -34,15 +34,6 @@ export const FEED_GROUPS: readonly FeedState[] = [
   'landing',
 ];
 
-/** How many rows a group shows before collapsing the rest behind a "show the other N" row.
- * Working gets more room because it is the group that legitimately runs long. */
-const GROUP_CAP: Partial<Record<FeedState, number>> = { working: 7 };
-const DEFAULT_CAP = 5;
-
-export function groupCap(state: FeedState): number {
-  return GROUP_CAP[state] ?? DEFAULT_CAP;
-}
-
 export interface FeedRowModel {
   runId: string;
   taskId: string;
@@ -50,6 +41,8 @@ export interface FeedRowModel {
   state: FeedState;
   /** The owning epic's title, when the task has one. */
   epicTitle: string | null;
+  /** The task's priority, for the row's leading glyph; `null` when the task is not loaded. */
+  priority: Priority | null;
   /** ISO timestamp the elapsed column counts from. */
   since: string;
   /**
@@ -69,12 +62,11 @@ export interface FeedRowModel {
 
 interface FeedGroupModel {
   state: FeedState;
-  /** Rows matching the current filter, before the cap. */
+  /** Rows matching the current filter — the header's count, even while collapsed. */
   total: number;
-  /** The rows actually rendered. */
+  /** The rows actually rendered: every match, or none while collapsed. Groups are never
+   * capped — a feed that silently holds rows back lies about how much work exists. */
   rows: FeedRowModel[];
-  /** How many the cap is holding back — 0 when everything is shown. */
-  hidden: number;
   collapsed: boolean;
 }
 
@@ -105,8 +97,6 @@ export interface BuildFeedInput {
   /** Empty means "no chip selected", which shows everything rather than nothing. */
   activeStates: ReadonlySet<FeedState>;
   collapsed: ReadonlySet<FeedState>;
-  /** Groups the user asked to show in full, overriding the cap. */
-  expanded: ReadonlySet<FeedState>;
 }
 
 /** Diff-style summary for a run awaiting review — what a reviewer wants before opening it. */
@@ -227,7 +217,6 @@ export function buildFeed(input: BuildFeedInput): FeedModel {
     query,
     activeStates,
     collapsed,
-    expanded,
   } = input;
 
   const epicTitleById = new Map(epics.map((e) => [e.meta.id, e.meta.title]));
@@ -321,6 +310,7 @@ export function buildFeed(input: BuildFeedInput): FeedModel {
         state,
         epicTitle:
           parentId === null ? null : (epicTitleById.get(parentId) ?? null),
+        priority: task?.meta.priority ?? null,
         since: run.updatedAt,
         activity,
         // A dead review agent leaves its execute run looking like an ordinary
@@ -402,14 +392,12 @@ export function buildFeed(input: BuildFeedInput): FeedModel {
     if (groupRows.length === 0) continue;
 
     const isCollapsed = collapsed.has(state);
-    const cap = expanded.has(state) ? groupRows.length : groupCap(state);
-    const visible = isCollapsed ? [] : groupRows.slice(0, cap);
+    const visible = isCollapsed ? [] : groupRows;
     shown += visible.length;
     groups.push({
       state,
       total: groupRows.length,
       rows: visible,
-      hidden: isCollapsed ? 0 : groupRows.length - visible.length,
       collapsed: isCollapsed,
     });
   }

@@ -1,14 +1,19 @@
 import { SearchIcon } from 'lucide-react';
-import { type KeyboardEvent, type ReactNode, useState } from 'react';
+import { type KeyboardEvent, type ReactNode, useId, useState } from 'react';
 
+import { EmptyState } from '../chrome/empty-state';
 import { Kbd } from '../kbd';
+import { splitKeycaps } from '../lib/keycaps';
 import { cn } from '../lib/utils';
 
 export type SearchItem = {
   id: string;
   label: string;
+  /** A 14px glyph at the row's left edge. */
   icon?: ReactNode;
+  /** Muted 13px/450 text after the label — a task id, a status. */
   hint?: string;
+  /** Right-aligned keycaps; whitespace splits them (`G S` is two caps). */
   kbd?: string;
 };
 
@@ -23,7 +28,13 @@ export type SearchPanelProps = {
   onQueryChange: (query: string) => void;
   groups: SearchGroup[];
   onSelect: (item: SearchItem) => void;
+  /** The muted line under the empty state's heading. */
   emptyHint: string;
+  /** The empty state's 13px heading. */
+  emptyHeading?: string;
+  placeholder?: string;
+  /** Trailing content in the input row — Linear's `Ask … Tab` hint. */
+  inputHint?: ReactNode;
 };
 
 /** Filters `groups` to items whose label contains `query` (case-insensitive substring),
@@ -79,24 +90,28 @@ export function moveActive(
   return items[nextIndex]?.id ?? null;
 }
 
-/** Overlay-style command search: a borderless input row (search icon, hairline divider
- * below) over grouped, keyboard-navigable results. Arrow keys move the active row
- * (`bg-surface-hover`, wrapping at either end); Enter selects it; hovering a row also
- * makes it active. Shows a centered muted icon + `emptyHint` when nothing matches.
- * Matches the showcase's "Search" primitive, extended with groups and `ui/kbd.tsx`
- * hints per the primitive brief. Fully controlled — `query`/`onQueryChange` live with
- * the caller. */
+/** Overlay-style command search on the popover surface: a 40px borderless input row
+ * (search icon, hairline below, optional trailing hint) over grouped, keyboard-navigable
+ * 40px rows under 12px/500 sentence-case headings. Arrow keys move the active row
+ * (`bg-surface-active`, wrapping at either end); Enter selects it; hovering a row also
+ * makes it active. A long label truncates before the hint or keycaps give way. Shows an
+ * `EmptyState` heading + `emptyHint` when nothing matches. Fully controlled —
+ * `query`/`onQueryChange` live with the caller. */
 export function SearchPanel({
   query,
   onQueryChange,
   groups,
   onSelect,
   emptyHint,
+  emptyHeading = 'No results',
+  placeholder = 'Type a command or search…',
+  inputHint,
 }: SearchPanelProps) {
   const filtered = filterGroups(groups, query);
   const flat = flattenItems(filtered);
   const [activeId, setActiveId] = useState<string | null>(flat[0]?.id ?? null);
   const resolvedActiveId = resolveActiveId(flat, activeId);
+  const inputHintId = useId();
 
   // Recomputes the match set for the next query synchronously (rather than via an
   // effect) so the active row resets to the top result in the same event that changes
@@ -122,7 +137,7 @@ export function SearchPanel({
   }
 
   return (
-    <div className="rounded-card bg-card shadow-overlay flex w-full flex-col overflow-hidden">
+    <div className="rounded-popover bg-popover shadow-overlay flex w-full flex-col overflow-hidden">
       <div className="shadow-hairline-bottom flex h-10 shrink-0 items-center gap-2 px-3">
         <SearchIcon
           aria-hidden
@@ -132,7 +147,7 @@ export function SearchPanel({
           value={query}
           onChange={(event) => handleInputChange(event.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Search…"
+          placeholder={placeholder}
           aria-label="Search"
           role="combobox"
           aria-expanded={flat.length > 0}
@@ -140,35 +155,39 @@ export function SearchPanel({
           aria-activedescendant={
             resolvedActiveId ? `search-item-${resolvedActiveId}` : undefined
           }
-          className="text-foreground placeholder:text-muted-foreground min-w-0 flex-1 bg-transparent text-[13px] outline-none"
+          aria-describedby={inputHint !== undefined ? inputHintId : undefined}
+          className="text-foreground placeholder:text-muted-foreground font-book min-w-0 flex-1 bg-transparent text-[13px] outline-none"
         />
+        {inputHint !== undefined && (
+          <div
+            id={inputHintId}
+            data-slot="search-input-hint"
+            className="text-muted-foreground flex shrink-0 items-center gap-1.5 text-[12px]"
+          >
+            {inputHint}
+          </div>
+        )}
       </div>
 
       {flat.length === 0 ? (
-        <div className="flex flex-col items-center justify-center gap-1.5 px-4 py-10 text-center">
-          <span
-            aria-hidden
-            className="bg-surface-inset text-muted-foreground shadow-hairline rounded-control flex size-8 items-center justify-center"
-          >
-            <SearchIcon className="size-3.5" />
-          </span>
-          <span className="text-muted-foreground text-[12.5px]">
-            {emptyHint}
-          </span>
-        </div>
+        <EmptyState
+          heading={emptyHeading}
+          description={emptyHint}
+          className="py-6"
+        />
       ) : (
         <div
           id="search-panel-results"
           role="listbox"
           aria-label="Search results"
-          className="flex flex-col gap-0.5 overflow-y-auto p-1"
+          className="flex flex-col overflow-y-auto p-1"
         >
           {filtered.map((group) => (
-            <div key={group.id}>
-              <div className="text-muted-foreground px-2 pt-2 pb-1 text-[10.5px] font-medium tracking-[0.08em] uppercase first:pt-1">
+            <div key={group.id} role="group" aria-label={group.label}>
+              <div className="text-muted-foreground px-3 py-2 text-[12px] font-medium">
                 {group.label}
               </div>
-              <div className="flex flex-col gap-0.5">
+              <div className="flex flex-col">
                 {group.items.map((item) => {
                   const isActive = item.id === resolvedActiveId;
                   return (
@@ -181,27 +200,33 @@ export function SearchPanel({
                       onMouseEnter={() => setActiveId(item.id)}
                       onClick={() => onSelect(item)}
                       className={cn(
-                        'ease-out-expo rounded-control flex h-8 w-full items-center gap-2 px-2 text-left text-[13px] transition-colors duration-100',
-                        isActive ? 'bg-surface-hover' : ''
+                        "ease-out-expo rounded-control font-book flex h-10 w-full items-center gap-2 px-3 text-left text-[13px] transition-colors duration-100 [&_svg:not([class*='size-'])]:size-3.5",
+                        isActive ? 'bg-surface-active' : ''
                       )}
                     >
                       {item.icon && (
                         <span
                           aria-hidden
-                          className="text-muted-foreground shrink-0"
+                          className="text-muted-foreground flex shrink-0 items-center"
                         >
                           {item.icon}
                         </span>
                       )}
-                      <span className="text-foreground min-w-0 flex-1 truncate">
+                      <span className="text-foreground min-w-0 truncate">
                         {item.label}
                       </span>
                       {item.hint && (
-                        <span className="text-muted-foreground shrink-0 truncate text-[11.5px]">
+                        <span className="text-muted-foreground shrink-0">
                           {item.hint}
                         </span>
                       )}
-                      {item.kbd && <Kbd className="shrink-0">{item.kbd}</Kbd>}
+                      {item.kbd && (
+                        <span className="ml-auto flex shrink-0 items-center gap-1 pl-4">
+                          {splitKeycaps(item.kbd).map((cap, index) => (
+                            <Kbd key={`${cap}-${index}`}>{cap}</Kbd>
+                          ))}
+                        </span>
+                      )}
                     </button>
                   );
                 })}

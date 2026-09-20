@@ -1,62 +1,78 @@
-import { X } from 'lucide-react';
-import { useState } from 'react';
+import { Plus, X } from 'lucide-react';
 
-import { Badge } from '@/ui/badge';
-import { Button } from '@/ui/button';
-import { Input } from '@/ui/input';
+import { colorForLabel } from '../../../lib/labelColor';
+import { PickerPopover } from './PickerPopover';
+import { railRowClass } from './RailSection';
+import { LabelPill } from '@/ui/ai/pill';
 
-// The labels editor in the rail: existing labels as removable chips plus an
-// input that adds a label on Enter. Labels are freeform strings, so this is a
-// plain add/remove rather than a pick-from-list — deduped and trimmed before it
-// calls back with the whole new list (matching UpdatePatch.labels' shape).
+// The labels group in the rail: the task's labels as colour-dotted pills, each with a
+// remove `×`, then an `Add label` row that opens a picker over every label the project
+// already uses — plus `Create "…"` for a new one, since labels are freeform strings. Calls
+// back with the whole new list (matching UpdatePatch.labels' shape), deduped.
 export function LabelEditor({
   labels,
+  candidates,
   onChange,
+  open,
+  onOpenChange,
 }: {
   labels: string[];
+  /** Every label used anywhere in the project, for the picker. */
+  candidates: string[];
   onChange: (next: string[]) => void;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
-  const [draft, setDraft] = useState('');
-  function add() {
-    const label = draft.trim();
-    if (label !== '' && !labels.includes(label)) onChange([...labels, label]);
-    setDraft('');
+  function add(label: string) {
+    const next = label.trim();
+    if (next !== '' && !labels.includes(next)) onChange([...labels, next]);
   }
+  const items = candidates
+    .filter((label) => !labels.includes(label))
+    .map((label) => ({
+      value: label,
+      label,
+      glyph: (
+        <span
+          aria-hidden
+          className="size-2 shrink-0 rounded-full"
+          style={{ backgroundColor: colorForLabel(label) }}
+        />
+      ),
+    }));
   return (
-    <div className="flex flex-col gap-1.5 px-2 pt-0.5">
+    <div data-slot="label-editor" className="flex flex-col gap-1">
       {labels.length > 0 && (
-        <div className="flex flex-wrap gap-1">
+        <div className="flex flex-wrap gap-1 px-2 py-1">
           {labels.map((label) => (
-            <Badge
-              key={label}
-              variant="secondary"
-              className="gap-1 pr-1 text-[11px]"
-            >
+            <LabelPill key={label} color={colorForLabel(label)}>
               {label}
-              <Button
+              <button
                 type="button"
-                variant="ghost"
                 aria-label={`Remove label ${label}`}
-                className="text-muted-foreground hover:text-foreground size-auto p-0 hover:bg-transparent has-[>svg]:px-0"
+                className="text-muted-foreground hover:text-foreground rounded-pill focus-visible:ring-ring -mr-1 flex size-4 items-center justify-center outline-none focus-visible:ring-2"
                 onClick={() => onChange(labels.filter((l) => l !== label))}
               >
                 <X className="size-3" />
-              </Button>
-            </Badge>
+              </button>
+            </LabelPill>
           ))}
         </div>
       )}
-      <Input
-        className="h-7 text-[12px]"
-        placeholder="Add label…"
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => {
-          // Plain Enter only — the peek's cmd+Enter expand chord must not also add a label.
-          if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey) add();
-        }}
-        onBlur={add}
-      />
+      <PickerPopover
+        triggerLabel="Add label"
+        triggerClassName={railRowClass({ unset: true })}
+        placeholder="Label…"
+        items={items}
+        onSelect={add}
+        onCreate={add}
+        emptyLabel="Type a new label."
+        open={open}
+        onOpenChange={onOpenChange}
+      >
+        <Plus />
+        <span className="truncate">Add label</span>
+      </PickerPopover>
     </div>
   );
 }

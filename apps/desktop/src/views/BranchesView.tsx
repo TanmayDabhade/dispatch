@@ -52,6 +52,9 @@ import {
   resolveGitKeyCommand,
 } from '../lib/keyboard';
 import { cn } from '@/lib/utils';
+import { IconButton } from '@/ui/ai/icon-button';
+import { PageHeader, ViewTabs } from '@/ui/ai/page-header';
+import { PillButton } from '@/ui/ai/pill';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -66,6 +69,7 @@ import { Button } from '@/ui/button';
 import { Checkbox } from '@/ui/checkbox';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -80,6 +84,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
 interface BranchesViewProps {
   data: DispatchProjectData;
+  /** The active project's display name, the first crumb of the page header. */
+  projectName?: string | null;
   onOpenRun: (runId: string) => void;
   /** Navigates to `ImpactView` with the selected file preselected — the
    *  Git file pane's "open in Impact" action. */
@@ -114,6 +120,7 @@ type PendingConfirm =
  * git doesn't have. Every keyboard shortcut also has a visible button/menu equivalent. */
 export function BranchesView({
   data,
+  projectName,
   onOpenRun,
   onOpenImpact,
 }: BranchesViewProps) {
@@ -559,18 +566,73 @@ export function BranchesView({
     handleGitCommand(cmd);
   }
 
+  const crumb = [
+    ...(projectName !== undefined && projectName !== null ? [projectName] : []),
+    'Git',
+  ];
+
   return (
     <div
       ref={containerRef}
       tabIndex={-1}
-      className="flex h-full min-h-0 flex-col gap-3 outline-none"
+      className="flex h-full min-h-0 flex-col outline-none"
       onKeyDown={onRootKeyDown}
     >
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex min-w-0 flex-1 items-center px-2">
-          {/* The `pl-2` InputGroup pushes onto its input is variant-prefixed, so it out-ranks
-              a plain `px-0` on the control and has to be overridden in the same form. */}
-          <InputGroup className="h-7 max-w-64 gap-2 px-2 has-[>[data-align=inline-start]]:[&>input]:pl-0">
+      <PageHeader
+        crumb={crumb}
+        actions={
+          <>
+            <Button variant="ghost" size="sm" onClick={openDispatchGeneral}>
+              <GitBranchIcon />
+              Dispatch agent
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                void data.handleRefreshBranches();
+                void refetchAll();
+              }}
+            >
+              <RefreshCw
+                className={cn(
+                  (data.branchesLoading || statusLoading) && 'animate-spin'
+                )}
+              />
+              Refresh
+            </Button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <IconButton
+                    label="Keyboard shortcuts (?)"
+                    onClick={() => setKeymapOpen(true)}
+                  />
+                }
+              >
+                <HelpCircle />
+              </TooltipTrigger>
+              <TooltipContent>Keyboard shortcuts (?)</TooltipContent>
+            </Tooltip>
+          </>
+        }
+        tabs={
+          <ViewTabs
+            label="Git panels"
+            tabs={GIT_PANEL_IDS.map((panel) => ({
+              id: panel,
+              label: PANEL_LABEL[panel],
+            }))}
+            active={panelState.focused}
+            onChange={(id) =>
+              setPanelState((s) => focusGitPanel(s, id as GitPanelId))
+            }
+          />
+        }
+        controls={
+          // The `pl-2` InputGroup pushes onto its input is variant-prefixed, so it out-ranks
+          // a plain `px-0` on the control and has to be overridden in the same form.
+          <InputGroup className="h-7 w-64 gap-2 px-2 has-[>[data-align=inline-start]]:[&>input]:pl-0">
             <InputGroupAddon className="p-0">
               <Search className="text-muted-foreground size-3.5 shrink-0" />
             </InputGroupAddon>
@@ -579,75 +641,33 @@ export function BranchesView({
               value={textFilter}
               onChange={(e) => setTextFilter(e.target.value)}
               placeholder="Filter files and branches (/)"
+              aria-label="Filter files and branches"
               className="h-auto px-0 text-[12px] md:text-[12px]"
             />
           </InputGroup>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 gap-1.5 text-[12px]"
-            onClick={openDispatchGeneral}
-          >
-            <GitBranchIcon className="size-3.5" />
-            Dispatch agent
-          </Button>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="Keyboard shortcuts (?)"
-                  onClick={() => setKeymapOpen(true)}
-                />
-              }
-            >
-              <HelpCircle className="size-4" />
-            </TooltipTrigger>
-            <TooltipContent>Keyboard shortcuts (?)</TooltipContent>
-          </Tooltip>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 gap-1.5 text-[12px]"
-            onClick={() => {
-              void data.handleRefreshBranches();
-              void refetchAll();
-            }}
-          >
-            <RefreshCw
-              className={cn(
-                'size-3.5',
-                (data.branchesLoading || statusLoading) && 'animate-spin'
-              )}
-            />
-            Refresh
-          </Button>
-        </div>
-      </div>
+        }
+      />
 
       {actionError !== null && (
-        <div className="border-destructive/40 bg-destructive/10 text-destructive flex items-start gap-2 rounded-md border px-3 py-2 text-[12px]">
-          <AlertTriangle className="mt-px size-4 shrink-0" />
+        <div className="bg-state-failed-surface text-state-failed rounded-card font-book mx-4 mt-3 flex items-start gap-2 px-3 py-2 text-[12px]">
+          <AlertTriangle className="mt-px size-3.5 shrink-0" />
           <span className="min-w-0 flex-1">{actionError}</span>
         </div>
       )}
 
-      <div className="grid min-h-0 flex-1 grid-cols-[19rem_minmax(0,1fr)] gap-3 overflow-hidden">
-        <div className="bg-card shadow-card rounded-card flex min-h-0 flex-col overflow-hidden">
+      <div className="grid min-h-0 flex-1 grid-cols-[19rem_minmax(0,1fr)] overflow-hidden">
+        <div className="shadow-hairline-right flex min-h-0 flex-col overflow-hidden">
           {GIT_PANEL_IDS.map((panel) => (
             <div
               key={panel}
               className={cn(
-                'border-border flex min-h-0 flex-col border-b last:border-b-0',
+                'flex min-h-0 flex-col',
                 // Accordion on the existing focus model: the focused panel takes all the
                 // remaining height, every other list collapses to its header row. Five
                 // stacked scroll areas in one column gave each list a useless sliver;
-                // focus (digits 1-5, or clicking a header) already names the list being
-                // worked in, so it also gets the room. Status stays pinned open — it is
-                // three lines, not a list.
+                // focus (digits 1-5, a header, or the view tab) already names the list
+                // being worked in, so it also gets the room. Status stays pinned open — it
+                // is three lines, not a list.
                 panel === 'status'
                   ? 'flex-none'
                   : panelState.focused === panel
@@ -657,43 +677,37 @@ export function BranchesView({
             >
               <div
                 className={cn(
-                  'flex items-center',
-                  'bg-muted/40',
-                  panelState.focused === panel && 'bg-accent/60'
+                  'mx-2 mt-1 flex h-9 shrink-0 items-center gap-2 rounded-card px-2 transition-colors duration-100',
+                  panelState.focused === panel
+                    ? 'bg-surface-active'
+                    : 'bg-surface-quaternary hover:bg-surface-active'
                 )}
               >
-                <Button
-                  variant="ghost"
-                  size="sm"
+                {/* The group bar doubles as the panel's focus target: the digit keycap
+                    names the key, the count reads sans like every other list count. */}
+                <button
+                  type="button"
+                  aria-pressed={panelState.focused === panel}
                   onClick={() => setPanelState((s) => focusGitPanel(s, panel))}
-                  className={cn(
-                    // The header has never lit up on hover, so ghost's own hover fill is
-                    // pinned to transparent — the wrapper row carries the resting fill.
-                    'h-auto min-w-0 flex-1 justify-start gap-2 rounded-none bg-transparent px-3 py-1.5 text-left text-[10.5px] font-medium tracking-wide uppercase hover:bg-transparent'
-                  )}
+                  className="rounded-control focus-visible:ring-ring flex h-full min-w-0 flex-1 items-center gap-2 text-left outline-none focus-visible:ring-2"
                 >
-                  <Kbd className="text-muted-foreground h-auto min-w-0 bg-transparent px-0 font-mono text-[length:inherit] normal-case">
-                    {PANEL_DIGIT[panel]}
-                  </Kbd>
-                  {PANEL_LABEL[panel]}
+                  <Kbd>{PANEL_DIGIT[panel]}</Kbd>
+                  <span className="min-w-0 truncate text-[13px] font-medium text-(--text-secondary)">
+                    {PANEL_LABEL[panel]}
+                  </span>
                   {panel !== 'status' && (
                     <span
                       data-git-panel-count={panel}
-                      className="text-muted-foreground font-mono normal-case"
+                      className="text-muted-foreground font-book shrink-0 text-[13px] tabular-nums"
                     >
                       {listLength(panel)}
                     </span>
                   )}
-                </Button>
+                </button>
                 {/* Trailing header actions — siblings of the focus button, never nested. */}
                 {panel === 'files' &&
                   fileRows.some((r) => r.section !== 'staged') && (
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      onClick={stageAll}
-                      className="text-muted-foreground hover:text-foreground mr-1.5 h-auto shrink-0 px-1.5 py-0.5 text-[10.5px]"
-                    >
+                    <Button variant="ghost" size="xs" onClick={stageAll}>
                       Stage all
                     </Button>
                   )}
@@ -702,9 +716,8 @@ export function BranchesView({
                     variant="ghost"
                     size="xs"
                     onClick={() => setNewBranchOpen(true)}
-                    className="text-muted-foreground hover:text-foreground mr-1.5 h-auto shrink-0 px-1.5 py-0.5 text-[10.5px]"
                   >
-                    <Plus className="size-3" />
+                    <Plus />
                     New branch
                   </Button>
                 )}
@@ -738,30 +751,28 @@ export function BranchesView({
                     />
                   )}
                   {panel === 'branches' && (
-                    <>
-                      <BranchesPanel
-                        rows={branchRowsFiltered}
-                        worktrees={data.branches}
-                        selectedIndex={panelState.index.branches}
-                        filter={branchFilter}
-                        onFilterChange={(next) =>
-                          setBranchFilter(next === branchFilter ? 'all' : next)
-                        }
-                        reclaiming={reclaiming}
-                        onReclaimMerged={() => void reclaimMerged()}
-                        onDeleteAllMergedOrphans={() =>
-                          void deleteAllMergedOrphans()
-                        }
-                        onSelectIndex={(index) =>
-                          setPanelState((s) => ({
-                            ...focusGitPanel(s, 'branches'),
-                            index: { ...s.index, branches: index },
-                          }))
-                        }
-                        onOpenRun={onOpenRun}
-                        onDispatchAgent={openDispatchForBranch}
-                      />
-                    </>
+                    <BranchesPanel
+                      rows={branchRowsFiltered}
+                      worktrees={data.branches}
+                      selectedIndex={panelState.index.branches}
+                      filter={branchFilter}
+                      onFilterChange={(next) =>
+                        setBranchFilter(next === branchFilter ? 'all' : next)
+                      }
+                      reclaiming={reclaiming}
+                      onReclaimMerged={() => void reclaimMerged()}
+                      onDeleteAllMergedOrphans={() =>
+                        void deleteAllMergedOrphans()
+                      }
+                      onSelectIndex={(index) =>
+                        setPanelState((s) => ({
+                          ...focusGitPanel(s, 'branches'),
+                          index: { ...s.index, branches: index },
+                        }))
+                      }
+                      onOpenRun={onOpenRun}
+                      onDispatchAgent={openDispatchForBranch}
+                    />
                   )}
                   {panel === 'commits' && (
                     <CommitsPanel
@@ -778,16 +789,14 @@ export function BranchesView({
                   )}
                   {panel === 'stashes' && (
                     <>
-                      <div className="flex items-center gap-1.5 px-2 pt-1.5">
+                      <div className="flex items-center gap-1.5 px-2 pt-2">
                         <Input
                           value={stashMessage}
                           onChange={(e) => setStashMessage(e.target.value)}
                           placeholder="Stash message (optional)"
-                          className="h-7 flex-1 text-[11px]"
+                          className="flex-1"
                         />
-                        <Button
-                          variant="outline"
-                          size="xs"
+                        <PillButton
                           disabled={busy}
                           onClick={() =>
                             void runMutation(async () => {
@@ -800,7 +809,7 @@ export function BranchesView({
                           }
                         >
                           Stash
-                        </Button>
+                        </PillButton>
                       </div>
                       <StashesPanel
                         stashes={stashes}
@@ -826,7 +835,7 @@ export function BranchesView({
           ))}
         </div>
 
-        <div className="bg-card shadow-card rounded-card min-h-0 overflow-hidden">
+        <div className="min-h-0 overflow-hidden">
           <GitRightPane
             pane={rightPane}
             status={status}
@@ -1086,12 +1095,14 @@ function NewBranchDialog({
               : 'Branches from the current HEAD.'}
           </DialogDescription>
         </DialogHeader>
-        <Input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="branch-name"
-          autoFocus
-        />
+        <DialogBody>
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="branch-name"
+            autoFocus
+          />
+        </DialogBody>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>
             Cancel
@@ -1166,13 +1177,12 @@ function ConfirmDialog({
         <Field orientation="horizontal" className="w-fit gap-1.5">
           <Checkbox
             id="git-force-delete-branch"
-            className="size-3.5"
             checked={force}
             onCheckedChange={(checked) => setForce(checked === true)}
           />
           <FieldLabel
             htmlFor="git-force-delete-branch"
-            className="text-[12px] font-normal"
+            className="font-book text-[12px]"
           >
             Force delete (destroys them permanently)
           </FieldLabel>
@@ -1180,8 +1190,8 @@ function ConfirmDialog({
       </div>
     ) : (
       <>
-        <span className="font-mono">{pending.stash.message}</span> — dropping a
-        stash discards it permanently.
+        <span>{pending.stash.message}</span> — dropping a stash discards it
+        permanently.
       </>
     );
 

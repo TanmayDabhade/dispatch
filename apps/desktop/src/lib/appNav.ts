@@ -91,6 +91,8 @@ export interface NavState {
    * column's "+" returns to the board, rather than one fixed view. */
   newTaskReturnView: ProjectView;
   paletteOpen: boolean;
+  /** Whether the keyboard-shortcuts reference (`?`) is open. */
+  shortcutsOpen: boolean;
   /**
    * Where you have been, newest last, and how far back you have stepped.
    *
@@ -138,6 +140,7 @@ export const initialNavState: NavState = {
   taskTab: 'details',
   newTaskReturnView: 'board',
   paletteOpen: false,
+  shortcutsOpen: false,
   history: [
     {
       section: 'project',
@@ -206,6 +209,9 @@ export type NavAction =
   | { type: 'openPalette' }
   | { type: 'closePalette' }
   | { type: 'togglePalette' }
+  /** The `?` shortcuts reference — a dialog, so it stacks over whatever is open. */
+  | { type: 'openShortcuts' }
+  | { type: 'closeShortcuts' }
   | { type: 'back' }
   | { type: 'forward' }
   /** Context-sensitive close: the command palette wins over the task peek, and each one open
@@ -451,7 +457,14 @@ export function navReducer(state: NavState, action: NavAction): NavState {
       return { ...state, paletteOpen: false };
     case 'togglePalette':
       return { ...state, paletteOpen: !state.paletteOpen };
+    case 'openShortcuts':
+      // The reference is help, not a destination — it opens over the palette rather than
+      // replacing it, and history never records it.
+      return { ...state, shortcutsOpen: true };
+    case 'closeShortcuts':
+      return { ...state, shortcutsOpen: false };
     case 'escape':
+      if (state.shortcutsOpen) return { ...state, shortcutsOpen: false };
       if (state.paletteOpen) return { ...state, paletteOpen: false };
       if (state.peekTaskId !== null) return { ...state, peekTaskId: null };
       if (state.projectView === 'new-task')

@@ -44,7 +44,7 @@ export function ToolChip({
       </span>
       {meta !== undefined && (
         <span
-          className={`shrink-0 font-mono text-[11px] tabular-nums ${
+          className={`font-book shrink-0 text-[12px] tabular-nums ${
             isFailed ? 'text-red' : 'text-muted-foreground'
           }`}
         >
@@ -80,7 +80,7 @@ export function ToolChipGroup({ children, overflowCount }: ToolChipGroupProps) {
       {overflowCount !== undefined && overflowCount > 0 && (
         <span
           aria-label={`${overflowCount} more tool calls`}
-          className="rounded-chip bg-surface-inset text-muted-foreground inline-flex h-6 shrink-0 items-center px-2 font-mono text-xs tabular-nums"
+          className="rounded-pill border-border-chip bg-surface-quaternary text-muted-foreground font-book inline-flex h-6 shrink-0 items-center border-[0.5px] px-2 text-[12px] tabular-nums"
         >
           +{overflowCount}
         </span>

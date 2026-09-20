@@ -1,106 +1,334 @@
 import type {
+  Assignee,
   CreateInput,
   Priority,
   TaskDoc,
   TaskKind,
 } from '@dispatch/core/browser';
+import {
+  Check,
+  Flag,
+  Layers,
+  Milestone,
+  Paperclip,
+  SquareCheck,
+  Tag,
+  X,
+} from 'lucide-react';
+import type { KeyboardEvent, ReactNode } from 'react';
 import { useState } from 'react';
 
 import { usePersistedDraft } from '../../hooks/usePersistedDraft';
-import { Alert, AlertDescription } from '@/ui/alert';
+import {
+  assigneeLabel,
+  kindLabel,
+  priorityLabel,
+  statusLabel,
+} from '../../lib/taskDisplay';
+import { useShellActions } from '../shell/ShellActionsContext';
+import { useToasts } from '../shell/Toasts';
+import { AssigneeAvatar } from './AssigneeAvatar';
+import { PriorityIcon } from './PriorityIcon';
+import { StatusIcon } from './StatusIcon';
+import { IconButton } from '@/ui/ai/icon-button';
+import { Pill, SelectPill } from '@/ui/ai/pill';
+import { Switch } from '@/ui/ai/switch';
 import { Button } from '@/ui/button';
 import {
   Dialog,
+  DialogBody,
+  DialogChrome,
   DialogContent,
   DialogFooter,
-  DialogHeader,
-  DialogTitle,
 } from '@/ui/dialog';
-import { Field, FieldLabel } from '@/ui/field';
-import { Input } from '@/ui/input';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/ui/select';
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from '@/ui/dropdown-menu';
+import { Input } from '@/ui/input';
+import { Popover, PopoverContent, PopoverTrigger } from '@/ui/popover';
 import { Textarea } from '@/ui/textarea';
 
 // Fixed, non-config-driven enums — see TaskDetailModal.tsx for why these
 // mirror core/types.ts's constants instead of importing them at runtime.
 const KINDS: TaskKind[] = ['task', 'epic'];
 const PRIORITIES: Priority[] = ['urgent', 'high', 'medium', 'low', 'none'];
+const ASSIGNEES: Assignee[] = ['agent', 'human', 'none'];
 
-// Radix `SelectItem` can't take an empty-string `value` (it's reserved to mean "no
-// selection" internally) — this stands in for the "None" epic option, and is translated
-// back to `''`/`null` at the state and submit boundaries so the rest of the component still
-// only ever deals with the plain empty string it always has.
+// Menu values can't be the empty string, so this stands in for the "no epic" choice and is
+// mapped back to `null` at the onChange boundary.
 const NO_EPIC = '__none__';
+
+export const CREATE_TASK_TITLE_KEY = 'dispatch:create-task-title';
+export const CREATE_TASK_DESCRIPTION_KEY = 'dispatch:create-task-description';
 
 interface CreateTaskModalProps {
   statuses: string[];
   epics: TaskDoc[];
-  /** Pre-selects the Status field — the board/list column-header "+" button opens this modal
-   * already set to that column's status, matching Linear's own "add to this column" gesture,
-   * rather than always defaulting to `statuses[0]`. */
+  /** The crumb's project chip (`[project] › New task`); the app name until a project is open. */
+  projectName?: string;
+  /** Pre-selects the status — kept for callers that pass it directly; the shell's
+   * `createPreset` (a `+` on a status group or board column) fills the same slot. */
   initialStatus?: string;
   onCreate: (input: CreateInput) => Promise<void>;
   onClose: () => void;
 }
 
-/** Modal for creating a task. Title is the only required field; everything else has a sane
- * default so a quick "just capture this" flow stays one field deep. Mirrors
- * packages/web/src/components/CreateTask.tsx's fields, built on shadcn's `Dialog` — a true
- * modal that blocks the rest of the app, unlike the peek panel's overlay. */
+interface ChipOption {
+  value: string;
+  label: string;
+  glyph: ReactNode;
+}
+
+// One 28px property chip: a `SelectPill` whose menu lists the options with their 14px glyph
+// and a 12px check on the current one. `unset` chips read as the property's name in muted
+// text (`Priority`, `Assignee`), the way Linear's new-issue chips do before a value is picked.
+function PropertyChip({
+  value,
+  options,
+  onChange,
+  label,
+  menuTitle,
+  unset = false,
+}: {
+  value: string;
+  options: ChipOption[];
+  onChange: (value: string) => void;
+  /** The chip's accessible name and its text while `unset`. */
+  label: string;
+  menuTitle: string;
+  unset?: boolean;
+}) {
+  const selected = options.find((o) => o.value === value);
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        aria-label={label}
+        data-slot="property-chip"
+        data-unset={unset || undefined}
+        render={
+          <SelectPill
+            icon={selected?.glyph}
+            className={unset ? 'text-muted-foreground' : undefined}
+          />
+        }
+      >
+        {unset ? label : (selected?.label ?? value)}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="max-h-72 min-w-[184px]">
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>{menuTitle}</DropdownMenuLabel>
+          {options.map((o) => (
+            <DropdownMenuItem
+              key={o.value}
+              onClick={() => onChange(o.value)}
+              data-selected={o.value === value || undefined}
+            >
+              {o.glyph}
+              <span className="truncate">{o.label}</span>
+              {o.value === value && (
+                <Check className="ml-auto size-3" aria-label="Selected" />
+              )}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+// A chip whose value is free text (labels, the milestone name): the popover holds a 28px
+// input; Enter commits, and `values` render as removable pills above it when `multiple`.
+function TextChip({
+  label,
+  glyph,
+  values,
+  placeholder,
+  multiple,
+  onChange,
+}: {
+  label: string;
+  glyph: ReactNode;
+  values: string[];
+  placeholder: string;
+  multiple: boolean;
+  onChange: (values: string[]) => void;
+}) {
+  const [text, setText] = useState('');
+  const unset = values.length === 0;
+
+  function commit() {
+    const next = text.trim();
+    if (next === '') return;
+    onChange(multiple ? [...new Set([...values, next])] : [next]);
+    setText('');
+  }
+
+  return (
+    <Popover>
+      <PopoverTrigger
+        aria-label={label}
+        data-slot="property-chip"
+        data-unset={unset || undefined}
+        render={
+          <SelectPill
+            icon={glyph}
+            className={unset ? 'text-muted-foreground' : undefined}
+          />
+        }
+      >
+        {unset ? label : values.join(', ')}
+      </PopoverTrigger>
+      <PopoverContent align="start" className="flex w-64 flex-col gap-2">
+        {values.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {values.map((v) => (
+              <Pill key={v}>
+                {v}
+                <button
+                  type="button"
+                  aria-label={`Remove ${v}`}
+                  onClick={() => onChange(values.filter((x) => x !== v))}
+                  className="text-muted-foreground hover:text-foreground -mr-1 flex size-3.5 items-center justify-center"
+                >
+                  <X className="size-2.5" />
+                </button>
+              </Pill>
+            ))}
+          </div>
+        )}
+        <Input
+          aria-label={placeholder}
+          placeholder={placeholder}
+          value={text}
+          autoFocus
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              commit();
+            }
+          }}
+        />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/**
+ * Linear's new-issue dialog (§9): a ~1024px sheet near the top of the window with a crumb
+ * header, a borderless 18px title over a 15px description, a row of 28px property chips,
+ * and a footer with `Create more` + the indigo `Create task`. Title is the only required
+ * field; `⌘⏎` creates, `Save as draft` files it under `draft`, and `Create more` keeps the
+ * dialog open with the properties intact for the next one.
+ */
 export function CreateTaskModal({
   statuses,
   epics,
+  projectName = 'Dispatch',
   initialStatus,
   onCreate,
   onClose,
 }: CreateTaskModalProps) {
+  const { createPreset } = useShellActions();
+  const toasts = useToasts();
   // Title and description survive an accidental close (Escape, outside click) — the two
-  // fields with real typing in them. The dropdowns cost one click to redo and stay ephemeral.
-  const [title, setTitle] = usePersistedDraft('dispatch:create-task-title');
+  // fields with real typing in them. The chips cost one click to redo and stay ephemeral.
+  const [title, setTitle] = usePersistedDraft(CREATE_TASK_TITLE_KEY);
+  const [description, setDescription] = usePersistedDraft(
+    CREATE_TASK_DESCRIPTION_KEY
+  );
   const [kind, setKind] = useState<TaskKind>('task');
   const [priority, setPriority] = useState<Priority>('none');
+  const [assignee, setAssignee] = useState<Assignee>('none');
   const [status, setStatus] = useState(
-    initialStatus ?? statuses[0] ?? 'backlog'
+    initialStatus ?? createPreset?.status ?? statuses[0] ?? 'backlog'
   );
-  const [parent, setParent] = useState('');
-  const [description, setDescription] = usePersistedDraft(
-    'dispatch:create-task-description'
+  const [parent, setParent] = useState<string | null>(
+    createPreset?.epic ?? null
   );
-  const [error, setError] = useState<string | null>(null);
+  const [milestone, setMilestone] = useState<string | null>(
+    createPreset?.milestone ?? null
+  );
+  const [labels, setLabels] = useState<string[]>([]);
+  const [createMore, setCreateMore] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  async function submit() {
-    if (title.trim() === '') {
-      setError('title is required');
-      return;
-    }
+  const canSubmit = title.trim() !== '' && !submitting;
+
+  // `asStatus` overrides the chip for `Save as draft`. Only a landed create clears the
+  // persisted title/description; with `Create more` the dialog stays open for the next one.
+  async function submit(asStatus: string = status) {
+    if (!canSubmit) return;
     setSubmitting(true);
-    setError(null);
     try {
       await onCreate({
         title: title.trim(),
         kind,
         priority,
-        status,
-        parent: parent !== '' ? parent : null,
+        assignee,
+        status: asStatus,
+        parent,
+        milestone,
+        labels,
         description,
       });
-      // The draft has landed as a task; only now does the persisted copy clear.
       setTitle('');
       setDescription('');
-      onClose();
+      if (!createMore) onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      toasts.push({
+        tone: 'error',
+        title: 'Could not create task',
+        description: err instanceof Error ? err.message : String(err),
+      });
     } finally {
       setSubmitting(false);
     }
   }
+
+  // `⌘⏎` from any field creates; a chip input that already consumed its Enter is skipped.
+  function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    if (e.defaultPrevented) return;
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      void submit();
+    }
+  }
+
+  const statusOptions: ChipOption[] = statuses.map((s) => ({
+    value: s,
+    label: statusLabel(s),
+    glyph: <StatusIcon status={s} />,
+  }));
+  const priorityOptions: ChipOption[] = PRIORITIES.map((p) => ({
+    value: p,
+    label: priorityLabel(p),
+    glyph: <PriorityIcon priority={p} />,
+  }));
+  const assigneeOptions: ChipOption[] = ASSIGNEES.map((a) => ({
+    value: a,
+    label: assigneeLabel(a),
+    glyph: <AssigneeAvatar assignee={a} size={16} />,
+  }));
+  const epicOptions: ChipOption[] = [
+    { value: NO_EPIC, label: 'No epic', glyph: <Milestone /> },
+    ...epics.map((epic) => ({
+      value: epic.meta.id,
+      label: epic.meta.title,
+      glyph: <Milestone />,
+    })),
+  ];
+  const kindOptions: ChipOption[] = KINDS.map((k) => ({
+    value: k,
+    label: kindLabel(k),
+    glyph: k === 'epic' ? <Layers /> : <SquareCheck />,
+  }));
 
   return (
     <Dialog
@@ -109,146 +337,130 @@ export function CreateTaskModal({
         if (!open) onClose();
       }}
     >
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>New task</DialogTitle>
-        </DialogHeader>
+      <DialogContent
+        aria-label="New task"
+        showCloseButton={false}
+        onKeyDown={onKeyDown}
+        className={
+          expanded
+            ? 'top-[4%] w-[min(1400px,96vw)] max-w-none translate-y-0 sm:max-w-none'
+            : 'top-[12%] w-[min(1024px,92vw)] max-w-none translate-y-0 sm:max-w-none'
+        }
+      >
+        <DialogChrome
+          expanded={expanded}
+          onExpand={() => setExpanded((v) => !v)}
+        >
+          <Pill>{projectName}</Pill>
+          <span aria-hidden>›</span>
+          <span className="text-(--text-secondary)">New task</span>
+        </DialogChrome>
 
-        <div className="flex flex-col gap-4">
-          {error !== null && (
-            <Alert
-              variant="destructive"
-              className="bg-destructive/10 rounded-md border-0 px-3 py-2 text-[13px]"
+        <DialogBody className="gap-2 pt-1 pb-4">
+          <Input
+            variant="borderless"
+            aria-label="Task title"
+            placeholder="Task title"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            autoFocus
+            className="text-[18px] leading-7 font-medium"
+          />
+          <Textarea
+            variant="borderless"
+            aria-label="Description"
+            placeholder="Add description…"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            className={
+              expanded
+                ? 'min-h-[240px] text-[15px] leading-6'
+                : 'min-h-[72px] text-[15px] leading-6'
+            }
+          />
+
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <PropertyChip
+              value={status}
+              options={statusOptions}
+              onChange={setStatus}
+              label="Status"
+              menuTitle="Change status"
+            />
+            <PropertyChip
+              value={priority}
+              options={priorityOptions}
+              onChange={(v) => setPriority(v as Priority)}
+              label="Priority"
+              menuTitle="Change priority"
+              unset={priority === 'none'}
+            />
+            <PropertyChip
+              value={assignee}
+              options={assigneeOptions}
+              onChange={(v) => setAssignee(v)}
+              label="Assignee"
+              menuTitle="Assign to"
+              unset={assignee === 'none'}
+            />
+            <TextChip
+              label="Labels"
+              glyph={<Tag />}
+              values={labels}
+              placeholder="Add label"
+              multiple
+              onChange={setLabels}
+            />
+            <PropertyChip
+              value={parent ?? NO_EPIC}
+              options={epicOptions}
+              onChange={(v) => setParent(v === NO_EPIC ? null : v)}
+              label="Epic"
+              menuTitle="Add to epic"
+              unset={parent === null}
+            />
+            <TextChip
+              label="Milestone"
+              glyph={<Flag />}
+              values={milestone === null ? [] : [milestone]}
+              placeholder="Milestone name"
+              multiple={false}
+              onChange={(v) => setMilestone(v[0] ?? null)}
+            />
+            <PropertyChip
+              value={kind}
+              options={kindOptions}
+              onChange={(v) => setKind(v as TaskKind)}
+              label="Kind"
+              menuTitle="Kind"
+            />
+          </div>
+        </DialogBody>
+
+        <DialogFooter
+          className="shadow-hairline-top"
+          leading={
+            <IconButton label="Attach" disabled>
+              <Paperclip />
+            </IconButton>
+          }
+        >
+          <Switch
+            label="Create more"
+            checked={createMore}
+            onCheckedChange={(next) => setCreateMore(next)}
+          />
+          {title.trim() !== '' && (
+            <Button
+              variant="ghost"
+              disabled={submitting}
+              onClick={() => void submit('draft')}
             >
-              <AlertDescription className="text-[13px]">
-                {error}
-              </AlertDescription>
-            </Alert>
+              Save as draft
+            </Button>
           )}
-
-          <Field className="gap-1.5">
-            <FieldLabel htmlFor="title" className="text-[13px] font-normal">
-              Title
-            </FieldLabel>
-            <Input
-              id="title"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              autoFocus
-            />
-          </Field>
-
-          <div className="flex gap-3">
-            <Field className="gap-1.5">
-              <FieldLabel htmlFor="kind" className="text-[13px] font-normal">
-                Kind
-              </FieldLabel>
-              <Select
-                value={kind}
-                onValueChange={(value) => setKind(value as TaskKind)}
-              >
-                <SelectTrigger id="kind" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {KINDS.map((k) => (
-                    <SelectItem key={k} value={k}>
-                      {k}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field className="gap-1.5">
-              <FieldLabel
-                htmlFor="priority"
-                className="text-[13px] font-normal"
-              >
-                Priority
-              </FieldLabel>
-              <Select
-                value={priority}
-                onValueChange={(value) => setPriority(value as Priority)}
-              >
-                <SelectTrigger id="priority" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PRIORITIES.map((p) => (
-                    <SelectItem key={p} value={p}>
-                      {p}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-          </div>
-
-          <div className="flex gap-3">
-            <Field className="gap-1.5">
-              <FieldLabel htmlFor="status" className="text-[13px] font-normal">
-                Status
-              </FieldLabel>
-              <Select value={status} onValueChange={setStatus}>
-                <SelectTrigger id="status" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {statuses.map((s) => (
-                    <SelectItem key={s} value={s}>
-                      {s}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field className="gap-1.5">
-              <FieldLabel htmlFor="epic" className="text-[13px] font-normal">
-                Epic
-              </FieldLabel>
-              <Select
-                value={parent === '' ? NO_EPIC : parent}
-                onValueChange={(value) =>
-                  setParent(value === NO_EPIC ? '' : value)
-                }
-              >
-                <SelectTrigger id="epic" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NO_EPIC}>None</SelectItem>
-                  {epics.map((epic) => (
-                    <SelectItem key={epic.meta.id} value={epic.meta.id}>
-                      {epic.meta.title}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-          </div>
-
-          <Field className="gap-1.5">
-            <FieldLabel
-              htmlFor="description"
-              className="text-[13px] font-normal"
-            >
-              Description
-            </FieldLabel>
-            <Textarea
-              id="description"
-              rows={4}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
-          </Field>
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button disabled={submitting} onClick={() => void submit()}>
-            Create
+          <Button disabled={!canSubmit} onClick={() => void submit()}>
+            Create task
           </Button>
         </DialogFooter>
       </DialogContent>

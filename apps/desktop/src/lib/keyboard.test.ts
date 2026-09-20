@@ -10,6 +10,7 @@ import {
   isInteractiveControlTagName,
   isTypingTagName,
   resolveCardKeyAction,
+  resolveChordPrefix,
   resolveGitKeyCommand,
   resolveGlobalKeyCommand,
   resolveListKeyCommand,
@@ -18,6 +19,7 @@ import {
 const baseGlobalCtx: GlobalKeyboardContext = {
   isTyping: false,
   modalOpen: false,
+  pendingPrefix: null,
 };
 
 function key(k: string, mods: Partial<KeyInput> = {}): KeyInput {
@@ -73,8 +75,77 @@ describe('resolveGlobalKeyCommand', () => {
     ).toBeNull();
   });
 
-  test('"c" is not a global shortcut (would conflict with copy)', () => {
-    expect(resolveGlobalKeyCommand(key('c'), baseGlobalCtx)).toBeNull();
+  test('bare "c" opens the task creator, but never while typing or over a modal', () => {
+    // Bare, not ⌘C — copy keeps its modifier, so the two never meet.
+    expect(resolveGlobalKeyCommand(key('c'), baseGlobalCtx)).toBe('new-task');
+    expect(
+      resolveGlobalKeyCommand(key('c'), { ...baseGlobalCtx, isTyping: true })
+    ).toBeNull();
+    expect(
+      resolveGlobalKeyCommand(key('c'), { ...baseGlobalCtx, modalOpen: true })
+    ).toBeNull();
+    expect(
+      resolveGlobalKeyCommand(key('c', { metaKey: true }), baseGlobalCtx)
+    ).toBeNull();
+  });
+
+  test('bare "[" toggles the sidebar; ⌘[ is still history', () => {
+    expect(resolveGlobalKeyCommand(key('['), baseGlobalCtx)).toBe(
+      'toggle-sidebar'
+    );
+    expect(
+      resolveGlobalKeyCommand(key('[', { metaKey: true }), baseGlobalCtx)
+    ).toBe('nav-back');
+    expect(
+      resolveGlobalKeyCommand(key('['), { ...baseGlobalCtx, isTyping: true })
+    ).toBeNull();
+    expect(
+      resolveGlobalKeyCommand(key('['), { ...baseGlobalCtx, modalOpen: true })
+    ).toBeNull();
+  });
+
+  test('"?" opens the shortcuts reference outside text fields', () => {
+    expect(resolveGlobalKeyCommand(key('?'), baseGlobalCtx)).toBe(
+      'open-shortcuts'
+    );
+    expect(
+      resolveGlobalKeyCommand(key('?'), { ...baseGlobalCtx, isTyping: true })
+    ).toBeNull();
+  });
+
+  test('a bare "g" arms the chord prefix instead of resolving', () => {
+    expect(resolveGlobalKeyCommand(key('g'), baseGlobalCtx)).toBeNull();
+    expect(resolveChordPrefix(key('g'), baseGlobalCtx)).toBe('g');
+    // Not while typing, not over a modal, not with a modifier, not twice.
+    expect(
+      resolveChordPrefix(key('g'), { ...baseGlobalCtx, isTyping: true })
+    ).toBeNull();
+    expect(
+      resolveChordPrefix(key('g'), { ...baseGlobalCtx, modalOpen: true })
+    ).toBeNull();
+    expect(
+      resolveChordPrefix(key('g', { metaKey: true }), baseGlobalCtx)
+    ).toBeNull();
+    expect(
+      resolveChordPrefix(key('g'), { ...baseGlobalCtx, pendingPrefix: 'g' })
+    ).toBeNull();
+    expect(resolveChordPrefix(key('h'), baseGlobalCtx)).toBeNull();
+  });
+
+  test('with "g" armed the second key resolves the chord', () => {
+    const armed = { ...baseGlobalCtx, pendingPrefix: 'g' as const };
+    expect(resolveGlobalKeyCommand(key('s'), armed)).toBe('goto-settings');
+    expect(resolveGlobalKeyCommand(key('i'), armed)).toBe('goto-inbox');
+    expect(resolveGlobalKeyCommand(key('t'), armed)).toBe('goto-tasks');
+    expect(resolveGlobalKeyCommand(key('c'), armed)).toBe('goto-control-room');
+    expect(resolveGlobalKeyCommand(key('a'), armed)).toBe('goto-overseer');
+    // A miss is nothing — not the key's own bare meaning.
+    expect(resolveGlobalKeyCommand(key('['), armed)).toBeNull();
+    expect(resolveGlobalKeyCommand(key('z'), armed)).toBeNull();
+    // Modifier chords still win over an armed prefix.
+    expect(resolveGlobalKeyCommand(key('k', { metaKey: true }), armed)).toBe(
+      'open-palette'
+    );
   });
 
   test('bare Enter outside text fields resolves to null globally (C2)', () => {
@@ -140,6 +211,29 @@ describe('resolveGlobalKeyCommand', () => {
     ).toBeNull();
     expect(resolveGlobalKeyCommand(key('d'), baseGlobalCtx)).toBeNull();
   });
+
+  test('⌘B aliases the sidebar toggle with the same typing and modal guards', () => {
+    expect(
+      resolveGlobalKeyCommand(key('b', { metaKey: true }), baseGlobalCtx)
+    ).toBe('toggle-sidebar');
+    expect(
+      resolveGlobalKeyCommand(key('B', { ctrlKey: true }), baseGlobalCtx)
+    ).toBe('toggle-sidebar');
+    expect(
+      resolveGlobalKeyCommand(key('b', { metaKey: true }), {
+        ...baseGlobalCtx,
+        isTyping: true,
+      })
+    ).toBeNull();
+    expect(
+      resolveGlobalKeyCommand(key('b', { metaKey: true }), {
+        ...baseGlobalCtx,
+        modalOpen: true,
+      })
+    ).toBeNull();
+    // A bare "b" is ordinary typing.
+    expect(resolveGlobalKeyCommand(key('b'), baseGlobalCtx)).toBeNull();
+  });
 });
 
 const baseListCtx: ListKeyboardContext = { isTyping: false };
@@ -159,17 +253,71 @@ describe('resolveListKeyCommand', () => {
     ).toBeNull();
   });
 
+  test('the arrow keys alias j/k', () => {
+    expect(resolveListKeyCommand(key('ArrowDown'), baseListCtx)).toBe(
+      'list-down'
+    );
+    expect(resolveListKeyCommand(key('ArrowUp'), baseListCtx)).toBe('list-up');
+  });
+
+  test('o opens, Space peeks, x toggles selection, Escape clears it', () => {
+    expect(resolveListKeyCommand(key('o'), baseListCtx)).toBe('list-open');
+    expect(resolveListKeyCommand(key(' '), baseListCtx)).toBe('list-peek');
+    expect(resolveListKeyCommand(key('x'), baseListCtx)).toBe(
+      'list-select-toggle'
+    );
+    expect(resolveListKeyCommand(key('Escape'), baseListCtx)).toBe(
+      'list-escape'
+    );
+  });
+
+  test('the single-key property shortcuts', () => {
+    expect(resolveListKeyCommand(key('s'), baseListCtx)).toBe(
+      'list-set-status'
+    );
+    expect(resolveListKeyCommand(key('p'), baseListCtx)).toBe(
+      'list-set-priority'
+    );
+    expect(resolveListKeyCommand(key('a'), baseListCtx)).toBe(
+      'list-set-assignee'
+    );
+    expect(resolveListKeyCommand(key('l'), baseListCtx)).toBe(
+      'list-set-labels'
+    );
+    expect(resolveListKeyCommand(key('e'), baseListCtx)).toBe('list-set-epic');
+    expect(resolveListKeyCommand(key('m'), baseListCtx)).toBe(
+      'list-set-milestone'
+    );
+    expect(resolveListKeyCommand(key('d'), baseListCtx)).toBe('list-dispatch');
+    expect(resolveListKeyCommand(key('f'), baseListCtx)).toBe(
+      'list-open-filter'
+    );
+    // ⇧V arrives as the uppercase key; a bare `v` is nothing.
+    expect(resolveListKeyCommand(key('V'), baseListCtx)).toBe(
+      'list-open-display'
+    );
+    expect(resolveListKeyCommand(key('v'), baseListCtx)).toBeNull();
+  });
+
+  test('nothing resolves while typing', () => {
+    const typing = { ...baseListCtx, isTyping: true };
+    for (const k of ['s', 'x', 'o', ' ', 'f', 'ArrowDown', 'Escape']) {
+      expect(resolveListKeyCommand(key(k), typing)).toBeNull();
+    }
+  });
+
   test('does not resolve global-only commands', () => {
-    expect(resolveListKeyCommand(key('Escape'), baseListCtx)).toBeNull();
     expect(resolveListKeyCommand(key('/'), baseListCtx)).toBeNull();
     expect(resolveListKeyCommand(key('c'), baseListCtx)).toBeNull();
+    expect(resolveListKeyCommand(key('['), baseListCtx)).toBeNull();
     expect(
       resolveListKeyCommand(key('k', { metaKey: true }), baseListCtx)
     ).toBeNull();
   });
 
   test('unrelated keys resolve to null', () => {
-    expect(resolveListKeyCommand(key('a'), baseListCtx)).toBeNull();
+    expect(resolveListKeyCommand(key('q'), baseListCtx)).toBeNull();
+    expect(resolveListKeyCommand(key('Tab'), baseListCtx)).toBeNull();
   });
 });
 
@@ -233,8 +381,8 @@ describe('resolveCardKeyAction', () => {
 });
 
 describe('navigation shortcuts', () => {
-  const ctx = { isTyping: false, modalOpen: false };
-  const typing = { isTyping: true, modalOpen: false };
+  const ctx = baseGlobalCtx;
+  const typing = { ...baseGlobalCtx, isTyping: true };
 
   test('cmd+[ and cmd+] move through history', () => {
     expect(

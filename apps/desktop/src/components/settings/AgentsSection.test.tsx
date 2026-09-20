@@ -140,3 +140,31 @@ test('a model role select carries its accessible name', () => {
   render(<AgentsSection config={config} onSave={async () => {}} />);
   expect(screen.getByLabelText('Coding runs model')).toBeTruthy();
 });
+
+// The model rows are their own group, ahead of the run controls and the ladder.
+test('the page is three sentence-case groups', () => {
+  render(<AgentsSection config={config} onSave={async () => {}} />);
+  expect(
+    screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
+  ).toEqual(['Models', 'How agents run', 'Escalation ladder']);
+});
+
+// Numeric inputs are sans with tabular digits — no code face on a number.
+test('numeric inputs are not monospaced', () => {
+  render(<AgentsSection config={config} onSave={async () => {}} />);
+  const input = screen.getByLabelText('Turn cap');
+  expect(input.className).not.toContain('font-mono');
+  expect(input.className).toContain('tabular-nums');
+});
+
+// The permission radios paint on Linear's indigo (`--color-primary` → `--accent`), not the
+// `accent-accent` alias that resolves to the near-transparent hover wash.
+test('the permission radios paint with the primary accent', () => {
+  render(<AgentsSection config={config} onSave={async () => {}} />);
+  const radios = screen.getAllByRole('radio');
+  expect(radios.length).toBeGreaterThan(0);
+  for (const radio of radios) {
+    expect(radio.className).toContain('accent-primary');
+    expect(radio.className).not.toContain('accent-accent');
+  }
+});

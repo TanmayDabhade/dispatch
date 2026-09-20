@@ -14,6 +14,27 @@ test('a panel header shows its label and count', () => {
   expect(screen.getByText('5')).toBeDefined();
 });
 
+// The panel is Linear's settings card: a secondary surface inside a half-pixel
+// border, no drop shadow — and its header and rows sit on the 36px grid.
+test('a panel is a bordered card and its header row is 36px', () => {
+  const { container } = render(
+    <Panel>
+      <PanelHeader>Personal</PanelHeader>
+      <PanelRow>Full name</PanelRow>
+    </Panel>
+  );
+  const panel = container.firstElementChild as HTMLElement;
+  const classes = panel.className.split(/\s+/);
+  expect(classes).toContain('border-[0.5px]');
+  expect(classes).toContain('bg-surface-secondary');
+  expect(classes.some((c) => c.startsWith('shadow-card'))).toBe(false);
+  const header = panel.firstElementChild as HTMLElement;
+  expect(header.className.split(/\s+/)).toContain('h-9');
+  const row = panel.lastElementChild as HTMLElement;
+  expect(row.className.split(/\s+/)).toContain('min-h-9');
+  expect(row.className).toContain('shadow-hairline-bottom');
+});
+
 // A header wanting a hairline or an inline toggle used to have to drop back to
 // raw markup, because these two never reached the SectionLabel underneath.
 test('a panel header forwards the rule and trailing content', () => {

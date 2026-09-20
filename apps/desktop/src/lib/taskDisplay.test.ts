@@ -1,27 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 
 import {
+  assigneeLabel,
+  kindLabel,
   parseTaskSections,
+  priorityLabel,
   priorityTone,
   sectionOrDash,
   statusLabel,
-  statusTone,
 } from './taskDisplay';
-
-describe('statusTone', () => {
-  test('maps each built-in status to its dedicated tone', () => {
-    expect(statusTone('working')).toBe('blue');
-    expect(statusTone('review')).toBe('amber');
-    expect(statusTone('landed')).toBe('green');
-    expect(statusTone('dropped')).toBe('red');
-  });
-
-  test('falls back to gray for backlog/todo and any custom status', () => {
-    expect(statusTone('draft')).toBe('gray');
-    expect(statusTone('ready')).toBe('gray');
-    expect(statusTone('triage')).toBe('gray');
-  });
-});
 
 describe('priorityTone', () => {
   test('urgent and high get a tone', () => {
@@ -68,5 +55,41 @@ describe('statusLabel', () => {
 
   test('drops empty segments rather than emitting stray spaces', () => {
     expect(statusLabel('done--')).toBe('Done');
+  });
+});
+
+describe('priorityLabel', () => {
+  test('names every priority, with an explicit "No priority" for none', () => {
+    expect(priorityLabel('none')).toBe('No priority');
+    expect(priorityLabel('low')).toBe('Low');
+    expect(priorityLabel('medium')).toBe('Medium');
+    expect(priorityLabel('high')).toBe('High');
+    expect(priorityLabel('urgent')).toBe('Urgent');
+  });
+});
+
+describe('assigneeLabel', () => {
+  test('reads none as Unassigned and the bare kinds by name', () => {
+    expect(assigneeLabel('none')).toBe('Unassigned');
+    expect(assigneeLabel('agent')).toBe('Agent');
+    expect(assigneeLabel('human')).toBe('Human');
+  });
+
+  test('names a handled ref by its handle', () => {
+    expect(assigneeLabel('human:wyat')).toBe('wyat');
+    expect(assigneeLabel('agent:wyat/claude')).toBe('claude');
+  });
+
+  test('falls back to the raw value for a malformed ref, and Unassigned for a missing one', () => {
+    expect(assigneeLabel('robot')).toBe('robot');
+    expect(assigneeLabel(null)).toBe('Unassigned');
+    expect(assigneeLabel('')).toBe('Unassigned');
+  });
+});
+
+describe('kindLabel', () => {
+  test('labels both kinds', () => {
+    expect(kindLabel('task')).toBe('Task');
+    expect(kindLabel('epic')).toBe('Epic');
   });
 });

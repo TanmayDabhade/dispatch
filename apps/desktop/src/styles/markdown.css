@@ -42,6 +42,35 @@
   color: var(--muted-foreground);
 }
 
+/* GFM task lists (`- [ ] …`): the bullet gives way to a 14px checkbox on the chip ring, the
+   same box Linear draws for a checklist in a description. */
+.dispatch-md ul.contains-task-list {
+  padding-left: 0;
+  list-style: none;
+}
+
+.dispatch-md li.task-list-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5em;
+}
+
+.dispatch-md li.task-list-item > input[type='checkbox'] {
+  appearance: none;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin: 0.35em 0 0;
+  border: 0.5px solid var(--border-chip);
+  border-radius: 4px;
+  background: var(--surface-quaternary);
+}
+
+.dispatch-md li.task-list-item > input[type='checkbox']:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
 .dispatch-md h1,
 .dispatch-md h2,
 .dispatch-md h3,
@@ -68,7 +97,7 @@
 }
 
 .dispatch-md a {
-  color: var(--primary);
+  color: var(--accent);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -76,14 +105,14 @@
 .dispatch-md blockquote {
   margin: 0.4em 0;
   padding-left: 0.8em;
-  border-left: 2px solid var(--border);
+  border-left: 2px solid var(--border-chip);
   color: var(--muted-foreground);
 }
 
 .dispatch-md hr {
   margin: 0.8em 0;
   border: none;
-  border-top: 1px solid var(--border);
+  border-top: 0.5px solid var(--border);
 }
 
 .dispatch-md table {
@@ -95,11 +124,36 @@
 .dispatch-md th,
 .dispatch-md td {
   padding: 0.25em 0.55em;
-  border: 1px solid var(--border);
+  border: 0.5px solid var(--border);
   text-align: left;
 }
 
 .dispatch-md th {
-  background: color-mix(in srgb, var(--muted) 60%, transparent);
-  font-weight: 600;
+  background: var(--surface-quaternary);
+  font-weight: 500;
+}
+
+/* The task page's long-form measure (Linear's description/comment body): 15px/450 on a
+   24px line, with headings held at 15px/600 so prose never competes with the 24px title.
+   Declared after every `.dispatch-md` element rule above so, at equal specificity, the
+   prose metrics win the cascade. */
+.dispatch-md-prose {
+  font-size: 15px;
+  font-weight: 450;
+  line-height: 24px;
+  color: var(--foreground);
+}
+
+.dispatch-md-prose h1,
+.dispatch-md-prose h2,
+.dispatch-md-prose h3,
+.dispatch-md-prose h4 {
+  font-size: 15px;
+  line-height: 24px;
+}
+
+.dispatch-md-prose p,
+.dispatch-md-prose ul,
+.dispatch-md-prose ol {
+  margin: 0.5em 0;
 }

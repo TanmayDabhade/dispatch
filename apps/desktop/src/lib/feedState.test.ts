@@ -13,6 +13,7 @@ import {
   FEED_STATE_ORDER,
   isInFlightState,
   isUrgentState,
+  tintForState,
 } from './feedState';
 
 // Only the fields deriveFeedState reads, matching the fixture style in runState.test.ts.
@@ -184,5 +185,17 @@ describe('state metadata', () => {
       'checking',
       'landing',
     ]);
+  });
+});
+
+describe('tintForState', () => {
+  test('every state of one tier shares its tint, and tiers differ', () => {
+    expect(tintForState('answer')).toBe(tintForState('review'));
+    expect(tintForState('working')).toBe(tintForState('landing'));
+    expect(tintForState('failed')).not.toBe(tintForState('working'));
+    expect(tintForState('ready')).not.toBe(tintForState('answer'));
+    for (const state of FEED_STATE_ORDER) {
+      expect(tintForState(state)).toMatch(/^var\(--state-[a-z]+-fg\)$/);
+    }
   });
 });

@@ -13,6 +13,7 @@ import {
   SquareArrowOutUpRight,
   Trash2,
 } from 'lucide-react';
+import type { MouseEvent } from 'react';
 import { useState } from 'react';
 
 import { landingKey } from '../../hooks/useDispatchProject';
@@ -30,7 +31,10 @@ import { REVIEW_VERDICT, StatusPill } from '../runs/PrStatusPills';
 import { useToasts } from '../shell/Toasts';
 import { ChecksPopover } from './ChecksPopover';
 import { cn } from '@/lib/utils';
-import { Button } from '@/ui/button';
+import { IconButton } from '@/ui/ai/icon-button';
+import { InitialsAvatar } from '@/ui/ai/initials-avatar';
+import { ListRow } from '@/ui/ai/list-row';
+import { LabelPill, PillButton } from '@/ui/ai/pill';
 import { StepStrip } from '@/ui/chrome/StepStrip';
 import {
   DropdownMenu,
@@ -40,7 +44,6 @@ import {
   DropdownMenuTrigger,
 } from '@/ui/dropdown-menu';
 import { Popover, PopoverContent, PopoverTrigger } from '@/ui/popover';
-import { TableCell, TableRow } from '@/ui/table';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
 // A row with no PR has no `checks` — distinct from a real zero-check PR,
@@ -53,7 +56,7 @@ const NO_CHECKS: PrCheckSummary = {
   runs: [],
 };
 
-// The status dot's fill, keyed off the gate rather than the row's group —
+// The gate pill's dot, keyed off the gate rather than the row's group —
 // two gates in the same group still read by their own run-state color family.
 const GATE_COLOR: Record<GateStatus, string> = {
   ready: 'var(--state-review-fg)',
@@ -67,6 +70,8 @@ const GATE_COLOR: Record<GateStatus, string> = {
   blocked: 'var(--state-waiting-fg)',
   none: 'var(--state-ready-fg)',
 };
+
+const META_CLASS = 'text-[12px] font-book text-muted-foreground tabular-nums';
 
 /** A run-backed row opens its task's Diff tab; a bare PR row opens the PR
  * review page. `null` only for a malformed row that is neither. */
@@ -89,12 +94,9 @@ interface LandingRowProps {
    * needs the whole set to name the entry one ahead. */
   queueRows: readonly LandingRowData[];
   now: number;
-  /** Whether the PR-only columns (Checks/Changes/Worktree) render at all — the view hides
-   * them for an all-local snapshot instead of printing a page of dashes. */
-  showPrColumns: boolean;
   /** How many older runs this task's surviving row also speaks for. */
   extraRuns?: number;
-  /** The run's reviewedAt — fills the Review column for queue-local rows. */
+  /** The run's reviewedAt — fills the review pill for queue-local rows. */
   reviewedAt?: string;
   onFilterAuthor: (author: string) => void;
   onFilterGate: (gate: GateStatus) => void;
@@ -111,13 +113,13 @@ interface LandingRowProps {
   onRetryQueue: () => Promise<void>;
 }
 
-/** One row of the unified PR table: status dot, title + identity subline,
- * landing progress, checks, diffstat, review verdict, and worktree. */
+/** One 36px row of the unified PR table: the PR number, the title, then the
+ * right-aligned gate pill, landing progress, checks, diffstat, review verdict,
+ * worktree, the author's avatar and when it last moved. */
 export function LandingRow({
   row,
   queueRows,
   now,
-  showPrColumns,
   extraRuns,
   reviewedAt,
   onFilterAuthor,
@@ -142,145 +144,141 @@ export function LandingRow({
         ? REVIEW_VERDICT.CHANGES_REQUESTED
         : undefined;
 
+  // The identity subline the table used to carry — branch → base, the queue
+  // state, extra runs — folded into the title's crumb so the row stays one line.
+  const crumb =
+    pr !== undefined
+      ? `${pr.headRefName} → ${pr.baseRefName}`
+      : queue !== undefined
+        ? queueStateLabel(queue.entry.state)
+        : undefined;
+  const crumbWithRuns =
+    extraRuns !== undefined && extraRuns > 0
+      ? `${crumb !== undefined ? `${crumb} · ` : ''}×${extraRuns + 1} runs`
+      : crumb;
+
+  const movedAt =
+    pr !== undefined
+      ? pr.updatedAt
+      : queue !== undefined
+        ? (queue.entry.stateSince ?? queue.entry.enqueuedAt)
+        : undefined;
+
+  // The whole row opens the target, except a click on one of its own controls — the
+  // gate pill, the checks popover, the worktree menu, the avatar — or inside a popover
+  // those controls portal out of the row (React bubbles through portals; the DOM does not).
+  const openRow =
+    openTarget === null
+      ? undefined
+      : (event?: MouseEvent<HTMLDivElement>) => {
+          if (event !== undefined) {
+            const target = event.target as Node;
+            if (!event.currentTarget.contains(target)) return;
+            if (
+              target instanceof Element &&
+              target.closest('[data-row-action]') !== null
+            ) {
+              return;
+            }
+          }
+          openTarget();
+        };
+
   return (
-    <TableRow>
-      <TableCell>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <span
-                aria-hidden
-                className="inline-block size-2 shrink-0 rounded-full"
-                style={{
-                  backgroundColor: color,
-                  boxShadow: `0 0 0 3px color-mix(in srgb, ${color} 16%, transparent)`,
-                }}
-              />
-            }
-          />
-          <TooltipContent>{row.gate.detail}</TooltipContent>
-        </Tooltip>
-      </TableCell>
-
-      <TableCell className="max-w-[360px]">
-        <button
-          type="button"
-          disabled={openTarget === null}
-          onClick={() => openTarget?.()}
-          className="block max-w-full truncate text-left text-[13px] hover:underline"
-        >
-          {row.title}
-        </button>
-        <div className="dense-meta mt-0.5 flex min-w-0 items-center gap-1 truncate">
-          {pr !== undefined ? (
-            <>
-              <span>#{pr.number}</span>
-              <span>·</span>
-              <button
-                type="button"
-                onClick={() => onFilterAuthor(pr.author)}
-                className="hover:text-foreground"
+    <ListRow
+      data-landing-row={row.id}
+      role="listitem"
+      id={pr !== undefined ? `#${pr.number}` : undefined}
+      title={row.title}
+      crumb={crumbWithRuns}
+      onClick={openRow}
+      trailing={
+        <>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  data-row-action
+                  className="rounded-pill focus-visible:ring-ring flex shrink-0 items-center outline-none focus-visible:ring-2"
+                  onClick={() => onFilterGate(row.gate.status)}
+                />
+              }
+            >
+              <LabelPill
+                color={color}
+                className="hover:bg-surface-active cursor-pointer"
               >
-                {pr.author}
-              </button>
-              <span>·</span>
-              <span className="min-w-0 truncate">
-                {pr.headRefName} → {pr.baseRefName}
-              </span>
-              <span>·</span>
-              <span className="shrink-0">
-                {relativeTime(pr.updatedAt, now)}
-              </span>
-            </>
-          ) : queue !== undefined ? (
-            <>
-              <span>{queueStateLabel(queue.entry.state)}</span>
-              <span>·</span>
-              <span>
-                {relativeTime(
-                  queue.entry.stateSince ?? queue.entry.enqueuedAt,
-                  now
-                )}
-              </span>
-            </>
+                {gateChipLabel(row, queueRows)}
+              </LabelPill>
+            </TooltipTrigger>
+            <TooltipContent>{row.gate.detail}</TooltipContent>
+          </Tooltip>
+          {steps !== null && <StepStrip steps={steps} className="w-20" />}
+          {checklistLabel(row.checklist) !== null && (
+            <LabelPill
+              color={
+                (row.checklist?.weak.length ?? 0) > 0
+                  ? 'var(--state-waiting-fg)'
+                  : 'var(--muted-foreground)'
+              }
+              title={
+                (row.checklist?.weak.length ?? 0) > 0
+                  ? `Weak: ${row.checklist?.weak.join(' · ')}`
+                  : undefined
+              }
+            >
+              {checklistLabel(row.checklist)}
+            </LabelPill>
+          )}
+          {queue !== undefined && isRetryable(queue.entry.state) && (
+            <span data-row-action>
+              <QueueRetryButton onRetry={onRetryQueue} />
+            </span>
+          )}
+          {pr !== undefined && (
+            <span data-row-action>
+              <ChecksPopover checks={pr.checks ?? NO_CHECKS} url={pr.url} />
+            </span>
+          )}
+          {pr !== undefined && (
+            <span className={cn(META_CLASS, 'hidden sm:inline')}>
+              <span className="text-state-review">+{pr.additions}</span>{' '}
+              <span className="text-state-failed">−{pr.deletions}</span>
+            </span>
+          )}
+          {verdict !== undefined ? (
+            <StatusPill tone={verdict.tone}>{verdict.label}</StatusPill>
+          ) : reviewedAt !== undefined ? (
+            <StatusPill tone="green">Reviewed</StatusPill>
           ) : null}
-          {extraRuns !== undefined && extraRuns > 0 && (
-            <span className="shrink-0">· ×{extraRuns + 1} runs</span>
+          {pr !== undefined && (
+            <span data-row-action>
+              <WorktreeCell row={row} client={client} port={port} />
+            </span>
           )}
-        </div>
-      </TableCell>
-
-      <TableCell className="max-w-[200px]">
-        <button
-          type="button"
-          onClick={() => onFilterGate(row.gate.status)}
-          className="dense-meta hover:text-foreground block max-w-full truncate text-left"
-        >
-          {gateChipLabel(row, queueRows)}
-        </button>
-        {steps !== null && <StepStrip steps={steps} className="mt-1.5 w-24" />}
-        {queue !== undefined && isRetryable(queue.entry.state) && (
-          <QueueRetryButton onRetry={onRetryQueue} />
-        )}
-        {checklistLabel(row.checklist) !== null && (
-          <div
-            className={cn(
-              'dense-meta mt-1 truncate',
-              (row.checklist?.weak.length ?? 0) > 0
-                ? 'text-state-waiting-fg'
-                : 'text-muted-foreground'
-            )}
-            title={
-              (row.checklist?.weak.length ?? 0) > 0
-                ? `Weak: ${row.checklist?.weak.join(' · ')}`
-                : undefined
-            }
-          >
-            {checklistLabel(row.checklist)}
-          </div>
-        )}
-      </TableCell>
-
-      {showPrColumns && (
-        <TableCell className="hidden md:table-cell">
-          <ChecksPopover checks={pr?.checks ?? NO_CHECKS} url={pr?.url} />
-        </TableCell>
-      )}
-
-      {showPrColumns && (
-        <TableCell className="hidden sm:table-cell">
-          {pr !== undefined ? (
-            <div className="flex flex-col">
-              <span className="dense-meta">
-                <span className="text-state-review">+{pr.additions}</span>{' '}
-                <span className="text-destructive">−{pr.deletions}</span>
-              </span>
-              <span className="dense-meta text-muted-foreground">
-                {pr.changedFiles} file{pr.changedFiles === 1 ? '' : 's'}
-              </span>
-            </div>
-          ) : (
-            <span className="dense-meta text-muted-foreground">—</span>
+          {pr !== undefined && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    data-row-action
+                    aria-label={`Filter by author ${pr.author}`}
+                    className="rounded-pill focus-visible:ring-ring flex shrink-0 items-center outline-none focus-visible:ring-2"
+                    onClick={() => onFilterAuthor(pr.author)}
+                  />
+                }
+              >
+                <InitialsAvatar name={pr.author} />
+              </TooltipTrigger>
+              <TooltipContent>{pr.author}</TooltipContent>
+            </Tooltip>
           )}
-        </TableCell>
-      )}
-
-      <TableCell className="hidden md:table-cell">
-        {verdict !== undefined ? (
-          <StatusPill tone={verdict.tone}>{verdict.label}</StatusPill>
-        ) : reviewedAt !== undefined ? (
-          <StatusPill tone="green">Reviewed</StatusPill>
-        ) : (
-          <span className="dense-meta text-muted-foreground">—</span>
-        )}
-      </TableCell>
-
-      {showPrColumns && (
-        <TableCell>
-          <WorktreeCell row={row} client={client} port={port} />
-        </TableCell>
-      )}
-    </TableRow>
+        </>
+      }
+      date={movedAt !== undefined ? relativeTime(movedAt, now) : undefined}
+    />
   );
 }
 
@@ -308,16 +306,9 @@ function QueueRetryButton({ onRetry }: { onRetry: () => Promise<void> }) {
   }
 
   return (
-    <Button
-      type="button"
-      size="sm"
-      variant="outline"
-      disabled={busy}
-      onClick={() => void retry()}
-      className="mt-1.5"
-    >
+    <PillButton disabled={busy} onClick={() => void retry()}>
       Retry
-    </Button>
+    </PillButton>
   );
 }
 
@@ -325,13 +316,13 @@ const SYNC_STATE_LABEL: Record<
   NonNullable<LandingRowData['worktree']>['syncState'],
   { label: string; tone: 'green' | 'amber' | 'red' }
 > = {
-  synced: { label: 'synced', tone: 'green' },
-  behind: { label: 'behind', tone: 'amber' },
-  'dirty-hold': { label: 'dirty · hold', tone: 'red' },
+  synced: { label: 'Synced', tone: 'green' },
+  behind: { label: 'Behind', tone: 'amber' },
+  'dirty-hold': { label: 'Dirty · hold', tone: 'red' },
 };
 
-/** The Worktree cell: cuts/removes a review worktree for a PR row, or shows
- * its sync state + actions menu once one exists. No PR ⇒ a bare dash. */
+/** The worktree slot: cuts/removes a review worktree for a PR row, or shows
+ * its sync state + actions menu once one exists. */
 function WorktreeCell({
   row,
   client,
@@ -389,9 +380,7 @@ function WorktreeCell({
     }
   }
 
-  if (pr === undefined) {
-    return <span className="dense-meta text-muted-foreground">—</span>;
-  }
+  if (pr === undefined) return null;
 
   if (worktree === undefined) {
     return (
@@ -403,10 +392,7 @@ function WorktreeCell({
       >
         <PopoverTrigger
           render={
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
+            <PillButton
               disabled={client === null || busy}
               onClick={() => {
                 if (pr.isCrossRepository) setAskingFork(true);
@@ -432,20 +418,13 @@ function WorktreeCell({
   const sync = SYNC_STATE_LABEL[worktree.syncState];
 
   return (
-    <div className="flex items-center gap-1">
+    <span className="flex items-center gap-1">
       <StatusPill tone={sync.tone}>{sync.label}</StatusPill>
       <DropdownMenu>
         <DropdownMenuTrigger
-          render={
-            <Button
-              type="button"
-              size="icon-xs"
-              variant="ghost"
-              aria-label={`Worktree actions for #${pr.number}`}
-            />
-          }
+          render={<IconButton label={`Worktree actions for #${pr.number}`} />}
         >
-          <MoreHorizontal className="size-3.5" />
+          <MoreHorizontal />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuItem
@@ -455,7 +434,7 @@ function WorktreeCell({
               });
             }}
           >
-            <SquareArrowOutUpRight className="size-3.5" />
+            <SquareArrowOutUpRight />
             Open in editor
           </DropdownMenuItem>
           <DropdownMenuItem
@@ -465,7 +444,7 @@ function WorktreeCell({
                 .catch(() => undefined);
             }}
           >
-            <Copy className="size-3.5" />
+            <Copy />
             Copy path
           </DropdownMenuItem>
           <DropdownMenuItem
@@ -475,7 +454,7 @@ function WorktreeCell({
               });
             }}
           >
-            <FolderOpen className="size-3.5" />
+            <FolderOpen />
             Reveal
           </DropdownMenuItem>
           <DropdownMenuSeparator />
@@ -484,11 +463,11 @@ function WorktreeCell({
             disabled={busy}
             onClick={() => void remove()}
           >
-            <Trash2 className="size-3.5" />
+            <Trash2 />
             Remove
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-    </div>
+    </span>
   );
 }

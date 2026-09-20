@@ -17,6 +17,9 @@ interface ExportControlProps {
   savingLabel?: string;
   /** Runs the export and resolves to the saved file's path. */
   onExport: () => Promise<string>;
+  /** `ghost` is the page-header action (12px muted text, no fill); `pill` the in-body
+   * secondary button. */
+  variant?: 'ghost' | 'pill';
 }
 
 /**
@@ -30,6 +33,7 @@ export function ExportControl({
   label,
   savingLabel = 'Exporting…',
   onExport,
+  variant = 'pill',
 }: ExportControlProps) {
   const [state, setState] = useState<ExportState>({ status: 'idle' });
 
@@ -44,24 +48,17 @@ export function ExportControl({
   }
 
   return (
-    <div className="flex items-center gap-3">
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={() => void handleExport()}
-        disabled={state.status === 'saving'}
-      >
-        <Download className="size-3.5" />
-        {state.status === 'saving' ? savingLabel : label}
-      </Button>
+    <div className="flex min-w-0 items-center gap-3">
       {state.status === 'saved' && (
-        <span className="text-muted-foreground inline-flex items-center gap-2 text-[13px]">
-          Saved to {state.path}
+        <span className="text-muted-foreground font-book inline-flex max-w-[320px] min-w-0 items-center gap-2 text-[12px]">
+          <span className="min-w-0 truncate" title={state.path}>
+            Saved to {state.path}
+          </span>
           <Button
             variant="link"
             size="xs"
             onClick={() => void revealInFinder(state.path)}
-            className="h-auto gap-1 p-0 text-[11px] font-normal whitespace-normal has-[>svg]:px-0"
+            className="h-auto gap-1 p-0 text-[12px] whitespace-nowrap has-[>svg]:px-0"
           >
             <FolderOpen className="size-3" />
             Reveal in Finder
@@ -69,8 +66,19 @@ export function ExportControl({
         </span>
       )}
       {state.status === 'error' && (
-        <span className="text-destructive text-[13px]">{state.message}</span>
+        <span className="text-state-failed max-w-[320px] truncate text-[12px]">
+          {state.message}
+        </span>
       )}
+      <Button
+        variant={variant === 'ghost' ? 'ghost' : 'secondary'}
+        size="sm"
+        onClick={() => void handleExport()}
+        disabled={state.status === 'saving'}
+      >
+        <Download className="size-3.5" />
+        {state.status === 'saving' ? savingLabel : label}
+      </Button>
     </div>
   );
 }

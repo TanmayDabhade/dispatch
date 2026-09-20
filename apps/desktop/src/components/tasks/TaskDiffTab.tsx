@@ -1,4 +1,5 @@
 import type { Finding, RunMeta } from '@dispatch/client';
+import { FileDiff } from 'lucide-react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { useTaskFindings } from '../../hooks/useOrchestration';
@@ -7,7 +8,8 @@ import { isTerminalRunState, liveReviewAgentFor } from '../../lib/runState';
 import { DiffEmptyState } from '../runs/DiffEmptyState';
 import { RunDiffView } from '../runs/RunDiffView';
 import { RunReviewView } from '../runs/RunReviewView';
-import { Skeleton } from '@/ui/skeleton';
+import { TabSkeleton } from './TabSkeleton';
+import { EmptyState } from '@/ui/chrome';
 
 export interface TaskDiffTabProps {
   data: DispatchProjectData;
@@ -16,6 +18,8 @@ export interface TaskDiffTabProps {
   onViewPr: (runId: string) => void;
   /** Opens `ImpactView` with this run preselected — the case panel's "Open in Impact". */
   onOpenImpact: (subject: ImpactSubjectRef) => void;
+  /** Dispatches the task from the no-session empty state; omitted when it isn't ready. */
+  onDispatch?: () => void;
 }
 
 /** The task view's Diff tab: the selected run's diff and the review actions over it, the
@@ -26,6 +30,7 @@ export function TaskDiffTab({
   selectedRun,
   onViewPr,
   onOpenImpact,
+  onDispatch,
 }: TaskDiffTabProps) {
   // Called unconditionally, ahead of the early returns below, even though its result is only
   // used once a run is selected and terminal — `enabled` inside the hook itself already no-ops
@@ -39,7 +44,18 @@ export function TaskDiffTab({
   if (selectedRun === undefined) {
     return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <DiffEmptyState message="No session yet. Dispatch the task to get a diff." />
+        <EmptyState
+          icon={FileDiff}
+          heading="No session yet"
+          description="Dispatch the task to get a diff to review."
+          className="h-full justify-center"
+          // `d` dispatches from anywhere on the task page (TaskPage's key handler).
+          primary={
+            onDispatch !== undefined
+              ? { label: 'Dispatch', onClick: onDispatch, hint: 'D' }
+              : undefined
+          }
+        />
       </div>
     );
   }
@@ -48,15 +64,7 @@ export function TaskDiffTab({
     data.runDetail === undefined ||
     data.runDetail.meta.id !== selectedRun.id
   ) {
-    return (
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <div className="flex flex-col gap-3 p-1">
-          <Skeleton className="h-6 w-48 rounded-md" />
-          <Skeleton className="h-32 rounded-md" />
-          <Skeleton className="h-32 rounded-md" />
-        </div>
-      </div>
-    );
+    return <TabSkeleton />;
   }
 
   return (

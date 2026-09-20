@@ -23,8 +23,8 @@ export function CollapseBar({
       aria-expanded={!collapsed}
       onClick={onToggle}
       className={cn(
-        'bg-muted hover:bg-secondary dense-meta h-auto w-full items-center justify-start gap-2 rounded px-3 py-1.5',
-        'transition-colors duration-150',
+        'bg-surface-secondary hover:bg-surface-control h-auto w-full items-center justify-start gap-2 rounded-control px-3 py-1.5 text-[12px] font-book text-muted-foreground tabular-nums',
+        'transition-colors duration-100',
         className
       )}
     >

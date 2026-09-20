@@ -1,11 +1,9 @@
 import type { DispatchConfig, VerifyConfig } from '@dispatch/core/browser';
 import { useEffect, useState } from 'react';
 
-import { Checkbox } from '@/ui/checkbox';
-import { HintText, Panel, PanelHeader, PanelRow } from '@/ui/chrome';
-import { Field, FieldDescription, FieldLabel } from '@/ui/field';
+import { SettingsGroup, SettingsRow } from './SettingsGroup';
+import { Switch } from '@/ui/ai/switch';
 import { Input } from '@/ui/input';
-import { Label } from '@/ui/label';
 import { Textarea } from '@/ui/textarea';
 
 interface GeneralSectionProps {
@@ -59,17 +57,13 @@ export function GeneralSection({ config, onSave }: GeneralSectionProps) {
 
   return (
     <>
-      <Panel>
-        <PanelHeader>Before anything lands</PanelHeader>
-
-        <PanelRow className="flex-col items-stretch gap-1.5">
-          <Field className="gap-1.5">
-            <FieldLabel
-              htmlFor="verify-command"
-              className="text-[12px] font-normal"
-            >
-              Verify command
-            </FieldLabel>
+      <SettingsGroup title="Before anything lands">
+        <SettingsRow
+          title="Verify command"
+          subtitle="Runs in the merge queue before a branch lands. Leave empty to skip verification entirely."
+          htmlFor="verify-command"
+          stacked
+          control={
             <Input
               id="verify-command"
               value={verify}
@@ -83,38 +77,29 @@ export function GeneralSection({ config, onSave }: GeneralSectionProps) {
                 }
               }}
               placeholder="bun run verify"
-              className="font-mono text-[12.5px]"
             />
-            <FieldDescription className="text-[11px]">
-              Runs in the merge queue before a branch lands. Leave empty to skip
-              verification entirely.
-            </FieldDescription>
-          </Field>
-        </PanelRow>
+          }
+        />
 
-        <PanelRow>
-          <Label className="flex items-center gap-2 font-normal">
-            <Checkbox
-              className="size-3.5"
+        <SettingsRow
+          title="Let an agent commit its own work as it goes"
+          htmlFor="auto-commit"
+          control={
+            <Switch
+              id="auto-commit"
               checked={config.autoCommit}
               onCheckedChange={(checked) =>
-                void onSave({ autoCommit: checked === true })
+                void onSave({ autoCommit: checked })
               }
             />
-            <span className="text-[13px]">
-              Let an agent commit its own work as it goes
-            </span>
-          </Label>
-        </PanelRow>
+          }
+        />
 
-        <PanelRow className="flex-col items-stretch gap-1.5">
-          <Field className="gap-1.5 [&>*]:w-auto">
-            <FieldLabel
-              htmlFor="verify-timeout"
-              className="text-[12px] font-normal"
-            >
-              Verify timeout
-            </FieldLabel>
+        <SettingsRow
+          title="Verify timeout"
+          subtitle="Ceiling on one verify run, in seconds. The merge queue is serial, so a verify that never returns holds up every entry behind it."
+          htmlFor="verify-timeout"
+          control={
             <Input
               id="verify-timeout"
               value={timeoutSec}
@@ -134,36 +119,22 @@ export function GeneralSection({ config, onSave }: GeneralSectionProps) {
                 }
               }}
               inputMode="numeric"
-              className="w-20 font-mono text-[12.5px]"
+              className="w-20 text-right tabular-nums"
             />
-            <FieldDescription className="text-[11px]">
-              Ceiling on one verify run, in seconds. The merge queue is serial,
-              so a verify that never returns holds up every entry behind it.
-            </FieldDescription>
-          </Field>
-        </PanelRow>
-      </Panel>
+          }
+        />
+      </SettingsGroup>
 
-      <Panel>
-        <PanelHeader>How to run this project</PanelHeader>
-
-        <PanelRow>
-          <HintText>
-            The recipe a <span className="font-mono">verify</span> run follows
-            to exercise the project by hand — separate from &ldquo;Verify
-            command&rdquo; above, which the merge queue runs automatically
-            before a branch lands.
-          </HintText>
-        </PanelRow>
-
-        <PanelRow className="flex-col items-stretch gap-1.5">
-          <Field className="gap-1.5">
-            <FieldLabel
-              htmlFor="run-command"
-              className="text-[12px] font-normal"
-            >
-              Run command
-            </FieldLabel>
+      <SettingsGroup
+        title="How to run this project"
+        hint="The recipe a verify run follows to exercise the project by hand — separate from “Verify command” above, which the merge queue runs automatically before a branch lands."
+      >
+        <SettingsRow
+          title="Run command"
+          subtitle="Starts the project so a verify run has something to exercise. Not the merge-queue gate above."
+          htmlFor="run-command"
+          stacked
+          control={
             <Input
               id="run-command"
               value={runCommand}
@@ -177,20 +148,16 @@ export function GeneralSection({ config, onSave }: GeneralSectionProps) {
                 )
               }
               placeholder="bun run dev"
-              className="font-mono text-[12.5px]"
             />
-            <FieldDescription className="text-[11px]">
-              Starts the project so a verify run has something to exercise. Not
-              the merge-queue gate above.
-            </FieldDescription>
-          </Field>
-        </PanelRow>
+          }
+        />
 
-        <PanelRow className="flex-col items-stretch gap-1.5">
-          <Field className="gap-1.5">
-            <FieldLabel htmlFor="url" className="text-[12px] font-normal">
-              URL
-            </FieldLabel>
+        <SettingsRow
+          title="URL"
+          subtitle="Where a verify run should look once the project is running."
+          htmlFor="url"
+          stacked
+          control={
             <Input
               id="url"
               value={runUrl}
@@ -199,19 +166,16 @@ export function GeneralSection({ config, onSave }: GeneralSectionProps) {
                 saveRunField('url', runUrl, config.verify?.url, setRunUrl)
               }
               placeholder="http://localhost:3000"
-              className="font-mono text-[12.5px]"
             />
-            <FieldDescription className="text-[11px]">
-              Where a verify run should look once the project is running.
-            </FieldDescription>
-          </Field>
-        </PanelRow>
+          }
+        />
 
-        <PanelRow className="flex-col items-stretch gap-1.5">
-          <Field className="gap-1.5">
-            <FieldLabel htmlFor="notes" className="text-[12px] font-normal">
-              Notes
-            </FieldLabel>
+        <SettingsRow
+          title="Notes"
+          subtitle="Anything else a verify run needs to know to exercise the project."
+          htmlFor="notes"
+          stacked
+          control={
             <Textarea
               id="notes"
               value={runNotes}
@@ -225,14 +189,10 @@ export function GeneralSection({ config, onSave }: GeneralSectionProps) {
                 )
               }
               placeholder="Login steps, seed data, ports…"
-              className="text-[12.5px]"
             />
-            <FieldDescription className="text-[11px]">
-              Anything else a verify run needs to know to exercise the project.
-            </FieldDescription>
-          </Field>
-        </PanelRow>
-      </Panel>
+          }
+        />
+      </SettingsGroup>
     </>
   );
 }

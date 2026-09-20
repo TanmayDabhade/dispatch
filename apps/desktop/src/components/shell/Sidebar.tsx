@@ -1,144 +1,82 @@
-import type { SyncStatus } from '@dispatch/client';
+import type { DraftRecord } from '@dispatch/client';
 import {
   Brain,
-  ChevronLeft,
-  ChevronRight,
-  Cog,
   GitBranch,
   GitMerge,
   Inbox,
   LayoutDashboard,
-  LayoutGrid,
+  Link2,
   ListChecks,
   NotebookPen,
-  Palette,
   Play,
   Radar,
-  Rows3,
+  Search,
   Shield,
-  Target,
+  Sparkles,
+  SquarePen,
   Waypoints,
 } from 'lucide-react';
-import { type ReactNode, useCallback, useEffect, useState } from 'react';
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import type { GlobalView, ProjectView } from '../../lib/appNav';
-import type { TasksViewMode } from '../../lib/tasksViewMode';
-import { SyncChip } from './SyncChip';
+import type { PaletteView } from '../../lib/paletteEntries';
+import { isTauri } from '../../lib/tauri';
+import { DraftTrayPopover } from './DraftTray';
 import { cn } from '@/lib/utils';
+import { IconButton } from '@/ui/ai/icon-button';
 import {
   SidebarNav,
   type SidebarNavItem,
   type SidebarNavSection,
 } from '@/ui/ai/sidebar-nav';
-import { Button } from '@/ui/button';
-import { Kbd } from '@/ui/kbd';
-import { Sidebar as SidebarRoot, useSidebar } from '@/ui/sidebar';
+import { Sidebar as SidebarRoot } from '@/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
-// `board` hosts both the Kanban and dense-list layouts behind its own in-view toggle now (see
-// `BoardView`), so it gets one "Tasks" row rather than the old separate Board/Tasks pair —
-// Linear itself doesn't split those into two nav destinations either.
 /**
- * The rail, in the order work actually moves through the app.
- *
- * It used to be a flat list of nine destinations with no stated relationship,
- * so moving between them felt like nine separate apps sharing a sidebar. The
- * groups name the stage each one belongs to — you capture, you plan, the agents
- * work, you land it — and the order matches the pipeline rather than the order
- * the views happened to get built.
- *
- * `shortcut` is the cmd+N that reaches it, assigned by position so the numbers
- * stay learnable rather than tracking an id.
+ * The Workspace section, in the order work moves through the app: capture, plan, the
+ * agents work, you land it. Inbox is not here — it leads the fixed top group above.
  */
-const PROJECT_VIEWS: {
+const WORKSPACE_VIEWS: {
   id: ProjectView;
   label: string;
-  icon: typeof ListChecks;
-  /** Starts a new group, rendered above this entry. */
-  group?: string;
+  icon: typeof Inbox;
 }[] = [
-  // The two pages this app is actually used from: one is where everything gets
-  // captured, the other is where everything gets watched.
   { id: 'overview', label: 'Control room', icon: LayoutDashboard },
   { id: 'brain-dump', label: 'Brain dump', icon: Brain },
-
-  { id: 'plans', label: 'Plans', icon: NotebookPen, group: 'Plan' },
+  { id: 'plans', label: 'Plans', icon: NotebookPen },
+  // Board, list and milestones are header view tabs inside Tasks now, not rail rows.
   { id: 'board', label: 'Tasks', icon: ListChecks },
-
-  // A slim, list-only "everything waiting on a human" — the whole Work stage
-  // now that Runs and Review are gone: a run is watched from its own task, and
-  // every past run is listed under All agents.
-  { id: 'inbox', label: 'Inbox', icon: Inbox, group: 'Work' },
-  // Blast radius of a file, run, or task's declared writes — reached from
-  // here with nothing preselected, or from the "open in Impact" action on
-  // the review case panel and the Git file pane.
+  // Blast radius of a file, run, or task's declared writes.
   { id: 'impact', label: 'Impact', icon: Waypoints },
-
-  { id: 'branches', label: 'Git', icon: GitBranch, group: 'Git' },
-  // Every open PR with its gates plus what already landed — the one answer to
-  // "what lands, when, and what landed".
+  { id: 'branches', label: 'Git', icon: GitBranch },
+  // Every open PR with its gates plus what already landed.
   { id: 'landing', label: 'Landing', icon: GitMerge },
 ];
 
-/** The rail order is the shortcut order — cmd+1 is the first entry, and so on. */
-export const PROJECT_VIEW_ORDER: ProjectView[] = PROJECT_VIEWS.map((v) => v.id);
-
-interface ProjectViewGroup {
-  /** The stage heading, or `undefined` for the unlabelled first stage. */
-  label: string | undefined;
-  /** Each entry paired with its position in the flat `PROJECT_VIEWS` list. */
-  entries: { view: (typeof PROJECT_VIEWS)[number]; index: number }[];
-}
-
-// `PROJECT_VIEWS` cut into its stages, one nav section each. The index travels with the entry
-// because it is the cmd+N number, which counts across the whole rail rather than per stage.
-const PROJECT_VIEW_GROUPS: ProjectViewGroup[] = [];
-PROJECT_VIEWS.forEach((view, index) => {
-  const current = PROJECT_VIEW_GROUPS[PROJECT_VIEW_GROUPS.length - 1];
-  if (current === undefined || view.group !== undefined) {
-    PROJECT_VIEW_GROUPS.push({ label: view.group, entries: [{ view, index }] });
-  } else {
-    current.entries.push({ view, index });
-  }
-});
-
-// The Tasks destination's layout options — surfaced as a nested list of rows under the
-// Tasks row while it's the active view, per the "view names belong in the sidebar" direction.
-const TASKS_VIEW_OPTIONS: {
-  id: TasksViewMode;
-  label: string;
-  icon: typeof LayoutGrid;
-}[] = [
-  { id: 'board', label: 'Board', icon: LayoutGrid },
-  { id: 'list', label: 'List', icon: Rows3 },
-  { id: 'milestones', label: 'Milestones', icon: Target },
+/** Every project destination in rail order — Inbox first, then Workspace — which is also the
+ * ⌘N order: ⌘1 is the first row, and so on. App indexes into this for `goto-N`. */
+export const PROJECT_NAV_VIEWS: PaletteView[] = [
+  { id: 'inbox', label: 'Inbox' },
+  ...WORKSPACE_VIEWS.map(({ id, label }) => ({ id, label })),
 ];
 
-// The active project's overseer: a full agent session in the checkout that
-// also holds the daemon's own controls (dispatch, approve, cancel). It is a
-// GlobalView — it answers about whichever project is active, from any view —
-// but it is pinned to the very top of the rail rather than listed with the
-// other global pages: it is the surface everything else can be driven from,
-// so it should be the first row rather than the one you scroll down to.
-const OVERSEER_VIEW = {
-  id: 'overseer',
-  label: 'Overseer',
-  icon: Shield,
-} as const;
+export const PROJECT_VIEW_ORDER: ProjectView[] = PROJECT_NAV_VIEWS.map(
+  (v) => v.id
+);
 
-const GLOBAL_VIEWS: { id: GlobalView; label: string; icon: typeof Radar }[] = [
-  { id: 'all-agents', label: 'All Agents', icon: Radar },
+const FLEET_VIEWS: { id: GlobalView; label: string; icon: typeof Radar }[] = [
+  { id: 'all-agents', label: 'All agents', icon: Radar },
   { id: 'sessions', label: 'Sessions', icon: Play },
-  { id: 'settings', label: 'Settings', icon: Cog },
-  // Dev-only primitive review surface — `DEV` is inlined at build time, so this
-  // entry (and GalleryView itself) is dead code in a production build.
-  ...(import.meta.env.DEV
-    ? [{ id: 'gallery' as const, label: 'Gallery', icon: Palette }]
-    : []),
 ];
 
-// Persists whether the left rail is collapsed to an icon-only strip, so the choice survives a
-// reload instead of resetting every time the app opens.
+// Persists whether the rail is hidden, so the choice survives a reload.
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'dispatch:sidebar-collapsed';
 
 function readStoredSidebarCollapsed(): boolean {
@@ -147,7 +85,7 @@ function readStoredSidebarCollapsed(): boolean {
 }
 
 /**
- * The collapsed-rail preference, kept here beside the rail it describes but applied by App's
+ * The hidden-rail preference, kept here beside the rail it describes but applied by App's
  * `SidebarProvider`, which owns the open/closed state the whole shell reads.
  */
 export function useSidebarCollapsed(): [boolean, (next: boolean) => void] {
@@ -164,272 +102,362 @@ export function useSidebarCollapsed(): [boolean, (next: boolean) => void] {
   return [collapsed, set];
 }
 
-// The rail's cmd+N hints — bare mono text sitting at the end of a row, not `Kbd`'s usual
-// filled keycap.
-const ROW_HINT_CLASS =
-  'text-muted-foreground/50 h-auto min-w-0 bg-transparent px-0 font-mono text-[10px] font-normal';
+/** The collapsible sections' ids — also the keys in the persisted map. */
+export type SidebarSectionId = 'workspace' | 'fleet' | 'live' | 'try';
 
-// The footer's cmd+K hint keeps `Kbd`'s outlined-key look.
-const FOOTER_HINT_CLASS =
-  'border-border h-auto min-w-0 rounded border px-1 py-0.5 font-mono text-[10px] font-normal';
+// Which sections the user has folded, as a JSON map. The Try block is the one that folds
+// itself: it is open on a fresh install and collapses the first time one of its rows is
+// used, since by then it has done its job.
+const SIDEBAR_SECTIONS_STORAGE_KEY = 'dispatch:sidebar-sections';
+
+type SectionState = Partial<Record<SidebarSectionId, boolean>>;
+
+function readStoredSections(): SectionState {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(SIDEBAR_SECTIONS_STORAGE_KEY);
+    if (raw === null) return {};
+    const parsed: unknown = JSON.parse(raw);
+    return typeof parsed === 'object' && parsed !== null
+      ? (parsed as SectionState)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+/** The persisted collapsed/expanded state of each rail section. */
+function useSidebarSections(): {
+  collapsed: (id: SidebarSectionId) => boolean;
+  toggle: (id: SidebarSectionId) => void;
+  collapse: (id: SidebarSectionId) => void;
+} {
+  const [state, setState] = useState<SectionState>(readStoredSections);
+  useEffect(() => {
+    window.localStorage.setItem(
+      SIDEBAR_SECTIONS_STORAGE_KEY,
+      JSON.stringify(state)
+    );
+  }, [state]);
+  const collapsed = useCallback(
+    (id: SidebarSectionId) => state[id] === true,
+    [state]
+  );
+  const toggle = useCallback(
+    (id: SidebarSectionId) =>
+      setState((prev) => ({ ...prev, [id]: prev[id] !== true })),
+    []
+  );
+  const collapse = useCallback(
+    (id: SidebarSectionId) => setState((prev) => ({ ...prev, [id]: true })),
+    []
+  );
+  return useMemo(
+    () => ({ collapsed, toggle, collapse }),
+    [collapsed, toggle, collapse]
+  );
+}
+
+/** True on the packaged macOS app, where the window uses `titleBarStyle: "Overlay"` and the
+ * native traffic lights float over the top-left of the rail, so it needs a left inset. In a
+ * plain browser (dev harness) or on Linux there are no overlaid controls to dodge. */
+function isMacTauri(): boolean {
+  return (
+    isTauri() &&
+    typeof navigator !== 'undefined' &&
+    navigator.userAgent.includes('Macintosh')
+  );
+}
+
+/** Whether to reserve space for the macOS traffic lights. They auto-hide in native
+ * fullscreen, so the inset collapses there; fullscreen is re-checked on every window resize
+ * (entering/leaving fullscreen always resizes, and `isFullscreen` is the reliable signal). */
+export function useTrafficLightInset(): boolean {
+  const [inset, setInset] = useState(() => isMacTauri());
+
+  useEffect(() => {
+    if (!isMacTauri()) return;
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    void import('@tauri-apps/api/window').then(async ({ getCurrentWindow }) => {
+      const win = getCurrentWindow();
+      const update = async () => {
+        const fullscreen = await win.isFullscreen();
+        if (!cancelled) setInset(!fullscreen);
+      };
+      void update();
+      const stop = await win.onResized(() => void update());
+      if (cancelled) stop();
+      else unlisten = stop;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  return inset;
+}
 
 interface SidebarProps {
   hasActiveProject: boolean;
   section: 'project' | 'global';
   projectView: ProjectView;
   globalView: GlobalView;
-  /** Count of non-terminal runs for this project — the "All Agents" badge, so you can tell
-   * something is live without leaving whatever you're looking at. */
-  liveAgentCount: number;
-  /** Overseer tool calls and queued actions waiting on the human — the Overseer row's badge,
-   * with the attention dot, so a parked overseer is visible from every view. Zero or absent
-   * renders no badge. */
+  /** The rail's top-row switcher (`ProjectSwitcher`) — App wires its lazy project list. */
+  switcher: ReactNode;
+  /** Leave 76px on the left of the top strip for the macOS traffic lights. */
+  trafficLightInset: boolean;
+  onOpenPalette: () => void;
+  onNewTask: () => void;
+  /** Everything waiting on a human — the Inbox row's count and attention dot. */
+  inboxCount: number;
+  /** Overseer tool calls and queued actions waiting on the human — the Overseer row's count. */
   overseerPendingCount?: number;
-  /** Live per-row counts. A row with no entry, or a zero, renders no badge at all — a rail of
-   * "0"s is noise, and the absence of a number is itself the information. */
-  badges: Partial<Record<ProjectView, number>>;
-  /** Total spend across today's runs, or `null` to show nothing. Stays at the foot of the
-   * rail (not in the custom titlebar) — a cost meter is glanceable context, not chrome. */
-  spendToday: number | null;
+  /** Count of non-terminal runs for this project — the All agents row's count. */
+  liveAgentCount: number;
+  drafts: DraftRecord[];
+  onOpenDraft: (id: string) => void;
+  onDismissDraft: (id: string) => void;
   onSetProjectView: (view: ProjectView) => void;
   onSetGlobalView: (view: GlobalView) => void;
-  /** The Tasks view's active layout — drives the nested switcher under its rail row. */
-  tasksViewMode: TasksViewMode;
-  onSetTasksViewMode: (mode: TasksViewMode) => void;
-  /** The board syncer's status — `null` until it has ever loaded, in which case the chip
-   * renders nothing. */
-  syncStatus: SyncStatus | null;
-  /** Flips `.dispatch/config.yml`'s `autoCommit` off — the sync chip's kill switch. */
-  onDisableAutoCommit: () => void;
-  /** The live-agents section (`LiveRail`), rendered at the top of the rail's footer — or
-   * `null` outside project scope, where there are no runs to show. App owns the gating and
-   * the data wiring; the rail just gives it a home. */
+  /** The `Live agents ▾` section's body (`LiveRail`), or `null` outside project scope. */
   liveRail: ReactNode;
+  /** The Try block's "Drop a thought" — the ⌘D quick capture. */
+  onQuickCapture: () => void;
 }
 
 /**
- * Persistent, Linear-style left rail: the active project's primary nav (Board/Tasks/Runs/
- * Plans), the global section (All Agents/Sessions/Settings) below it, and the live-agents
- * section in the footer. The project switcher, notifications bell, and drafts tray live in
- * the window titlebar (see `TitleBar.tsx`); branding lives in the app icon, not the rail.
- * Built on the `SidebarNav` primitive (`ui/ai/sidebar-nav.tsx`)
- * for its rows/sections, still wrapped in the shadcn `Sidebar` shell purely for the
- * fixed-position/icon-collapse/mobile mechanics App.tsx's `SidebarProvider` already owns —
- * this reads that back through `useSidebar` so the icon-only strip still works.
+ * Linear's rail on the `#08080a` frame: a top strip holding the project switcher plus
+ * search and new-task icon buttons, a fixed heading-less group (Inbox, Drafts, Overseer),
+ * then the collapsible `Workspace ▾`, `Fleet ▾`, `Live agents ▾` and `Try ▾` sections.
+ * Built on `SidebarNav` (`ui/ai/sidebar-nav.tsx`) inside the `Sidebar` shell that App's
+ * `SidebarProvider` hides entirely on `[`. Settings is not a row: it lives in the
+ * switcher's menu, on `G S`, and behind the status strip's `?`.
  */
 export function Sidebar({
   hasActiveProject,
   section,
   projectView,
   globalView,
+  switcher,
+  trafficLightInset,
+  onOpenPalette,
+  onNewTask,
+  inboxCount,
+  overseerPendingCount = 0,
   liveAgentCount,
-  badges,
-  spendToday,
+  drafts,
+  onOpenDraft,
+  onDismissDraft,
   onSetProjectView,
   onSetGlobalView,
-  tasksViewMode,
-  onSetTasksViewMode,
-  syncStatus,
-  onDisableAutoCommit,
   liveRail,
-  overseerPendingCount = 0,
+  onQuickCapture,
 }: SidebarProps) {
-  const { state, toggleSidebar } = useSidebar();
-  const collapsed = state === 'collapsed';
+  const sections = useSidebarSections();
+  const [draftsOpen, setDraftsOpen] = useState(false);
+  const navRef = useRef<HTMLDivElement>(null);
+  const draftCount = drafts.filter(
+    (d) =>
+      d.state === 'running' || d.state === 'ready' || d.questions.length > 0
+  ).length;
 
   const activeId = section === 'project' ? projectView : globalView;
 
-  // The stage groups (Workspace/Plan/Work/Git), each mapped straight onto a `SidebarNav`
-  // section. The first stage carries no group name of its own in `PROJECT_VIEWS` (it's the
-  // rail's unlabelled top), so it's given the "Workspace" heading here rather than in the
-  // data — that heading is presentational, not part of the navigation model.
-  const projectSections: SidebarNavSection[] = PROJECT_VIEW_GROUPS.map(
-    (group, groupIndex) => ({
-      id: group.label ?? 'workspace',
-      label: groupIndex === 0 ? 'Workspace' : group.label,
-      items: group.entries.map(({ view, index }) => {
-        const Icon = view.icon;
-        const count = badges[view.id];
-        const hasCount = count !== undefined && count > 0;
-        // The Tasks row grows a nested list of its layouts while it's the active view —
-        // the page itself carries no view tabs any more. Plain indented rows, not a
-        // dropdown: the rail is a list, so its children read as list rows too.
-        const tasksSwitcher =
-          view.id === 'board' &&
-          section === 'project' &&
-          projectView === 'board' &&
-          !collapsed ? (
-            <div className="flex flex-col gap-px py-0.5 pr-1 pl-6">
-              {TASKS_VIEW_OPTIONS.map((option) => {
-                const OptionIcon = option.icon;
-                const optionActive = option.id === tasksViewMode;
-                return (
-                  <button
-                    key={option.id}
-                    type="button"
-                    onClick={() => onSetTasksViewMode(option.id)}
-                    aria-current={optionActive ? 'true' : undefined}
-                    className={cn(
-                      'rounded-control ease-out-expo flex w-full items-center gap-2 px-2 py-1 text-left text-[12px] transition-colors duration-150',
-                      optionActive
-                        ? 'bg-surface-hover-strong text-foreground font-medium'
-                        : 'text-muted-foreground hover:bg-surface-hover hover:text-foreground'
-                    )}
-                  >
-                    <OptionIcon className="size-3.5 shrink-0" />
-                    {option.label}
-                  </button>
-                );
-              })}
-            </div>
-          ) : undefined;
-        return {
-          id: view.id,
-          label: view.label,
-          icon: <Icon strokeWidth={2} />,
-          count: hasCount ? count : undefined,
-          // Inbox's count is the "needs a human" queue — the one row-level badge that also
-          // earns the attention dot, not just a number.
-          state: view.id === 'inbox' && hasCount ? 'attention' : undefined,
-          disabled: !hasActiveProject,
-          // The shortcut lives on the thing it operates, which is the only way anyone finds
-          // out it exists.
-          hint:
-            index < 9 ? (
-              <Kbd className={ROW_HINT_CLASS}>⌘{index + 1}</Kbd>
-            ) : undefined,
-          children: tasksSwitcher,
-        } satisfies SidebarNavItem;
-      }),
-    })
-  );
-
-  const globalItems: SidebarNavItem[] = [
-    ...GLOBAL_VIEWS.map((item) => {
-      const Icon = item.icon;
-      const liveCount = item.id === 'all-agents' ? liveAgentCount : 0;
-      return {
-        id: item.id,
-        label: item.label,
-        icon: <Icon strokeWidth={2} />,
-        count: liveCount > 0 ? liveCount : undefined,
-      } satisfies SidebarNavItem;
-    }),
-  ];
-
-  // The rail's first row, in a section of its own: see OVERSEER_VIEW.
-  const OverseerIcon = OVERSEER_VIEW.icon;
-  const overseerSection: SidebarNavSection = {
-    id: 'overseer',
+  const topGroup: SidebarNavSection = {
+    id: 'top',
     items: [
       {
-        id: OVERSEER_VIEW.id,
-        label: OVERSEER_VIEW.label,
-        icon: <OverseerIcon strokeWidth={2} />,
+        id: 'inbox',
+        label: 'Inbox',
+        icon: <Inbox strokeWidth={2} />,
+        count: inboxCount > 0 ? inboxCount : undefined,
+        // The one row whose count is "needs a human" — it earns the dot, not just a number.
+        state: inboxCount > 0 ? 'attention' : undefined,
+        disabled: !hasActiveProject,
+      },
+      {
+        id: 'drafts',
+        label: 'Drafts',
+        icon: <Sparkles strokeWidth={2} />,
+        count: draftCount > 0 ? draftCount : undefined,
+        disabled: !hasActiveProject,
+      },
+      {
+        id: 'overseer',
+        label: 'Overseer',
+        icon: <Shield strokeWidth={2} />,
         count: overseerPendingCount > 0 ? overseerPendingCount : undefined,
         state: overseerPendingCount > 0 ? 'attention' : undefined,
-      } satisfies SidebarNavItem,
+      },
     ],
   };
 
-  const sections: SidebarNavSection[] = [
-    overseerSection,
-    ...projectSections,
-    { id: 'global', items: globalItems },
+  const workspace: SidebarNavSection = {
+    id: 'workspace',
+    label: 'Workspace',
+    collapsible: true,
+    collapsed: sections.collapsed('workspace'),
+    onToggle: () => sections.toggle('workspace'),
+    items: WORKSPACE_VIEWS.map((view) => {
+      const Icon = view.icon;
+      return {
+        id: view.id,
+        label: view.label,
+        icon: <Icon strokeWidth={2} />,
+        disabled: !hasActiveProject,
+      } satisfies SidebarNavItem;
+    }),
+  };
+
+  const fleet: SidebarNavSection = {
+    id: 'fleet',
+    label: 'Fleet',
+    collapsible: true,
+    collapsed: sections.collapsed('fleet'),
+    onToggle: () => sections.toggle('fleet'),
+    items: FLEET_VIEWS.map((view) => {
+      const Icon = view.icon;
+      return {
+        id: view.id,
+        label: view.label,
+        icon: <Icon strokeWidth={2} />,
+        count:
+          view.id === 'all-agents' && liveAgentCount > 0
+            ? liveAgentCount
+            : undefined,
+      } satisfies SidebarNavItem;
+    }),
+  };
+
+  const live: SidebarNavSection | null =
+    liveRail !== null
+      ? {
+          id: 'live',
+          label: 'Live agents',
+          collapsible: true,
+          collapsed: sections.collapsed('live'),
+          onToggle: () => sections.toggle('live'),
+          items: [],
+          content: liveRail,
+        }
+      : null;
+
+  const tryBlock: SidebarNavSection = {
+    id: 'try',
+    label: 'Try',
+    collapsible: true,
+    collapsed: sections.collapsed('try'),
+    onToggle: () => sections.toggle('try'),
+    items: [
+      {
+        id: 'try-plan',
+        label: 'Plan work…',
+        icon: <NotebookPen strokeWidth={2} />,
+        disabled: !hasActiveProject,
+      },
+      {
+        id: 'try-capture',
+        label: 'Drop a thought',
+        icon: <Brain strokeWidth={2} />,
+        disabled: !hasActiveProject,
+      },
+      {
+        id: 'try-linear',
+        label: 'Connect Linear',
+        icon: <Link2 strokeWidth={2} />,
+      },
+    ],
+  };
+
+  const navSections: SidebarNavSection[] = [
+    topGroup,
+    workspace,
+    fleet,
+    ...(live !== null ? [live] : []),
+    tryBlock,
   ];
 
   const handleSelect = useCallback(
     (id: string) => {
+      if (id === 'drafts') {
+        setDraftsOpen((open) => !open);
+        return;
+      }
+      if (id.startsWith('try-')) {
+        // First use is the last time the block needs to be open by default.
+        sections.collapse('try');
+        if (id === 'try-plan') onSetProjectView('plans');
+        else if (id === 'try-capture') onQuickCapture();
+        // Lands on Settings' first page: `SettingsView` keeps its page in local state and
+        // has no initial-page prop yet, so Settings › Integrations is not addressable here.
+        else onSetGlobalView('settings');
+        return;
+      }
       if ((PROJECT_VIEW_ORDER as string[]).includes(id)) {
         onSetProjectView(id as ProjectView);
         return;
       }
       onSetGlobalView(id as GlobalView);
     },
-    [onSetProjectView, onSetGlobalView]
-  );
-
-  const footer = (
-    <>
-      {/* The live-agents section (see `LiveRail.tsx`) — App passes it already gated to
-          project scope, so `null` here just means there is nothing to show. */}
-      {liveRail}
-
-      {/* The board syncer's status. Hidden when collapsed, same as the spend line below — an
-          icon-only rail has no room for a sentence. */}
-      {!collapsed && hasActiveProject && (
-        <SyncChip
-          status={syncStatus}
-          onDisableAutoCommit={onDisableAutoCommit}
-        />
-      )}
-
-      {/* Today's spend. Deliberately kept at the foot of the rail rather than promoted to the
-          custom titlebar. Hidden entirely at zero rather than showing "$0.00": a running cost
-          meter is only worth the pixels once there is a cost. */}
-      {!collapsed && spendToday !== null && spendToday > 0 && (
-        <div className="text-muted-foreground px-2 pt-3 text-[11px]">
-          <span className="dense-meta">${spendToday.toFixed(2)}</span> today
-        </div>
-      )}
-
-      <div
-        className={cn(
-          'flex items-center pt-3',
-          collapsed ? 'justify-center' : 'justify-between px-2'
-        )}
-      >
-        {!collapsed && (
-          <span className="text-muted-foreground text-[11px]">
-            <Kbd className={FOOTER_HINT_CLASS}>⌘K</Kbd> to jump anywhere
-          </span>
-        )}
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-                aria-expanded={!collapsed}
-                aria-controls="dispatch-sidebar"
-                onClick={() => toggleSidebar()}
-                className="text-muted-foreground hover:text-foreground shrink-0 transition-colors duration-150"
-              />
-            }
-          >
-            {collapsed ? (
-              <ChevronRight className="size-4" />
-            ) : (
-              <ChevronLeft className="size-4" />
-            )}
-          </TooltipTrigger>
-          <TooltipContent side="right">
-            {collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          </TooltipContent>
-        </Tooltip>
-      </div>
-    </>
+    [sections, onSetProjectView, onSetGlobalView, onQuickCapture]
   );
 
   return (
-    <SidebarRoot
-      id="dispatch-sidebar"
-      collapsible="icon"
-      className="absolute h-full"
-    >
-      {/* `w-full`: the shadcn shell already animates its own container between
-          `--sidebar-width`/`--sidebar-width-icon` (see `ui/sidebar.tsx`'s
-          `sidebar-gap`/`sidebar-container`), so this fills that box instead of also
-          animating its own `w-60`/`w-14` in parallel and drifting out of sync with it. */}
-      <SidebarNav
-        sections={sections}
-        activeId={activeId}
-        onSelect={handleSelect}
-        footer={footer}
-        collapsed={collapsed}
-        className="w-full"
+    <SidebarRoot id="dispatch-sidebar">
+      {/* The window's drag strip: with `titleBarStyle: "Overlay"` the native traffic lights
+          float over the top-left of this row, so it steps right to clear them. Only elements
+          carrying `data-tauri-drag-region` start a window drag, so every control stays
+          clickable. */}
+      <div
+        data-tauri-drag-region
+        className={cn(
+          'flex h-10 shrink-0 items-center gap-1 pr-2',
+          trafficLightInset ? 'pl-[76px]' : 'pl-2'
+        )}
+      >
+        <div className="min-w-0 flex-1">{switcher}</div>
+        <Tooltip>
+          <TooltipTrigger
+            render={<IconButton label="Search" onClick={onOpenPalette} />}
+          >
+            <Search />
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Search ⌘K</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <IconButton
+                filled
+                label="New task"
+                onClick={onNewTask}
+                disabled={!hasActiveProject}
+              />
+            }
+          >
+            <SquarePen />
+          </TooltipTrigger>
+          <TooltipContent side="bottom">New task C</TooltipContent>
+        </Tooltip>
+      </div>
+      <div ref={navRef} className="min-h-0 flex-1">
+        <SidebarNav
+          sections={navSections}
+          activeId={activeId}
+          onSelect={handleSelect}
+        />
+      </div>
+      <DraftTrayPopover
+        open={draftsOpen}
+        onOpenChange={setDraftsOpen}
+        anchor={() =>
+          navRef.current?.querySelector('[data-nav-item="drafts"]') ?? null
+        }
+        drafts={drafts}
+        onOpenDraft={onOpenDraft}
+        onDismissDraft={onDismissDraft}
       />
     </SidebarRoot>
   );

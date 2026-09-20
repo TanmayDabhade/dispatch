@@ -34,12 +34,12 @@ function EditDiff({ oldStr, newStr }: { oldStr: string; newStr: string }) {
   const removed = oldStr === '' ? [] : oldStr.split('\n');
   const added = newStr === '' ? [] : newStr.split('\n');
   return (
-    <ScrollArea className="border-border/60 max-h-64 rounded-md border">
-      <pre className="font-mono text-[11.5px] leading-snug">
+    <ScrollArea className="rounded-card border-border max-h-64 border-[0.5px]">
+      <pre className="font-mono text-[12px] leading-snug">
         {removed.map((line, i) => (
           <div
             key={`r${i}`}
-            className="bg-destructive/10 text-destructive px-2 whitespace-pre-wrap"
+            className="bg-state-failed-surface text-state-failed px-2 whitespace-pre-wrap"
           >
             <span className="opacity-60 select-none">- </span>
             {line}
@@ -63,8 +63,8 @@ function EditDiff({ oldStr, newStr }: { oldStr: string; newStr: string }) {
 // fallback JSON dump) so a large payload never blows out the transcript's height.
 function CodeBlock({ text }: { text: string }) {
   return (
-    <ScrollArea className="bg-muted/50 border-border/60 max-h-64 rounded-md border">
-      <pre className="p-2 font-mono text-[11.5px] leading-snug whitespace-pre-wrap">
+    <ScrollArea className="bg-surface-secondary rounded-card border-border max-h-64 border-[0.5px]">
+      <pre className="p-2 font-mono text-[12px] leading-snug whitespace-pre-wrap">
         {text}
       </pre>
     </ScrollArea>

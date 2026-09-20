@@ -56,7 +56,13 @@ import type { DecisionItem } from '../lib/decisionFeed';
 import { fetchDecisions, isDecisionsChanged } from '../lib/decisionFeed';
 import { fixLoopCappedNotice } from '../lib/fixLoopStatus';
 import type { InboxEntryDraft, InboxState } from '../lib/inbox';
-import { addEntries, loadInbox, markAllRead, saveInbox } from '../lib/inbox';
+import {
+  addEntries,
+  loadInbox,
+  markAllRead,
+  markRead,
+  saveInbox,
+} from '../lib/inbox';
 import { resolveExecuteModel } from '../lib/models';
 import { notify, setNotificationKinds } from '../lib/notifications';
 import type { PendingApproval } from '../lib/pendingApprovals';
@@ -549,6 +555,8 @@ export interface DispatchProjectData {
   notificationInbox: InboxState;
   // Marks every notification entry read — called once when the panel opens, not per-entry.
   markNotificationInboxRead: () => void;
+  /** Flips one entry to read — the Inbox page selecting a notification row. */
+  markNotificationRead: (id: string) => void;
 }
 
 /**
@@ -642,6 +650,13 @@ export function useDispatchProject(
   const markNotificationInboxRead = useCallback(() => {
     updateNotificationInbox((prev) => markAllRead(prev));
   }, [updateNotificationInbox]);
+
+  const markNotificationRead = useCallback(
+    (id: string) => {
+      updateNotificationInbox((prev) => markRead(prev, id));
+    },
+    [updateNotificationInbox]
+  );
 
   // A plan started against one project's dispatchd must never leak into another project's
   // Plans view — without this, switching projects while a plan was mid-flight (or just left
@@ -2619,6 +2634,7 @@ export function useDispatchProject(
 
     notificationInbox,
     markNotificationInboxRead,
+    markNotificationRead,
 
     inbox: inbox ?? [],
     handleCaptureInbox,

@@ -1,19 +1,29 @@
+import { CheckIcon, InfoIcon } from 'lucide-react';
 import { createContext, useContext, useMemo } from 'react';
 import { toast } from 'sonner';
 
-import { sonnerOptionsFor, type ToastTone } from './toastContract';
+import {
+  sonnerActionsFor,
+  sonnerOptionsFor,
+  type ToastLink,
+  type ToastTone,
+} from './toastContract';
 import { Toaster } from '@/ui/sonner';
 
 interface ToastInput {
+  /** 13px/500, beside the tone's 14px icon (a green check for success, an info glyph for
+   * an error). */
   title: string;
-  /** The detail line. For a failure this should be what actually went wrong. */
+  /** The 12px muted line under it. For a failure this should be what actually went wrong;
+   * for a task, `t-8f2a — Cache the search index` (`taskToastDescription`). */
   description?: string;
   tone?: ToastTone;
-  /** The toast's primary follow-up (sonner's `action` button). */
-  action?: { label: React.ReactNode; onClick: () => void };
-  /** A second, quieter follow-up (sonner's `cancel` slot) — dismisses the
-   * toast either way. */
-  secondary?: { label: React.ReactNode; onClick: () => void };
+  /** The indigo text link under the description — `View task` (`viewTaskLink`). */
+  link?: ToastLink;
+  /** The same slot as `link`, for follow-ups that are not a navigation (`Restart`). */
+  action?: ToastLink;
+  /** A second, quieter follow-up rendered as a ghost — dismisses the toast either way. */
+  secondary?: ToastLink;
 }
 
 interface ToastApi {
@@ -28,6 +38,17 @@ const TONE_FN = {
   info: toast.info,
 } as const;
 
+// §12: success is a plain green check, an error is an info glyph with its description.
+// The Toaster colours them per tone; the shapes are set here.
+const TONE_ICON = {
+  error: <InfoIcon aria-hidden />,
+  success: <CheckIcon aria-hidden />,
+  info: <InfoIcon aria-hidden />,
+} as const;
+
+/** Mounts the Linear-styled `Toaster` (a 300px quaternary card, bottom-right) and hands
+ * every surface a `push`. There is no close button: a toast times out, or its link or
+ * ghost dismisses it. */
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const api = useMemo<ToastApi>(
     () => ({
@@ -35,18 +56,8 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         const tone = input.tone ?? 'info';
         TONE_FN[tone](input.title, {
           description: input.description,
-          ...(input.action !== undefined && {
-            action: {
-              label: input.action.label,
-              onClick: input.action.onClick,
-            },
-          }),
-          ...(input.secondary !== undefined && {
-            cancel: {
-              label: input.secondary.label,
-              onClick: input.secondary.onClick,
-            },
-          }),
+          icon: TONE_ICON[tone],
+          ...sonnerActionsFor(input),
           ...sonnerOptionsFor(tone),
         });
       },
@@ -57,7 +68,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={api}>
       {children}
-      <Toaster position="bottom-right" visibleToasts={4} closeButton />
+      <Toaster position="bottom-right" visibleToasts={4} />
     </ToastContext.Provider>
   );
 }

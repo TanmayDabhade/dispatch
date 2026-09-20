@@ -3,28 +3,40 @@ import {
   Check,
   CircleAlert,
   Plus,
-  Send,
   Shield,
   TerminalSquare,
   Wrench,
   X,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef } from 'react';
 
 import type {
   OverseerApprovalDecision,
   OverseerSession,
 } from '../../hooks/useOverseerSession';
 import { formatRelativeTimeFromIso } from '../../lib/format';
-import { modelLabel } from '../../lib/models';
+import { modelLabel, MODELS } from '../../lib/models';
 import type { OverseerThreadItem } from '../../lib/overseerThread';
 import { buildOverseerThread } from '../../lib/overseerThread';
 import { Markdown } from '../runs/Markdown';
-import { ModelPicker } from './ModelPicker';
 import { cn } from '@/lib/utils';
+import { PillButton } from '@/ui/ai/pill';
+import { PromptBar } from '@/ui/ai/prompt-bar';
 import { Button } from '@/ui/button';
 import { Spinner } from '@/ui/spinner';
-import { Textarea } from '@/ui/textarea';
+
+/** The models the opening composer offers, in `PromptBar`'s shape. */
+const COMPOSER_MODELS = MODELS.map((m) => ({ id: m.id, label: m.label }));
+
+/** An inline failure line — a send that dispatchd refused, a decision that threw. */
+function ErrorLine({ children }: { children: ReactNode }) {
+  return (
+    <div className="bg-state-failed-surface text-state-failed rounded-control flex items-start gap-2 px-3 py-2 text-[13px]">
+      <CircleAlert className="size-3.5 shrink-0 translate-y-0.5" />
+      <span>{children}</span>
+    </div>
+  );
+}
 
 /** One turn of the overseer conversation — the same bubble treatment as the plan
  * thread: the assistant's replies are markdown (it's an agent transcript), the
@@ -42,25 +54,18 @@ function OverseerMessageBubble({
   return (
     <div
       className={cn(
-        'flex max-w-[85%] flex-col gap-1 rounded-md px-3 py-2',
+        'rounded-card flex max-w-[85%] flex-col gap-1 px-3 py-2',
         fromUser
-          ? 'bg-primary text-primary-foreground self-end'
-          : 'border-border bg-card self-start border'
+          ? 'bg-surface-secondary shadow-hairline self-end'
+          : 'bg-surface-quaternary shadow-card self-start'
       )}
     >
-      <div
-        className={cn(
-          'flex items-baseline gap-1.5 text-[11px] font-medium tracking-wide uppercase',
-          fromUser ? 'text-primary-foreground/70' : 'text-muted-foreground'
-        )}
-      >
+      <div className="text-muted-foreground flex items-baseline gap-1.5 text-[12px] font-medium">
         {fromUser ? 'You' : 'Overseer'}
-        <span className="font-normal normal-case opacity-70">
-          {formatRelativeTimeFromIso(at)}
-        </span>
+        <span className="font-book">{formatRelativeTimeFromIso(at)}</span>
       </div>
       {fromUser ? (
-        <p className="text-[13px] whitespace-pre-wrap">{text}</p>
+        <p className="font-book text-[13px] whitespace-pre-wrap">{text}</p>
       ) : (
         <Markdown content={text} className="text-[13px]" />
       )}
@@ -97,24 +102,16 @@ function OverseerConfirmCard({
   onDecide,
 }: OverseerConfirmCardProps) {
   return (
-    <div className="flex flex-col gap-2 self-stretch rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2.5">
-      <div className="flex items-center gap-1.5 text-[11px] font-medium tracking-wide text-amber-600 uppercase dark:text-amber-400">
+    <div className="bg-state-waiting-surface rounded-card flex flex-col gap-2 self-stretch border-[0.5px] border-(--state-waiting-edge) px-3 py-2.5">
+      <div className="text-state-waiting flex items-center gap-1.5 text-[12px] font-medium">
         <Shield className="size-3.5" />
         Needs your approval
-        <span className="text-muted-foreground font-mono font-normal normal-case">
-          {action.tool}
-        </span>
+        <span className="text-muted-foreground font-book">{action.tool}</span>
       </div>
-      <p className="text-[13px]">{action.summary}</p>
-      {failure !== null && (
-        <div className="border-destructive/30 bg-destructive/10 text-destructive flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-[12px]">
-          <CircleAlert className="size-3.5 shrink-0 translate-y-0.5" />
-          <span>{failure}</span>
-        </div>
-      )}
+      <p className="font-book text-[13px]">{action.summary}</p>
+      {failure !== null && <ErrorLine>{failure}</ErrorLine>}
       <div className="flex items-center gap-2">
         <Button
-          size="sm"
           disabled={locked}
           onClick={() => onDecide(true)}
           aria-label={`Approve: ${action.summary}`}
@@ -126,16 +123,14 @@ function OverseerConfirmCard({
           )}
           {failure !== null ? 'Retry' : 'Approve'}
         </Button>
-        <Button
-          size="sm"
-          variant="outline"
+        <PillButton
           disabled={locked}
           onClick={() => onDecide(false)}
           aria-label={`Deny: ${action.summary}`}
         >
           <X className="size-3.5" />
           Deny
-        </Button>
+        </PillButton>
       </div>
     </div>
   );
@@ -165,18 +160,18 @@ function OverseerApproveCard({
   onDecide,
 }: OverseerApproveCardProps) {
   return (
-    <div className="flex flex-col gap-2 self-stretch rounded-md border border-sky-500/40 bg-sky-500/5 px-3 py-2.5">
-      <div className="flex items-center gap-1.5 text-[11px] font-medium tracking-wide text-sky-600 uppercase dark:text-sky-400">
+    <div className="bg-state-waiting-surface rounded-card flex flex-col gap-2 self-stretch border-[0.5px] border-(--state-waiting-edge) px-3 py-2.5">
+      <div className="text-state-waiting flex items-center gap-1.5 text-[12px] font-medium">
         <TerminalSquare className="size-3.5" />
         Wants to run
-        <span className="text-muted-foreground font-mono font-normal normal-case">
+        <span className="text-muted-foreground font-book">
           {approval.toolName}
         </span>
       </div>
+      {/* The call itself — a command line, so it keeps the code face. */}
       <p className="font-mono text-[12px] break-all">{approval.summary}</p>
       <div className="flex flex-wrap items-center gap-2">
         <Button
-          size="sm"
           disabled={locked}
           onClick={() => onDecide({ allow: true })}
           aria-label={`Allow: ${approval.summary}`}
@@ -188,25 +183,21 @@ function OverseerApproveCard({
           )}
           Allow
         </Button>
-        <Button
-          size="sm"
-          variant="outline"
+        <PillButton
           disabled={locked}
           onClick={() => onDecide({ allow: true, scope: 'session' })}
           aria-label={`Allow ${approval.toolName} for this conversation`}
         >
           Allow for this conversation
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
+        </PillButton>
+        <PillButton
           disabled={locked}
           onClick={() => onDecide({ allow: false })}
           aria-label={`Deny: ${approval.summary}`}
         >
           <X className="size-3.5" />
           Deny
-        </Button>
+        </PillButton>
       </div>
     </div>
   );
@@ -226,13 +217,11 @@ function OverseerOutcomeRow({
   return (
     <div
       className={cn(
-        'flex items-start gap-2 self-start rounded-md border px-3 py-1.5 text-[12px]',
+        'rounded-control font-book flex items-start gap-2 self-start px-3 py-1.5 text-[12px]',
         (outcome === 'applied' || outcome === 'allowed') &&
-          'border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400',
-        outcome === 'denied' &&
-          'border-border bg-muted/40 text-muted-foreground',
-        outcome === 'failed' &&
-          'border-destructive/30 bg-destructive/10 text-destructive'
+          'bg-state-review-surface text-state-review',
+        outcome === 'denied' && 'bg-surface-quaternary text-muted-foreground',
+        outcome === 'failed' && 'bg-state-failed-surface text-state-failed'
       )}
     >
       {outcome === 'applied' || outcome === 'allowed' ? (
@@ -244,7 +233,10 @@ function OverseerOutcomeRow({
       )}
       <span>
         {text}
-        <span className="opacity-60"> · {formatRelativeTimeFromIso(at)}</span>
+        <span className="text-muted-foreground">
+          {' '}
+          · {formatRelativeTimeFromIso(at)}
+        </span>
       </span>
     </div>
   );
@@ -378,11 +370,11 @@ export function OverseerChat({ overseer, compact = false }: OverseerChatProps) {
         return (
           <div
             key={item.key}
-            className="text-muted-foreground flex items-start gap-1.5 self-start px-1 text-[12px]"
+            className="text-muted-foreground font-book flex items-start gap-1.5 self-start px-1 text-[12px]"
           >
             <Wrench className="size-3 shrink-0 translate-y-0.5" />
             <span className="line-clamp-2">
-              <span className="font-mono">{item.tool}</span> — {item.text}
+              <span className="font-medium">{item.tool}</span> — {item.text}
             </span>
           </div>
         );
@@ -422,20 +414,16 @@ export function OverseerChat({ overseer, compact = false }: OverseerChatProps) {
         return (
           <div
             key={item.key}
-            className="border-border bg-muted/40 text-muted-foreground flex items-center gap-2 self-start rounded-md border px-3 py-2 text-[13px]"
+            className="bg-surface-quaternary text-muted-foreground rounded-control font-book flex items-center gap-2 self-start px-3 py-2 text-[13px]"
           >
-            <Spinner className="text-primary size-3.5" />
+            <Spinner className="text-state-working size-3.5" />
             The overseer is working…
           </div>
         );
       case 'failed':
         return (
-          <div
-            key={item.key}
-            className="border-destructive/30 bg-destructive/10 text-destructive flex items-start gap-2 self-start rounded-md border px-3 py-2 text-[13px]"
-          >
-            <CircleAlert className="size-4 shrink-0 translate-y-0.5" />
-            <span>{item.error}</span>
+          <div key={item.key} className="self-start">
+            <ErrorLine>{item.error}</ErrorLine>
           </div>
         );
     }
@@ -443,63 +431,26 @@ export function OverseerChat({ overseer, compact = false }: OverseerChatProps) {
 
   if (overseer.conversationId === null) {
     return (
-      <div
-        className={cn(
-          'flex flex-col gap-3',
-          !compact &&
-            'border-border bg-card animate-in fade-in-0 rounded-lg border p-4 duration-150'
-        )}
-      >
-        <p className="text-muted-foreground text-[13px]">
+      <div className="flex flex-col gap-3">
+        <p className="text-muted-foreground font-book text-[13px]">
           {compact
             ? 'Ask about runs, tasks, the queue — or the code. Actions wait for your approval.'
             : 'Ask about this project — runs, tasks, the merge queue, what needs you — or about the code itself: the overseer is a full agent session in the checkout and can read, search, run commands and edit. It can also act on the project (dispatch, cancel, approve), but every mutation waits for your explicit approval here first, and tool calls the permission policy does not settle pause for you to allow.'}
         </p>
-        {sendError !== null && (
-          <div className="border-destructive/30 bg-destructive/10 text-destructive flex items-center gap-2 rounded-md border px-3 py-2 text-[13px]">
-            <CircleAlert className="size-4 shrink-0" />
-            <span>{sendError}</span>
-          </div>
-        )}
-        <Textarea
-          rows={compact ? 2 : 3}
-          placeholder="What's going on with my agents?"
+        {sendError !== null && <ErrorLine>{sendError}</ErrorLine>}
+        {/* Which model the conversation opens on — remembered per device, so
+            "always Fable" sticks. An open conversation keeps its model. */}
+        <PromptBar
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              submitDraft();
-            }
-          }}
-          aria-label="Overseer opening question"
-          className="resize-y text-[13px]"
+          onChange={setDraft}
+          onSubmit={submitDraft}
+          disabled={sending}
+          placeholder="What's going on with my agents?"
+          ariaLabel="Overseer opening question"
+          models={COMPOSER_MODELS}
+          modelId={overseer.model}
+          onModelChange={overseer.setModel}
         />
-        <div className="flex items-center justify-end gap-2">
-          {/* Which model the conversation opens on — remembered per device, so
-              "always Fable" sticks. An open conversation keeps its model. */}
-          <ModelPicker
-            value={overseer.model}
-            onChange={overseer.setModel}
-            label="Overseer model"
-            disabled={sending}
-          />
-          <Button
-            size={compact ? 'sm' : 'default'}
-            disabled={sending || draft.trim() === ''}
-            onClick={submitDraft}
-          >
-            {sending ? (
-              <>
-                <Spinner className="size-4" /> Starting…
-              </>
-            ) : (
-              <>
-                <Send className="size-4" /> Ask
-              </>
-            )}
-          </Button>
-        </div>
       </div>
     );
   }
@@ -508,16 +459,11 @@ export function OverseerChat({ overseer, compact = false }: OverseerChatProps) {
     <div
       className={cn(
         'flex min-h-0 flex-1 flex-col',
-        compact
-          ? 'gap-2'
-          : 'border-border bg-card animate-in fade-in-0 gap-3 rounded-lg border p-4 duration-150'
+        compact ? 'gap-2' : 'gap-3'
       )}
     >
       {overseer.recordError !== null && overseer.record === undefined && (
-        <div className="border-destructive/30 bg-destructive/10 text-destructive flex items-center gap-2 rounded-md border px-3 py-2 text-[13px]">
-          <CircleAlert className="size-4 shrink-0" />
-          <span>{overseer.recordError}</span>
-        </div>
+        <ErrorLine>{overseer.recordError}</ErrorLine>
       )}
 
       <div
@@ -529,30 +475,19 @@ export function OverseerChat({ overseer, compact = false }: OverseerChatProps) {
         {thread.map(renderRow)}
       </div>
 
-      <div
-        className={cn(
-          'border-border flex flex-col gap-1.5 border-t',
-          compact ? 'pt-2' : 'pt-3'
-        )}
-      >
+      <div className="flex flex-col gap-1.5">
         {(sendError ?? decideError) !== null && (
-          <div className="border-destructive/30 bg-destructive/10 text-destructive flex items-center gap-2 rounded-md border px-3 py-2 text-[13px]">
-            <CircleAlert className="size-4 shrink-0" />
-            <span>{sendError ?? decideError}</span>
-          </div>
+          <ErrorLine>{sendError ?? decideError}</ErrorLine>
         )}
         <div className="flex items-center gap-2">
-          <span className="text-muted-foreground min-w-0 flex-1 truncate text-[11px]">
+          <span className="text-muted-foreground font-book min-w-0 flex-1 truncate text-[12px]">
             {busy
               ? 'The overseer is answering…'
               : compact
                 ? 'Actions wait for your approval.'
                 : 'Ask a follow-up. Actions always wait for your approval.'}
             {overseer.record?.model !== undefined && (
-              <span className="opacity-70">
-                {' '}
-                · {modelLabel(overseer.record.model)}
-              </span>
+              <> · {modelLabel(overseer.record.model)}</>
             )}
           </span>
           {compact && (
@@ -580,38 +515,17 @@ export function OverseerChat({ overseer, compact = false }: OverseerChatProps) {
             </Button>
           )}
         </div>
-        <div className={cn('flex gap-2', compact && 'flex-col')}>
-          <Textarea
-            rows={2}
-            placeholder="Ask about runs, tasks, the queue — or ask it to act…"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                submitDraft();
-              }
-            }}
-            aria-label="Follow-up message"
-            className="min-h-0 flex-1 resize-none text-[13px]"
-          />
-          <Button
-            size={compact ? 'sm' : 'default'}
-            disabled={busy || sending || draft.trim() === ''}
-            onClick={submitDraft}
-            className="self-end"
-          >
-            {sending ? (
-              <>
-                <Spinner className="size-4" /> Sending…
-              </>
-            ) : (
-              <>
-                <Send className="size-4" /> Send
-              </>
-            )}
-          </Button>
-        </div>
+        {/* Disabled for the whole turn, not just the send: the composer is the
+            primitive's, and a Send that looks live against a turn the server
+            would 409 is the worse of the two. */}
+        <PromptBar
+          value={draft}
+          onChange={setDraft}
+          onSubmit={submitDraft}
+          disabled={busy || sending}
+          placeholder="Ask about runs, tasks, the queue — or ask it to act…"
+          ariaLabel="Follow-up message"
+        />
       </div>
     </div>
   );

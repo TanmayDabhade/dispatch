@@ -26,6 +26,7 @@ import type {
   GitFileRow,
   GitRightPane as GitRightPaneState,
 } from '@/lib/gitPanels';
+import { PillButton } from '@/ui/ai/pill';
 import { Button } from '@/ui/button';
 import { EmptyState } from '@/ui/chrome';
 
@@ -84,13 +85,13 @@ export function GitRightPane(props: GitRightPaneProps) {
     const status = props.status;
     if (status === undefined) return null;
     return (
-      <div className="flex flex-col gap-3 p-4 text-[12px]">
+      <div className="font-book flex flex-col gap-3 px-4 py-3 text-[13px]">
         <h2 className="text-[13px] font-medium">Repository status</h2>
-        <dl className="grid grid-cols-[8rem_1fr] gap-y-1.5">
+        <dl className="grid grid-cols-[8rem_1fr] gap-y-1.5 tabular-nums">
           <dt className="text-muted-foreground">Branch</dt>
-          <dd className="font-mono">{status.branch ?? 'detached HEAD'}</dd>
+          <dd>{status.branch ?? 'detached HEAD'}</dd>
           <dt className="text-muted-foreground">Upstream</dt>
-          <dd className="font-mono">{status.upstream ?? '—'}</dd>
+          <dd>{status.upstream ?? '—'}</dd>
           <dt className="text-muted-foreground">Ahead / behind</dt>
           <dd>
             {status.ahead} / {status.behind}
@@ -113,49 +114,45 @@ export function GitRightPane(props: GitRightPaneProps) {
     if (row === undefined) return null;
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <div className="shadow-hairline-bottom flex items-center justify-between gap-2 px-3 py-2">
+        <div className="shadow-hairline-bottom flex h-11 shrink-0 items-center justify-between gap-2 px-4">
           <span className="truncate font-mono text-[12px]">{row.path}</span>
-          <div className="flex shrink-0 items-center gap-1.5">
+          <div className="flex shrink-0 items-center gap-1">
             <Button
               variant="ghost"
-              size="xs"
+              size="sm"
               onClick={() => props.onOpenImpact({ kind: 'file', id: row.path })}
             >
-              <Waypoints className="size-3.5" />
+              <Waypoints />
               Open in Impact
             </Button>
             {row.section !== 'staged' && (
               <Button
                 variant="ghost"
-                size="xs"
-                className="hover:text-destructive"
+                size="sm"
+                className="hover:text-state-failed"
                 onClick={() => props.onRequestDiscardFile(row)}
                 title="Discard (d)"
               >
-                <Trash2 className="size-3.5" />
+                <Trash2 />
                 Discard
               </Button>
             )}
-            <Button
-              variant="outline"
-              size="xs"
-              onClick={props.onToggleStageSelectedFile}
-            >
+            <PillButton onClick={props.onToggleStageSelectedFile}>
               {row.section === 'staged' ? 'Unstage' : 'Stage'}
-            </Button>
+            </PillButton>
           </div>
         </div>
         <ImpactPanel
           client={props.client}
           subject="file"
           id={row.path}
-          className="m-3"
+          className="mx-4 my-3"
         />
         {/* A flex column so `GitDiffPane`'s `CodeView` can size itself off this with `flex-1`
             rather than a percentage — see `DiffSurface`'s `className`. */}
         <div className="flex min-h-0 flex-1 flex-col overflow-auto">
           {row.section === 'untracked' ? (
-            <p className="text-muted-foreground p-4 text-[12px]">
+            <p className="text-muted-foreground font-book px-4 py-3 text-[13px]">
               New, untracked file — stage it to see its contents in a diff.
             </p>
           ) : (
@@ -175,29 +172,23 @@ export function GitRightPane(props: GitRightPaneProps) {
     return (
       <div className="flex h-full min-h-0 flex-col">
         {commit !== undefined && (
-          <div className="shadow-hairline-bottom flex items-center justify-between gap-2 px-3 py-2">
-            <div className="flex min-w-0 flex-col">
-              <span className="truncate text-[12px]">{commit.subject}</span>
-              <span className="text-muted-foreground font-mono text-[10.5px]">
+          <div className="shadow-hairline-bottom flex h-11 shrink-0 items-center justify-between gap-2 px-4">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="truncate text-[13px] font-medium">
+                {commit.subject}
+              </span>
+              <span className="text-muted-foreground font-book shrink-0 text-[12px] tabular-nums">
                 {commit.shortSha} · {commit.author} ·{' '}
                 {formatRelativeTimeFromIso(commit.date)}
               </span>
             </div>
-            <div className="flex shrink-0 items-center gap-1.5">
-              <Button
-                variant="outline"
-                size="xs"
-                onClick={() => props.onCherryPick(commit.sha)}
-              >
+            <div className="flex shrink-0 items-center gap-1">
+              <PillButton onClick={() => props.onCherryPick(commit.sha)}>
                 Cherry-pick
-              </Button>
-              <Button
-                variant="outline"
-                size="xs"
-                onClick={() => props.onRevert(commit.sha)}
-              >
+              </PillButton>
+              <PillButton onClick={() => props.onRevert(commit.sha)}>
                 Revert
-              </Button>
+              </PillButton>
             </div>
           </div>
         )}
@@ -220,16 +211,16 @@ export function GitRightPane(props: GitRightPaneProps) {
     const canDiscard =
       worktree?.status === 'reviewable' && worktree.runId !== undefined;
     return (
-      <div className="flex flex-col gap-3 p-4 text-[12px]">
+      <div className="font-book flex flex-col gap-3 px-4 py-3 text-[13px]">
         <div className="flex items-center gap-2">
           {row.isCurrent ? (
-            <Check className="size-4 text-emerald-600 dark:text-emerald-400" />
+            <Check className="text-state-review size-3.5" />
           ) : (
-            <GitBranchIcon className="text-muted-foreground size-4" />
+            <GitBranchIcon className="text-muted-foreground size-3.5" />
           )}
-          <h2 className="truncate font-mono text-[13px]">{row.name}</h2>
+          <h2 className="truncate text-[13px] font-medium">{row.name}</h2>
         </div>
-        <dl className="grid grid-cols-[8rem_1fr] gap-y-1.5">
+        <dl className="grid grid-cols-[8rem_1fr] gap-y-1.5 tabular-nums">
           <dt className="text-muted-foreground">Last commit</dt>
           <dd className="truncate">
             {row.shortSha} {row.subject}
@@ -259,7 +250,7 @@ export function GitRightPane(props: GitRightPaneProps) {
         </dl>
 
         {worktree?.dirty === true && (
-          <div className="bg-state-waiting-surface text-state-waiting rounded-control flex items-start gap-2 px-2.5 py-2">
+          <div className="bg-state-waiting-surface text-state-waiting rounded-card flex items-start gap-2 px-2.5 py-2 text-[12px]">
             <AlertTriangle className="mt-px size-3.5 shrink-0" />
             <span>
               Uncommitted changes here block reclaiming this worktree. Commit,
@@ -270,24 +261,20 @@ export function GitRightPane(props: GitRightPaneProps) {
 
         <div className="flex flex-wrap items-center gap-1.5">
           {!row.isCurrent && (
-            <Button
-              variant="outline"
-              size="sm"
+            <PillButton
               disabled={props.busy}
               onClick={() => props.onCheckout(row.name)}
             >
               Checkout
-            </Button>
+            </PillButton>
           )}
-          <Button
-            variant="outline"
-            size="sm"
+          <PillButton
             disabled={props.busy}
             onClick={() => props.onDispatchAgent(row.name)}
           >
-            <Bot className="size-3.5" />
+            <Bot />
             Dispatch agent
-          </Button>
+          </PillButton>
           {row.runId !== undefined && (
             <Button
               variant="ghost"
@@ -326,7 +313,7 @@ export function GitRightPane(props: GitRightPaneProps) {
               variant="ghost"
               size="sm"
               disabled={props.busy}
-              className="hover:text-destructive"
+              className="hover:text-state-failed"
               onClick={() => props.onRequestDeleteBranch(row)}
             >
               <Trash2 className="size-3.5" />
@@ -342,25 +329,23 @@ export function GitRightPane(props: GitRightPaneProps) {
   const stash = props.selectedStash;
   if (stash === undefined) return null;
   return (
-    <div className="flex flex-col gap-3 p-4 text-[12px]">
+    <div className="font-book flex flex-col gap-3 px-4 py-3 text-[13px]">
       <h2 className="truncate text-[13px] font-medium">{stash.message}</h2>
-      <p className="text-muted-foreground">
+      <p className="text-muted-foreground text-[12px] tabular-nums">
         {formatRelativeTimeFromIso(stash.date)} · {stash.sha.slice(0, 10)}
       </p>
       <div className="flex items-center gap-1.5">
-        <Button
-          variant="outline"
-          size="sm"
+        <PillButton
           disabled={props.busy}
           onClick={() => props.onPopStash(stash.index)}
         >
-          <Undo2 className="size-3.5" />
+          <Undo2 />
           Pop
-        </Button>
+        </PillButton>
         <Button
           variant="ghost"
           size="sm"
-          className="hover:text-destructive"
+          className="hover:text-state-failed"
           disabled={props.busy}
           onClick={() => props.onRequestDropStash(stash)}
         >

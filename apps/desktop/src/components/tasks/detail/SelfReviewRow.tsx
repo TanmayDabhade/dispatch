@@ -1,13 +1,12 @@
 import { Eye } from 'lucide-react';
 
-import { Checkbox } from '@/ui/checkbox';
+import { railRowClass } from './RailSection';
+import { Switch } from '@/ui/ai/switch';
 
 // The self-review toggle in the rail: when on, the orchestrator's prompt builder (see
-// server's prompt.ts) appends an instruction telling the dispatched agent to re-review its
-// own diff against the acceptance criteria before finishing, rather than stopping the moment
-// tests pass. A plain checkbox rather than a picker (there's no "value" to choose, just
-// on/off), styled like the other rail rows so it reads as one of them rather than a bolted-on
-// control.
+// server's prompt.ts) tells the dispatched agent to re-review its own diff against the
+// acceptance criteria before finishing. A 28×16 switch on a ghost row, so it reads as one
+// more property rather than a bolted-on form control.
 export function SelfReviewRow({
   value,
   onChange,
@@ -18,14 +17,15 @@ export function SelfReviewRow({
   return (
     <label
       htmlFor="task-self-review"
-      className="hover:bg-muted/60 flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px]"
+      data-slot="self-review-row"
+      className={railRowClass()}
     >
-      <Eye className="text-muted-foreground size-3.5 shrink-0" />
-      <span className="flex-1">Self review</span>
-      <Checkbox
+      <Eye className="text-muted-foreground" />
+      <span className="flex-1 truncate">Self review</span>
+      <Switch
         id="task-self-review"
         checked={value}
-        onCheckedChange={(checked) => onChange(checked === true)}
+        onCheckedChange={(checked) => onChange(checked)}
         aria-label="Self review before finishing"
       />
     </label>

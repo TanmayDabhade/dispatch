@@ -76,3 +76,21 @@ test('a global-sourced key hides Disconnect and invites a project override', () 
   expect(screen.queryByRole('button', { name: /Disconnect/ })).toBeNull();
   expect(screen.getByText(/shared default key/)).toBeDefined();
 });
+
+// Sync is a row whose title labels a `Switch`; the API-key field is the 13px book-weight
+// `Input` with no code face, and the poll interval is sans with tabular digits.
+test('sync is a switch and the key and interval inputs are sans', () => {
+  render(
+    <LinearPanel data={dataWith({ keySource: 'env', connected: true })} />
+  );
+  expect(
+    screen.getByRole('switch', { name: 'Sync this project with Linear' })
+  ).toBeDefined();
+  const key = screen.getByPlaceholderText('Linear API key');
+  expect(key.className).toContain('text-[13px]');
+  expect(key.className).toContain('font-book');
+  expect(key.className).not.toContain('font-mono');
+  const interval = screen.getByLabelText('Poll interval');
+  expect(interval.className).toContain('tabular-nums');
+  expect(interval.className).not.toContain('font-mono');
+});

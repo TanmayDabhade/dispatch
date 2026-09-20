@@ -32,15 +32,16 @@ test('every state renders a distinct glyph', () => {
   expect(seen.size).toBe(STATES.length);
 });
 
-// Pulse means "in flight" and nothing else — exactly the machine tier, and no
-// state outside it may take it.
-test('exactly the machine tier pulses by default', () => {
-  const pulsing: string[] = [];
+// Marks are still, like Linear's status icons: no state pulses, even when a
+// caller still asks for it, and every mark is the fixed 14px glyph.
+test('no state pulses and every mark is 14px', () => {
   for (const state of STATES) {
-    const { container } = render(<StateMark state={state} />);
-    if (container.innerHTML.includes('animate-pulse')) pulsing.push(state);
+    const { container } = render(<StateMark state={state} pulse size="md" />);
+    expect(container.innerHTML).not.toContain('animate-pulse');
+    const glyph = container.firstElementChild as SVGElement;
+    expect(glyph.getAttribute('class')).toContain('size-3.5');
+    expect(glyph.getAttribute('stroke-width')).toBe('1.75');
   }
-  expect(pulsing.sort()).toEqual(['checking', 'fixing', 'landing', 'working']);
 });
 
 // Every state is its own lucide glyph — not one shape recoloured — so the marks

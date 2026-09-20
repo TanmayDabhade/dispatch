@@ -7,6 +7,8 @@ import {
   groupOpenFindingsBySeverity,
   partitionFindings,
   ruleKeyOf,
+  severityColor,
+  severityLabel,
 } from './findings';
 
 function finding(overrides: Partial<Finding>): Finding {
@@ -62,6 +64,22 @@ describe('countOpenFindings', () => {
       finding({ id: 'f-4', severity: 'minor', verdict: 'blocked' }),
     ]);
     expect(counts).toEqual({ open: 3, critical: 2, important: 0, minor: 1 });
+  });
+});
+
+describe('severityLabel', () => {
+  test('is sentence case, never the raw enum', () => {
+    expect(severityLabel('critical')).toBe('Critical');
+    expect(severityLabel('important')).toBe('Important');
+    expect(severityLabel('minor')).toBe('Minor');
+  });
+});
+
+describe('severityColor', () => {
+  test('red and amber for the two that need attention; minor stays muted', () => {
+    expect(severityColor('critical')).toBe('var(--red)');
+    expect(severityColor('important')).toBe('var(--amber)');
+    expect(severityColor('minor')).toBe('var(--text-muted)');
   });
 });
 

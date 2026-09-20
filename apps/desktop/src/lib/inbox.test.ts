@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { InboxEntryDraft, InboxState } from './inbox';
+import type { InboxEntry, InboxEntryDraft, InboxState } from './inbox';
 import {
   addEntries,
   loadInbox,
   markAllRead,
+  markRead,
   projectViewForInboxTarget,
   saveInbox,
   unreadCount,
@@ -199,6 +200,31 @@ describe('markAllRead', () => {
       ],
     };
     expect(markAllRead(state)).toBe(state);
+  });
+});
+
+describe('markRead', () => {
+  const unread = (id: string): InboxEntry => ({
+    id,
+    ts: 't',
+    title: id,
+    body: '',
+    target: { kind: 'queue' },
+    read: false,
+  });
+
+  test('flips only the named entry to read', () => {
+    const state: InboxState = { entries: [unread('a'), unread('b')] };
+    const next = markRead(state, 'a');
+    expect(next.entries.map((e) => e.read)).toEqual([true, false]);
+  });
+
+  test('returns the same state reference for an unknown or already-read id', () => {
+    const state: InboxState = {
+      entries: [{ ...unread('a'), read: true }, unread('b')],
+    };
+    expect(markRead(state, 'a')).toBe(state);
+    expect(markRead(state, 'zzz')).toBe(state);
   });
 });
 

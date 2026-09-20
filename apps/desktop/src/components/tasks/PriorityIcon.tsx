@@ -1,30 +1,25 @@
 import type { Priority } from '@dispatch/core/browser';
 
+import { priorityLabel } from '../../lib/taskDisplay';
 import { cn } from '@/lib/utils';
 
-// Shared 14x14 viewBox/size with `StatusIcon` — see that file's comment for why size is a
-// Tailwind class rather than an SVG attribute.
-const VIEWBOX = 14;
+// Linear's priority glyph, rects read from its SVG DOM: a 16×16 viewBox with three rounded
+// bars at x = 1.5 / 6.5 / 11.5, filled in `currentColor` (muted grey on rows). Sized via the
+// `size-3.5` Tailwind class the same way `StatusIcon` is.
+const VIEWBOX = 16;
 
-const PRIORITY_LABEL: Record<Priority, string> = {
-  urgent: 'Urgent priority',
-  high: 'High priority',
-  medium: 'Medium priority',
-  low: 'Low priority',
-  none: 'No priority',
-};
+// The three ascending bars (x, y, height) — the same rects for low/medium/high, with the
+// bars above the level faded to 40%.
+const BARS: readonly { x: number; y: number; height: number }[] = [
+  { x: 1.5, y: 8, height: 6 },
+  { x: 6.5, y: 5, height: 9 },
+  { x: 11.5, y: 2, height: 12 },
+];
+const BAR_WIDTH = 3;
+const FADED_OPACITY = 0.4;
 
-// Ascending signal bars, matching Linear's own priority glyph: three bars of increasing
-// height, with only as many "filled" (dark) as the priority level out of 3 — the rest render
-// faint/muted. `none` skips the bars entirely for a plain "···" (see below).
-const BAR_HEIGHTS = [4, 7, 10];
-const BAR_WIDTH = 2.6;
-const BAR_GAP = 1.4;
-const BAR_BASE_Y = 12;
-
-// How many of the three ascending bars render filled (dark) vs faint (muted) — only for
-// low/medium/high; `none` renders the dot glyph below and `urgent` renders its own orange
-// square, so neither ever looks this map up.
+// How many of the three bars render solid — `none` and `urgent` have their own glyphs and
+// never look this up.
 const FILLED_BAR_COUNT: Record<'low' | 'medium' | 'high', number> = {
   low: 1,
   medium: 2,
@@ -34,55 +29,63 @@ const FILLED_BAR_COUNT: Record<'low' | 'medium' | 'high', number> = {
 function SignalBars({ filledCount }: { filledCount: number }) {
   return (
     <>
-      {BAR_HEIGHTS.map((height, i) => {
-        const x = 1 + i * (BAR_WIDTH + BAR_GAP);
-        const y = BAR_BASE_Y - height;
-        const filled = i < filledCount;
-        return (
-          <rect
-            key={i}
-            x={x}
-            y={y}
-            width={BAR_WIDTH}
-            height={height}
-            rx={0.6}
-            className={
-              filled ? 'fill-foreground/75' : 'fill-muted-foreground/25'
-            }
-          />
-        );
-      })}
-    </>
-  );
-}
-
-// `none` priority: three small horizontal dots ("···"), muted — the common case for most
-// tasks, so it deliberately costs almost no visual weight.
-function NoneDots() {
-  return (
-    <>
-      {[3, 7, 11].map((cx) => (
-        <circle
-          key={cx}
-          cx={cx}
-          cy={10}
-          r={0.9}
-          className="fill-muted-foreground/40"
+      {BARS.map((bar, i) => (
+        <rect
+          key={bar.x}
+          x={bar.x}
+          y={bar.y}
+          width={BAR_WIDTH}
+          height={bar.height}
+          rx={1}
+          fillOpacity={i < filledCount ? undefined : FADED_OPACITY}
         />
       ))}
     </>
   );
 }
 
-// `urgent` priority: Linear's filled rounded orange square with a white "!" — built from two
-// rounded rects (the exclamation's stem and dot) rather than SVG `<text>`, so it stays crisp
-// at 14px without depending on font metrics.
+// `none`: three short dashes on the centre line ("···"), the common case for most tasks,
+// so it deliberately costs almost no visual weight.
+function NoneDashes() {
+  return (
+    <>
+      {BARS.map((bar) => (
+        <rect
+          key={bar.x}
+          x={bar.x}
+          y={7.25}
+          width={BAR_WIDTH}
+          height={1.5}
+          rx={0.5}
+          opacity={0.9}
+        />
+      ))}
+    </>
+  );
+}
+
+// `urgent`: the filled orange rounded square with a white "!" — a 1.5-wide rounded bar
+// from y=3.5 to y=9 and a dot centred at y=11.5, both centred on x=8.
 function UrgentGlyph() {
   return (
     <>
-      <rect x={0.5} y={0.5} width={13} height={13} rx={3.5} fill="#f2994a" />
-      <rect x={6.3} y={3.3} width={1.4} height={5.1} rx={0.7} fill="white" />
-      <rect x={6.3} y={9.6} width={1.4} height={1.4} rx={0.7} fill="white" />
+      <rect
+        x={1}
+        y={1}
+        width={14}
+        height={14}
+        rx={3}
+        fill="var(--priority-urgent)"
+      />
+      <rect x={7.25} y={3.5} width={1.5} height={5.5} rx={0.75} fill="white" />
+      <rect
+        x={7.25}
+        y={10.75}
+        width={1.5}
+        height={1.5}
+        rx={0.75}
+        fill="white"
+      />
     </>
   );
 }
@@ -93,20 +96,22 @@ export interface PriorityIconProps {
 }
 
 /**
- * Linear's priority glyph: ascending signal bars for low/medium/high (1/2/3 of 3 bars
- * filled), a muted "···" for none, and a filled orange rounded square with a white "!" for
- * urgent — matching Linear's exact look rather than lucide's generic `SignalHigh`/`ChevronsUp`
- * glyphs. Shared between `TaskCardTile`, the epic lane header, and the list view's row.
+ * Linear's priority glyph at its exact geometry: ascending bars for low/medium/high (1/2/3
+ * of 3 solid, the rest at 40%), three dashes for none, and a filled orange square with a
+ * white "!" for urgent. Grey bars take the muted text colour; pass a `text-*` class to
+ * recolour.
  */
 export function PriorityIcon({ priority, className }: PriorityIconProps) {
   return (
     <svg
       viewBox={`0 0 ${VIEWBOX} ${VIEWBOX}`}
-      className={cn('size-4 shrink-0', className)}
+      fill="currentColor"
+      className={cn('size-3.5 shrink-0 text-muted-foreground', className)}
       role="img"
-      aria-label={PRIORITY_LABEL[priority]}
+      aria-label={priorityLabel(priority)}
+      data-priority={priority}
     >
-      {priority === 'none' && <NoneDots />}
+      {priority === 'none' && <NoneDashes />}
       {priority === 'urgent' && <UrgentGlyph />}
       {priority !== 'none' && priority !== 'urgent' && (
         <SignalBars filledCount={FILLED_BAR_COUNT[priority]} />

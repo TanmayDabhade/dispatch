@@ -41,4 +41,32 @@ describe('Markdown', () => {
     expect(inline?.textContent).toBe('bun test');
     expect(container.querySelector('pre')).toBeNull();
   });
+
+  test('the prose variant carries the 15px long-form class; the default inherits', () => {
+    const { container } = render(
+      <Markdown content="A description." variant="prose" />
+    );
+    const root = container.querySelector('[data-slot="markdown"]');
+    expect(root?.className).toContain('dispatch-md-prose');
+    expect(root?.getAttribute('data-variant')).toBe('prose');
+
+    const inline = render(<Markdown content="A line." />);
+    const inlineRoot = inline.container.querySelector('[data-slot="markdown"]');
+    expect(inlineRoot?.className).not.toContain('dispatch-md-prose');
+  });
+
+  test('a GFM task list renders checkboxes, so acceptance criteria read as a checklist', () => {
+    const { container } = render(
+      <Markdown
+        content={'- [ ] tests pass\n- [x] docs updated'}
+        variant="prose"
+      />
+    );
+    const boxes = container.querySelectorAll('input[type="checkbox"]');
+    expect(boxes).toHaveLength(2);
+    expect((boxes[1] as HTMLInputElement).checked).toBe(true);
+    expect(container.querySelector('ul')?.className).toContain(
+      'contains-task-list'
+    );
+  });
 });

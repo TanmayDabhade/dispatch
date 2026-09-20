@@ -33,8 +33,8 @@ export function ProgressTrack({ value, className, label }: ProgressTrackProps) {
       aria-valuenow={indeterminate ? undefined : pct}
       aria-valuetext={indeterminate ? undefined : `${pct}%`}
       className={cn(
-        'bg-border h-0.5 w-full overflow-hidden rounded-none',
-        '[&>[data-slot=progress-indicator]]:bg-state-working [&>[data-slot=progress-indicator]]:transition-none',
+        'h-0.5 w-full overflow-hidden rounded-none bg-border-chip',
+        '[&>[data-slot=progress-indicator]]:bg-primary [&>[data-slot=progress-indicator]]:transition-none',
         indeterminate &&
           '[&>[data-slot=progress-indicator]]:motion-safe:animate-pulse',
         className

@@ -53,3 +53,18 @@ test('every SelectTrigger renders its face through SelectValue', () => {
   }
   expect(offenders).toEqual([]);
 });
+
+// The trigger is the `SelectPill`: it must draw its face from the one shared pill
+// recipe rather than a copy of it, or a select and a `SelectPill` on the same
+// header drift apart the way the three hairline spellings once did.
+test('SelectTrigger is built on the shared pill-button recipe', () => {
+  const source = readFileSync(join(import.meta.dir, 'select.tsx'), 'utf8');
+  expect(source).toContain("import { PILL_BUTTON_CLASS } from './ai/pill';");
+  const trigger = source.slice(
+    source.indexOf('function SelectTrigger('),
+    source.indexOf('function SelectContent(')
+  );
+  expect(trigger).toContain('PILL_BUTTON_CLASS');
+  expect(trigger).not.toContain('h-9');
+  expect(trigger).not.toContain('shadow-btn');
+});

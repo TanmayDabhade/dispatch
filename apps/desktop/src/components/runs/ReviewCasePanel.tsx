@@ -23,6 +23,7 @@ import { isDeadGuard } from '../../lib/reviewCase';
 import { ImpactPanel } from '../impact/ImpactPanel';
 import { PolicyReceiptBadge } from '../ledger/PolicyReceiptBadge';
 import { cn } from '@/lib/utils';
+import { PillButton } from '@/ui/ai/pill';
 import { Button } from '@/ui/button';
 import { Checkbox } from '@/ui/checkbox';
 import { SectionLabel } from '@/ui/chrome/SectionLabel';
@@ -32,6 +33,9 @@ import {
   CollapsibleTrigger,
 } from '@/ui/collapsible';
 import { ScrollArea } from '@/ui/scroll-area';
+
+// Row metadata — a summary, a duration, a path, a kind — 12px sans, tabular digits.
+const META_CLASS = 'text-[12px] font-book text-muted-foreground tabular-nums';
 
 interface ReviewCasePanelProps {
   evidence: CommandEvidence[];
@@ -132,7 +136,7 @@ export function ReviewCasePanel({
           </SectionLabel>
           {evidence.length === 0 ? (
             // The absence is the finding, so this must not read as a blank section or a tick.
-            <p className="text-state-waiting mt-2 text-[12.5px]">
+            <p className="text-state-waiting font-book mt-2 text-[13px]">
               The agent recorded no verification.
             </p>
           ) : (
@@ -140,16 +144,20 @@ export function ReviewCasePanel({
               {evidence.map((e) => (
                 <div
                   key={`${e.at}-${e.command}`}
-                  className="flex items-baseline gap-2 text-[12.5px]"
+                  className="flex items-baseline gap-2 text-[13px]"
                 >
                   {e.exitCode === 0 ? (
                     <Check className="text-state-review size-3 shrink-0" />
                   ) : (
                     <X className="text-state-failed size-3 shrink-0" />
                   )}
-                  <code className="min-w-0 flex-1 truncate">{e.command}</code>
-                  <span className="dense-meta shrink-0">{e.summary}</span>
-                  <span className="dense-meta shrink-0">
+                  <code className="min-w-0 flex-1 truncate text-[12px]">
+                    {e.command}
+                  </code>
+                  <span className={cn(META_CLASS, 'shrink-0')}>
+                    {e.summary}
+                  </span>
+                  <span className={cn(META_CLASS, 'shrink-0')}>
                     {(e.durationMs / 1000).toFixed(1)}s
                   </span>
                 </div>
@@ -169,10 +177,10 @@ export function ReviewCasePanel({
               {onOpenImpact && (
                 <Button
                   variant="ghost"
-                  size="xs"
+                  size="sm"
                   onClick={() => onOpenImpact({ kind: 'run', id: runId })}
                 >
-                  <Waypoints className="size-3.5" />
+                  <Waypoints />
                   Open in Impact
                 </Button>
               )}
@@ -189,7 +197,7 @@ export function ReviewCasePanel({
               {mutations.map((m) => (
                 <div
                   key={`${m.at}-${m.guard}`}
-                  className="flex items-baseline gap-2 text-[12.5px]"
+                  className="flex items-baseline gap-2 text-[13px]"
                 >
                   {isDeadGuard(m) ? (
                     <TriangleAlert className="text-state-waiting size-3 shrink-0" />
@@ -197,13 +205,15 @@ export function ReviewCasePanel({
                     <Check className="text-state-review size-3 shrink-0" />
                   )}
                   <span className="min-w-0 flex-1 truncate">{m.guard}</span>
-                  <span className="dense-meta shrink-0">{m.file}</span>
+                  <span className="text-muted-foreground shrink-0 font-mono text-[12px]">
+                    {m.file}
+                  </span>
                   <span
-                    className={
-                      isDeadGuard(m)
-                        ? 'text-state-waiting shrink-0 text-[11px]'
-                        : 'dense-meta shrink-0'
-                    }
+                    className={cn(
+                      META_CLASS,
+                      'shrink-0',
+                      isDeadGuard(m) && 'text-state-waiting'
+                    )}
                   >
                     {isDeadGuard(m)
                       ? '0 tests failed: dead guard or vacuous test'
@@ -223,25 +233,23 @@ export function ReviewCasePanel({
             <div className="mt-2 flex flex-col items-start gap-2">
               {/* Never "no findings": an empty set means nobody looked, and saying otherwise
                 would turn an absent review into a clean bill of health. */}
-              <p className="text-muted-foreground text-[12.5px]">
+              <p className="text-muted-foreground font-book text-[13px]">
                 {reviewAgentLive
                   ? 'An agent is reviewing this diff — its findings land here once it finishes.'
                   : 'No agent review has run over this diff.'}
               </p>
               {onStartAiReview !== undefined && (
-                <Button
-                  variant="outline"
-                  size="sm"
+                <PillButton
                   disabled={aiReviewBusy || reviewAgentLive}
                   onClick={() => void onStartAiReview()}
                 >
-                  <Bot className="size-3.5" />
+                  <Bot />
                   {reviewAgentLive
                     ? 'Agent reviewing…'
                     : aiReviewBusy
                       ? 'Starting…'
                       : 'Ask an agent to review'}
-                </Button>
+                </PillButton>
               )}
             </div>
           ) : (
@@ -267,21 +275,19 @@ export function ReviewCasePanel({
               ))}
               {onFixFindings !== undefined && (
                 <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
+                  <PillButton
                     disabled={fixBusy || selectedFindingIds.size === 0}
                     onClick={() => void fixSelected()}
                   >
-                    <Wrench className="size-3.5" />
+                    <Wrench />
                     {fixBusy
                       ? 'Sending to the agent…'
                       : selectedFindingIds.size > 0
                         ? `Fix ${selectedFindingIds.size} selected`
                         : 'Fix selected'}
-                  </Button>
+                  </PillButton>
                   {fixError !== null && (
-                    <span className="text-state-failed text-[11px]">
+                    <span className="text-state-failed font-book text-[12px]">
                       {fixError}
                     </span>
                   )}
@@ -337,7 +343,7 @@ function FindingRow({
   const [expanded, setExpanded] = useState(false);
   const long = finding.detail.length > DETAIL_CLAMP_CHARS;
   return (
-    <div className="text-[12.5px]">
+    <div className="text-[13px]">
       <div className="flex items-baseline gap-1.5">
         {onToggleSelect !== undefined && (
           <Checkbox
@@ -348,9 +354,9 @@ function FindingRow({
           />
         )}
         <TriangleAlert className="text-state-waiting size-3 shrink-0 self-center" />
-        <span className="min-w-0 flex-1">{finding.title}</span>
+        <span className="min-w-0 flex-1 font-medium">{finding.title}</span>
         {finding.file !== null && (
-          <span className="dense-meta shrink-0">
+          <span className="text-muted-foreground shrink-0 font-mono text-[12px]">
             {finding.file}
             {finding.line !== null && `:${finding.line}`}
           </span>
@@ -358,7 +364,7 @@ function FindingRow({
       </div>
       <p
         className={cn(
-          'text-muted-foreground pl-4.5 text-[11px] leading-snug',
+          'text-muted-foreground pl-4.5 text-[12px] leading-snug font-book',
           long && !expanded && 'line-clamp-2'
         )}
       >
@@ -368,10 +374,11 @@ function FindingRow({
         <Button
           type="button"
           variant="ghost"
+          size="xs"
           onClick={() => setExpanded((v) => !v)}
-          className="text-accent-foreground h-auto p-0 pl-4.5 text-[11px] font-normal hover:bg-transparent"
+          className="h-auto px-0 pl-4.5"
         >
-          {expanded ? 'less' : 'more'}
+          {expanded ? 'Less' : 'More'}
         </Button>
       )}
     </div>
@@ -392,7 +399,7 @@ function CheckRow({ group }: { group: CheckGroup }) {
     <Collapsible
       open={expanded}
       onOpenChange={setExpanded}
-      className="text-[12.5px]"
+      className="text-[13px]"
     >
       {/* `group` + `group-data-panel-open:rotate-90` rather than `expanded &&
           'rotate-90'` — the chevron reacts to the trigger's own `data-panel-open`
@@ -400,18 +407,18 @@ function CheckRow({ group }: { group: CheckGroup }) {
       <CollapsibleTrigger className="group flex w-full items-baseline gap-1.5 text-left">
         <ChevronRight className="size-3 shrink-0 self-center transition-transform group-data-panel-open:rotate-90" />
         <span className="min-w-0 flex-1">{group.rule}</span>
-        <span className="dense-meta shrink-0">
+        <span className={cn(META_CLASS, 'shrink-0')}>
           {group.files.length} file{group.files.length === 1 ? '' : 's'}
         </span>
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <ul className="text-muted-foreground mt-1 flex flex-col gap-0.5 pl-4.5 text-[11px]">
+        <ul className="text-muted-foreground font-book mt-1 flex flex-col gap-0.5 pl-4.5 text-[12px]">
           {shown.map((path) => (
             <li key={path} className="truncate">
               {path}
             </li>
           ))}
-          {hidden > 0 && <li className="dense-meta">+{hidden} more</li>}
+          {hidden > 0 && <li className={META_CLASS}>+{hidden} more</li>}
         </ul>
       </CollapsibleContent>
     </Collapsible>
@@ -429,7 +436,7 @@ function DecisionList({ entries }: { entries: LedgerEntry[] }) {
   return (
     <div className="mt-2 flex flex-col gap-2">
       {shown.map((d) => (
-        <div key={d.id} className="text-[12.5px]">
+        <div key={d.id} className="text-[13px]">
           <div className="flex items-center gap-1.5">
             <Flag
               className={
@@ -438,11 +445,13 @@ function DecisionList({ entries }: { entries: LedgerEntry[] }) {
                   : 'text-muted-foreground size-3 shrink-0'
               }
             />
-            <span className="dense-meta shrink-0">{d.kind}</span>
-            <span className="min-w-0 flex-1 truncate">{d.title}</span>
+            <span className={cn(META_CLASS, 'shrink-0')}>{d.kind}</span>
+            <span className="min-w-0 flex-1 truncate font-medium">
+              {d.title}
+            </span>
             <PolicyReceiptBadge entry={d} />
           </div>
-          <p className="text-muted-foreground pl-4.5 text-[11px] leading-snug">
+          <p className="text-muted-foreground font-book pl-4.5 text-[12px] leading-snug">
             {d.detail}
           </p>
         </div>
@@ -451,8 +460,9 @@ function DecisionList({ entries }: { entries: LedgerEntry[] }) {
         <Button
           type="button"
           variant="ghost"
+          size="xs"
           onClick={() => setShowAll((v) => !v)}
-          className="text-accent-foreground h-auto self-start p-0 pl-4.5 text-[11px] font-normal hover:bg-transparent"
+          className="h-auto self-start px-0 pl-4.5"
         >
           {showAll ? 'Show fewer' : `Show all ${entries.length}`}
         </Button>

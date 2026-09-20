@@ -52,7 +52,7 @@ function ConfidenceMeter({ confidence }: { confidence: number }) {
           />
         ))}
       </div>
-      <span className="text-muted-foreground font-mono text-[11px] tabular-nums">
+      <span className="text-muted-foreground font-book text-[12px] tabular-nums">
         {percent}%
       </span>
     </div>

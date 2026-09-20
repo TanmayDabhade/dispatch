@@ -6,35 +6,30 @@ import type {
 } from '@dispatch/client';
 import type { Priority } from '@dispatch/core/browser';
 import {
-  AlertTriangle,
   Check,
   CircleAlert,
   History,
   Link2,
   Maximize2,
-  Minus,
   Plus,
   Rows3,
-  Send,
-  SignalHigh,
-  SignalLow,
-  SignalMedium,
   Trash2,
   Waypoints,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 
-import { ModelPicker } from '../components/chat/ModelPicker';
 import { DependencyGraph } from '../components/graph/DependencyGraph';
 import { PlanQuestionsForm } from '../components/plans/PlanQuestionsForm';
 import { PlanTaskSpecDialog } from '../components/plans/PlanTaskSpecDialog';
 import { Markdown } from '../components/runs/Markdown';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { useToasts } from '../components/shell/Toasts';
+import { PriorityIcon } from '../components/tasks/PriorityIcon';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { formatRelativeTimeFromIso } from '../lib/format';
 import {
   modelLabel,
+  MODELS,
   readRoleModelOverride,
   resolveRoleModel,
   storeRoleModelOverride,
@@ -45,10 +40,13 @@ import {
   editPlanDraft,
   syncPlanDraft,
 } from '../lib/planThread';
+import { priorityLabel } from '../lib/taskDisplay';
 import { cn } from '@/lib/utils';
-import { Badge } from '@/ui/badge';
+import { PageHeader } from '@/ui/ai/page-header';
+import { Pill } from '@/ui/ai/pill';
+import { PromptBar } from '@/ui/ai/prompt-bar';
 import { Button } from '@/ui/button';
-import { EmptyState } from '@/ui/chrome';
+import { EmptyState, SectionLabel } from '@/ui/chrome';
 import { Input } from '@/ui/input';
 import {
   Select,
@@ -64,50 +62,32 @@ import { ToggleGroup, ToggleGroupItem } from '@/ui/toggle-group';
 
 const PRIORITIES: Priority[] = ['urgent', 'high', 'medium', 'low', 'none'];
 
-/** Small color-coded lucide icon in place of a text pill — only urgent/high get a color
- * treatment (matches `priorityTone`'s "don't compete for attention" rule elsewhere in the
- * app); medium/low/none stay a muted, silent icon shape. */
-function PriorityIcon({
-  priority,
-  className,
-}: {
-  priority: Priority;
-  className?: string;
-}) {
-  switch (priority) {
-    case 'urgent':
-      return <AlertTriangle className={cn('text-destructive', className)} />;
-    case 'high':
-      return (
-        <SignalHigh
-          className={cn('text-amber-500 dark:text-amber-400', className)}
-        />
-      );
-    case 'medium':
-      return (
-        <SignalMedium className={cn('text-muted-foreground', className)} />
-      );
-    case 'low':
-      return <SignalLow className={cn('text-muted-foreground', className)} />;
-    case 'none':
-      return <Minus className={cn('text-muted-foreground/60', className)} />;
-  }
-}
+/** The models the composer offers, in `PromptBar`'s shape. */
+const COMPOSER_MODELS = MODELS.map((m) => ({ id: m.id, label: m.label }));
 
 /** Small colored dot for a history entry's plan state — the brief's "status = a dot, not a
- * text pill" rule. `running` pulses (mirrors the Board's live-run pulse) since it's the one
- * state that's actively changing underneath the user. */
+ * text pill" rule, on the run-state tokens. */
 function PlanStateDot({ state }: { state: PlanState | 'unknown' }) {
   return (
     <span
       className={cn(
         'size-1.5 shrink-0 rounded-full',
-        state === 'ready' && 'bg-emerald-500',
-        state === 'failed' && 'bg-destructive',
-        state === 'running' && 'bg-primary animate-pulse',
+        state === 'ready' && 'bg-state-review',
+        state === 'failed' && 'bg-state-failed',
+        state === 'running' && 'bg-state-working',
         state === 'unknown' && 'bg-muted-foreground/40'
       )}
     />
+  );
+}
+
+/** An inline failure line — a turn dispatchd refused, a confirm that threw. */
+function ErrorLine({ children }: { children: ReactNode }) {
+  return (
+    <div className="bg-state-failed-surface text-state-failed rounded-control flex items-start gap-2 px-3 py-2 text-[13px]">
+      <CircleAlert className="size-3.5 shrink-0 translate-y-0.5" />
+      <span>{children}</span>
+    </div>
   );
 }
 
@@ -127,27 +107,20 @@ function PlanMessageBubble({
   return (
     <div
       className={cn(
-        'rounded-control flex max-w-[85%] flex-col gap-1 px-3 py-2',
-        // A quiet tint, not a solid fill — a wall of saturated bubbles was the
+        'rounded-card flex max-w-[85%] flex-col gap-1 px-3 py-2',
+        // Neutral surfaces both ways — a wall of saturated bubbles was the
         // loudest surface in the app, and the words are the point.
         fromUser
-          ? 'bg-primary/10 shadow-hairline self-end'
-          : 'bg-card shadow-hairline self-start'
+          ? 'bg-surface-secondary shadow-hairline self-end'
+          : 'bg-surface-quaternary shadow-card self-start'
       )}
     >
-      <div
-        className={cn(
-          'flex items-baseline gap-1.5 text-[11px] font-medium tracking-wide uppercase',
-          fromUser ? 'text-primary' : 'text-muted-foreground'
-        )}
-      >
+      <div className="text-muted-foreground flex items-baseline gap-1.5 text-[12px] font-medium">
         {fromUser ? 'You' : 'Planner'}
-        <span className="font-normal normal-case opacity-70">
-          {formatRelativeTimeFromIso(at)}
-        </span>
+        <span className="font-book">{formatRelativeTimeFromIso(at)}</span>
       </div>
       {fromUser ? (
-        <p className="text-[13px] whitespace-pre-wrap">{text}</p>
+        <p className="font-book text-[13px] whitespace-pre-wrap">{text}</p>
       ) : (
         <Markdown content={text} className="text-[13px]" />
       )}
@@ -214,7 +187,7 @@ function PlanConversation({
   }
 
   return (
-    <div className="bg-card rounded-card shadow-card animate-in fade-in-0 flex flex-col gap-3 p-4 duration-150">
+    <div className="flex flex-col gap-3">
       <div
         ref={scrollRef}
         role="log"
@@ -226,21 +199,17 @@ function PlanConversation({
             return (
               <div
                 key={item.key}
-                className="bg-surface-inset text-muted-foreground shadow-hairline rounded-control flex items-center gap-2 self-start px-3 py-2 text-[13px]"
+                className="bg-surface-quaternary text-muted-foreground rounded-control font-book flex items-center gap-2 self-start px-3 py-2 text-[13px]"
               >
-                <Spinner className="text-primary size-3.5" />
+                <Spinner className="text-state-working size-3.5" />
                 Planning — reading the codebase and updating the proposal…
               </div>
             );
           }
           if (item.kind === 'failed') {
             return (
-              <div
-                key={item.key}
-                className="bg-state-failed-surface text-state-failed rounded-control flex items-start gap-2 self-start px-3 py-2 text-[13px]"
-              >
-                <CircleAlert className="size-4 shrink-0 translate-y-0.5" />
-                <span>{item.error}</span>
+              <div key={item.key} className="self-start">
+                <ErrorLine>{item.error}</ErrorLine>
               </div>
             );
           }
@@ -263,14 +232,9 @@ function PlanConversation({
         />
       )}
 
-      <div className="shadow-hairline-top flex flex-col gap-1.5 pt-3">
-        {error !== null && (
-          <div className="bg-state-failed-surface text-state-failed rounded-control flex items-center gap-2 px-3 py-2 text-[13px]">
-            <CircleAlert className="size-4 shrink-0" />
-            <span>{error}</span>
-          </div>
-        )}
-        <span className="text-muted-foreground text-[11px]">
+      <div className="flex flex-col gap-1.5">
+        {error !== null && <ErrorLine>{error}</ErrorLine>}
+        <span className="text-muted-foreground font-book text-[12px]">
           {confirmed
             ? 'Confirmed. Tasks are created. Start a new plan to keep going.'
             : busy
@@ -278,37 +242,17 @@ function PlanConversation({
               : 'Ask for a change. The proposal updates.'}
         </span>
         {!confirmed && (
-          <div className="flex gap-2">
-            <Textarea
-              rows={2}
-              placeholder="Split a task, add one, change the order…"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  void submit();
-                }
-              }}
-              aria-label="Follow-up message"
-              className="min-h-0 flex-1 resize-none text-[13px]"
-            />
-            <Button
-              disabled={busy || sending || text.trim() === ''}
-              onClick={() => void submit()}
-              className="self-end"
-            >
-              {sending ? (
-                <>
-                  <Spinner className="size-4" /> Sending…
-                </>
-              ) : (
-                <>
-                  <Send className="size-4" /> Send
-                </>
-              )}
-            </Button>
-          </div>
+          // Disabled for the whole turn, not just the send: the composer is the
+          // primitive's, and a Send that looks live against a turn dispatchd
+          // would 409 is the worse of the two.
+          <PromptBar
+            value={text}
+            onChange={setText}
+            onSubmit={() => void submit()}
+            disabled={busy || sending}
+            placeholder="Split a task, add one, change the order…"
+            ariaLabel="Follow-up message"
+          />
         )}
       </div>
     </div>
@@ -327,12 +271,11 @@ interface PlanTaskRowProps {
   onExpand: (index: number) => void;
 }
 
-/** One card of the proposal review list, in the ai components' RecommendationCard shape:
- * a round accent-tinted badge (the task's number) beside the editable title and muted
- * description, then one inset top-bordered footer strip holding the blocked-by chips on the
- * left and the priority/expand/remove controls on the right. Blocker titles are looked up
- * live off the current draft so an edited blocker's new title shows immediately in its
- * dependents' rows. */
+/** One card of the proposal review list: a quaternary `shadow-card` card with a sans `Pill`
+ * index beside the borderless editable title and muted description, then a hairline-topped
+ * footer holding the blocked-by pills on the left and the priority/expand/remove controls on
+ * the right. Blocker titles are looked up live off the current draft so an edited blocker's
+ * new title shows immediately in its dependents' rows. */
 function PlanTaskRow({
   task,
   index,
@@ -342,21 +285,23 @@ function PlanTaskRow({
   onExpand,
 }: PlanTaskRowProps) {
   return (
-    <div className="bg-card rounded-card shadow-card group/plan-task flex flex-col overflow-hidden">
-      <div className="flex items-start gap-2.5 px-4 pt-3 pb-2.5">
-        <span className="bg-accent-tint text-primary flex size-7 shrink-0 items-center justify-center rounded-full font-mono text-[11px]">
+    <div className="bg-surface-quaternary rounded-card shadow-card group/plan-task flex flex-col overflow-hidden">
+      <div className="flex items-start gap-2.5 px-3 pt-3 pb-2.5">
+        <Pill className="text-muted-foreground shrink-0 px-1.5 tabular-nums">
           {index + 1}
-        </span>
-        <div className="min-w-0 flex-1 pt-0.5">
+        </Pill>
+        <div className="min-w-0 flex-1">
           <Input
+            variant="borderless"
             value={task.title}
             onChange={(e) =>
               onEdit({ type: 'setTaskTitle', index, title: e.target.value })
             }
-            aria-label={`Task ${index + 1} title`}
-            className="focus-visible:ring-ring/40 h-auto w-full min-w-0 border-none bg-transparent px-0 py-0 text-[13px] font-semibold shadow-none focus-visible:ring-1"
+            aria-label={`Task ${String(index + 1)} title`}
+            className="h-6 w-full min-w-0 text-[13px] font-medium"
           />
           <Textarea
+            variant="borderless"
             rows={2}
             value={task.description}
             onChange={(e) =>
@@ -366,13 +311,13 @@ function PlanTaskRow({
                 description: e.target.value,
               })
             }
-            aria-label={`Task ${index + 1} description`}
-            className="text-muted-foreground focus-visible:ring-ring/40 mt-1 min-h-0 resize-none border-none bg-transparent p-0 text-[12.5px] leading-relaxed shadow-none focus-visible:ring-1"
+            aria-label={`Task ${String(index + 1)} description`}
+            className="text-muted-foreground mt-1 min-h-0 resize-none text-[13px] leading-relaxed"
           />
         </div>
       </div>
 
-      <div className="border-border bg-surface-inset flex items-center gap-2 border-t px-4 py-1.5">
+      <div className="shadow-hairline-top flex items-center gap-2 px-3 py-1.5">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
           {task.blockedByIndices.length > 0 && (
             <>
@@ -385,21 +330,18 @@ function PlanTaskRow({
                     key={blockerIndex}
                     type="button"
                     onClick={() => onExpand(blockerIndex)}
-                    aria-label={`Expand task ${blockerIndex + 1}`}
-                    className="rounded-control focus-visible:ring-ring/40 focus-visible:ring-1 focus-visible:outline-none"
+                    aria-label={`Expand task ${String(blockerIndex + 1)}`}
+                    className="rounded-pill focus-visible:ring-ring focus-visible:ring-2 focus-visible:outline-none"
                   >
-                    {/* `justify-start` matters: Badge centers its content, and a
-                        centered flex box with overflow clips the START of the text. */}
-                    <Badge
-                      variant="secondary"
+                    <Pill
                       title={title}
-                      className="hover:bg-accent max-w-[11rem] cursor-pointer justify-start font-normal"
+                      className="hover:bg-surface-active max-w-[11rem] cursor-pointer"
                     >
-                      <span className="text-muted-foreground shrink-0 font-mono">
+                      <span className="text-muted-foreground font-book shrink-0 tabular-nums">
                         #{blockerIndex + 1}
                       </span>
                       <span className="truncate">{title}</span>
-                    </Badge>
+                    </Pill>
                   </button>
                 );
               })}
@@ -420,17 +362,16 @@ function PlanTaskRow({
               item's icon+label — a second icon was how the trigger ended up
               double-glyphed and clipped. */}
           <SelectTrigger
-            size="sm"
-            aria-label={`Task ${index + 1} priority`}
-            className="h-6.5 w-[6.75rem] shrink-0 gap-1 border-none bg-transparent px-2 text-[12px] shadow-none"
+            aria-label={`Task ${String(index + 1)} priority`}
+            className="w-[7.5rem] shrink-0 border-transparent bg-transparent"
           >
-            <SelectValue className="capitalize" />
+            <SelectValue />
           </SelectTrigger>
           <SelectContent align="end">
             {PRIORITIES.map((p) => (
               <SelectItem key={p} value={p}>
-                <PriorityIcon priority={p} className="size-3.5" />
-                <span className="capitalize">{p}</span>
+                <PriorityIcon priority={p} />
+                <span>{priorityLabel(p)}</span>
               </SelectItem>
             ))}
           </SelectContent>
@@ -440,8 +381,8 @@ function PlanTaskRow({
           variant="ghost"
           size="icon-xs"
           onClick={() => onExpand(index)}
-          aria-label={`Expand task ${index + 1}`}
-          className="text-muted-foreground hover:text-foreground shrink-0 opacity-0 transition-opacity duration-100 group-focus-within/plan-task:opacity-100 group-hover/plan-task:opacity-100"
+          aria-label={`Expand task ${String(index + 1)}`}
+          className="shrink-0 opacity-0 transition-opacity duration-100 group-focus-within/plan-task:opacity-100 group-hover/plan-task:opacity-100"
         >
           <Maximize2 className="size-3.5" />
         </Button>
@@ -450,8 +391,8 @@ function PlanTaskRow({
           variant="ghost"
           size="icon-xs"
           onClick={() => onRemove(index)}
-          aria-label={`Remove task ${index + 1}`}
-          className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 shrink-0 opacity-0 transition-opacity duration-100 group-focus-within/plan-task:opacity-100 group-hover/plan-task:opacity-100"
+          aria-label={`Remove task ${String(index + 1)}`}
+          className="hover:text-red shrink-0 opacity-0 transition-opacity duration-100 group-focus-within/plan-task:opacity-100 group-hover/plan-task:opacity-100"
         >
           <Trash2 className="size-3.5" />
         </Button>
@@ -467,6 +408,8 @@ function firstPromptLine(prompt: string): string {
 
 interface PlansViewProps {
   data: DispatchProjectData;
+  /** The active project's display name — the header's `Project › Plans` crumb. */
+  projectName?: string;
   /** Navigates to the board — the confirm toast's "View board" action. */
   onGoToBoard: () => void;
   /**
@@ -488,6 +431,7 @@ interface PlansViewProps {
  */
 export function PlansView({
   data,
+  projectName,
   onGoToBoard,
   initialPrompt,
 }: PlansViewProps) {
@@ -617,13 +561,20 @@ export function PlansView({
   // (`handleSubmitPrompt` throws once `client` is null, but only *after* the click) — show
   // the same daemon-unavailable state every other primary view shows instead of a live
   // composer with nothing behind it (I4).
+  const crumb = projectName !== undefined ? [projectName, 'Plans'] : ['Plans'];
+
   if (data.portLoading || data.portError || data.client === null) {
     return (
-      <DaemonUnavailable
-        starting={data.portLoading}
-        errorDetail={data.portErrorDetail}
-        onRetry={data.retryEnsureDispatchd}
-      />
+      <div className="flex h-full min-h-0 flex-col">
+        <PageHeader crumb={crumb} />
+        <div className="px-6 py-4">
+          <DaemonUnavailable
+            starting={data.portLoading}
+            errorDetail={data.portErrorDetail}
+            onRetry={data.retryEnsureDispatchd}
+          />
+        </div>
+      </div>
     );
   }
 
@@ -650,271 +601,255 @@ export function PlansView({
       : null;
 
   return (
-    <div className="mx-auto flex w-full max-w-[60rem] flex-col gap-6">
-      <div className="flex items-center justify-end gap-3">
-        {data.planRecord?.model !== undefined && (
-          <span className="text-muted-foreground text-[11px]">
-            Planning on {modelLabel(data.planRecord.model)}
-          </span>
-        )}
-        {data.planId !== null && (
-          <Button variant="outline" size="sm" onClick={closePlan}>
-            <Plus className="size-3.5" /> New plan
-          </Button>
-        )}
-      </div>
-
-      {data.planId === null ? (
-        <div className="bg-card rounded-card shadow-card animate-in fade-in-0 flex flex-col gap-3 p-4 duration-150">
-          {submitError !== null && (
-            <div className="bg-state-failed-surface text-state-failed rounded-control flex items-center gap-2 px-3 py-2 text-[13px]">
-              <CircleAlert className="size-4 shrink-0" />
-              <span>{submitError}</span>
-            </div>
-          )}
-          <Textarea
-            rows={4}
-            placeholder="Describe the work…"
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            className="resize-y text-[13px]"
-          />
-          <div className="flex items-center justify-end gap-2">
-            <ModelPicker
-              value={planModel}
-              onChange={pickModel}
-              label="Planning model"
-              disabled={submitting}
-            />
-            <Button
-              disabled={submitting || prompt.trim() === ''}
-              onClick={() => void submitPrompt()}
-            >
-              {submitting ? (
-                <>
-                  <Spinner className="size-4" /> Starting…
-                </>
-              ) : (
-                <>
-                  <Send className="size-4" /> Plan
-                </>
+    <div className="flex h-full min-h-0 flex-col">
+      <PageHeader
+        crumb={crumb}
+        actions={
+          <>
+            {data.planRecord?.model !== undefined && (
+              <span className="text-muted-foreground font-book px-2 text-[12px]">
+                Planning on {modelLabel(data.planRecord.model)}
+              </span>
+            )}
+            {data.planId !== null && (
+              <Button variant="ghost" size="sm" onClick={closePlan}>
+                <Plus className="size-3.5" /> New plan
+              </Button>
+            )}
+          </>
+        }
+      />
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+        <div className="mx-auto flex w-full max-w-[800px] flex-col gap-6 pb-8">
+          {data.planId === null ? (
+            <div className="flex flex-col gap-3">
+              {submitError !== null && <ErrorLine>{submitError}</ErrorLine>}
+              {/* Which model the plan opens on — remembered per device, so "always
+              Fable" sticks. An open plan keeps the model it started on. */}
+              <PromptBar
+                value={prompt}
+                onChange={setPrompt}
+                onSubmit={() => void submitPrompt()}
+                disabled={submitting}
+                placeholder="Describe the work…"
+                ariaLabel="Describe the work"
+                models={COMPOSER_MODELS}
+                modelId={planModel}
+                onModelChange={pickModel}
+              />
+              {submitting && (
+                <span className="text-muted-foreground font-book flex items-center gap-2 text-[12px]">
+                  <Spinner className="text-state-working size-3.5" /> Starting…
+                </span>
               )}
-            </Button>
-          </div>
-        </div>
-      ) : (
-        thread.length > 0 && (
-          // Keyed by plan so opening a different one starts with an empty composer rather
-          // than the half-typed follow-up meant for the plan the user just left.
-          <PlanConversation
-            key={data.planId}
-            items={thread}
-            busy={turnRunning}
-            confirmed={planConfirmed}
-            questions={data.planRecord?.questions ?? []}
-            onSend={sendFollowUp}
-          />
-        )
-      )}
-
-      {awaitingFirstProposal && (
-        // Shape-only: the conversation's own pending row above already says the planner is
-        // working, so this is where the epic and its tasks are *going* to be and nothing more
-        // — a second "Planning…" line here just says the same thing twice.
-        <div
-          className="bg-card rounded-card shadow-card animate-in fade-in-0 flex flex-col gap-2 p-4 duration-150"
-          aria-hidden="true"
-        >
-          <Skeleton className="h-4 w-2/3" />
-          <Skeleton className="h-14 w-full" />
-          <Skeleton className="h-14 w-full" />
-          <Skeleton className="h-14 w-full" />
-        </div>
-      )}
-
-      {draft !== null && (
-        <div className="animate-in fade-in-0 flex flex-col gap-4 duration-150">
-          {confirmError !== null && (
-            <div className="bg-state-failed-surface text-state-failed rounded-control flex items-center gap-2 px-3 py-2 text-[13px]">
-              <CircleAlert className="size-4 shrink-0" />
-              <span>{confirmError}</span>
-            </div>
-          )}
-
-          {reviewNotice !== null && (
-            <div className="text-muted-foreground flex items-center gap-2 text-[12px]">
-              {turnRunning ? (
-                <Spinner className="text-primary size-3.5 shrink-0" />
-              ) : (
-                <CircleAlert className="text-destructive size-3.5 shrink-0" />
-              )}
-              <span>{reviewNotice}</span>
-            </div>
-          )}
-
-          {draft.proposal.epic !== undefined && (
-            <div className="bg-card rounded-card shadow-card flex flex-col gap-2 p-4">
-              <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
-                Milestone
-              </div>
-              <Input
-                value={draft.proposal.epic.title}
-                onChange={(e) =>
-                  applyEdit({ type: 'setEpicTitle', title: e.target.value })
-                }
-                aria-label="Epic title"
-                className="focus-visible:ring-ring/40 h-auto border-none bg-transparent px-0 text-[14px] font-medium shadow-none focus-visible:ring-1"
-              />
-              <Textarea
-                rows={2}
-                value={draft.proposal.epic.description}
-                onChange={(e) =>
-                  applyEdit({
-                    type: 'setEpicDescription',
-                    description: e.target.value,
-                  })
-                }
-                aria-label="Epic description"
-                className="text-muted-foreground focus-visible:ring-ring/40 min-h-0 resize-y border-none bg-transparent px-0 text-[13px] shadow-none focus-visible:ring-1"
-              />
-            </div>
-          )}
-
-          {draft.proposal.tasks.length > 1 && (
-            <div className="flex justify-end">
-              <ToggleGroup
-                variant="outline"
-                size="sm"
-                value={[proposalView]}
-                onValueChange={([value]) => {
-                  // The group hands back an empty list when the active item is
-                  // re-clicked; a proposal is always one of the two views, so
-                  // ignore the deselect.
-                  if (value === 'list' || value === 'graph')
-                    setProposalView(value);
-                }}
-                aria-label="Proposal layout"
-              >
-                <ToggleGroupItem value="list" aria-label="List view">
-                  <Rows3 className="size-3.5" /> List
-                </ToggleGroupItem>
-                <ToggleGroupItem value="graph" aria-label="Graph view">
-                  <Waypoints className="size-3.5" /> Graph
-                </ToggleGroupItem>
-              </ToggleGroup>
-            </div>
-          )}
-
-          {proposalView === 'graph' && draft.proposal.tasks.length > 1 ? (
-            <div className="bg-card rounded-card shadow-card p-4">
-              <DependencyGraph
-                tasks={graphTasks}
-                refFor={(id) => `#${Number(id) + 1}`}
-                accessoryFor={(id) => {
-                  const task = draft.proposal.tasks[Number(id)];
-                  return task === undefined ? undefined : (
-                    <PriorityIcon
-                      priority={task.priority}
-                      className="size-3.5"
-                    />
-                  );
-                }}
-                onOpenNode={(id) => setSpecIndex(Number(id))}
-                ariaLabel="Plan dependency graph"
-              />
             </div>
           ) : (
-            <div className="flex flex-col gap-2">
-              {draft.proposal.tasks.map((task, i) => (
-                <PlanTaskRow
-                  key={draft.taskKeys[i] ?? i}
-                  task={task}
-                  index={i}
-                  allTasks={draft.proposal.tasks}
-                  onEdit={applyEdit}
-                  onRemove={(index) => applyEdit({ type: 'removeTask', index })}
-                  onExpand={setSpecIndex}
-                />
-              ))}
+            thread.length > 0 && (
+              // Keyed by plan so opening a different one starts with an empty composer rather
+              // than the half-typed follow-up meant for the plan the user just left.
+              <PlanConversation
+                key={data.planId}
+                items={thread}
+                busy={turnRunning}
+                confirmed={planConfirmed}
+                questions={data.planRecord?.questions ?? []}
+                onSend={sendFollowUp}
+              />
+            )
+          )}
+
+          {awaitingFirstProposal && (
+            // Shape-only: the conversation's own pending row above already says the planner is
+            // working, so this is where the epic and its tasks are *going* to be and nothing more
+            // — a second "Planning…" line here just says the same thing twice.
+            <div className="flex flex-col gap-2" aria-hidden="true">
+              <Skeleton className="h-4 w-2/3" />
+              <Skeleton className="h-14 w-full" />
+              <Skeleton className="h-14 w-full" />
+              <Skeleton className="h-14 w-full" />
             </div>
           )}
 
-          <PlanTaskSpecDialog
-            index={specIndex}
-            tasks={draft.proposal.tasks}
-            onOpenIndex={setSpecIndex}
-            onClose={() => setSpecIndex(null)}
-          />
+          {draft !== null && (
+            <div className="flex flex-col gap-4">
+              {confirmError !== null && <ErrorLine>{confirmError}</ErrorLine>}
 
-          <div className="shadow-hairline-top flex items-center justify-end gap-2 pt-3">
-            <Button variant="ghost" onClick={closePlan} disabled={confirming}>
-              Cancel
-            </Button>
-            <Button
-              disabled={
-                confirming || !canConfirm || draft.proposal.tasks.length === 0
-              }
-              onClick={() => void submitConfirm()}
-            >
-              {confirming ? (
-                <>
-                  <Spinner className="size-4" /> Creating…
-                </>
-              ) : planConfirmed ? (
-                <>
-                  <Check className="size-4" /> Tasks created
-                </>
-              ) : (
-                <>
-                  <Check className="size-4" /> Confirm{' '}
-                  {draft.proposal.tasks.length} tasks
-                </>
+              {reviewNotice !== null && (
+                <div className="text-muted-foreground font-book flex items-center gap-2 text-[12px]">
+                  {turnRunning ? (
+                    <Spinner className="text-state-working size-3.5 shrink-0" />
+                  ) : (
+                    <CircleAlert className="text-state-failed size-3.5 shrink-0" />
+                  )}
+                  <span>{reviewNotice}</span>
+                </div>
               )}
-            </Button>
-          </div>
-        </div>
-      )}
 
-      <div className="flex flex-col gap-2">
-        <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
-          History
-        </div>
-        {data.plans.length === 0 ? (
-          <EmptyState
-            icon={History}
-            message="No plans yet."
-            className="border-border rounded-card border border-dashed px-0 py-8 [&_[data-slot=empty-description]]:text-[13px]"
-          />
-        ) : (
-          <div className="flex flex-col gap-1.5">
-            {data.plans.map((entry) => (
-              <Button
-                key={entry.id}
-                type="button"
-                variant="ghost"
-                size="xs"
-                onClick={() => openHistoryEntry(entry.id)}
-                className={cn(
-                  'rounded-control ease-out-expo h-auto w-full items-center justify-start gap-2 px-3 py-2 text-left text-[length:inherit] font-normal transition-colors duration-100 hover:text-foreground',
-                  entry.id === data.planId
-                    ? 'bg-accent ring-primary/40 ring-1'
-                    : 'bg-card shadow-hairline hover:bg-surface-hover'
-                )}
-              >
-                <PlanStateDot state={entry.state} />
-                <span className="min-w-0 flex-1 truncate">
-                  {entry.subject ?? firstPromptLine(entry.prompt)}
-                </span>
-                <span className="text-muted-foreground shrink-0 text-[11px] capitalize">
-                  {entry.confirmedAt !== undefined ? 'confirmed' : entry.state}
-                </span>
-                <span className="dense-meta shrink-0">
-                  {formatRelativeTimeFromIso(entry.updatedAt)}
-                </span>
-              </Button>
-            ))}
+              {draft.proposal.epic !== undefined && (
+                <div className="bg-surface-quaternary rounded-card shadow-card flex flex-col gap-1 p-3">
+                  <SectionLabel>Milestone</SectionLabel>
+                  <Input
+                    variant="borderless"
+                    value={draft.proposal.epic.title}
+                    onChange={(e) =>
+                      applyEdit({ type: 'setEpicTitle', title: e.target.value })
+                    }
+                    aria-label="Epic title"
+                    className="text-[15px] font-semibold"
+                  />
+                  <Textarea
+                    variant="borderless"
+                    rows={2}
+                    value={draft.proposal.epic.description}
+                    onChange={(e) =>
+                      applyEdit({
+                        type: 'setEpicDescription',
+                        description: e.target.value,
+                      })
+                    }
+                    aria-label="Epic description"
+                    className="text-muted-foreground min-h-0 resize-y text-[13px]"
+                  />
+                </div>
+              )}
+
+              {draft.proposal.tasks.length > 1 && (
+                <div className="flex justify-end">
+                  <ToggleGroup
+                    variant="outline"
+                    size="sm"
+                    value={[proposalView]}
+                    onValueChange={([value]) => {
+                      // The group hands back an empty list when the active item is
+                      // re-clicked; a proposal is always one of the two views, so
+                      // ignore the deselect.
+                      if (value === 'list' || value === 'graph')
+                        setProposalView(value);
+                    }}
+                    aria-label="Proposal layout"
+                  >
+                    <ToggleGroupItem value="list" aria-label="List view">
+                      <Rows3 className="size-3.5" /> List
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value="graph" aria-label="Graph view">
+                      <Waypoints className="size-3.5" /> Graph
+                    </ToggleGroupItem>
+                  </ToggleGroup>
+                </div>
+              )}
+
+              {proposalView === 'graph' && draft.proposal.tasks.length > 1 ? (
+                <div className="p-4">
+                  <DependencyGraph
+                    tasks={graphTasks}
+                    refFor={(id) => `#${Number(id) + 1}`}
+                    accessoryFor={(id) => {
+                      const task = draft.proposal.tasks[Number(id)];
+                      return task === undefined ? undefined : (
+                        <PriorityIcon priority={task.priority} />
+                      );
+                    }}
+                    onOpenNode={(id) => setSpecIndex(Number(id))}
+                    ariaLabel="Plan dependency graph"
+                  />
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {draft.proposal.tasks.map((task, i) => (
+                    <PlanTaskRow
+                      key={draft.taskKeys[i] ?? i}
+                      task={task}
+                      index={i}
+                      allTasks={draft.proposal.tasks}
+                      onEdit={applyEdit}
+                      onRemove={(index) =>
+                        applyEdit({ type: 'removeTask', index })
+                      }
+                      onExpand={setSpecIndex}
+                    />
+                  ))}
+                </div>
+              )}
+
+              <PlanTaskSpecDialog
+                index={specIndex}
+                tasks={draft.proposal.tasks}
+                onOpenIndex={setSpecIndex}
+                onClose={() => setSpecIndex(null)}
+              />
+
+              <div className="shadow-hairline-top flex items-center justify-end gap-2 pt-3">
+                <Button
+                  variant="ghost"
+                  onClick={closePlan}
+                  disabled={confirming}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  disabled={
+                    confirming ||
+                    !canConfirm ||
+                    draft.proposal.tasks.length === 0
+                  }
+                  onClick={() => void submitConfirm()}
+                >
+                  {confirming ? (
+                    <>
+                      <Spinner className="size-3.5" /> Creating…
+                    </>
+                  ) : planConfirmed ? (
+                    <>
+                      <Check className="size-3.5" /> Tasks created
+                    </>
+                  ) : (
+                    <>
+                      <Check className="size-3.5" /> Confirm{' '}
+                      {draft.proposal.tasks.length} tasks
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          <div className="flex flex-col gap-2">
+            <SectionLabel>History</SectionLabel>
+            {data.plans.length === 0 ? (
+              <EmptyState icon={History} heading="No plans yet" />
+            ) : (
+              <div className="bg-surface-quaternary rounded-card shadow-card [&>*+*]:shadow-hairline-top flex flex-col overflow-hidden">
+                {data.plans.map((entry) => (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    aria-current={entry.id === data.planId ? 'true' : undefined}
+                    onClick={() => openHistoryEntry(entry.id)}
+                    className={cn(
+                      'flex h-9 w-full items-center gap-2 px-3 text-left text-[13px] font-medium transition-colors duration-100 outline-none',
+                      entry.id === data.planId
+                        ? 'bg-surface-selected text-foreground'
+                        : 'text-(--text-secondary) hover:bg-surface-hover hover:text-foreground'
+                    )}
+                  >
+                    <PlanStateDot state={entry.state} />
+                    <span className="min-w-0 flex-1 truncate">
+                      {entry.subject ?? firstPromptLine(entry.prompt)}
+                    </span>
+                    <span className="text-muted-foreground font-book shrink-0 text-[12px] capitalize">
+                      {entry.confirmedAt !== undefined
+                        ? 'confirmed'
+                        : entry.state}
+                    </span>
+                    <span className="text-muted-foreground font-book shrink-0 text-[12px] tabular-nums">
+                      {formatRelativeTimeFromIso(entry.updatedAt)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
     </div>
   );

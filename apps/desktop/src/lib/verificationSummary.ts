@@ -39,3 +39,9 @@ export function verificationCheckDetail(
   if (expected === '' && actual === '') return null;
   return { expected, actual };
 }
+
+/** Whether an artifact is an absolute path the app can reveal in Finder — anything else
+ *  (a URL, a relative name) is shown as plain text. */
+export function isRevealableArtifact(path: string): boolean {
+  return path.startsWith('/');
+}

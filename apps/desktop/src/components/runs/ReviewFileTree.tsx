@@ -105,21 +105,27 @@ export function ReviewFileTree({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center gap-2 px-3 pt-2 pb-1">
-        <span className="dense-label">Changed files</span>
-        <span className="dense-meta">{files.length}</span>
+      <div className="flex h-9 shrink-0 items-center gap-2 px-3">
+        <span className="text-muted-foreground text-[12px] font-medium">
+          Changed files
+        </span>
+        <span className="text-muted-foreground font-book text-[12px] tabular-nums">
+          {files.length}
+        </span>
         <span className="flex-1" />
         <Button
           type="button"
           variant="ghost"
-          size="sm"
+          size="xs"
           onClick={onToggleUnviewedOnly}
-          className="text-accent-foreground hover:text-accent-foreground h-auto p-0 text-[11px] font-normal hover:bg-transparent"
+          className="px-0"
         >
           {unviewedOnly ? 'All' : 'Unviewed'}
         </Button>
       </div>
-      <p className="dense-meta px-3 pb-1">{viewedSummary(viewed, allPaths)}</p>
+      <p className="text-muted-foreground font-book px-3 pb-1 text-[12px] tabular-nums">
+        {viewedSummary(viewed, allPaths)}
+      </p>
 
       <div className="min-h-0 flex-1 overflow-auto">
         <FileTree model={model} className="size-full" />

@@ -66,6 +66,19 @@ export function fixLoopTone(state: FixLoopState): FixLoopTone {
   return reason === 'rounds-exhausted' ? 'waiting' : 'neutral';
 }
 
+/** The colour the fix-loop bar's left edge picks up (the `GroupHeader` tint): amber while
+ *  it waits on a ruling, red after a failure, none when there is nothing to flag. */
+export function fixLoopTint(tone: FixLoopTone): string | undefined {
+  switch (tone) {
+    case 'waiting':
+      return 'var(--amber)';
+    case 'failed':
+      return 'var(--red)';
+    case 'neutral':
+      return undefined;
+  }
+}
+
 /** The failure text behind an errored loop, or null when there is nothing
  *  extra to show — `stopDetail` is only meaningful alongside `error`. */
 export function fixLoopStopDetail(state: FixLoopState): string | null {

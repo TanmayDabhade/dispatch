@@ -365,18 +365,20 @@ export function PierreReviewDiff({
             {annMeta.findings.map((f) => (
               <div
                 key={f.id}
-                className="border-state-waiting/40 bg-state-waiting/5 rounded-md border-l-2 px-2 py-1"
+                className="bg-state-waiting-surface rounded-card border-state-waiting-edge border-l-2 px-2 py-1"
               >
-                <div className="flex items-center gap-1.5 text-[12px]">
+                <div className="flex items-center gap-1.5 text-[13px]">
                   <TriangleAlert className="text-state-waiting size-3 shrink-0" />
                   {/* Marked as the agent's claim rather than the reviewer's note: the two sit on
                       the same line and must not be mistaken for each other. */}
-                  <span className="dense-meta shrink-0">
-                    agent · {f.severity}
+                  <span className="text-muted-foreground font-book shrink-0 text-[12px]">
+                    Agent · {f.severity}
                   </span>
-                  <span className="min-w-0 flex-1 truncate">{f.title}</span>
+                  <span className="min-w-0 flex-1 truncate font-medium">
+                    {f.title}
+                  </span>
                 </div>
-                <p className="text-muted-foreground text-[11px] leading-snug">
+                <p className="text-muted-foreground font-book text-[12px] leading-snug">
                   {f.detail}
                 </p>
               </div>
@@ -647,7 +649,9 @@ export function PierreReviewDiff({
       return (
         <>
           {error !== null && (
-            <span className="text-destructive text-[11px]">{error}</span>
+            <span className="text-state-failed font-book text-[12px]">
+              {error}
+            </span>
           )}
           {isEditing ? (
             <>
@@ -656,7 +660,7 @@ export function PierreReviewDiff({
                 variant="ghost"
                 size="sm"
                 onClick={() => saveEdit(file)}
-                className="text-accent-foreground hover:text-accent-foreground h-auto p-0 text-[11px] font-normal hover:bg-transparent"
+                className="h-auto p-0 text-[12px]"
               >
                 Save
               </Button>
@@ -667,7 +671,7 @@ export function PierreReviewDiff({
                 variant="ghost"
                 size="sm"
                 onClick={() => cancelEdit(file)}
-                className="text-muted-foreground hover:text-foreground h-auto p-0 text-[11px] font-normal hover:bg-transparent"
+                className="h-auto p-0 text-[12px]"
               >
                 Cancel
               </Button>

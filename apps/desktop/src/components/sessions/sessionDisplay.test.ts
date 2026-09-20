@@ -1,6 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 
-import { cacheHitRateDisplay, parseTags } from './sessionDisplay.ts';
+import {
+  cacheHitRateDisplay,
+  DEFAULT_SPEND_WINDOW,
+  parseTags,
+  SPEND_WINDOWS,
+  spendWindowLabel,
+  statusDotClass,
+} from './sessionDisplay.ts';
 
 describe('cacheHitRateDisplay', () => {
   test('is the share of input tokens served from cache, rounded to a percent', () => {
@@ -46,5 +53,24 @@ describe('parseTags', () => {
 
   test('returns an empty array for null', () => {
     expect(parseTags(null)).toEqual([]);
+  });
+});
+
+describe('spend windows', () => {
+  test('the default window is one of the offered tabs', () => {
+    expect(SPEND_WINDOWS).toContain(DEFAULT_SPEND_WINDOW);
+  });
+
+  test('a window labels itself in days', () => {
+    expect(spendWindowLabel(30)).toBe('30 days');
+  });
+});
+
+describe('statusDotClass', () => {
+  // The dot is a run-state token, never a stock palette literal, so it restates with the
+  // theme.
+  test('an active session is the review green, an ended one is muted', () => {
+    expect(statusDotClass('active')).toBe('bg-state-review');
+    expect(statusDotClass('ended')).toBe('bg-muted-foreground/50');
   });
 });

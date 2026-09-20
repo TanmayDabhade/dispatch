@@ -284,3 +284,107 @@ test('tapping the row text drops the editor down and tapping again folds it', ()
   fireEvent.click(rowText);
   expect(screen.queryByLabelText('Edit "first line"')).toBeNull();
 });
+
+test('inbox rows are 36px ListRows with a kind pill and no dense classes', () => {
+  const items = [
+    inboxItem({ id: 'in-1', text: 'the picker forgets', kind: 'bug' }),
+    inboxItem({ id: 'in-2', text: 'a plain note', kind: 'note' }),
+  ];
+  const { calls } = mount(items);
+
+  const rows = Array.from(document.querySelectorAll('[data-slot=list-row]'));
+  expect(rows).toHaveLength(2);
+  for (const row of rows) {
+    expect(row.className).toContain('h-9');
+    expect(row.querySelector('[data-slot=list-row-select]')).not.toBeNull();
+  }
+  // The kind is a label pill with a dot, and the unremarkable kinds get none.
+  const pills = document.querySelectorAll('[data-slot=label-pill]');
+  expect(pills).toHaveLength(1);
+  expect(pills[0]?.textContent).toBe('Bug');
+  expect(document.querySelector('.dense-meta')).toBeNull();
+  expect(document.querySelector('.dense-label')).toBeNull();
+  expect(document.querySelector('.line-through')).toBeNull();
+  // The section bars are GroupHeaders, sentence case, with counts.
+  const headers = Array.from(
+    document.querySelectorAll('[data-slot=group-header]')
+  );
+  expect(
+    headers.map(
+      (h) => h.querySelector('[data-slot=group-header-name]')?.textContent
+    )
+  ).toEqual(['Grouped', 'Inbox']);
+  expect(calls).toEqual([]);
+});
+
+test('selecting rows shows the bulk bar with a primary Make tasks and pill actions', () => {
+  const items = [
+    inboxItem({ id: 'in-1', text: 'first' }),
+    inboxItem({ id: 'in-2', text: 'second' }),
+  ];
+  const { calls } = mount(items);
+
+  expect(screen.queryByText(/selected/)).toBeNull();
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select "first"' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select "second"' }));
+
+  const bar = screen.getByText('2 selected').parentElement;
+  expect(bar?.className).toContain('h-9');
+  expect(bar?.className).toContain('bg-surface-quaternary');
+  const make = screen.getByRole('button', { name: 'Make tasks' });
+  expect(make.dataset['variant']).toBe('default');
+  // Rows carry their own round `Dismiss`; the bar's is the pill.
+  expect(
+    screen
+      .getAllByRole('button', { name: 'Dismiss' })
+      .map((b) => b.dataset['slot'])
+  ).toContain('pill-button');
+
+  fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+  expect(screen.queryByText(/selected/)).toBeNull();
+  expect(calls).toEqual([]);
+});
+
+test('archived items sit under a collapsed Archived group with a done glyph and a task pill', () => {
+  const items = [
+    inboxItem({ id: 'in-1', text: 'still open' }),
+    inboxItem({
+      id: 'in-2',
+      text: 'became a task',
+      done: true,
+      linkedTaskId: 't-abc123',
+    }),
+    inboxItem({ id: 'in-3', text: 'let go', done: true }),
+  ];
+  mount(items);
+
+  expect(screen.queryByText('became a task')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Expand group' }));
+
+  expect(screen.getByText('became a task')).toBeTruthy();
+  expect(screen.getByText('→ t-abc123').dataset['slot']).toBe('pill');
+  expect(screen.getByText('Dismissed').dataset['slot']).toBe('pill');
+  expect(screen.getByLabelText('Status: landed')).toBeTruthy();
+  expect(screen.getByLabelText('Status: dropped')).toBeTruthy();
+  expect(document.querySelector('.line-through')).toBeNull();
+});
+
+test('an empty inbox shows an EmptyState and the composer is a comment card', () => {
+  mount([]);
+
+  const empty = document.querySelectorAll('[data-slot=empty-state]');
+  expect(empty.length).toBeGreaterThanOrEqual(1);
+  expect(screen.getByText('Nothing captured yet')).toBeTruthy();
+  const composer =
+    screen.getByPlaceholderText<HTMLTextAreaElement>('Dump it here…');
+  expect(composer.dataset['variant']).toBe('borderless');
+  expect(composer.className).toContain('text-[15px]');
+  const drop = screen.getByRole<HTMLButtonElement>('button', {
+    name: 'Drop into the inbox',
+  });
+  expect(drop.dataset['variant']).toBe('default');
+  expect(drop.disabled).toBe(true);
+  expect(screen.getByRole('button', { name: 'Plan' }).dataset['slot']).toBe(
+    'pill-button'
+  );
+});

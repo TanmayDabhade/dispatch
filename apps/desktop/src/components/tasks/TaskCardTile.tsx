@@ -4,34 +4,29 @@ import type {
   DraggableAttributes,
   DraggableSyntheticListeners,
 } from '@dnd-kit/core';
-import { ArrowRight, ChevronRight } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
-import { formatRelativeTimeFromIso } from '../../lib/format';
 import { readinessBadges } from '../../lib/judgmentBadges';
 import { resolveCardKeyAction } from '../../lib/keyboard';
-import { colorForEpic } from '../../lib/projectColor';
-import { MergeLadderDot } from '../runs/MergeLadderDot';
+import { colorForLabel } from '../../lib/labelColor';
+import { formatCreated } from '../../lib/taskDates';
+import { TASK_PROPERTIES, type TaskProperty } from '../../lib/tasksPrefs';
+import { MergeLadderPill } from '../runs/MergeLadderDot';
+import { RunStatePill } from '../runs/RunStatePill';
 import {
   AssigneeControl,
   PriorityControl,
   StatusControl,
 } from './PropertyControls';
-import {
-  runStateColorClass,
-  runStateDotClass,
-  RunStateIcon,
-  runStateLabel,
-} from './RunStateIcon';
 import { cn } from '@/lib/utils';
-import { Badge } from '@/ui/badge';
+import { LabelPill, Pill } from '@/ui/ai/pill';
 import { Button } from '@/ui/button';
 import { Spinner } from '@/ui/spinner';
 
-// Drag wiring handed down from `TaskBoard`'s `@dnd-kit` sortable card — grouped into one
-// optional prop rather than several loose ones so a card rendered outside the board (there
-// isn't one today, but the type shouldn't assume there never will be) can simply omit it and
-// render as a plain, non-draggable card.
+// Drag wiring handed down from `TaskBoard`'s `@dnd-kit` draggable card — grouped into one
+// optional prop rather than several loose ones so a card rendered outside the board (the drag
+// overlay, a test) can simply omit it and render as a plain, non-draggable card.
 interface CardDragProps {
   setNodeRef: (node: HTMLElement | null) => void;
   style: React.CSSProperties | undefined;
@@ -46,11 +41,10 @@ interface TaskCardTileProps {
   blocked: boolean;
   /** State of this task's live (non-terminal) run, if it has one. */
   liveRunState: RunState | undefined;
-  /** This task's latest run, if any — feeds the card's merge-ladder dot. */
+  /** This task's latest run, if any — feeds the run-state mark and the merge-ladder pill. */
   run?: RunMeta;
-  /** Title of this task's parent epic, resolved by the caller (`TaskBoard`/`TasksListView`
-   * build an id->title map from the project's epic list) — lets the card render Linear's
-   * `t-id › Epic title` breadcrumb without needing its own epic lookup. */
+  /** Title of this task's parent epic, resolved by the caller — the ` › Epic` crumb on row 1.
+   * Omitted on a board grouped by epic, where the lane header already names it. */
   epicTitle?: string;
   /** The project's configured status list, for the card's inline status picker. */
   statuses: string[];
@@ -59,32 +53,28 @@ interface TaskCardTileProps {
   /** Edits this task's priority/assignee inline from the card. */
   onEditTask: (patch: UpdatePatch) => void;
   onClick: () => void;
-  /** Dispatches this task directly from the card without opening the peek panel first.
-   * Omitted (no action rendered) for cards that aren't ready to start. */
+  /** Dispatches this task directly from the card. Omitted (no action rendered) for cards that
+   * aren't ready to start. */
   onDispatch?: () => Promise<void>;
   /** True when the Board's own j/k roving-focus cursor (see `BoardView`) is on this card —
    * moves real DOM focus onto the card so `:focus-visible` and screen readers agree with
-   * what j/k just did, rather than a CSS-only highlight that looks focused but isn't. */
+   * what j/k just did. */
   focused?: boolean;
   /** Called whenever real DOM focus lands on this card (click, Tab, or the `focused` effect
    * above) — lets `BoardView` sync its `focusedTaskId` cursor to wherever focus actually is. */
   onFocus?: () => void;
   /** See `CardDragProps` — omitted for a card that isn't draggable. */
   drag?: CardDragProps;
-  /** Task 9: true for an archived task shown via the "Archived" toggle — dims the card and
-   * drops the drag affordance; `TaskBoard` also disables the drag itself and the underlying
-   * `moveTaskStatus` call is gated centrally in `useDispatchProject`, so this is purely visual. */
+  /** True for an archived task shown via Display › Show archived — dims the card and drops the
+   * pickers; `TaskBoard` also disables the drag itself. */
   archived?: boolean;
   /** True when this task's latest run needs a human (see `deriveTaskAttentionById`) — a
-   * hairline amber ring so it stands out on a dense board without breaking the uniform card
-   * anatomy. */
+   * `Needs you` pill on row 3, never a tinted card. */
   needsAttention?: boolean;
-  /** Two-row layout (the board's default): status, title and the trailing controls on one
-   * line, id / epic / labels / age on the next. Run state and blocked collapse to glyphs
-   * with a title tooltip. False renders the four-row comfortable card. */
-  compact?: boolean;
+  /** Which properties the card shows (Display › Display properties). Defaults to all. */
+  properties?: ReadonlySet<TaskProperty>;
   /** The daemon's readiness reading for this task, when judged — a thin spec
-   * or a likely split shows as a badge beside the labels. */
+   * or a likely split shows as a pill beside the labels. */
   readiness?: ReadinessReading;
 }
 
@@ -92,13 +82,15 @@ interface TaskCardTileProps {
 // row/card treatment never lets an unbounded label list crowd out the title.
 const MAX_VISIBLE_LABELS = 2;
 
+const ALL_PROPERTIES: ReadonlySet<TaskProperty> = new Set(TASK_PROPERTIES);
+
 /**
- * A single Board card, redesigned to Linear's exact anatomy: a meta row (id, epic breadcrumb,
- * assignee), a title row (StatusIcon + title), a meta row (priority, labels, blocked, live-run
- * pulse), and a footer row ("Updated <relative>" plus a Dispatch action that only reveals on
- * hover/focus — never a persistent button, and no left accent edge; every card on the board
- * reads as visually uniform, matching Linear's calm density). Draggable via the optional
- * `drag` prop (see `TaskBoard`).
+ * A Board card on Linear's four-row anatomy (§5): row 1 the id and ` › Epic` crumb with the
+ * assignee avatar pushed right; row 2 the status glyph and a two-line title; row 3 the
+ * priority glyph and the pills (labels, blocked, `Needs you`, live run mark, merge ladder);
+ * row 4 `Created Sep 13` with the Dispatch action on the right. Every card is the same
+ * 322px `#1b1a1a` tile with a half-pixel ring — no coloured edge, no state tint; the
+ * keyboard cursor and hover are neutral. Draggable via the optional `drag` prop.
  */
 export function TaskCardTile({
   doc,
@@ -117,11 +109,12 @@ export function TaskCardTile({
   drag,
   archived = false,
   needsAttention = false,
-  compact = false,
+  properties = ALL_PROPERTIES,
   readiness,
 }: TaskCardTileProps) {
   const [dispatching, setDispatching] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
+  const has = (p: TaskProperty) => properties.has(p);
 
   useEffect(() => {
     if (focused) cardRef.current?.focus();
@@ -138,8 +131,13 @@ export function TaskCardTile({
     }
   }
 
-  const visibleLabels = doc.meta.labels.slice(0, MAX_VISIBLE_LABELS);
-  const hiddenLabelCount = doc.meta.labels.length - visibleLabels.length;
+  const visibleLabels = has('labels')
+    ? doc.meta.labels.slice(0, MAX_VISIBLE_LABELS)
+    : [];
+  const hiddenLabelCount = has('labels')
+    ? doc.meta.labels.length - visibleLabels.length
+    : 0;
+  const showCrumb = has('epic') && epicTitle !== undefined;
 
   return (
     <div
@@ -152,18 +150,16 @@ export function TaskCardTile({
       {...drag?.listeners}
       role="button"
       tabIndex={0}
+      data-slot="task-card"
       data-focused={focused}
       className={cn(
-        'group bg-card rounded-card shadow-card ease-out-expo flex w-full cursor-pointer flex-col text-left transition-colors duration-150',
-        compact ? 'gap-1 px-2 py-1.5' : 'gap-2 p-3',
-        'hover:bg-surface-hover',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
-        'data-[focused=true]:ring-2 data-[focused=true]:ring-ring/40',
+        'group bg-surface-quaternary rounded-card shadow-card flex w-[322px] max-w-full cursor-pointer flex-col gap-1.5 p-3 text-left transition-[background-color,box-shadow] duration-100',
+        // 3% of the text colour into the card surface: a lift in dark, a dip in light.
+        'hover:bg-[color-mix(in_srgb,var(--surface-quaternary),var(--text-primary)_3%)]',
+        'focus-visible:shadow-raised focus-visible:outline-none',
+        'data-[focused=true]:shadow-raised',
         drag?.isDragging === true && 'opacity-40',
-        // A hairline amber ring, not a surface wash — the card stands out without the
-        // whole tile turning into alarm wallpaper.
-        needsAttention && !archived && 'ring-state-waiting-edge ring-1',
-        archived && 'cursor-default opacity-55 saturate-50 hover:bg-card'
+        archived && 'cursor-default opacity-55 hover:bg-surface-quaternary'
       )}
       onClick={onClick}
       onFocus={onFocus}
@@ -171,280 +167,141 @@ export function TaskCardTile({
         const isDirectTarget = e.target === e.currentTarget;
         if (drag !== undefined && e.key === ' ' && isDirectTarget) {
           // Space belongs to @dnd-kit's keyboard sensor (pick up / move / drop) when this
-          // card is draggable — Enter is still the "open peek" key below, so the two never
-          // compete for the same keypress. `drag.listeners` was already spread onto this
-          // element above, but that spread's own `onKeyDown` gets overwritten by this
-          // explicit handler (later JSX props win) — forwarding to it manually here is what
-          // keeps the keyboard sensor's Space behavior alive.
+          // card is draggable — Enter is still the "open" key below. `drag.listeners` was
+          // spread onto this element above, but that spread's own `onKeyDown` is overwritten
+          // by this handler, so the sensor's Space is forwarded by hand.
           drag.listeners?.onKeyDown?.(e);
           return;
         }
         if (resolveCardKeyAction(e.key, isDirectTarget) === 'activate') {
-          // Space's native behavior on a focusable div is to scroll the page — this is a
-          // button-role element, so Space should activate it, not scroll past it.
           e.preventDefault();
           onClick();
           return;
         }
         if (!isDirectTarget) {
-          // This keydown originated on a nested interactive child — the inline Dispatch
-          // button below — which owns its own Enter/Space activation. Stop it here so it
-          // never reaches the Board's roving-focus track above.
+          // A keydown from a nested control (a picker, the Dispatch button) owns its own
+          // Enter/Space; stop it before it reaches the Board's roving-focus track.
           e.stopPropagation();
         }
       }}
     >
-      {compact ? (
-        <>
-          {/* Row one: everything needed to read and act on the card in a single line.
-              The title truncates rather than wrapping so every card is the same height
-              and a column scans like a list. */}
-          <div className="flex min-w-0 items-center gap-1.5">
-            <span className="-ml-0.5 shrink-0">
-              <StatusControl
-                value={doc.meta.status}
-                statuses={statuses}
-                onChange={onStatusChange}
-              />
+      <div
+        data-slot="task-card-meta"
+        className="font-book text-muted-foreground flex min-h-[18px] min-w-0 items-center gap-1 text-[12px]"
+      >
+        {has('id') && <span className="shrink-0">{doc.meta.id}</span>}
+        {showCrumb && (
+          <>
+            <span aria-hidden className="shrink-0">
+              ›
             </span>
-            <MergeLadderDot meta={run} className="shrink-0" />
             <span
-              className="text-foreground min-w-0 flex-1 truncate text-[13px] leading-5 font-medium"
-              title={doc.meta.title}
+              data-slot="task-card-crumb"
+              className="min-w-0 truncate"
+              title={epicTitle}
             >
-              {doc.meta.title}
+              {epicTitle}
             </span>
-            {blocked && (
-              <RunStateIcon
-                state="blocked"
-                className="text-destructive size-3.5 shrink-0"
-                aria-label="Blocked"
-              />
-            )}
-            {liveRunState !== undefined && (
-              <span
-                role="img"
-                aria-label={runStateLabel(liveRunState)}
-                title={runStateLabel(liveRunState)}
-                className={cn(
-                  'size-2 shrink-0 rounded-full',
-                  runStateDotClass(liveRunState),
-                  liveRunState === 'running' && 'motion-safe:animate-pulse'
-                )}
-              />
-            )}
-            <PriorityControl
-              value={doc.meta.priority}
-              onChange={(p) => onEditTask({ priority: p })}
-            />
+          </>
+        )}
+        {has('assignee') && (
+          <span className="ml-auto flex shrink-0 items-center">
             <AssigneeControl
               value={doc.meta.assignee}
               onChange={(a) => onEditTask({ assignee: a })}
             />
-          </div>
-          {/* Row two: the scent line — where the card lives and how stale it is. */}
-          <div className="text-muted-foreground/60 flex min-w-0 items-center gap-1.5 text-[10.5px] leading-4">
-            <span className="shrink-0 font-mono tracking-tight">
-              {doc.meta.id}
-            </span>
-            {epicTitle !== undefined && (
-              <span className="flex min-w-0 items-center gap-1">
-                {doc.meta.parent !== undefined && (
-                  <span
-                    aria-hidden
-                    className="size-1.5 shrink-0 rounded-full"
-                    style={{ background: colorForEpic(doc.meta.parent) }}
-                  />
-                )}
-                <span className="min-w-0 truncate">{epicTitle}</span>
-              </span>
-            )}
-            {visibleLabels.length > 0 && (
-              <span className="min-w-0 truncate">
-                {visibleLabels.join(' · ')}
-                {hiddenLabelCount > 0 && ` +${hiddenLabelCount}`}
-              </span>
-            )}
-            {archived && <span className="shrink-0">Archived</span>}
-            <span className="ml-auto shrink-0 whitespace-nowrap">
-              {formatRelativeTimeFromIso(doc.meta.updated)}
-            </span>
-            {ready && onDispatch !== undefined && (
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={dispatching}
-                onClick={(e) => void dispatchNow(e)}
-                className={cn(
-                  'text-muted-foreground -my-1 h-auto gap-1 rounded-md px-1 py-0.5 text-[10.5px] font-medium opacity-0 transition-opacity duration-150 has-[>svg]:px-1',
-                  'hover:bg-primary/10 hover:text-primary',
-                  'group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100',
-                  dispatching && 'pointer-events-none opacity-100'
-                )}
-              >
-                {dispatching ? (
-                  <>
-                    <Spinner className="size-3" />
-                    Dispatching
-                  </>
-                ) : (
-                  <>
-                    Dispatch
-                    <ArrowRight className="size-3" />
-                  </>
-                )}
-              </Button>
-            )}
-          </div>
-        </>
-      ) : (
-        <>
-          <div className="flex min-w-0 items-center justify-between gap-2">
-            <div className="flex min-w-0 items-center gap-1 text-[11px]">
-              <span className="text-muted-foreground/60 shrink-0 font-mono tracking-tight">
-                {doc.meta.id}
-              </span>
-              {epicTitle !== undefined && (
-                <>
-                  <ChevronRight className="text-muted-foreground/40 size-3 shrink-0" />
-                  {/* Dot in the epic's own color, matching its swim-lane swatch — makes a card's
-                      epic scannable in the flat board and list, where there's no lane heading to
-                      group by. */}
-                  {doc.meta.parent !== undefined && (
-                    <span
-                      aria-hidden
-                      className="size-1.5 shrink-0 rounded-full"
-                      style={{ background: colorForEpic(doc.meta.parent) }}
-                    />
-                  )}
-                  <span className="text-muted-foreground/80 min-w-0 truncate">
-                    {epicTitle}
-                  </span>
-                </>
-              )}
-              {archived && (
-                <Badge
-                  variant="outline"
-                  className="text-muted-foreground h-4 shrink-0 rounded px-1.5 py-0 text-[10px] font-normal"
-                >
-                  Archived
-                </Badge>
-              )}
-            </div>
-            <AssigneeControl
-              value={doc.meta.assignee}
-              onChange={(a) => onEditTask({ assignee: a })}
+          </span>
+        )}
+      </div>
+
+      <div data-slot="task-card-title" className="flex items-start gap-1.5">
+        {has('status') && (
+          <span className="mt-px -ml-0.5 shrink-0">
+            <StatusControl
+              value={doc.meta.status}
+              statuses={statuses}
+              onChange={onStatusChange}
             />
-          </div>
+          </span>
+        )}
+        <span className="text-foreground line-clamp-2 text-[13px] leading-5 font-medium">
+          {doc.meta.title}
+        </span>
+      </div>
 
-          <div className="flex items-start gap-1.5">
-            <span className="mt-px -ml-0.5 shrink-0">
-              <StatusControl
-                value={doc.meta.status}
-                statuses={statuses}
-                onChange={onStatusChange}
-              />
-            </span>
-            {/* Merge-ladder dot: same affordance TasksListView/StackRail/TaskDetailPanel show. */}
-            <MergeLadderDot meta={run} className="mt-1.5" />
-            <span className="text-foreground line-clamp-2 text-[13.5px] leading-[1.35] font-medium">
-              {doc.meta.title}
-            </span>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-1.5">
+      <div
+        data-slot="task-card-pills"
+        className="flex flex-wrap items-center gap-1.5"
+      >
+        {has('priority') && (
+          <span className="-ml-0.5 shrink-0">
             <PriorityControl
               value={doc.meta.priority}
               onChange={(p) => onEditTask({ priority: p })}
             />
-            {blocked && (
-              <span className="text-destructive inline-flex items-center gap-1 text-[11px]">
-                <RunStateIcon state="blocked" className="size-3.5" />
-                Blocked
-              </span>
-            )}
-            {visibleLabels.map((label) => (
-              <Badge
-                key={label}
-                variant="outline"
-                className="text-muted-foreground h-4 rounded px-1.5 py-0 text-[10px] font-normal"
-              >
-                {label}
-              </Badge>
-            ))}
-            {hiddenLabelCount > 0 && (
-              <span className="text-muted-foreground/70 text-[10px]">
-                +{hiddenLabelCount}
-              </span>
-            )}
-            {readinessBadges(readiness).map((badge) => (
-              <Badge
-                key={badge}
-                variant="outline"
-                title={readiness?.label}
-                className="text-state-waiting-fg h-4 rounded px-1.5 py-0 text-[10px] font-normal"
-              >
-                {badge}
-              </Badge>
-            ))}
-            {liveRunState !== undefined && (
-              <span
-                className={cn(
-                  'inline-flex shrink-0 items-center gap-1.5 text-[11px] font-medium',
-                  runStateColorClass(liveRunState)
-                )}
-                title={runStateLabel(liveRunState)}
-              >
-                {/* TaskRow's state-dot language: a small pulsing dot ahead of the glyph, so a
-                    board card reads the same "something is happening" cue as the dense task
-                    rows (SessionsHub, AllAgents). */}
-                <span
-                  aria-hidden
-                  className={cn(
-                    'size-2 shrink-0 rounded-full',
-                    runStateDotClass(liveRunState),
-                    liveRunState === 'running' && 'motion-safe:animate-pulse'
-                  )}
-                />
-                <RunStateIcon state={liveRunState} className="size-3.5" />
-                {runStateLabel(liveRunState)}
-              </span>
-            )}
-          </div>
+          </span>
+        )}
+        {blocked && (
+          <LabelPill color="var(--status-blocked)">Blocked</LabelPill>
+        )}
+        {needsAttention && !archived && (
+          <LabelPill color="var(--state-waiting-fg)">Needs you</LabelPill>
+        )}
+        {visibleLabels.map((label) => (
+          <LabelPill key={label} color={colorForLabel(label)}>
+            {label}
+          </LabelPill>
+        ))}
+        {hiddenLabelCount > 0 && (
+          <Pill className="text-muted-foreground">+{hiddenLabelCount}</Pill>
+        )}
+        {readinessBadges(readiness).map((badge) => (
+          <LabelPill key={badge} color="var(--state-waiting-fg)">
+            {badge}
+          </LabelPill>
+        ))}
+        {has('run') && liveRunState !== undefined && run !== undefined && (
+          <RunStatePill meta={run} compact />
+        )}
+        {has('run') && <MergeLadderPill meta={run} />}
+        {archived && <Pill className="text-muted-foreground">Archived</Pill>}
+      </div>
 
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-muted-foreground/60 shrink-0 text-[11px] whitespace-nowrap">
-              {formatRelativeTimeFromIso(doc.meta.updated)}
-            </span>
-            {ready && onDispatch !== undefined && (
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={dispatching}
-                onClick={(e) => void dispatchNow(e)}
-                className={cn(
-                  'h-auto gap-1 rounded-md px-1.5 py-0.5 has-[>svg]:px-1.5 text-[11px] font-medium text-muted-foreground opacity-0 transition-opacity duration-150',
-                  'hover:bg-primary/10 hover:text-primary',
-                  'group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100',
-                  dispatching && 'pointer-events-none opacity-100'
-                )}
-              >
-                {dispatching ? (
-                  <>
-                    <Spinner className="size-3" />
-                    Dispatching
-                  </>
-                ) : (
-                  <>
-                    Dispatch
-                    <ArrowRight className="size-3" />
-                  </>
-                )}
-              </Button>
+      {/* The footer is the card's fixed `Created` line (Linear's row 4); the Created/Updated
+          property chips govern the list's date column, not this. */}
+      <div
+        data-slot="task-card-footer"
+        className="font-book text-muted-foreground flex min-h-6 items-center justify-between gap-2 text-[12px]"
+      >
+        <span className="shrink-0 whitespace-nowrap">
+          {formatCreated(doc.meta.created)}
+        </span>
+        {ready && onDispatch !== undefined && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            disabled={dispatching}
+            onClick={(e) => void dispatchNow(e)}
+            className={cn(
+              '-my-1 -mr-1.5 text-[12px] font-medium',
+              dispatching && 'pointer-events-none'
             )}
-          </div>
-        </>
-      )}
+          >
+            {dispatching ? (
+              <>
+                <Spinner className="size-3" />
+                Dispatching
+              </>
+            ) : (
+              <>
+                Dispatch
+                <ArrowRight className="size-3" />
+              </>
+            )}
+          </Button>
+        )}
+      </div>
     </div>
   );
 }

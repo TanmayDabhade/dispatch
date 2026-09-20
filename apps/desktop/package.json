@@ -21,7 +21,7 @@
     "@dispatch/tokens": "workspace:*",
     "@dnd-kit/core": "catalog:",
     "@dnd-kit/utilities": "catalog:",
-    "@fontsource/inter": "catalog:",
+    "@fontsource-variable/inter": "catalog:",
     "@fontsource/jetbrains-mono": "catalog:",
     "@pierre/diffs": "catalog:",
     "@pierre/trees": "catalog:",

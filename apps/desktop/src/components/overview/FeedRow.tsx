@@ -1,57 +1,33 @@
-import { CircleAlert, Hand } from 'lucide-react';
+import {
+  Ban,
+  CircleAlert,
+  ExternalLink,
+  Eye,
+  Gavel,
+  Hand,
+  MessageCircleQuestion,
+  RotateCw,
+  ShieldCheck,
+  ShieldX,
+} from 'lucide-react';
 import type { ReactNode } from 'react';
 
+import { PriorityIcon } from '../tasks/PriorityIcon';
 import type { FeedRowModel } from '@/lib/controlRoom';
-import { FEED_STATE_LABEL, feedTier, isUrgentState } from '@/lib/feedState';
+import { feedTier, isUrgentState } from '@/lib/feedState';
 import { formatRelativeTimeFromIso } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import { Button } from '@/ui/button';
-import { ProgressTrack } from '@/ui/chrome/ProgressTrack';
-import { StateDot } from '@/ui/chrome/StateDot';
-
-// Urgency tints the state label and attention line only — never the whole row;
-// a wall of amber rows reads as alarm wallpaper, not information. Keyed by
-// TIER and spelled out for Tailwind's static extraction.
-const URGENT_TEXT: Partial<Record<ReturnType<typeof feedTier>, string>> = {
-  you: 'text-state-waiting',
-  broken: 'text-state-failed',
-};
-
-/** A row action. Rendered small and quiet — the row itself is the primary target. */
-function RowButton({
-  children,
-  onClick,
-  tone,
-}: {
-  children: ReactNode;
-  onClick: () => void;
-  tone?: 'urgent-waiting' | 'urgent-failed';
-}) {
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="xs"
-      // Every action sits inside a clickable row, so each one has to stop the click from also
-      // opening the row behind it. Approving should not navigate away.
-      onClick={(e) => {
-        e.stopPropagation();
-        onClick();
-      }}
-      className={cn(
-        'shadow-hairline ease-out-expo rounded-chip h-auto px-2 py-1 text-[12px] font-normal whitespace-nowrap transition-colors duration-100',
-        // Ghost's own hover bg/text are neutralized so only the row's own tones move.
-        'hover:bg-surface-hover-strong dark:hover:bg-surface-hover-strong',
-        tone === 'urgent-waiting' &&
-          'text-state-waiting hover:text-state-waiting',
-        tone === 'urgent-failed' && 'text-state-failed hover:text-state-failed',
-        tone === undefined && 'text-muted-foreground hover:text-foreground'
-      )}
-    >
-      {children}
-    </Button>
-  );
-}
+import { InitialsAvatar } from '@/ui/ai/initials-avatar';
+import { ListRow } from '@/ui/ai/list-row';
+import { LabelPill, Pill, PillButton } from '@/ui/ai/pill';
+import { StateMark } from '@/ui/chrome/state-mark';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@/ui/context-menu';
 
 export interface FeedRowActions {
   onOpen: (row: FeedRowModel) => void;
@@ -92,154 +68,209 @@ function fixLoopActivity(row: FeedRowModel): string | null {
   return `Pass ${loop.round}/${loop.cap}${suffix}`;
 }
 
+/** One menu entry: the label, the verb it fires, and the icon before it. */
+interface RowAction {
+  id: string;
+  label: string;
+  icon: ReactNode;
+  run: () => void;
+}
+
+/** Every verb the row offers, in menu order. The first one marked `primary` is also the
+ * hover-revealed pill at the row's right. A question's answer is free text, so it can only
+ * be given on the Session tab; approving, retrying, reviewing and cancelling happen here. */
+export function rowActions(
+  row: FeedRowModel,
+  actions: FeedRowActions
+): { primary: RowAction | null; menu: RowAction[] } {
+  const menu: RowAction[] = [];
+  let primary: RowAction | null = null;
+  const add = (action: RowAction, isPrimary = false) => {
+    menu.push(action);
+    if (isPrimary && primary === null) primary = action;
+  };
+  switch (row.state) {
+    case 'answer':
+      add(
+        {
+          id: 'answer',
+          label: 'Answer',
+          icon: <MessageCircleQuestion />,
+          run: () => actions.onOpen(row),
+        },
+        true
+      );
+      break;
+    case 'approve':
+      add(
+        {
+          id: 'approve',
+          label: 'Approve',
+          icon: <ShieldCheck />,
+          run: () => actions.onApprove(row, true),
+        },
+        true
+      );
+      add({
+        id: 'deny',
+        label: 'Deny',
+        icon: <ShieldX />,
+        run: () => actions.onApprove(row, false),
+      });
+      break;
+    case 'ruling':
+      add(
+        {
+          id: 'rule',
+          label: 'Rule on findings',
+          icon: <Gavel />,
+          run: () => actions.onRule(row),
+        },
+        true
+      );
+      break;
+    case 'failed':
+      add(
+        {
+          id: 'retry',
+          label: 'Retry',
+          icon: <RotateCw />,
+          run: () => actions.onRetry(row),
+        },
+        true
+      );
+      add({
+        id: 'read-error',
+        label: 'Read the error',
+        icon: <CircleAlert />,
+        run: () => actions.onOpen(row),
+      });
+      break;
+    case 'review':
+      add(
+        {
+          id: 'review',
+          label: 'Review',
+          icon: <Eye />,
+          run: () => actions.onReview(row),
+        },
+        true
+      );
+      break;
+    case 'landing':
+      add({
+        id: 'cancel-landing',
+        label: 'Cancel landing',
+        icon: <Ban />,
+        run: () => actions.onCancelLanding(row),
+      });
+      break;
+    default:
+      break;
+  }
+  if (fixLoopActive(row)) {
+    add({
+      id: 'stop-loop',
+      label: 'Stop loop',
+      icon: <Hand />,
+      run: () => actions.onStopFixLoop(row),
+    });
+  }
+  return { primary, menu };
+}
+
 interface FeedRowProps {
   row: FeedRowModel;
   actions: FeedRowActions;
+  /** The keyboard cursor: a neutral wash, never the accent. */
+  focused?: boolean;
 }
 
 /**
- * One row of the Control room feed.
- *
- * Urgent rows differ in three ways — a tinted ground, a slightly heavier title, and a second
- * line naming what is actually in the way. That second line is the point of the whole screen:
- * approving or retrying from here means never opening the run at all.
+ * One row of the Control room feed on Linear's 36px `ListRow`: priority glyph, sans task
+ * id, the 14px state glyph, the title, then what the run is doing as a muted crumb and the
+ * right-aligned pills — `Needs you` (amber dot) or `Broken` (red dot) when the row is
+ * waiting on a human, the epic chip, the elapsed time and the agent's avatar. The verbs
+ * live in the right-click menu; the one that matters most is also a hover-revealed pill,
+ * so approving or retrying from here means never opening the run at all.
  */
-export function FeedRow({ row, actions }: FeedRowProps) {
+export function FeedRow({ row, actions, focused = false }: FeedRowProps) {
   const urgent = isUrgentState(row.state);
   const tier = feedTier(row.state);
+  const { primary, menu } = rowActions(row, actions);
+  const activity = fixLoopActivity(row) ?? row.activity;
+  const attention = row.attention?.reason ?? null;
+
+  const listRow = (
+    <ListRow
+      data-run-id={row.runId}
+      data-state={row.state}
+      leading={<PriorityIcon priority={row.priority ?? 'none'} />}
+      id={row.taskId}
+      status={<StateMark state={row.state} />}
+      title={row.title}
+      crumb={attention ?? activity ?? undefined}
+      focused={focused}
+      onClick={() => actions.onOpen(row)}
+      trailing={
+        <>
+          {primary !== null && (
+            <PillButton
+              onClick={(event) => {
+                // Inside a clickable row: the pill must not also open the run behind it.
+                event.stopPropagation();
+                primary.run();
+              }}
+              className={cn(
+                'opacity-0 transition-opacity duration-100 group-hover/row:opacity-100 focus-visible:opacity-100',
+                focused && 'opacity-100'
+              )}
+            >
+              {primary.label}
+            </PillButton>
+          )}
+          {urgent && (
+            <LabelPill
+              color={
+                tier === 'you'
+                  ? 'var(--state-waiting-fg)'
+                  : 'var(--state-failed-fg)'
+              }
+              title={attention ?? undefined}
+            >
+              {tier === 'you' ? 'Needs you' : 'Broken'}
+            </LabelPill>
+          )}
+          {row.epicTitle !== null && (
+            <Pill className="max-w-40">
+              <span className="truncate">{row.epicTitle}</span>
+            </Pill>
+          )}
+          <InitialsAvatar name="Agent" />
+        </>
+      }
+      date={formatRelativeTimeFromIso(row.since)}
+    />
+  );
 
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={() => actions.onOpen(row)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          actions.onOpen(row);
-        }
-      }}
-      className={cn(
-        'group/row ease-out-expo rounded-control cursor-pointer overflow-hidden transition-colors duration-100',
-        'hover:bg-surface-hover'
-      )}
-    >
-      <div className="grid grid-cols-[130px_minmax(140px,1fr)_140px_150px_64px_auto] items-center gap-3 px-3 py-2">
-        <span className="flex min-w-0 items-center gap-2">
-          <StateDot state={row.state} size="md" />
-          <span
-            className={cn(
-              'truncate text-[11px]',
-              urgent
-                ? cn(URGENT_TEXT[tier], 'font-medium')
-                : 'text-muted-foreground'
-            )}
-          >
-            {FEED_STATE_LABEL[row.state]}
-          </span>
-        </span>
-
-        <span
-          className={cn(
-            'truncate text-[13.5px]',
-            urgent ? 'text-foreground font-medium' : 'text-foreground'
-          )}
-        >
-          {row.title}
-        </span>
-
-        <span className="dense-meta truncate">{row.epicTitle ?? ''}</span>
-        <span className="dense-meta truncate">
-          {fixLoopActivity(row) ?? row.activity ?? ''}
-        </span>
-        <span className="dense-meta text-right whitespace-nowrap">
-          {formatRelativeTimeFromIso(row.since)}
-        </span>
-
-        <span className="flex justify-end gap-1.5">
-          {/* A question's answer is free text, so it can only be given on the Session tab. */}
-          {row.state === 'answer' && (
-            <RowButton
-              tone="urgent-waiting"
-              onClick={() => actions.onOpen(row)}
-            >
-              Answer
-            </RowButton>
-          )}
-          {row.state === 'approve' && (
-            <>
-              <RowButton onClick={() => actions.onApprove(row, false)}>
-                Deny
-              </RowButton>
-              <RowButton
-                tone="urgent-waiting"
-                onClick={() => actions.onApprove(row, true)}
-              >
-                Approve
-              </RowButton>
-            </>
-          )}
-          {row.state === 'ruling' && (
-            <RowButton
-              tone="urgent-waiting"
-              onClick={() => actions.onRule(row)}
-            >
-              Rule on findings
-            </RowButton>
-          )}
-          {row.state === 'failed' && (
-            <>
-              <RowButton onClick={() => actions.onOpen(row)}>
-                Read the error
-              </RowButton>
-              <RowButton
-                tone="urgent-failed"
-                onClick={() => actions.onRetry(row)}
-              >
-                Retry
-              </RowButton>
-            </>
-          )}
-          {row.state === 'review' && (
-            <RowButton onClick={() => actions.onReview(row)}>Review</RowButton>
-          )}
-          {row.state === 'landing' && (
-            <RowButton onClick={() => actions.onCancelLanding(row)}>
-              Cancel
-            </RowButton>
-          )}
-          {fixLoopActive(row) && (
-            <RowButton onClick={() => actions.onStopFixLoop(row)}>
-              Stop loop
-            </RowButton>
-          )}
-        </span>
-      </div>
-
-      {row.attention !== null && (
-        <div className="flex items-center gap-2 px-3 pb-2 pl-[142px]">
-          {tier === 'you' ? (
-            <Hand className="text-state-waiting size-3.5 shrink-0" />
-          ) : (
-            <CircleAlert className="text-state-failed size-3.5 shrink-0" />
-          )}
-          <span className={cn('truncate text-[12.5px]', URGENT_TEXT[tier])}>
-            {row.attention.reason}
-          </span>
-          {row.attention.detail !== null && (
-            <span className="dense-meta bg-surface-inset rounded-chip px-1.5 py-0.5 font-mono">
-              {row.attention.detail}
-            </span>
-          )}
-        </div>
-      )}
-
-      {/* A working run has no honest completion fraction — the orchestrator does not know how
-          far through a task an agent is — so this is deliberately indeterminate rather than a
-          number derived from turn count, which would look like measurement. */}
-      {(row.state === 'working' || row.state === 'fixing') && (
-        <ProgressTrack value={null} label={`${row.title} in progress`} />
-      )}
-    </div>
+    <ContextMenu>
+      <ContextMenuTrigger render={<div data-slot="feed-row" />}>
+        {listRow}
+      </ContextMenuTrigger>
+      <ContextMenuContent className="min-w-[180px]">
+        <ContextMenuItem onClick={() => actions.onOpen(row)}>
+          <ExternalLink />
+          Open run
+        </ContextMenuItem>
+        {menu.length > 0 && <ContextMenuSeparator />}
+        {menu.map((action) => (
+          <ContextMenuItem key={action.id} onClick={action.run}>
+            {action.icon}
+            {action.label}
+          </ContextMenuItem>
+        ))}
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }

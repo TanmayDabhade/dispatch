@@ -1,44 +1,62 @@
 import { Search } from 'lucide-react';
 
 import type { FeedState } from '@/lib/feedState';
+import { FEED_STATE_LABEL, FEED_STATE_ORDER } from '@/lib/feedState';
+import { FilterIconButton } from '@/ui/ai/page-header';
 import { Button } from '@/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/ui/dropdown-menu';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/ui/input-group';
 
 interface FeedFilterBarProps {
   query: string;
   onQueryChange: (value: string) => void;
   activeStates: ReadonlySet<FeedState>;
-  /** Clears every state filter — the ribbon toggles them one at a time. */
+  /** Flips one state in or out of the filter — the ribbon toggles the same set. */
+  onToggleState: (state: FeedState) => void;
+  /** Clears every state filter. */
   onClearStates: () => void;
-  shown: number;
-  total: number;
+  /** Epics with rows in the feed, for the facet menu; `null` selects none. */
+  epics: readonly string[];
+  activeEpic: string | null;
+  onEpicChange: (epic: string | null) => void;
+  needsYouOnly: boolean;
+  onNeedsYouChange: (value: boolean) => void;
   allCollapsed: boolean;
   onToggleCollapseAll: () => void;
 }
 
 /**
- * Query, status chips, and the shown/total readout.
- *
- * The readout is the load-bearing part rather than decoration: the feed caps each group, so
- * without a count of what is being held back, a capped feed silently lies about how much work
- * exists. The chips share their selection with the ribbon above — one piece of state, two
- * controls, so they can't disagree.
+ * The Control room header's second-row controls: the search field, a `Collapse all` ghost
+ * and the funnel icon button (there is no display popover or side panel here). The funnel
+ * opens a small facet menu — state, epic, needs-you — sharing its selection with the ribbon
+ * above, so the two can never disagree; the dot on it says a filter is applied.
  */
 export function FeedFilterBar({
   query,
   onQueryChange,
   activeStates,
+  onToggleState,
   onClearStates,
-  shown,
-  total,
+  epics,
+  activeEpic,
+  onEpicChange,
+  needsYouOnly,
+  onNeedsYouChange,
   allCollapsed,
   onToggleCollapseAll,
 }: FeedFilterBarProps) {
+  const filtered = activeStates.size > 0 || activeEpic !== null || needsYouOnly;
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      {/* Fully-expanded `shadow-[inset_...]`, not `shadow-hairline` — twMerge only
-          dedupes against InputGroup's `shadow-xs` in this spelled-out form (DispatchDialog). */}
-      <InputGroup className="h-auto w-64 gap-2 rounded-md border-0 bg-transparent px-2.5 shadow-[inset_0_0_0_1px_var(--border-default)] outline-none has-[[data-slot=input-group-control]:focus-visible]:border-transparent has-[[data-slot=input-group-control]:focus-visible]:ring-0 dark:bg-transparent">
+    <div className="flex items-center gap-1">
+      <InputGroup className="h-7 w-56 gap-2 px-2 has-[>[data-align=inline-start]]:[&>input]:pl-0">
         <InputGroupAddon className="p-0">
           <Search className="text-muted-foreground size-3.5 shrink-0" />
         </InputGroupAddon>
@@ -46,40 +64,67 @@ export function FeedFilterBar({
           value={query}
           onChange={(e) => onQueryChange(e.target.value)}
           placeholder="Filter by task, id or epic"
-          className="text-foreground h-auto px-0 py-1.5 text-[12.5px] md:text-[12.5px]"
+          aria-label="Filter the feed"
+          className="h-auto px-0 text-[12px] md:text-[12px]"
         />
       </InputGroup>
-
-      {/* The per-state chips used to live here as well as on the ribbon
-          above — two controls, the same counts, the same activeStates, stacked
-          one on top of the other. The ribbon already filters, so this row is
-          now only the things the ribbon cannot say: free-text search, how much
-          the filter is hiding, and collapse-all. */}
-      <span className="flex-1" />
-      {activeStates.size > 0 && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="xs"
-          onClick={onClearStates}
-          // Ghost's hover bg/transition are neutralized — the old button had neither.
-          className="text-muted-foreground hover:text-foreground rounded-chip h-auto px-2 py-1.5 text-[12px] font-normal transition-none hover:bg-transparent dark:hover:bg-transparent"
-        >
-          Clear filter
-        </Button>
-      )}
-      <span className="dense-meta">
-        {shown} of {total} shown
-      </span>
-      <Button
-        type="button"
-        variant="ghost"
-        size="xs"
-        onClick={onToggleCollapseAll}
-        className="text-muted-foreground hover:bg-surface-hover hover:text-foreground ease-out-expo rounded-chip h-auto px-2.5 py-1.5 text-[12px] font-normal transition-colors duration-100"
-      >
+      <Button variant="ghost" onClick={onToggleCollapseAll}>
         {allCollapsed ? 'Expand all' : 'Collapse all'}
       </Button>
+      {/* The feed has one layout and no side panel; only the triad's funnel earns a button. */}
+      <DropdownMenu>
+        <DropdownMenuTrigger render={<FilterIconButton active={filtered} />} />
+        <DropdownMenuContent align="end" className="min-w-[200px]">
+          <DropdownMenuCheckboxItem
+            checked={needsYouOnly}
+            onCheckedChange={(checked) => onNeedsYouChange(checked)}
+          >
+            Needs you
+          </DropdownMenuCheckboxItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel>State</DropdownMenuLabel>
+          {FEED_STATE_ORDER.map((state) => (
+            <DropdownMenuCheckboxItem
+              key={state}
+              checked={activeStates.has(state)}
+              onCheckedChange={() => onToggleState(state)}
+            >
+              {FEED_STATE_LABEL[state]}
+            </DropdownMenuCheckboxItem>
+          ))}
+          {epics.length > 0 && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Epic</DropdownMenuLabel>
+              {epics.map((epic) => (
+                <DropdownMenuCheckboxItem
+                  key={epic}
+                  checked={activeEpic === epic}
+                  onCheckedChange={(checked) =>
+                    onEpicChange(checked ? epic : null)
+                  }
+                >
+                  {epic}
+                </DropdownMenuCheckboxItem>
+              ))}
+            </>
+          )}
+          {filtered && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() => {
+                  onClearStates();
+                  onEpicChange(null);
+                  onNeedsYouChange(false);
+                }}
+              >
+                Clear filters
+              </DropdownMenuItem>
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }
