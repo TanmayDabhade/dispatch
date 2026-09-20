@@ -1,6 +1,7 @@
 import type {
   AgentSessionMeta,
   ApiClient,
+  ConfirmResult,
   DraftRecord,
   EpicProgress,
   FixLoopState,
@@ -35,7 +36,7 @@ import type {
   TaskDoc,
   UpdatePatch,
 } from '@dispatch/core/browser';
-import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { hideArchivedRuns } from '../lib/archiveFilter';
@@ -54,6 +55,8 @@ import {
 } from '../lib/daemonAuth';
 import type { DecisionItem } from '../lib/decisionFeed';
 import { fetchDecisions, isDecisionsChanged } from '../lib/decisionFeed';
+import type { WorkEpicOptions } from '../lib/epicSession';
+import { epicPausedNotice } from '../lib/epicSession';
 import { fixLoopCappedNotice } from '../lib/fixLoopStatus';
 import type { InboxEntryDraft, InboxState } from '../lib/inbox';
 import {
@@ -241,6 +244,10 @@ export interface DispatchProjectData {
   blockedIds: Set<string>;
   epics: TaskDoc[];
   epicProgressById: Map<string, EpicProgress>;
+  /** The epics with a fan-out session that is `active` or `paused` right now
+   * — what the live rail groups under and the status strip sums ceilings
+   * over. Order follows the bulk progress response. */
+  liveEpicSessions: EpicProgress[];
   liveRunStateByTaskId: Map<string, RunState>;
   latestRunByTaskId: Map<string, RunMeta>;
   /** Tasks whose latest run needs a human right now (waiting on approval/question, failed,
@@ -354,6 +361,8 @@ export interface DispatchProjectData {
     verifyCommand?: string | null;
     autoCommit?: boolean;
     epicConcurrency?: number;
+    maxConcurrency?: number;
+    runCostEstimateUsd?: number;
     verifyTimeoutSec?: number;
     permissionMode?: string;
     models?: Partial<ModelConfig>;
@@ -505,7 +514,21 @@ export interface DispatchProjectData {
   handleReview: (runId: string, action: 'merge' | 'discard') => Promise<void>;
   handleRequestChanges: (runId: string, text: string) => Promise<void>;
   handleOpenPr: (runId: string) => Promise<void>;
-  handleWorkEpic: (epicId: string, concurrency: number) => Promise<void>;
+  /** Starts a fan-out session on an epic. A bare number is the pre-fan-out
+   * form, `{ concurrency }` with no ceilings — kept until every caller passes
+   * options (Parked). */
+  handleWorkEpic: (
+    epicId: string,
+    opts: number | WorkEpicOptions
+  ) => Promise<void>;
+  /** Stops a session filling; live runs finish. Resume picks it back up. */
+  handlePauseEpic: (epicId: string) => Promise<void>;
+  /** Resumes a paused session, optionally with new ceilings or concurrency —
+   * `null` lifts a ceiling, `undefined` keeps the session's value. */
+  handleResumeEpic: (
+    epicId: string,
+    opts?: Partial<WorkEpicOptions>
+  ) => Promise<void>;
   handleStopEpic: (epicId: string) => Promise<void>;
   /** Lands a finished epic branch on the default base — one PR or one local
    * merge, decided server-side off the project's `pr` capability. */
@@ -519,7 +542,9 @@ export interface DispatchProjectData {
   handleSendPlanMessage: (
     text: string
   ) => Promise<import('@dispatch/client').PlanRecord>;
-  handleConfirmPlan: (proposal: PlanProposal) => Promise<void>;
+  /** Turns a proposal into tasks. Resolves to the created epic's id (when the
+   * plan had one) and the task ids, so the caller can open the milestone. */
+  handleConfirmPlan: (proposal: PlanProposal) => Promise<ConfirmResult>;
   // Task 6: enqueue/dequeue a run in the merge queue. Both let the server's
   // 404/409 (unknown run, not terminal, already reviewed, already queued, or
   // "can't remove the actively-processing entry") propagate as a thrown
@@ -1178,24 +1203,31 @@ export function useDispatchProject(
     [runs, archivedTaskIds, showArchived]
   );
 
-  const epicProgressResults = useQueries({
-    queries: epics.map((epic) => ({
-      queryKey: [...epicProgressKeyPrefix, epic.meta.id],
-      queryFn: () => {
-        if (client === null) throw new Error('dispatchd client not ready');
-        return client.fetchEpicProgress(epic.meta.id);
-      },
-      enabled: client !== null,
-    })),
+  // One GET for every epic's progress rather than one per epic: the prefix
+  // is invalidated on every run/epic change, and a fan-out of dozens of
+  // milestones made that a burst of dozens of requests each time.
+  const { data: allEpicProgress } = useQuery({
+    queryKey: [...epicProgressKeyPrefix, 'all'],
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchAllEpicProgress();
+    },
+    enabled: client !== null,
   });
   const epicProgressById = useMemo(() => {
     const map = new Map<string, EpicProgress>();
-    epics.forEach((epic, i) => {
-      const data = epicProgressResults[i]?.data;
-      if (data !== undefined) map.set(epic.meta.id, data);
-    });
+    for (const progress of allEpicProgress ?? []) {
+      map.set(progress.epicId, progress);
+    }
     return map;
-  }, [epics, epicProgressResults]);
+  }, [allEpicProgress]);
+  const liveEpicSessions = useMemo(
+    () =>
+      (allEpicProgress ?? []).filter(
+        (p) => p.session?.state === 'active' || p.session?.state === 'paused'
+      ),
+    [allEpicProgress]
+  );
 
   useEffect(() => {
     if (client === null) return;
@@ -1405,6 +1437,34 @@ export function useDispatchProject(
                 title: notice.title,
                 body: notice.body,
                 target: { kind: 'task', taskId: event.taskId },
+              },
+            ]);
+          } else if (event.type === 'epic.changed') {
+            // A session started, paused, resumed, stopped, completed or filled
+            // a batch — the bulk progress query is the one reader.
+            void queryClient.invalidateQueries({
+              queryKey: epicProgressKeyPrefix,
+            });
+          } else if (event.type === 'epic.paused') {
+            void queryClient.invalidateQueries({
+              queryKey: epicProgressKeyPrefix,
+            });
+            // A session that paused itself needs a human to resume or raise
+            // the ceiling — a toast plus a durable inbox row, worded from the
+            // event's own numbers so neither waits on the refetch above.
+            const liveTasks =
+              queryClient.getQueryData<TaskDoc[]>(allTasksQueryKey);
+            const epicTitle =
+              liveTasks?.find((t) => t.meta.id === event.epicId)?.meta.title ??
+              event.epicId;
+            const notice = epicPausedNotice(epicTitle, event);
+            void notify(notice.title, notice.body);
+            onRecordInbox([
+              {
+                ts: new Date().toISOString(),
+                title: notice.title,
+                body: notice.body,
+                target: { kind: 'task', taskId: event.epicId },
               },
             ]);
           } else if (event.type === 'config.changed') {
@@ -2075,9 +2135,32 @@ export function useDispatchProject(
   );
 
   const handleWorkEpic = useCallback(
-    async (epicId: string, concurrency: number): Promise<void> => {
+    async (epicId: string, opts: number | WorkEpicOptions): Promise<void> => {
       if (client === null) return;
-      await client.startEpic(epicId, { concurrency });
+      const { concurrency, maxSpendUsd, maxRuns } =
+        typeof opts === 'number' ? { concurrency: opts } : opts;
+      await client.startEpic(epicId, { concurrency, maxSpendUsd, maxRuns });
+      void queryClient.invalidateQueries({ queryKey: epicProgressKeyPrefix });
+      void queryClient.invalidateQueries({ queryKey: runsQueryKey });
+    },
+    [client, queryClient, epicProgressKeyPrefix, runsQueryKey]
+  );
+
+  const handlePauseEpic = useCallback(
+    async (epicId: string): Promise<void> => {
+      if (client === null) return;
+      await client.pauseEpic(epicId);
+      void queryClient.invalidateQueries({ queryKey: epicProgressKeyPrefix });
+      void queryClient.invalidateQueries({ queryKey: runsQueryKey });
+    },
+    [client, queryClient, epicProgressKeyPrefix, runsQueryKey]
+  );
+
+  // Runs refetch too: a resume fills the queue straight away.
+  const handleResumeEpic = useCallback(
+    async (epicId: string, opts?: Partial<WorkEpicOptions>): Promise<void> => {
+      if (client === null) return;
+      await client.resumeEpic(epicId, opts ?? {});
       void queryClient.invalidateQueries({ queryKey: epicProgressKeyPrefix });
       void queryClient.invalidateQueries({ queryKey: runsQueryKey });
     },
@@ -2147,13 +2230,25 @@ export function useDispatchProject(
   );
 
   const handleConfirmPlan = useCallback(
-    async (proposal: PlanProposal): Promise<void> => {
-      if (client === null || planId === null) return;
-      await client.confirmPlan(planId, proposal);
+    async (proposal: PlanProposal): Promise<ConfirmResult> => {
+      if (client === null || planId === null) {
+        throw new Error('no plan open to confirm');
+      }
+      const result = await client.confirmPlan(planId, proposal);
       void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
       void queryClient.invalidateQueries({ queryKey: readyQueryKey });
+      // The new epic shows up in the bulk progress list on the next fetch.
+      void queryClient.invalidateQueries({ queryKey: epicProgressKeyPrefix });
+      return result;
     },
-    [client, planId, queryClient, tasksQueryKey, readyQueryKey]
+    [
+      client,
+      planId,
+      queryClient,
+      tasksQueryKey,
+      readyQueryKey,
+      epicProgressKeyPrefix,
+    ]
   );
 
   // Task 6: enqueue a terminal, unreviewed run into the merge queue. The
@@ -2400,6 +2495,8 @@ export function useDispatchProject(
       verifyCommand?: string | null;
       autoCommit?: boolean;
       epicConcurrency?: number;
+      maxConcurrency?: number;
+      runCostEstimateUsd?: number;
       verifyTimeoutSec?: number;
       permissionMode?: string;
       models?: Partial<ModelConfig>;
@@ -2559,6 +2656,7 @@ export function useDispatchProject(
     blockedIds,
     epics,
     epicProgressById,
+    liveEpicSessions,
     liveRunStateByTaskId,
     latestRunByTaskId,
     attentionByTaskId,
@@ -2618,6 +2716,8 @@ export function useDispatchProject(
     handleRequestChanges,
     handleOpenPr,
     handleWorkEpic,
+    handlePauseEpic,
+    handleResumeEpic,
     handleStopEpic,
     handleLandEpic,
     handleSubmitPrompt,
