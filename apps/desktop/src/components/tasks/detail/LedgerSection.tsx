@@ -10,15 +10,17 @@ const LEDGER_KIND_ORDER: readonly LedgerEntry['kind'][] = [
   'handoff',
 ];
 
+// Plural, sentence case: each is a sub-heading over a run of cards.
 const LEDGER_KIND_LABEL: Record<LedgerEntry['kind'], string> = {
-  constraint: 'Constraint',
-  hazard: 'Hazard',
-  decision: 'Decision',
-  handoff: 'Handoff',
+  constraint: 'Constraints',
+  hazard: 'Hazards',
+  decision: 'Decisions',
+  handoff: 'Handoffs',
 };
 
 // Carried-forward findings/decisions — an epic's, or a plain task's own —
-// grouped by kind and attributed to the task that raised each one.
+// grouped by kind and attributed to the task that raised each one. Each entry
+// is a comment card; the source task id sits at its right edge in sans.
 export function LedgerSection({ entries }: { entries: LedgerEntry[] }) {
   if (entries.length === 0) return null;
   const groups = LEDGER_KIND_ORDER.map((kind) => ({
@@ -26,33 +28,51 @@ export function LedgerSection({ entries }: { entries: LedgerEntry[] }) {
     entries: entries.filter((e) => e.kind === kind),
   })).filter((group) => group.entries.length > 0);
   return (
-    <MainSection title={`Ledger · ${entries.length}`}>
+    <MainSection
+      title="Ledger"
+      trailing={
+        <span className="text-muted-foreground font-book text-[12px] tabular-nums">
+          {entries.length}
+        </span>
+      }
+    >
       <div className="flex flex-col gap-3">
         {groups.map((group) => (
-          <div key={group.kind} className="flex flex-col gap-1.5">
-            <span className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
-              {LEDGER_KIND_LABEL[group.kind]} · {group.entries.length}
+          <div
+            key={group.kind}
+            data-slot="ledger-group"
+            className="flex flex-col gap-1.5"
+          >
+            <span className="text-muted-foreground flex items-center gap-1.5 text-[12px] font-medium">
+              {LEDGER_KIND_LABEL[group.kind]}
+              <span className="font-book tabular-nums">
+                {group.entries.length}
+              </span>
             </span>
             <ul className="flex flex-col gap-2">
               {group.entries.map((entry) => (
                 <li
                   key={entry.id}
-                  className="border-border/60 rounded-md border px-2.5 py-2"
+                  data-slot="ledger-entry"
+                  className="bg-surface-quaternary rounded-card border-border-strong border-[0.5px] p-3"
                 >
                   <div className="flex items-center gap-2">
-                    <span className="min-w-0 text-[13px] font-medium break-words">
+                    <span className="text-foreground min-w-0 text-[13px] font-medium break-words">
                       {entry.title}
                     </span>
                     <PolicyReceiptBadge entry={entry} />
                     {entry.sourceTaskId !== null && (
-                      <span className="text-muted-foreground ml-auto shrink-0 font-mono text-[11px]">
+                      <span
+                        data-slot="ledger-source"
+                        className="text-muted-foreground font-book ml-auto shrink-0 text-[12px] tracking-(--id-tracking)"
+                      >
                         {entry.sourceTaskId}
                       </span>
                     )}
                   </div>
                   {/* Scope grants put absolute paths in here, which have no
                       break opportunity of their own. */}
-                  <p className="text-muted-foreground mt-1 text-[12.5px] break-words whitespace-pre-wrap">
+                  <p className="text-muted-foreground font-book mt-1 text-[13px] break-words whitespace-pre-wrap">
                     {entry.detail}
                   </p>
                 </li>

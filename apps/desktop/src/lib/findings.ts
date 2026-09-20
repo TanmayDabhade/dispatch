@@ -13,6 +13,30 @@ export interface FindingGroup {
   findings: Finding[];
 }
 
+const SEVERITY_LABEL: Record<FindingSeverity, string> = {
+  critical: 'Critical',
+  important: 'Important',
+  minor: 'Minor',
+};
+
+/** Sentence-case severity for the panel's pill: `Critical`, `Important`, `Minor`. */
+export function severityLabel(severity: FindingSeverity): string {
+  return SEVERITY_LABEL[severity];
+}
+
+// The pill's 8px dot: red for a critical finding, amber for an important one, and the muted
+// text colour for a minor one so it reads as a label rather than a warning.
+const SEVERITY_COLOR: Record<FindingSeverity, string> = {
+  critical: 'var(--red)',
+  important: 'var(--amber)',
+  minor: 'var(--text-muted)',
+};
+
+/** The CSS colour a severity's `LabelPill` dot paints in. */
+export function severityColor(severity: FindingSeverity): string {
+  return SEVERITY_COLOR[severity];
+}
+
 /** Open findings only, bucketed by severity in `SEVERITY_ORDER`; a severity
  *  with nothing open is omitted rather than rendered as an empty group. */
 export function groupOpenFindingsBySeverity(

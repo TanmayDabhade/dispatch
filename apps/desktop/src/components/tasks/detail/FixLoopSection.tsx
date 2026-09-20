@@ -6,21 +6,22 @@ import type { FixLoopTone } from '../../../lib/fixLoopStatus';
 import {
   fixLoopStatusLabel,
   fixLoopStopDetail,
+  fixLoopTint,
   fixLoopTone,
   fixLoopTraceLabel,
   willEscalateNextRound,
 } from '../../../lib/fixLoopStatus';
 import { MainSection } from './MainSection';
 import { cn } from '@/lib/utils';
-import { Button } from '@/ui/button';
+import { GroupHeader } from '@/ui/ai/group-header';
+import { PillButton } from '@/ui/ai/pill';
 
-// Only a loop actually waiting on a ruling gets the "needs you" amber
-// treatment; an errored one reads as a failure and the rest stay neutral.
-const FIX_LOOP_TONE_CLASS: Record<FixLoopTone, string> = {
-  waiting:
-    'border-state-waiting-edge bg-state-waiting-surface text-state-waiting',
-  failed: 'border-destructive/30 bg-destructive/10 text-destructive',
-  neutral: 'border-border/60',
+// The bar's glyph takes the tone colour; the bar itself stays a neutral group
+// header whose left edge picks up the same tint.
+const FIX_LOOP_ICON_CLASS: Record<FixLoopTone, string> = {
+  waiting: 'text-state-waiting',
+  failed: 'text-red',
+  neutral: 'text-muted-foreground',
 };
 
 // What the start button offers, or null when the loop is mid-flight or done and
@@ -44,6 +45,9 @@ function startAction(
   return null;
 }
 
+// The fix loop as a 36px group-header bar — glyph, status line, pill buttons at
+// the right — with the trace, stop detail, hints and errors as muted 12px lines
+// beneath it.
 export function FixLoopSection({
   fixLoop,
   escalation,
@@ -70,74 +74,62 @@ export function FixLoopSection({
     fixLoop !== null && willEscalateNextRound(fixLoop, escalation);
   const detail = fixLoop === null ? null : fixLoopStopDetail(fixLoop);
   const trace = fixLoop === null ? null : fixLoopTraceLabel(fixLoop);
+  const tone = fixLoop === null ? 'neutral' : fixLoopTone(fixLoop);
+  const hasLines =
+    escalates ||
+    trace !== null ||
+    detail !== null ||
+    action !== null ||
+    stoppable ||
+    startError !== null;
   return (
     <MainSection title="Fix loop">
-      <div
-        className={cn(
-          'flex flex-col gap-1 rounded-md border px-2.5 py-2 text-[13px]',
-          FIX_LOOP_TONE_CLASS[
-            fixLoop === null ? 'neutral' : fixLoopTone(fixLoop)
-          ]
-        )}
-      >
-        <div className="flex items-center gap-2">
-          <ShieldAlert className="size-3.5 shrink-0" />
-          <span>
-            {fixLoop === null
+      <div className="flex flex-col gap-1.5">
+        <GroupHeader
+          tint={fixLoopTint(tone)}
+          icon={
+            <ShieldAlert
+              aria-hidden
+              className={cn('size-3.5', FIX_LOOP_ICON_CLASS[tone])}
+            />
+          }
+          name={
+            fixLoop === null
               ? 'Not started — review and fixes run when you ask for them.'
-              : fixLoopStatusLabel(fixLoop)}
-          </span>
-          {escalates && (
-            <span className="text-muted-foreground ml-auto text-[11px]">
-              Next round hands off to a fresh implementer
-            </span>
-          )}
-        </div>
-        {trace !== null && (
-          <p className="text-muted-foreground pl-[1.375rem] text-[12px]">
-            Findings per pass: {trace}
-          </p>
-        )}
-        {detail !== null && (
-          <p className="pl-[1.375rem] text-[12px] whitespace-pre-wrap opacity-90">
-            {detail}
-          </p>
-        )}
-        {action !== null && (
-          <div className="flex items-center gap-2 pt-1 pl-[1.375rem]">
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={starting}
-              onClick={onStart}
-            >
-              {starting ? (
-                <Loader2 className="size-3 animate-spin" />
-              ) : (
-                <Wrench className="size-3" />
+              : fixLoopStatusLabel(fixLoop)
+          }
+          actions={
+            <>
+              {action !== null && (
+                <PillButton disabled={starting} onClick={onStart}>
+                  {starting ? <Loader2 className="animate-spin" /> : <Wrench />}
+                  {action.label}
+                </PillButton>
               )}
-              {action.label}
-            </Button>
-            <span className="text-muted-foreground text-[11px]">
-              {action.hint}
-            </span>
+              {stoppable && (
+                <PillButton onClick={onStop}>
+                  <Square />
+                  Stop
+                </PillButton>
+              )}
+            </>
+          }
+        />
+        {hasLines && (
+          <div className="text-muted-foreground font-book flex flex-col gap-0.5 px-2 text-[12px]">
+            {escalates && <p>Next round hands off to a fresh implementer.</p>}
+            {trace !== null && <p>Findings per pass: {trace}</p>}
+            {detail !== null && (
+              <p className="whitespace-pre-wrap text-(--text-secondary)">
+                {detail}
+              </p>
+            )}
+            {action !== null && <p>{action.hint}</p>}
+            {stoppable && (
+              <p>Stop caps the loop here; Review &amp; fix resumes it later.</p>
+            )}
+            {startError !== null && <p className="text-red">{startError}</p>}
           </div>
-        )}
-        {stoppable && (
-          <div className="flex items-center gap-2 pt-1 pl-[1.375rem]">
-            <Button size="xs" variant="outline" onClick={onStop}>
-              <Square className="size-3" />
-              Stop
-            </Button>
-            <span className="text-muted-foreground text-[11px]">
-              Cap the loop here; Review &amp; fix resumes it later.
-            </span>
-          </div>
-        )}
-        {startError !== null && (
-          <p className="text-destructive pl-[1.375rem] text-[12px]">
-            {startError}
-          </p>
         )}
       </div>
     </MainSection>

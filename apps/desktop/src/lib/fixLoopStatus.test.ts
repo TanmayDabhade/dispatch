@@ -7,6 +7,7 @@ import {
   fixLoopNeedsRuling,
   fixLoopStatusLabel,
   fixLoopStopDetail,
+  fixLoopTint,
   fixLoopTone,
   fixLoopTraceLabel,
   willEscalateNextRound,
@@ -117,6 +118,14 @@ describe('fixLoopTone', () => {
     expect(fixLoopTone(state({ state: 'capped', stopReason: 'error' }))).toBe(
       'failed'
     );
+  });
+});
+
+describe('fixLoopTint', () => {
+  test('amber for a loop waiting on a ruling, red for a failure, none otherwise', () => {
+    expect(fixLoopTint('waiting')).toBe('var(--amber)');
+    expect(fixLoopTint('failed')).toBe('var(--red)');
+    expect(fixLoopTint('neutral')).toBeUndefined();
   });
 });
 

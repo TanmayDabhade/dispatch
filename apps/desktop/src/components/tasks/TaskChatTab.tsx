@@ -1,14 +1,13 @@
 import type { RunMeta, RunQuestion } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
-import { MousePointerClick } from 'lucide-react';
+import { MessageSquare } from 'lucide-react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { useScopeRequest } from '../../hooks/useScopeRequest';
 import { isTerminalRunState } from '../../lib/runState';
 import { RunLogView } from '../runs/RunLogView';
-import { Button } from '@/ui/button';
+import { TabSkeleton } from './TabSkeleton';
 import { EmptyState } from '@/ui/chrome';
-import { Skeleton } from '@/ui/skeleton';
 
 // Shared empty array so a run with no open questions keeps the same prop
 // identity across renders.
@@ -49,15 +48,15 @@ export function TaskChatTab({
     return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <EmptyState
-          icon={MousePointerClick}
-          message="No agent has worked this task yet."
-          className="h-full justify-center p-0 [&_[data-slot=empty-description]]:text-[13px]"
-          action={
-            data.readyIds.has(doc.meta.id) ? (
-              <Button size="sm" onClick={onDispatch}>
-                Dispatch
-              </Button>
-            ) : undefined
+          icon={MessageSquare}
+          heading="No session yet"
+          description="No agent has worked this task yet. Dispatch it to open a session here."
+          className="h-full justify-center"
+          // `d` dispatches from anywhere on the task page (TaskPage's key handler).
+          primary={
+            data.readyIds.has(doc.meta.id)
+              ? { label: 'Dispatch', onClick: onDispatch, hint: 'D' }
+              : undefined
           }
         />
       </div>
@@ -68,15 +67,7 @@ export function TaskChatTab({
     data.runDetail === undefined ||
     data.runDetail.meta.id !== selectedRun.id
   ) {
-    return (
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <div className="flex flex-col gap-3 p-1">
-          <Skeleton className="h-6 w-48 rounded-md" />
-          <Skeleton className="h-32 rounded-md" />
-          <Skeleton className="h-32 rounded-md" />
-        </div>
-      </div>
-    );
+    return <TabSkeleton />;
   }
 
   return (
