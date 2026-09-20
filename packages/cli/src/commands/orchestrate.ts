@@ -214,13 +214,38 @@ export function registerOrchestrateCommands(
   program: Command,
   ctx: CliContext
 ): void {
+  program
+    .command('executors')
+    .description('List the executors the daemon can dispatch on')
+    .option('--json', 'print the executors as JSON')
+    .action(async (opts: { json?: boolean }) => {
+      const { client } = await daemonFor(ctx);
+      const info = await client.fetchExecutors();
+      if (opts.json === true) {
+        ctx.log(JSON.stringify(info, null, 2));
+        return;
+      }
+      for (const executor of info.executors) {
+        const notes = [
+          executor.name === info.default ? 'default' : undefined,
+          executor.reportsCost ? undefined : 'no cost reporting',
+          executor.enforcesCaps ? undefined : 'caps not enforced',
+        ].filter((note) => note !== undefined);
+        ctx.log(
+          notes.length === 0
+            ? executor.name
+            : `${executor.name}  (${notes.join(', ')})`
+        );
+      }
+    });
+
   const run = program
     .command('run')
     .description('Dispatch a new run, or inspect an existing one');
   run.addHelpText(
     'after',
     '\nDispatch a new run with:\n' +
-      '  dispatch run <task-id> [--executor claude|codex|fake] [--fresh] [--watch] [--json]\n' +
+      '  dispatch run <task-id> [--executor <name>] [--fresh] [--watch] [--json]\n' +
       '\nA task whose last run failed with its worktree intact is resumed rather\n' +
       'than started over; --fresh forces a new run. Resume a specific run with:\n' +
       '  dispatch run resume <run-id>'
@@ -228,7 +253,11 @@ export function registerOrchestrateCommands(
 
   run
     .command('dispatch <taskId>', { isDefault: true, hidden: true })
-    .option('--executor <name>', 'claude|codex|fake', 'claude')
+    .option(
+      '--executor <name>',
+      'an executor the daemon registered (see `dispatch executors`)',
+      'claude'
+    )
     .option(
       '--fresh',
       "start a new run even when the task's last run could be resumed"

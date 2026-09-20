@@ -161,6 +161,14 @@ export interface ExecutorProfile {
   permissionRefusal(permissionMode: string): string | null;
 }
 
+/** One registered executor as GET /api/executors reports it. */
+export interface ExecutorInfo {
+  name: string;
+  reportsCost: boolean;
+  reportsTurns: boolean;
+  enforcesCaps: boolean;
+}
+
 export const DEFAULT_EXECUTOR_PROFILE: ExecutorProfile = {
   reportsCost: true,
   reportsTurns: true,

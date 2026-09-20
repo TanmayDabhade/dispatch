@@ -784,6 +784,23 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     // value before writing, and that ConfigError becomes the 400 below.
     patch.models = body.models as Partial<ModelConfig>;
   }
+  if ('executor' in body) {
+    if (typeof body.executor !== 'string') {
+      return errorResponse(400, 'executor must be a string');
+    }
+    patch.executor = body.executor;
+  }
+  if ('executors' in body) {
+    if (
+      typeof body.executors !== 'object' ||
+      body.executors === null ||
+      Array.isArray(body.executors)
+    ) {
+      return errorResponse(400, 'executors must be an object');
+    }
+    // Like models: core's updateConfig validates each role before writing.
+    patch.executors = body.executors as NonNullable<ConfigPatch['executors']>;
+  }
   if ('linear' in body) {
     if (
       typeof body.linear !== 'object' ||
@@ -5136,6 +5153,19 @@ export async function handleApi(
     // enrich/"add detail" agents, task drafts, overseer chats), normalized for
     // the All agents page. Task runs are not repeated here: GET /api/runs
     // already lists them, and the client merges the two.
+    // GET /api/executors — what this daemon can dispatch on, so no client has
+    // to hard-code executor names.
+    if (
+      segments[0] === 'executors' &&
+      segments.length === 1 &&
+      method === 'GET'
+    ) {
+      return jsonResponse({
+        executors: ctx.orchestrator.describeExecutors(),
+        default: ctx.orchestrator.defaultExecutorName(),
+      });
+    }
+
     if (segments[0] === 'agents' && segments.length === 1 && method === 'GET') {
       return jsonResponse(
         buildAgentSessions(

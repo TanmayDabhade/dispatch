@@ -275,6 +275,13 @@ const DEFAULT_WEB_DIST_DIR = join(moduleDir, '..', '..', 'web', 'dist');
  * daemon that scaffolded files and then opened a database would find an empty
  * project and report nothing wrong.
  */
+// Codex is offered only when its CLI is actually installed, so no picker ever
+// lists an executor whose first run would die on spawn.
+export function registerCodexIfInstalled(orchestrator: Orchestrator): void {
+  if (Bun.which('codex') === null) return;
+  orchestrator.registerExecutor('codex', new CodexExecutor());
+}
+
 export function resolveStoreBackend(rootDir: string): TaskStoreBackend {
   const recorded = readProjectBackend(rootDir);
   if (recorded !== null) return recorded;
@@ -856,7 +863,7 @@ async function bootServer(
     opts.registerExecutors(orchestrator);
   } else {
     orchestrator.registerExecutor('claude', new ClaudeExecutor());
-    orchestrator.registerExecutor('codex', new CodexExecutor());
+    registerCodexIfInstalled(orchestrator);
   }
   // Questions an agent raised mid-run. A run going terminal drops its own, so
   // the app never shows a card whose answer nobody is listening for.

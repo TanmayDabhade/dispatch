@@ -81,6 +81,7 @@ import type {
   BranchEntryStatus,
   Executor,
   ExecutorEvents,
+  ExecutorInfo,
   ExecutorProfile,
   ExecutorStartOptions,
   NormalizedEntry,
@@ -461,6 +462,19 @@ export class Orchestrator {
   /** The executor a dispatch runs on when nobody names one: `orchestrator.executor`. */
   defaultExecutorName(): string {
     return this.orchestratorCaps().executor;
+  }
+
+  /** Every registered executor with its profile flags, for clients that offer a choice. */
+  describeExecutors(): ExecutorInfo[] {
+    return [...this.executors.keys()].sort().map((name) => {
+      const profile = this.executorProfile(name);
+      return {
+        name,
+        reportsCost: profile.reportsCost,
+        reportsTurns: profile.reportsTurns,
+        enforcesCaps: profile.enforcesCaps,
+      };
+    });
   }
 
   /** A registered executor's profile, or the Claude-shaped default for one that declares none. */

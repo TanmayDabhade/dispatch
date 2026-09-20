@@ -154,4 +154,19 @@ describe('overseer types mirror dispatchd', () => {
       expect(client).toEqual(server);
     });
   }
+
+  it('ExecutorInfo carries the same fields the daemon reports', () => {
+    const fields = (source: string): string[] | undefined =>
+      /export interface ExecutorInfo \{([\s\S]*?)\n\}/
+        .exec(source)?.[1]
+        .split('\n')
+        .map((line) => /^ {2}(\w+):/.exec(line)?.[1])
+        .filter((name): name is string => name !== undefined);
+    const server = fields(serverSource('orchestrator', 'types.ts'));
+    const client = fields(
+      readFileSync(join(import.meta.dir, '..', 'src', 'api.ts'), 'utf8')
+    );
+    expect(server).toBeDefined();
+    expect(client).toEqual(server);
+  });
 });
