@@ -318,8 +318,9 @@ test('live runs on a milestone with a session group under its section row', () =
       })}
     />
   );
+  // The count and spend are in the name too — they are what the row exists to show.
   const section = screen.getByRole('button', {
-    name: 'Auth rewrite milestone',
+    name: 'Auth rewrite milestone · 2 running · $41.20 / $60',
   });
   expect(section.className).toContain('h-7');
   expect(section.textContent).toContain('Auth rewrite');
@@ -330,11 +331,19 @@ test('live runs on a milestone with a session group under its section row', () =
     .getAllByRole('button')
     .map((button) => button.getAttribute('aria-label'));
   expect(names).toEqual([
-    'Auth rewrite milestone',
+    'Auth rewrite milestone · 2 running · $41.20 / $60',
     'Rotate the tokens',
     'Rewrite the login',
     'Loose run',
   ]);
+
+  // The rows under the section indent; the loose row does not.
+  expect(
+    screen.getByRole('button', { name: 'Rotate the tokens' }).className
+  ).toContain('pl-6');
+  expect(
+    screen.getByRole('button', { name: 'Loose run' }).className
+  ).not.toContain('pl-6');
 
   fireEvent.click(section);
   expect(opened).toEqual(['e-1']);
@@ -362,7 +371,30 @@ test('a milestone with no epic doc is named by its id', () => {
       })}
     />
   );
-  expect(screen.getByRole('button', { name: 'e-1 milestone' })).toBeDefined();
+  expect(
+    screen.getByRole('button', {
+      name: 'e-1 milestone · 1 running · $41.20 / $60',
+    })
+  ).toBeDefined();
+});
+
+test('a paused session reads as held rather than working', () => {
+  const paused = session('e-1', ['t-1']);
+  paused.session = { ...paused.session!, state: 'paused', active: false };
+  const { container } = render(
+    <LiveRail
+      {...railProps({
+        runs: [run({ taskId: 't-1' })],
+        sessions: [paused],
+        epics: [epicDoc('e-1', 'Auth rewrite')],
+      })}
+    />
+  );
+  const section = container.querySelector(
+    '[data-slot="live-rail-group"] > button'
+  );
+  expect(section?.querySelector('svg.lucide-ban')).not.toBeNull();
+  expect(section?.querySelector('svg.lucide-loader-circle')).toBeNull();
 });
 
 test('a session with nothing live adds no section row', () => {

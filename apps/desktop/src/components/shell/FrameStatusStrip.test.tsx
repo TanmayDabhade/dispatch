@@ -119,6 +119,13 @@ test('spend shows only once there is spend', () => {
     </TooltipProvider>
   );
   expect(screen.getByText('$4.50 today')).toBeTruthy();
+  // Whole dollars drop the cents, the same rule as the ceilings readout beside it.
+  rerender(
+    <TooltipProvider>
+      <FrameStatusStrip {...props} spendToday={12} />
+    </TooltipProvider>
+  );
+  expect(screen.getByText('$12 today')).toBeTruthy();
 });
 
 test('the Overseer link opens the overseer', () => {

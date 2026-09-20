@@ -137,7 +137,7 @@ export function FrameStatusStrip({
           worth the pixels once there is a cost. */}
       {showToday && (
         <span className="text-muted-foreground font-book tabular-nums">
-          ${spendToday.toFixed(2)} today
+          {formatUsd(spendToday)} today
         </span>
       )}
       {/* Only while a fan-out is live: the strip is the one place the whole fleet's

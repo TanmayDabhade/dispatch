@@ -116,6 +116,9 @@ export function LiveRail({
       )}
       {live.groups.map(({ progress, rows }) => {
         const title = epicTitleById.get(progress.epicId) ?? progress.epicId;
+        // Live count then spend against the ceiling, the milestone header's pill in one
+        // line — `$41.20 / $60`, or the settled figure alone with no ceiling.
+        const meta = `${rows.length} running · ${spendPillLabel(progress.spend)}`;
         return (
           <div
             key={progress.epicId}
@@ -125,16 +128,18 @@ export function LiveRail({
             <button
               type="button"
               onClick={() => onOpenMilestone?.(progress.epicId)}
-              aria-label={`${title} milestone`}
+              aria-label={`${title} milestone · ${meta}`}
               className={cn(SIDEBAR_ROW_CLASS, SIDEBAR_ROW_INACTIVE_CLASS)}
             >
-              <StateMark state="working" />
+              {/* A budget-paused session still drains its last runs; the mark says held,
+                  not working, so the rail agrees with the milestone header. */}
+              <StateMark
+                state={
+                  progress.session?.state === 'paused' ? 'blocked' : 'working'
+                }
+              />
               <span className="min-w-0 flex-1 truncate">{title}</span>
-              {/* Live count then spend against the ceiling, the milestone header's pill in
-                  one line — `$41.20 / $60`, or the settled figure alone with no ceiling. */}
-              <MetaText className="shrink-0 text-[11px]">
-                {`${rows.length} running · ${spendPillLabel(progress.spend)}`}
-              </MetaText>
+              <MetaText className="shrink-0 text-[11px]">{meta}</MetaText>
             </button>
             {rows.map((row) => (
               <RunRow

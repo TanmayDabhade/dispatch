@@ -12,7 +12,7 @@ export interface LiveRailRow {
 }
 
 /** The live rows under one milestone with a fan-out session, in `runs`' own order. */
-export interface LiveRailGroup {
+interface LiveRailGroup {
   progress: EpicProgress;
   rows: LiveRailRow[];
 }
