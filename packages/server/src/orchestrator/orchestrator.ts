@@ -36,6 +36,9 @@ import type { EventBus } from '../events.js';
 import { FindingStore } from '../findings.js';
 import type { FindingStorePort } from '../findings.js';
 import { GitRepo } from '../git/commands.js';
+import type { JudgmentClient } from '../judgments/client.js';
+import { judgeRunModel } from '../judgments/modelTier.js';
+import type { RunModelChoice } from '../judgments/modelTier.js';
 import { LedgerStore } from '../ledger.js';
 import type { LedgerStorePort } from '../ledger.js';
 import { dirSizeBytes } from './dirSize.js';
@@ -168,6 +171,9 @@ export interface OrchestratorContext {
   // it creates — see the `carry` call there. Optional: a test that never
   // resumes across a restart has nothing to carry.
   scopeRequests?: ScopeRequestCarrier;
+  // The TypeSafe judgment client, or null/absent when none is configured —
+  // only the fresh-dispatch model tier consults it (see modelForFreshRun).
+  judgments?: JudgmentClient | null;
 }
 
 /** The one thing the orchestrator asks of the scope-request registry. */
@@ -1941,22 +1947,49 @@ export class Orchestrator {
     }
     const executorName =
       request.executor ?? request.defaults?.executor ?? DEFAULT_EXECUTOR_NAME;
-    return await this.dispatch(taskId, executorName, {
-      // The project's configured `models.execute` is the last fallback, so a
-      // caller that resolves no default still lands where settings chose. It
-      // sits at the same precedence as `defaults.model` — after anything the
-      // caller NAMED — so the named-vs-defaulted distinction resume turns on
-      // is untouched (resumeHonoursRequest has already run, on the raw
-      // request). Resolving this per caller instead is what silently ran a
-      // whole 2026-09-08 fleet on the CLI's default model: only the HTTP
-      // route passed `defaults`, while the epic auto-fill and the overseer's
-      // dispatch tool passed none, and the config key looked ignored.
-      model:
-        request.model ??
-        request.defaults?.model ??
-        loadConfig(this.ctx.rootDir).models.execute,
+    const { model, reason } = await this.modelForFreshRun(taskId, request);
+    const meta = await this.dispatch(taskId, executorName, {
+      model,
       actor: request.actor,
     });
+    if (reason !== null) {
+      // Logged on the task so a run on the cheaper tier is explainable from
+      // the task view, next to the finish line the run will write later.
+      this.bestEffort(`recording model choice for run ${meta.id}`, () => {
+        this.ctx.store.update(taskId, {
+          appendActivity: `${new Date().toISOString()} [run ${meta.id}] model ${model}: ${reason}`,
+        });
+      });
+    }
+    return meta;
+  }
+
+  // The model a fresh dispatch runs on. Anything the caller NAMED wins, so
+  // the named-vs-defaulted distinction resume turns on is untouched
+  // (resumeHonoursRequest has already run, on the raw request). With nothing
+  // named, a judgment may lower the tier for routine, small work (see
+  // judgments/modelTier.ts); otherwise the caller's default, then the
+  // project's configured `models.execute` as the last fallback, so a caller
+  // that resolves no default still lands where settings chose. Resolving
+  // that per caller instead is what silently ran a whole 2026-09-08 fleet on
+  // the CLI's default model: only the HTTP route passed `defaults`, while the
+  // epic auto-fill and the overseer's dispatch tool passed none, and the
+  // config key looked ignored.
+  private async modelForFreshRun(
+    taskId: string,
+    request: { model?: string; defaults?: { model?: string } }
+  ): Promise<RunModelChoice> {
+    if (request.model !== undefined) {
+      return { model: request.model, reason: null };
+    }
+    const models = loadConfig(this.ctx.rootDir).models;
+    const task = this.ctx.store.get(taskId);
+    const judgments = this.ctx.judgments ?? null;
+    if (task !== null && judgments !== null) {
+      const judged = await judgeRunModel(judgments, task, models);
+      if (judged.reason !== null) return judged;
+    }
+    return { model: request.defaults?.model ?? models.execute, reason: null };
   }
 
   // Whether resuming `run` would actually give the caller what it asked for. A

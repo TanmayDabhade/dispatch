@@ -825,11 +825,19 @@ async function bootServer(
   const scopeRequests = new ScopeRequestRegistry({
     path: scopeRequestsPath(rootDir),
   });
+  // The TypeSafe judgment client, resolved once at boot: a key added later
+  // needs a restart, same as the executors. Tests pass `judgments`
+  // explicitly (null disables).
+  const judgments =
+    opts.judgments === undefined
+      ? createJudgmentClient(rootDir)
+      : opts.judgments;
   const orchestrator = new Orchestrator({
     rootDir,
     store,
     cache,
     scopeRequests,
+    judgments,
     events,
     jj,
     ledgerStore,
@@ -859,13 +867,6 @@ async function bootServer(
       events.broadcast({ type: 'question.closed', runId: meta.id });
     }
   });
-  // The TypeSafe judgment client, resolved once at boot: a key added later
-  // needs a restart, same as the executors. Tests pass `judgments`
-  // explicitly (null disables).
-  const judgments =
-    opts.judgments === undefined
-      ? createJudgmentClient(rootDir)
-      : opts.judgments;
   // A coding run that finished cleanly gets its diff checked against the
   // task's requirements (see judgments/landingChecklist.ts). Fire-and-forget
   // off the terminal transition: the checklist is an annotation on the
