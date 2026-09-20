@@ -536,4 +536,25 @@ describe('buildLandingSnapshot', () => {
     });
     expect(result.generatedAt).toBe(NOW);
   });
+
+  test('a run row carries its checklist summary when one exists, and nothing otherwise', () => {
+    const judged = run({ id: 'r-1', state: 'finished' });
+    const unjudged = run({ id: 'r-2', taskId: 't-2', state: 'finished' });
+    const result = buildLandingSnapshot({
+      runs: [judged, unjudged],
+      queue: snapshot(),
+      openPrs: [],
+      mergedPrs: [],
+      worktrees: NO_WORKTREES,
+      checklists: new Map([['r-1', { passed: 2, total: 3, weak: ['docs'] }]]),
+      now: NOW,
+    });
+    const byRun = new Map(result.rows.map((row) => [row.runId, row]));
+    expect(byRun.get('r-1')?.checklist).toEqual({
+      passed: 2,
+      total: 3,
+      weak: ['docs'],
+    });
+    expect(byRun.get('r-2')?.checklist).toBeUndefined();
+  });
 });

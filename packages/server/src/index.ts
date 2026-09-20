@@ -53,6 +53,7 @@ import { InboxStore } from './inbox.js';
 import type { InboxClusterer } from './inboxClusterer.js';
 import { createJudgmentClient } from './judgments/client.js';
 import type { JudgmentClient } from './judgments/client.js';
+import { computeChecklist } from './judgments/landingChecklist.js';
 import { LedgerStore } from './ledger.js';
 import type { LedgerStorePort } from './ledger.js';
 import type { LinearClient } from './linear/client.js';
@@ -85,7 +86,7 @@ import {
 } from './orchestrator/repoDigest.js';
 import { ReviewRunner } from './orchestrator/review.js';
 import { ScopeRequestRegistry } from './orchestrator/scopeRequests.js';
-import { TERMINAL_RUN_STATES } from './orchestrator/types.js';
+import { runKind, TERMINAL_RUN_STATES } from './orchestrator/types.js';
 import { VerificationRunner } from './orchestrator/verify.js';
 import {
   policyActivityAppender,
@@ -858,6 +859,35 @@ async function bootServer(
       events.broadcast({ type: 'question.closed', runId: meta.id });
     }
   });
+  // The TypeSafe judgment client, resolved once at boot: a key added later
+  // needs a restart, same as the executors. Tests pass `judgments`
+  // explicitly (null disables).
+  const judgments =
+    opts.judgments === undefined
+      ? createJudgmentClient(rootDir)
+      : opts.judgments;
+  // A coding run that finished cleanly gets its diff checked against the
+  // task's requirements (see judgments/landingChecklist.ts). Fire-and-forget
+  // off the terminal transition: the checklist is an annotation on the
+  // landing row, so nothing waits on it, and a missing diff just means no
+  // checklist.
+  orchestrator.onRunTerminal((meta) => {
+    if (meta.state !== 'finished' || runKind(meta) !== 'execute') return;
+    if (judgments === null) return;
+    const task = store.get(meta.taskId);
+    if (task === null) return;
+    let diff;
+    try {
+      diff = orchestrator.diff(meta.id);
+    } catch {
+      return;
+    }
+    void computeChecklist(judgments, rootDir, meta, task, diff).then(
+      (checklist) => {
+        if (checklist !== null) events.broadcast({ type: 'run.changed' });
+      }
+    );
+  });
   // Same lifecycle for out-of-scope edit requests: a run that ends still
   // holding one open should not leave it dangling for a human to find later.
   // A boot force-fail is deliberately NOT a terminal transition here (see
@@ -1200,13 +1230,6 @@ async function bootServer(
     appendActivity: policyActivityAppender({ store, cache, events }),
   });
   const stopPolicyEngine = policyEngine.start();
-
-  // Resolved once at boot: a key added later needs a restart, same as the
-  // executors. Tests pass `judgments` explicitly (null disables).
-  const judgments =
-    opts.judgments === undefined
-      ? createJudgmentClient(rootDir)
-      : opts.judgments;
 
   const apiCtx: ApiContext = {
     rootDir,

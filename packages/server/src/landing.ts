@@ -1,3 +1,4 @@
+import type { ChecklistSummary } from './judgments/landingChecklist.js';
 // The landing feed: a pure join of runs, the merge queue, and PRs into rows
 // plus landed history. No I/O, no Date.now — `now` is injected by the caller.
 import type {
@@ -40,6 +41,9 @@ interface LandingRow {
   queue?: { position: number; entry: MergeQueueEntry };
   gate: LandingGate;
   worktree?: LandingWorktree;
+  /** How many of the task's requirements the run's diff was judged to
+   *  implement, when a checklist was computed for it. Annotation only. */
+  checklist?: ChecklistSummary;
 }
 
 interface LandedRow {
@@ -207,9 +211,12 @@ export function buildLandingSnapshot(input: {
   openPrs: RepoPr[];
   mergedPrs: RepoPr[];
   worktrees: Map<number, LandingWorktree>;
+  /** Checklists by run id; a row whose run has none simply carries none. */
+  checklists?: Map<string, ChecklistSummary>;
   now: string;
 }): LandingSnapshot {
   const { runs, queue, openPrs, mergedPrs, worktrees, now } = input;
+  const checklists = input.checklists ?? new Map<string, ChecklistSummary>();
   const queueByRunId = indexQueueByRunId(queue.entries);
   const prByUrl = new Map(openPrs.map((pr) => [pr.url, pr]));
   const mergedPrByUrl = new Map(mergedPrs.map((pr) => [pr.url, pr]));
@@ -276,6 +283,8 @@ export function buildLandingSnapshot(input: {
         gate,
       };
     }
+    const checklist = checklists.get(run.id);
+    if (checklist !== undefined) row.checklist = checklist;
     sortable.push({
       row,
       group,

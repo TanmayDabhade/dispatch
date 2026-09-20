@@ -46,6 +46,13 @@ export function diffSnapshotPath(rootDir: string, runId: string): string {
   return join(runsDir(rootDir), `${runId}.diff.json`);
 }
 
+// Where a finished run's requirement checklist (see
+// judgments/landingChecklist.ts) lives — beside the diff snapshot it was
+// judged from, so both outlive the worktree.
+export function checklistPath(rootDir: string, runId: string): string {
+  return join(runsDir(rootDir), `${runId}.checklist.json`);
+}
+
 // Where a review target's comments live — the line-level notes a human
 // leaves on its diff. Kept alongside the transcript and diff snapshot rather
 // than in the worktree, for the same reason the snapshot is: every review

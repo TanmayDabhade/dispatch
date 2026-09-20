@@ -1353,6 +1353,24 @@ export interface LandingRow {
   queue?: { position: number; entry: MergeQueueEntry };
   gate: LandingGate;
   worktree?: LandingWorktree;
+  /** How many of the task's requirements the run's diff was judged to
+   * implement, when a checklist exists for it. `weak` lists the ones below
+   * 0.5 — worth a human look. Annotation only; never gates a merge. */
+  checklist?: { passed: number; total: number; weak: string[] };
+}
+
+/** A finished run's diff judged against its task's requirements — mirrors
+ * RunChecklist in packages/server/src/judgments/landingChecklist.ts. */
+export interface RunChecklist {
+  runId: string;
+  taskId: string;
+  items: { text: string; probability: number }[];
+  passed: number;
+  total: number;
+  weak: string[];
+  /** Probability the diff changes behaviour no requirement asks for. */
+  scopeCreep: number;
+  createdAt: string;
 }
 
 // Mirrors LandedRow in packages/server/src/landing.ts — one entry in the
@@ -1854,6 +1872,8 @@ export interface ApiClient {
   // agent instead, and the run's Activity/transcript say so.
   resumeRun(runId: string): Promise<RunMeta>;
   fetchRunDiff(runId: string): Promise<DiffResult>;
+  /** The run's requirement checklist; 404s until the finish hook wrote one. */
+  fetchRunChecklist(runId: string): Promise<RunChecklist>;
   reviewRun(
     runId: string,
     action: 'merge' | 'discard' | 'pr'
@@ -2405,6 +2425,8 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     resumeRun: (runId) =>
       request(target, `/api/runs/${runId}/resume`, { method: 'POST' }),
     fetchRunDiff: (runId) => request(target, `/api/runs/${runId}/diff`),
+    fetchRunChecklist: (runId) =>
+      request(target, `/api/runs/${runId}/checklist`),
     reviewRun: (runId, action) =>
       request(target, `/api/runs/${runId}/review`, {
         method: 'POST',

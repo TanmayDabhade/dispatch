@@ -94,6 +94,11 @@ import {
   triageInbox,
   untriagedForClustering,
 } from './judgments/inboxTriage.js';
+import {
+  checklistSummary,
+  readChecklist,
+} from './judgments/landingChecklist.js';
+import type { ChecklistSummary } from './judgments/landingChecklist.js';
 import { readinessFor, ReadinessStore } from './judgments/readiness.js';
 import { buildLandingSnapshot } from './landing.js';
 import type { LedgerStorePort } from './ledger.js';
@@ -2389,12 +2394,21 @@ async function getLandingSnapshot(ctx: ApiContext): Promise<Response> {
       toLandingWorktree(state, headRefOidByNumber.get(state.prNumber)),
     ])
   );
+  // One small file read per terminal run; the checklist is written once
+  // when the run finishes and never changes after.
+  const runs = ctx.orchestrator.list();
+  const checklists = new Map<string, ChecklistSummary>();
+  for (const run of runs) {
+    const checklist = readChecklist(ctx.rootDir, run.id);
+    if (checklist !== null) checklists.set(run.id, checklistSummary(checklist));
+  }
   const snapshot = buildLandingSnapshot({
-    runs: ctx.orchestrator.list(),
+    runs,
     queue: ctx.mergeQueue.snapshot(),
     openPrs,
     mergedPrs,
     worktrees,
+    checklists,
     now: new Date().toISOString(),
   });
   return jsonResponse(snapshot);
@@ -4414,6 +4428,18 @@ export async function handleApi(
       }
       if (segments.length === 3 && segments[2] === 'diff' && method === 'GET') {
         return jsonResponse(ctx.orchestrator.diff(segments[1]));
+      }
+      // GET /api/runs/:id/checklist — the run's requirement checklist; 404
+      // until the finish hook has written one (or ever, without a client).
+      if (
+        segments.length === 3 &&
+        segments[2] === 'checklist' &&
+        method === 'GET'
+      ) {
+        const checklist = readChecklist(ctx.rootDir, segments[1]);
+        return checklist === null
+          ? errorResponse(404, `no checklist for run: ${segments[1]}`)
+          : jsonResponse(checklist);
       }
       if (segments.length === 3 && segments[2] === 'file' && method === 'GET') {
         return await readRunFile(req, ctx, segments[1]);
