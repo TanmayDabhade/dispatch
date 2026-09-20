@@ -704,10 +704,6 @@ export type ServerEvent =
   | { type: 'config.changed' }
   // A task draft changed state or was dismissed — no id, refetch the list.
   | { type: 'draft.changed' }
-  // A overseer conversation advanced (turn settled, action queued or decided) —
-  // same "go refetch, no payload beyond the id" contract as `plan.changed`.
-  // Mirrors packages/server/src/events.ts exactly.
-  | { type: 'overseer.changed'; conversationId: string }
   // A run agent's question was asked, answered, or withdrawn. Mirrors
   // packages/server/src/events.ts.
   | { type: 'question.asked'; runId: string; questionId: string }
@@ -735,6 +731,25 @@ export type ServerEvent =
       reason: FixLoopStop;
       message?: string;
     }
+  // An epic's dispatch session changed: started, paused, resumed, stopped,
+  // completed, or a fill dispatched a batch. Same "go refetch, no payload
+  // beyond the id" contract as `plan.changed`. Mirrors
+  // packages/server/src/events.ts.
+  | { type: 'epic.changed'; epicId: string }
+  // An epic's session paused on its own (a ceiling or a fill that kept
+  // failing — never a human's pause). Carries the spend numbers like
+  // `fixloop.capped` so a client can toast the reason without a fetch.
+  | {
+      type: 'epic.paused';
+      epicId: string;
+      reason: EpicPauseReason;
+      settledUsd: number;
+      estimatedLiveUsd: number;
+      maxSpendUsd: number | null;
+      runsStarted: number;
+      maxRuns: number | null;
+      detail?: string;
+    }
   // A run was surveyed on reaching `failed`/`interrupted-dirty`. Mirrors
   // packages/server/src/events.ts.
   | { type: 'run.survey'; runId: string; survey: RunSurvey }
@@ -748,6 +763,11 @@ export type ServerEvent =
   // The receipts exporter attempted an export of the git audit trail. The
   // database backend's counterpart to `board.sync`.
   | { type: 'receipts.export'; result: ReceiptsResult }
+  // The decision feed's contents changed: something started or stopped
+  // awaiting a human. Same "go refetch" contract as task.changed — the feed
+  // is derived on every read, so there is no increment to carry. Mirrors
+  // packages/server/src/events.ts exactly.
+  | { type: 'decisions.changed' }
   // The PR poll's cached repo-PR set changed (a delta in number, head sha,
   // state, mergeable, review decision, checks, draft-ness, or updatedAt) —
   // refetch GET /api/landing. No payload: the cache itself is the source of
@@ -890,6 +910,9 @@ export interface PlanRecord {
   createdAt: string;
   updatedAt: string;
   confirmedAt?: string;
+  /** The epic `confirmPlan` minted for this plan, when the proposal carried
+   * one, so a row can link straight to its milestone. Absent on a flat plan. */
+  epicId?: string;
   /** Set when the plan was started from a note via `enrichNote` — the note
    * whose one-liner the planner was asked to expand into a task. Confirming
    * such a plan links that note to the task it creates. */
@@ -915,6 +938,7 @@ export interface PlanSummary {
   createdAt: string;
   updatedAt: string;
   confirmedAt?: string;
+  epicId?: string;
 }
 
 // Mirrors DraftRecord in packages/server/src/orchestrator/plan.ts — the body
@@ -1051,27 +1075,113 @@ export interface AgentSessionMeta {
   updatedAt: string;
 }
 
-// Mirrors EpicSession in packages/server/src/orchestrator/epic.ts.
+// Mirrors EpicSessionState / EpicPauseReason in
+// packages/server/src/orchestrator/epic.ts.
+export type EpicSessionState = 'active' | 'paused' | 'stopped' | 'complete';
+export type EpicPauseReason = 'human' | 'budget' | 'runs' | 'fill-failed';
+
+// Mirrors EpicSession in packages/server/src/orchestrator/epic.ts — the body
+// of `POST /api/epics/:id/dispatch`, `/pause`, `/resume` and `/stop`.
 export interface EpicSession {
   epicId: string;
   concurrency: number;
-  active: boolean;
+  executor: string;
+  state: EpicSessionState;
+  /** Set while paused, cleared on resume. */
+  pausedReason?: EpicPauseReason;
+  /** The message behind a `fill-failed` pause. */
+  pausedDetail?: string;
+  /** `null` = no spend ceiling. */
+  maxSpendUsd: number | null;
+  /** `null` = no run ceiling. */
+  maxRuns: number | null;
+  startedAt: string;
+  updatedAt: string;
   completedAt?: string;
+  /** `state === 'active'` — kept for `formatEpicProgress` and `--watch`. */
+  active: boolean;
 }
 
+// Mirrors EpicSpend in packages/server/src/orchestrator/epicPhase.ts: what
+// one session has spent and started, against its ceilings.
+export interface EpicSpend {
+  /** Σ `RunMeta.costUsd` over the session's runs (stamped at finish). */
+  settledUsd: number;
+  /** Non-terminal session runs, any kind. */
+  liveCount: number;
+  /** `liveCount × orchestrator.runCostEstimateUsd`. */
+  estimatedLiveUsd: number;
+  /** Session runs of every kind — what `maxRuns` bounds. */
+  runsStarted: number;
+  maxSpendUsd: number | null;
+  maxRuns: number | null;
+}
+
+// Mirrors EpicChildPhase in packages/server/src/orchestrator/epicPhase.ts:
+// where a child stands inside its epic's fan-out, derived server-side so the
+// CLI and desktop agree.
+export type EpicChildPhase =
+  | 'draft'
+  | 'waiting'
+  | 'queued'
+  | 'held'
+  | 'working'
+  | 'reviewing'
+  | 'fixing'
+  | 'needs-review'
+  | 'capped'
+  | 'failed'
+  | 'blocked'
+  | 'landing'
+  | 'landed'
+  | 'dropped';
+
+// Mirrors EpicProgressChild in packages/server/src/orchestrator/epicPhase.ts.
 export interface EpicProgressChild {
   id: string;
   title: string;
   status: string;
+  phase: EpicChildPhase;
+  /** Depth along `blockedBy` edges inside the epic, 1-based. */
+  wave: number;
+  reason?: string;
+  /** The live run, else the latest one. */
+  runId?: string;
+  /** The latest run's cost. */
+  costUsd?: number;
+  openFindings: number;
 }
 
-// The body of `GET /api/epics/:id/progress`.
+// Mirrors EpicWave in packages/server/src/orchestrator/epicPhase.ts.
+export interface EpicWave {
+  index: number;
+  total: number;
+  byPhase: Partial<Record<EpicChildPhase, number>>;
+}
+
+// Mirrors EpicProgress in packages/server/src/orchestrator/epic.ts — the
+// body of `GET /api/epics/:id/progress` (and one row of `GET
+// /api/epics/progress`).
 export interface EpicProgress {
   epicId: string;
   active: boolean;
   concurrency?: number;
+  /** `null` until the epic's first `startEpic`. */
+  session: EpicSession | null;
+  /** For the session's runs, or for every child run when there is none. */
+  spend: EpicSpend;
   children: EpicProgressChild[];
+  waves: EpicWave[];
   liveRuns: RunMeta[];
+}
+
+/** The optional body `startEpic` and `resumeEpic` take. `null` lifts a
+ * ceiling; the server ranges every value and 400s out of range. */
+export interface EpicSessionOptions {
+  concurrency?: number;
+  executor?: string;
+  maxSpendUsd?: number | null;
+  maxRuns?: number | null;
 }
 
 /**
@@ -2090,6 +2200,8 @@ export interface ApiClient {
     autoCommit?: boolean;
     epicConcurrency?: number;
     verifyTimeoutSec?: number;
+    maxConcurrency?: number;
+    runCostEstimateUsd?: number;
     permissionMode?: string;
     models?: Partial<ModelConfig>;
     linear?: {
@@ -2234,13 +2346,20 @@ export interface ApiClient {
     decision: { allow: boolean; scope?: 'once' | 'session'; reason?: string }
   ): Promise<OverseerRecord>;
   // Phase 5 P2: epic-level concurrent dispatch. `concurrency` defaults
-  // server-side to the project's `orchestrator.epicConcurrency` config.
-  startEpic(
+  // server-side to the project's `orchestrator.epicConcurrency` config;
+  // `maxSpendUsd`/`maxRuns` are ceilings that pause the session when reached.
+  startEpic(epicId: string, opts?: EpicSessionOptions): Promise<EpicSession>;
+  /** Halts new dispatches; live runs continue. 409 unless the session is active. */
+  pauseEpic(epicId: string): Promise<EpicSession>;
+  /** Fills again, optionally with new ceilings or concurrency. 409 unless paused. */
+  resumeEpic(
     epicId: string,
-    opts?: { concurrency?: number; executor?: 'fake' | 'claude' }
+    opts?: Omit<EpicSessionOptions, 'executor'>
   ): Promise<EpicSession>;
   stopEpic(epicId: string): Promise<EpicSession>;
   fetchEpicProgress(epicId: string): Promise<EpicProgress>;
+  /** Progress for every non-archived epic, `session: null` where never started. */
+  fetchAllEpicProgress(): Promise<EpicProgress[]>;
   // Lands a finished epic branch on the default base — one PR (when the
   // project has the `pr` capability) or one local merge. 409s with the
   // server's reason when the epic is only partially done.
@@ -2789,10 +2908,18 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
         ...jsonBody(opts),
       }),
+    pauseEpic: (epicId) =>
+      request(target, `/api/epics/${epicId}/pause`, { method: 'POST' }),
+    resumeEpic: (epicId, opts = {}) =>
+      request(target, `/api/epics/${epicId}/resume`, {
+        method: 'POST',
+        ...jsonBody(opts),
+      }),
     stopEpic: (epicId) =>
       request(target, `/api/epics/${epicId}/stop`, { method: 'POST' }),
     fetchEpicProgress: (epicId) =>
       request(target, `/api/epics/${epicId}/progress`),
+    fetchAllEpicProgress: () => request(target, '/api/epics/progress'),
     landEpic: (epicId) =>
       request(target, `/api/epics/${epicId}/land`, { method: 'POST' }),
     fetchEpicDiff: (epicId) => request(target, `/api/epics/${epicId}/diff`),

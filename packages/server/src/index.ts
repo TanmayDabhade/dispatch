@@ -944,6 +944,7 @@ async function bootServer(
     cache,
     events,
     orchestrator,
+    findingStore,
     actorContext,
   });
 
@@ -1170,6 +1171,14 @@ async function bootServer(
   const resumedLoops = fixLoop.resumeOnBoot();
   if (resumedLoops > 0) {
     console.log(`dispatchd: resumed ${resumedLoops} stalled fix loop(s)`);
+  }
+  // The engine reads child phases off the loop; bound here because the loop
+  // is constructed after it. Its own sessions re-arm on a delay (see
+  // EpicEngine.resumeOnBoot) so the orchestrator's auto-resume goes first.
+  epicEngine.bindFixLoop(fixLoop);
+  const resumedEpics = epicEngine.resumeOnBoot();
+  if (resumedEpics > 0) {
+    console.log(`dispatchd: re-armed ${resumedEpics} epic dispatch session(s)`);
   }
 
   // One feed of everything awaiting a human, derived from the registries above

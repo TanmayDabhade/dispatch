@@ -157,6 +157,12 @@ describe('PlanManager.confirm', () => {
     expect(implement?.meta.blockedBy).toEqual([designId]);
     expect(implement?.meta.priority).toBe('medium');
     expect(implement?.body).toContain('Tests pass');
+
+    // The record and its list row remember the epic confirm() minted.
+    expect(manager.get(started.id).epicId).toBe(result.epicId);
+    expect(manager.list().find((r) => r.id === started.id)?.epicId).toBe(
+      result.epicId
+    );
   });
 
   it('leaves an epic Activity note when a confirmed task has no declared writes', async () => {
@@ -267,6 +273,8 @@ describe('PlanManager.confirm', () => {
     expect(result.epicId).toBeUndefined();
     const task = store.get(result.taskIds[0]);
     expect(task?.meta.parent).toBeNull();
+    expect(manager.get(started.id).epicId).toBeUndefined();
+    expect(manager.get(started.id).confirmedAt).toBeDefined();
   });
 
   it('404s confirming an unknown plan id', () => {

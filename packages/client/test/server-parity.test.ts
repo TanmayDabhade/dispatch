@@ -85,6 +85,105 @@ function fields(source: string, name: string): string[] | null {
   return [...body.matchAll(/\n {2}(\w+\??):/g)].map((m) => m[1]);
 }
 
+// The `type: '…'` discriminants of the `export type ServerEvent =` union, in
+// declaration order. The block ends at the first `};` — members' own `;`s
+// always follow a field, never a closing brace.
+function eventTypes(source: string): string[] | null {
+  const body = /export type ServerEvent =([\s\S]*?\});/.exec(source)?.[1];
+  if (body === undefined) return null;
+  return [...body.matchAll(/type: '([^']+)'/g)].map((m) => m[1]);
+}
+
+describe('events mirror dispatchd', () => {
+  it('ServerEvent carries the same variants the daemon broadcasts', () => {
+    const server = eventTypes(serverSource('events.ts'));
+    const client = eventTypes(clientSource());
+    expect(server).not.toBeNull();
+    expect(client).not.toBeNull();
+    const byName = (a: string, b: string): number => a.localeCompare(b);
+    expect([...(client ?? [])].sort(byName)).toEqual(
+      [...(server ?? [])].sort(byName)
+    );
+  });
+
+  it('epic.paused declares the same fields with the same optionality', () => {
+    const member = (source: string): string[] | null => {
+      const body = /\{\n {6}type: 'epic\.paused';([\s\S]*?)\n {4}\}/.exec(
+        source
+      )?.[1];
+      if (body === undefined) return null;
+      return [...body.matchAll(/\n {6}(\w+\??):/g)].map((m) => m[1]);
+    };
+    const server = member(serverSource('events.ts'));
+    const client = member(clientSource());
+    expect(server).not.toBeNull();
+    expect(client).toEqual(server);
+  });
+});
+
+describe('plan types mirror dispatchd', () => {
+  it('PlanSummary carries the fields the server list() map emits', () => {
+    // The server's PlanSummary is defined by what list() actually maps, so
+    // the pin is against that object literal rather than the interface.
+    const listBody = /list\(\): PlanSummary\[\] \{([\s\S]*?)\n {2}\}/.exec(
+      serverSource('orchestrator', 'plan.ts')
+    )?.[1];
+    expect(listBody).toBeDefined();
+    const mapped = [...(listBody ?? '').matchAll(/\n {8}(\w+): r\./g)].map(
+      (m) => m[1]
+    );
+    expect(mapped.length).toBeGreaterThan(0);
+    const client = fields(clientSource(), 'PlanSummary');
+    expect(client?.map((f) => f.replace('?', ''))).toEqual(mapped);
+    const server = fields(
+      serverSource('orchestrator', 'plan.ts'),
+      'PlanSummary'
+    );
+    expect(client).toEqual(server);
+  });
+
+  it('PlanRecord.epicId is optional on both sides', () => {
+    const server = fields(
+      serverSource('orchestrator', 'plan.ts'),
+      'PlanRecord'
+    );
+    const client = fields(clientSource(), 'PlanRecord');
+    expect(server).toContain('epicId?');
+    expect(client).toContain('epicId?');
+  });
+});
+
+describe('epic types mirror dispatchd', () => {
+  for (const [iface, file] of [
+    ['EpicSession', 'epic.ts'],
+    ['EpicProgress', 'epic.ts'],
+    ['EpicSpend', 'epicPhase.ts'],
+    ['EpicProgressChild', 'epicPhase.ts'],
+    ['EpicWave', 'epicPhase.ts'],
+  ] as const) {
+    it(`${iface} declares the same fields with the same optionality`, () => {
+      const server = fields(serverSource('orchestrator', file), iface);
+      const client = fields(clientSource(), iface);
+      expect(server).not.toBeNull();
+      expect(client).toEqual(server);
+    });
+  }
+
+  for (const [name, file] of [
+    ['EpicSessionState', 'epic.ts'],
+    ['EpicPauseReason', 'epic.ts'],
+    ['EpicChildPhase', 'epicPhase.ts'],
+  ] as const) {
+    it(`${name} carries the same literals as the server`, () => {
+      const pattern = new RegExp(`export type ${name} =([^;]+);`);
+      const server = literals(serverSource('orchestrator', file), pattern);
+      const client = literals(clientSource(), pattern);
+      expect(server).not.toBeNull();
+      expect(client).toEqual(server);
+    });
+  }
+});
+
 describe('overseer types mirror dispatchd', () => {
   it('OverseerRecord declares the same fields with the same optionality', () => {
     const server = fields(
