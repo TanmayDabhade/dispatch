@@ -7,6 +7,7 @@ import {
   groupTasksByEpicLane,
   laneKey,
   statusFromDropZoneId,
+  visibleBoardColumns,
   visibleLaneTaskIds,
 } from './boardGrouping';
 
@@ -165,37 +166,45 @@ describe('laneKey', () => {
 });
 
 describe('countLaneStatuses', () => {
-  test('with nothing collapsed every card is counted as visible', () => {
-    const counts = countLaneStatuses(TWO_EPIC_LANES, STATUSES, new Set());
-    expect(counts.get('todo')).toEqual({ visible: 3, hidden: 0 });
-    expect(counts.get('done')).toEqual({ visible: 2, hidden: 0 });
-    expect(counts.get('in-progress')).toEqual({ visible: 0, hidden: 0 });
-  });
-
-  // The point of the split: a collapsed epic's cards move from one column of the header count
-  // to the other, so the totals never quietly shrink.
-  test('a collapsed lane moves its cards from visible to hidden, status by status', () => {
-    const counts = countLaneStatuses(
-      TWO_EPIC_LANES,
-      STATUSES,
-      new Set(['e-1'])
-    );
-    expect(counts.get('todo')).toEqual({ visible: 1, hidden: 2 });
-    expect(counts.get('done')).toEqual({ visible: 1, hidden: 1 });
-  });
-
-  test('the no-epic lane collapses under its sentinel key like any other', () => {
-    const counts = countLaneStatuses(
-      TWO_EPIC_LANES,
-      STATUSES,
-      new Set([laneKey(null)])
-    );
-    expect(counts.get('done')).toEqual({ visible: 1, hidden: 1 });
+  test("sums every lane's cards per status", () => {
+    const counts = countLaneStatuses(TWO_EPIC_LANES, STATUSES);
+    expect(counts.get('todo')).toBe(3);
+    expect(counts.get('done')).toBe(2);
+    expect(counts.get('in-progress')).toBe(0);
   });
 
   test('every configured status gets an entry, even one no task is in', () => {
-    const counts = countLaneStatuses(TWO_EPIC_LANES, STATUSES, new Set());
+    const counts = countLaneStatuses(TWO_EPIC_LANES, STATUSES);
     expect([...counts.keys()]).toEqual(STATUSES);
+  });
+});
+
+describe('visibleBoardColumns', () => {
+  const counts = new Map([
+    ['todo', 3],
+    ['in-progress', 0],
+    ['done', 2],
+  ]);
+
+  test('drops empty statuses unless empty groups are shown', () => {
+    expect(visibleBoardColumns(STATUSES, counts, false)).toEqual([
+      'todo',
+      'done',
+    ]);
+    expect(visibleBoardColumns(STATUSES, counts, true)).toEqual(STATUSES);
+  });
+
+  test('a hidden column stays hidden even with empty groups on', () => {
+    expect(
+      visibleBoardColumns(STATUSES, counts, true, new Set(['done']))
+    ).toEqual(['todo', 'in-progress']);
+  });
+
+  test('keeps the configured order', () => {
+    expect(visibleBoardColumns(['done', 'todo'], counts, false)).toEqual([
+      'done',
+      'todo',
+    ]);
   });
 });
 

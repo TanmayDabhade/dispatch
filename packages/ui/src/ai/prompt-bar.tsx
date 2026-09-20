@@ -1,6 +1,7 @@
 import { ArrowUpIcon, MicIcon, XIcon } from 'lucide-react';
 import { type KeyboardEvent, type ReactNode, useEffect, useRef } from 'react';
 
+import { Kbd } from '../kbd';
 import { cn } from '../lib/utils';
 import { Popover, PopoverContent } from '../popover';
 import {
@@ -10,6 +11,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../select';
+import { IconButton } from './icon-button';
+import { Pill } from './pill';
 
 export type PromptBarReference = {
   id: string;
@@ -79,11 +82,11 @@ function autosize(el: HTMLTextAreaElement) {
   el.style.overflowY = el.scrollHeight > maxHeight ? 'auto' : 'hidden';
 }
 
-/** Message composer: removable reference chips above an auto-growing textarea, and a
- * footer with a model picker, a dictation affordance, and an accent submit button.
+/** Message composer: removable reference pills above an auto-growing textarea, and a
+ * footer with a model picker, a dictation affordance, and an indigo submit button.
  * Typing `/` opens a filtered command popover; Enter submits, Shift+Enter inserts a
- * newline. Fully controlled — `value`/`onChange` live with the caller. Matches the
- * showcase's "Prompt Bar" primitive. */
+ * newline. Fully controlled — `value`/`onChange` live with the caller. The frame is
+ * Linear's comment composer: a quaternary card with a half-pixel border. */
 export function PromptBar({
   value,
   onChange,
@@ -119,28 +122,25 @@ export function PromptBar({
   return (
     <div
       className={cn(
-        'bg-field shadow-inset-field rounded-card ease-out-expo flex flex-col gap-1.5 border border-transparent p-1.5 transition-colors duration-150',
-        'focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-primary/20'
+        'bg-surface-quaternary rounded-card ease-out-expo flex flex-col gap-1.5 border-[0.5px] border-border-strong p-1.5 transition-[box-shadow] duration-100',
+        'focus-within:ring-1 focus-within:ring-ring'
       )}
     >
       {references.length > 0 && (
         <div className="flex flex-wrap gap-1.5 px-0.5 pt-0.5">
           {references.map((reference) => (
-            <span
-              key={reference.id}
-              className="bg-surface-inset text-foreground rounded-chip inline-flex h-6 max-w-full items-center gap-1 py-0.5 pr-1 pl-2 text-xs"
-            >
+            <Pill key={reference.id} className="pr-1">
               {reference.icon}
               <span className="min-w-0 truncate">{reference.label}</span>
               <button
                 type="button"
                 aria-label={`Remove ${reference.label}`}
                 onClick={() => onRemoveReference?.(reference.id)}
-                className="text-muted-foreground hover:bg-surface-hover-strong hover:text-foreground ease-out-expo flex size-4 shrink-0 items-center justify-center rounded-full transition-colors duration-100"
+                className="text-muted-foreground hover:bg-surface-active hover:text-foreground ease-out-expo rounded-pill flex size-4 shrink-0 items-center justify-center transition-colors duration-100"
               >
                 <XIcon aria-hidden className="size-3" />
               </button>
-            </span>
+            </Pill>
           ))}
         </div>
       )}
@@ -174,22 +174,18 @@ export function PromptBar({
                   <button
                     type="button"
                     onClick={() => onChange(`/${command.label} `)}
-                    className="hover:bg-surface-hover rounded-control ease-out-expo flex w-full items-center justify-between gap-3 px-2 py-1.5 text-left text-[13px] transition-colors duration-100"
+                    className="hover:bg-surface-hover rounded-control ease-out-expo font-book flex h-10 w-full items-center justify-between gap-3 px-2 text-left text-[13px] transition-colors duration-100"
                   >
-                    <span className="text-foreground font-medium">
-                      {command.label}
-                    </span>
+                    <span className="text-foreground">{command.label}</span>
                     {command.hint !== undefined && (
-                      <span className="text-muted-foreground truncate text-[11.5px]">
-                        {command.hint}
-                      </span>
+                      <Kbd className="max-w-[60%] truncate">{command.hint}</Kbd>
                     )}
                   </button>
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="text-muted-foreground px-2 py-1.5 text-[12.5px]">
+            <p className="text-muted-foreground font-book px-2 py-1.5 text-[12px]">
               No matching commands
             </p>
           )}
@@ -199,11 +195,7 @@ export function PromptBar({
       <div className="flex items-center justify-between gap-1 px-0.5 pb-0.5">
         {models.length > 0 ? (
           <Select value={modelId} onValueChange={onModelChange}>
-            <SelectTrigger
-              size="sm"
-              aria-label="Choose model"
-              className="text-muted-foreground hover:text-foreground h-7 border-none bg-transparent px-1.5 text-[12px] font-medium shadow-none hover:bg-transparent"
-            >
+            <SelectTrigger aria-label="Choose model">
               <SelectValue placeholder="Model" />
             </SelectTrigger>
             <SelectContent>
@@ -219,29 +211,25 @@ export function PromptBar({
         )}
 
         <div className="flex items-center gap-1">
-          <button
-            type="button"
-            aria-label="Start dictation"
+          <IconButton
+            label="Start dictation"
             aria-pressed="false"
             onClick={onMicClick}
-            className="text-muted-foreground hover:bg-surface-hover hover:text-foreground rounded-control ease-out-expo flex size-7 shrink-0 items-center justify-center transition-[background-color,color,transform] duration-150 active:scale-[0.94] motion-reduce:active:scale-100"
           >
-            <MicIcon aria-hidden className="size-3.5" />
-          </button>
-          <button
-            type="button"
-            aria-label="Send"
+            <MicIcon aria-hidden />
+          </IconButton>
+          <IconButton
+            label="Send"
+            filled
             disabled={!canSubmit}
             onClick={onSubmit}
             className={cn(
-              'ease-out-expo flex size-7 shrink-0 items-center justify-center rounded-control transition-[background-color,color,transform] duration-200 enabled:active:scale-[0.94] motion-reduce:active:scale-100',
-              canSubmit
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-surface-inset text-muted-foreground'
+              canSubmit &&
+                'bg-primary text-primary-foreground hover:bg-[var(--accent-hover)] hover:text-primary-foreground'
             )}
           >
-            <ArrowUpIcon aria-hidden className="size-4" />
-          </button>
+            <ArrowUpIcon aria-hidden />
+          </IconButton>
         </div>
       </div>
     </div>

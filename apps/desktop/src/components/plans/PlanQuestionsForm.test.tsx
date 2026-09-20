@@ -63,3 +63,20 @@ describe('PlanQuestionsForm', () => {
     ).toBe('');
   });
 });
+
+describe('PlanQuestionsForm chrome', () => {
+  test('the heading is a 12px sentence-case row, not an uppercase tracked label', () => {
+    render(
+      <PlanQuestionsForm
+        questions={[Q1]}
+        disabled={false}
+        onSend={() => Promise.resolve()}
+      />
+    );
+    const heading = screen.getByText('The planner is asking you');
+    expect(heading.className).toContain('text-[12px]');
+    expect(heading.className).toContain('font-medium');
+    expect(heading.className).not.toContain('uppercase');
+    expect(heading.className).not.toContain('dense-label');
+  });
+});

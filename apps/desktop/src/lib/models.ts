@@ -5,31 +5,15 @@ export interface ModelOption {
   /** SDK model id passed straight through to the Agent SDK's `query({ options: { model } })`. */
   id: string;
   label: string;
-  /** One-line "when to reach for this" hint shown in the Settings picker. */
-  hint: string;
 }
 
+// The default for real work first; Fable is the hardest-work premium tier, Sonnet the
+// faster/cheaper pick for well-scoped tasks, Haiku the fastest for small mechanical changes.
 export const MODELS: ModelOption[] = [
-  {
-    id: 'claude-opus-5',
-    label: 'Opus 5',
-    hint: 'The default for real work',
-  },
-  {
-    id: 'claude-fable-5-1',
-    label: 'Fable 5.1',
-    hint: 'Hardest work. Premium pricing.',
-  },
-  {
-    id: 'claude-sonnet-5',
-    label: 'Sonnet 5',
-    hint: 'Faster and cheaper for well-scoped tasks',
-  },
-  {
-    id: 'claude-haiku-4-5-20251001',
-    label: 'Haiku 4.5',
-    hint: 'Fastest. Small mechanical changes.',
-  },
+  { id: 'claude-opus-5', label: 'Opus 5' },
+  { id: 'claude-fable-5-1', label: 'Fable 5.1' },
+  { id: 'claude-sonnet-5', label: 'Sonnet 5' },
+  { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
 ];
 
 const DEFAULT_MODEL = MODELS[0].id;

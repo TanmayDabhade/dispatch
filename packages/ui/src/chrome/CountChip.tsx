@@ -8,7 +8,7 @@ interface CountChipProps {
 }
 
 /**
- * A bare mono count, used for sidebar badges and group totals.
+ * A bare 12px count, used for sidebar badges and group totals.
  *
  * Deliberately not a filled pill. These sit next to a label that already carries the meaning,
  * so a background would make a count read as a status of its own — and a rail of eight tinted
@@ -20,5 +20,14 @@ export function CountChip({
   className,
 }: CountChipProps) {
   if (hideZero && count === 0) return null;
-  return <span className={cn('dense-meta', className)}>{count}</span>;
+  return (
+    <span
+      className={cn(
+        'text-[12px] font-book text-muted-foreground tabular-nums',
+        className
+      )}
+    >
+      {count}
+    </span>
+  );
 }

@@ -1,6 +1,6 @@
 import type { Finding } from '@dispatch/client';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, PanelLeftIcon } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
 import { PierreReviewDiff } from '../components/runs/PierreReviewDiff';
@@ -15,12 +15,13 @@ import { repoPrDetailKey, useRepoPrDetail } from '../hooks/useRepoPrDetail';
 import { readPanelOpen, writePanelOpen } from '../lib/reviewPanels';
 import { reviewTargetKey } from '../lib/reviewTarget';
 import { readViewed, toggleViewed, writeViewed } from '../lib/reviewViewed';
-import { Button } from '@/ui/button';
-import { IconToggle } from '@/ui/chrome/IconToggle';
-import { StateDot } from '@/ui/chrome/StateDot';
+import { IconButton } from '@/ui/ai/icon-button';
+import { PageHeader, SidePanelIconButton } from '@/ui/ai/page-header';
 
 interface PrReviewViewProps {
   data: DispatchProjectData;
+  /** The active project's display name, the first crumb of the page header. */
+  projectName?: string | null;
   /** Which repo pull request is open — `navReducer`'s `activePrNumber`. */
   prNumber: number;
   onBack: () => void;
@@ -45,7 +46,12 @@ const REPO_PRS_POLL_MS = 60_000;
  * (its own `review` panel key), since it is the only place to approve a PR and
  * the only place from which a staged note reaches GitHub.
  */
-export function PrReviewView({ data, prNumber, onBack }: PrReviewViewProps) {
+export function PrReviewView({
+  data,
+  projectName,
+  prNumber,
+  onBack,
+}: PrReviewViewProps) {
   const queryClient = useQueryClient();
 
   // No event announces a PR moving on GitHub, so triage needs a poll. Driven
@@ -159,24 +165,50 @@ export function PrReviewView({ data, prNumber, onBack }: PrReviewViewProps) {
     );
   }
 
+  const title = repoPr.prDetail?.status.title ?? `Pull request #${prNumber}`;
+  const railCount = repoPr.prDetail?.conversation.length ?? 0;
+
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3">
-      <Header
-        onBack={onBack}
-        title={repoPr.prDetail?.status.title ?? `Pull request #${prNumber}`}
-        filesOpen={filesOpen}
-        onToggleFiles={() => setFilesOpen((v) => !v)}
-        railOpen={railOpen}
-        onToggleRail={() => setRailOpen((v) => !v)}
-        railCount={repoPr.prDetail?.conversation.length ?? 0}
+    <div className="flex h-full min-h-0 flex-col">
+      {/* Project › Landing › #123 Title — the PR page is a leaf of Landing, so the crumb
+          walks back to it and the back button does the same in one click. */}
+      <PageHeader
+        leading={
+          <IconButton label="Back" onClick={onBack}>
+            <ArrowLeft />
+          </IconButton>
+        }
+        crumb={[
+          ...(projectName !== undefined && projectName !== null
+            ? [projectName]
+            : []),
+          'Landing',
+          `#${prNumber} ${title}`,
+        ]}
+        actions={
+          <>
+            <IconButton
+              label={filesOpen ? 'Hide files' : 'Show files'}
+              active={filesOpen}
+              onClick={() => setFilesOpen((v) => !v)}
+            >
+              <PanelLeftIcon />
+            </IconButton>
+            <SidePanelIconButton
+              label={railOpen ? 'Hide review' : `Review (${railCount})`}
+              active={railOpen}
+              onClick={() => setRailOpen((v) => !v)}
+            />
+          </>
+        }
       />
 
-      <div className="flex min-h-0 flex-1 gap-4 overflow-hidden">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* `overflow-hidden`, not `-auto`: the list scrolls itself internally
             (its header and viewed summary stay pinned above it), so this only
             needs to bound the track. */}
         {filesOpen && (
-          <div className="flex min-h-0 w-56 shrink-0 flex-col overflow-hidden">
+          <div className="shadow-hairline-right flex min-h-0 w-56 shrink-0 flex-col overflow-hidden">
             <div className="min-h-0 flex-1 overflow-hidden">
               <ReviewFileTree
                 files={diff?.files ?? []}
@@ -200,13 +232,13 @@ export function PrReviewView({ data, prNumber, onBack }: PrReviewViewProps) {
           {/* A failed fetch must not read as "this PR changes nothing" — an
               empty file tree beside cheerful copy is the worse failure. */}
           {diff === undefined && repoPr.prDiffError !== null && (
-            <p className="text-destructive p-4 text-[12.5px]">
+            <p className="text-state-failed font-book px-4 py-3 text-[13px]">
               Couldn&rsquo;t load this pull request&rsquo;s diff from GitHub:{' '}
               {repoPr.prDiffError}
             </p>
           )}
           {diff === undefined && repoPr.prDiffError === null && (
-            <p className="text-muted-foreground p-4 text-[12.5px]">
+            <p className="text-muted-foreground font-book px-4 py-3 text-[13px]">
               {repoPr.prDiffLoading
                 ? 'Fetching the diff from GitHub…'
                 : 'No diff to show.'}
@@ -235,7 +267,7 @@ export function PrReviewView({ data, prNumber, onBack }: PrReviewViewProps) {
         </div>
 
         {railOpen && (
-          <div className="flex min-h-0 w-72 shrink-0 flex-col gap-3 overflow-y-auto">
+          <div className="shadow-hairline-left flex min-h-0 w-80 shrink-0 flex-col gap-3 overflow-y-auto px-3 py-3">
             {/* Owns the PR's status header too — one source, refreshed by every
                 action here, rather than a second copy off the 60s repo poll. */}
             <PrReviewPanel
@@ -257,7 +289,7 @@ export function PrReviewView({ data, prNumber, onBack }: PrReviewViewProps) {
             {/* An empty thread list must not read as "nobody commented" when
                 the GitHub pull is what failed. */}
             {repoPr.reviewCommentsError !== null && (
-              <p className="text-destructive text-[12.5px]">
+              <p className="text-state-failed font-book text-[13px]">
                 Couldn&rsquo;t load this pull request&rsquo;s threads:{' '}
                 {repoPr.reviewCommentsError}
               </p>
@@ -275,7 +307,7 @@ export function PrReviewView({ data, prNumber, onBack }: PrReviewViewProps) {
                 staged until a verdict publishes them, and a reply written on
                 github.com never comes back into a thread (the mirror drops
                 in-reply payloads) — it lands in the conversation above. */}
-            <p className="text-muted-foreground text-[11.5px]">
+            <p className="text-muted-foreground font-book text-[12px]">
               Notes stay staged until you comment, approve or request changes
               above, then publish to GitHub as one review. Replies written on
               github.com show in the conversation, not in these threads.
@@ -290,65 +322,3 @@ export function PrReviewView({ data, prNumber, onBack }: PrReviewViewProps) {
 // A PR's findings live in the rail's panel, not on its file tree — one shared
 // empty map so the tree keeps a stable prop identity across renders.
 const NO_FINDINGS_BY_FILE: ReadonlyMap<string, Finding[]> = new Map();
-
-/**
- * Two rows, not three, and the title at a size that does not wrap: this sits
- * above a diff that wants every pixel of height.
- */
-function Header({
-  onBack,
-  title,
-  filesOpen,
-  onToggleFiles,
-  railOpen,
-  onToggleRail,
-  railCount,
-}: {
-  onBack: () => void;
-  title: string;
-  filesOpen: boolean;
-  onToggleFiles: () => void;
-  railOpen: boolean;
-  onToggleRail: () => void;
-  railCount: number;
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <div className="flex items-center gap-2">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={onBack}
-          className="text-muted-foreground hover:text-foreground h-auto shrink-0 gap-1.5 p-0 text-[11.5px] font-normal hover:bg-transparent"
-        >
-          <ArrowLeft className="size-3" />
-          Back
-        </Button>
-        <StateDot state="review" pulse={false} />
-        <h1 className="min-w-0 flex-1 truncate text-[15px] font-medium">
-          {title}
-        </h1>
-      </div>
-      <div className="flex flex-wrap items-center gap-3">
-        <span className="flex-1" />
-        <IconToggle
-          on={filesOpen}
-          onClick={onToggleFiles}
-          label={filesOpen ? 'Hide files' : 'Show files'}
-          className="text-accent-foreground hover:text-accent-foreground data-pressed:text-accent-foreground border-none p-0 text-[11px] hover:bg-transparent data-pressed:bg-transparent"
-        >
-          {filesOpen ? 'Hide files' : 'Show files'}
-        </IconToggle>
-        <IconToggle
-          on={railOpen}
-          onClick={onToggleRail}
-          label={railOpen ? 'Hide review' : `Review (${railCount})`}
-          className="text-accent-foreground hover:text-accent-foreground data-pressed:text-accent-foreground border-none p-0 text-[11px] hover:bg-transparent data-pressed:bg-transparent"
-        >
-          {railOpen ? 'Hide review' : `Review (${railCount})`}
-        </IconToggle>
-      </div>
-    </div>
-  );
-}

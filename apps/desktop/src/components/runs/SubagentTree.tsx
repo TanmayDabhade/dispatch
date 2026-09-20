@@ -91,7 +91,7 @@ export function SubagentTree({
       open={open}
       onOpenChange={setOpen}
       className={cn(
-        'border-border bg-card/60 flex flex-col rounded-md border',
+        'bg-surface-quaternary flex flex-col rounded-card border-[0.5px] border-border',
         className
       )}
       data-testid="subagent-tree"
@@ -100,7 +100,7 @@ export function SubagentTree({
         render={
           <button
             type="button"
-            className="hover:bg-muted/50 flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left"
+            className="hover:bg-surface-hover rounded-card flex h-9 w-full items-center gap-2 px-2.5 text-left transition-colors duration-100"
             aria-label={`Sub-agents: ${subagentHeadline(nodes)}`}
           />
         }
@@ -111,12 +111,12 @@ export function SubagentTree({
           <ChevronRight className="text-muted-foreground size-3.5 shrink-0" />
         )}
         <Bot className="text-muted-foreground size-3.5 shrink-0" />
-        <span className="text-[12px] font-medium">
+        <span className="text-[13px] font-medium text-(--text-secondary)">
           Sub-agents · {nodes.length}
         </span>
         <span
           className={cn(
-            'dense-meta ml-auto shrink-0',
+            'text-muted-foreground ml-auto shrink-0 text-[12px] font-book tabular-nums',
             anyRunning && 'text-foreground'
           )}
         >
@@ -127,7 +127,7 @@ export function SubagentTree({
         <ul
           role="tree"
           aria-label="Sub-agents"
-          className="border-border/60 flex max-h-56 flex-col overflow-y-auto border-t py-1"
+          className="shadow-hairline-top flex max-h-56 flex-col overflow-y-auto py-1"
         >
           {rows.map((row) => (
             <SubagentRow key={row.id} node={row} now={now} />
@@ -153,7 +153,7 @@ function SubagentRow({ node, now }: { node: SubagentTreeNode; now: number }) {
       role="treeitem"
       aria-level={node.depth + 1}
       aria-label={`${node.label}, ${statusWord(node.status)}`}
-      className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5 px-2.5 py-1 text-[12px]"
+      className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5 px-2.5 py-1 text-[13px]"
       style={{ paddingLeft: `${10 + node.depth * 16}px` }}
     >
       <span className="flex min-w-0 items-center gap-2">
@@ -162,10 +162,12 @@ function SubagentRow({ node, now }: { node: SubagentTreeNode; now: number }) {
           {node.label}
         </span>
         {node.type !== undefined && (
-          <span className="dense-meta shrink-0">{node.type}</span>
+          <span className="text-muted-foreground font-book shrink-0 text-[12px]">
+            {node.type}
+          </span>
         )}
       </span>
-      <span className="dense-meta flex shrink-0 items-center gap-2 tabular-nums">
+      <span className="text-muted-foreground font-book flex shrink-0 items-center gap-2 text-[12px] tabular-nums">
         <span>
           {node.toolUses} {node.toolUses === 1 ? 'call' : 'calls'}
         </span>
@@ -182,7 +184,7 @@ function SubagentRow({ node, now }: { node: SubagentTreeNode; now: number }) {
       </span>
       {tail !== undefined && tail !== null && tail !== '' && (
         <span
-          className="text-muted-foreground col-span-2 truncate pl-5 text-[11px]"
+          className="text-muted-foreground font-book col-span-2 truncate pl-5 text-[12px]"
           title={tail}
         >
           {tail}

@@ -3,8 +3,19 @@ import { Terminal, TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 
 import { ensureDispatchd } from '../lib/tauri';
+import { PageHeader } from '@/ui/ai/page-header';
 import { Button } from '@/ui/button';
+import { EmptyState } from '@/ui/chrome';
 import { Spinner } from '@/ui/spinner';
+
+/** The `.dispatch/` path chip — a path, so it keeps the code face. */
+function PathChip({ children }: { children: string }) {
+  return (
+    <code className="bg-surface-quaternary rounded-chip border-border-chip border-[0.5px] px-1 py-0.5 font-mono text-[11px] break-all">
+      {children}
+    </code>
+  );
+}
 
 interface GetStartedViewProps {
   /** Absolute path of the one project this window is scoped to — shown here specifically
@@ -56,56 +67,52 @@ export function GetStartedView({ projectPath }: GetStartedViewProps) {
   }
 
   return (
-    <div className="mx-auto flex max-w-lg flex-col items-center gap-4 pt-24 text-center">
-      <div className="bg-accent text-accent-foreground rounded-control flex size-10 items-center justify-center">
-        <Terminal className="size-5" />
-      </div>
-      <h1 className="text-foreground text-[15px] font-medium">
-        Get started with Dispatch
-      </h1>
-      <p className="text-muted-foreground text-[13px] leading-relaxed">
-        Dispatch tracks tasks as files inside a project&rsquo;s own{' '}
-        <code className="bg-secondary rounded px-1 py-0.5 font-mono text-[12px]">
-          .dispatch/
-        </code>{' '}
-        directory. Initialize it below — its Board, Tasks, and Plans will take
-        over automatically once it's ready.
-      </p>
+    <div className="flex h-full min-h-0 flex-col">
+      <PageHeader crumb={['Get started']} />
+      <div className="flex min-h-0 flex-1 flex-col items-center gap-4 overflow-y-auto px-6 py-4">
+        <EmptyState
+          className="pt-20"
+          illustration={<Terminal aria-hidden />}
+          heading="Get started with Dispatch"
+          description={
+            <>
+              Dispatch tracks tasks as files inside a project&rsquo;s own{' '}
+              <PathChip>.dispatch/</PathChip> directory. Initialize it below —
+              its Board, Tasks, and Plans will take over automatically once
+              it&rsquo;s ready.
+            </>
+          }
+          action={
+            <Button
+              onClick={() => void initialize()}
+              disabled={initState === 'pending'}
+              className="rounded-pill"
+            >
+              {initState === 'pending' ? (
+                <>
+                  <Spinner className="size-3.5" /> Initializing…
+                </>
+              ) : (
+                'Initialize project'
+              )}
+            </Button>
+          }
+        />
 
-      <Button
-        onClick={() => void initialize()}
-        disabled={initState === 'pending'}
-        className="w-full"
-      >
-        {initState === 'pending' ? (
-          <>
-            <Spinner className="size-3.5" /> Initializing…
-          </>
-        ) : (
-          'Initialize project'
+        {initError !== null && (
+          <div className="bg-state-failed-surface text-state-failed rounded-card flex w-full max-w-[540px] items-start gap-2 px-3 py-2.5 text-left text-[13px]">
+            <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+            <pre className="max-h-48 min-w-0 flex-1 overflow-auto font-mono text-[12px] break-words whitespace-pre-wrap">
+              {initError}
+            </pre>
+          </div>
         )}
-      </Button>
 
-      {initError !== null && (
-        <div className="border-destructive/30 bg-destructive/10 text-destructive flex w-full max-w-full items-start gap-2 rounded-md border px-3 py-2.5 text-left text-[13px]">
-          <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
-          <pre className="max-h-48 min-w-0 flex-1 overflow-auto font-mono text-[12px] break-words whitespace-pre-wrap">
-            {initError}
-          </pre>
-        </div>
-      )}
-
-      <p className="text-muted-foreground text-[12px] leading-relaxed">
-        Initialize creates a{' '}
-        <code className="bg-secondary rounded px-1 py-0.5 font-mono text-[11px]">
-          .dispatch/
-        </code>{' '}
-        tracker folder in{' '}
-        <code className="bg-secondary rounded px-1 py-0.5 font-mono text-[11px] break-all">
-          {projectPath}
-        </code>
-        .
-      </p>
+        <p className="text-muted-foreground font-book max-w-[340px] text-center text-[12px] leading-relaxed">
+          Initialize creates a <PathChip>.dispatch/</PathChip> tracker folder in{' '}
+          <PathChip>{projectPath}</PathChip>.
+        </p>
+      </div>
     </div>
   );
 }

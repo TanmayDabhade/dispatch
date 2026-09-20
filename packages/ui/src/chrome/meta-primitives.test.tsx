@@ -77,6 +77,21 @@ test('a collapse bar toggles', () => {
   expect(toggled).toBe(true);
 });
 
+// Ids, counts and times are 12px sans now — mono is for code, paths and diffs only,
+// and the deprecated `.dense-*` classes must not creep back in.
+test('meta text, counts and section labels are sans, not mono or dense', () => {
+  const cases = [
+    render(<MetaText>12s</MetaText>).container,
+    render(<CountChip count={4} />).container,
+    render(<SectionLabel>Merge queue</SectionLabel>).container,
+  ];
+  for (const container of cases) {
+    expect(container.innerHTML).not.toContain('font-mono');
+    expect(container.innerHTML).not.toContain('dense-');
+    expect(container.innerHTML).toContain('text-[12px]');
+  }
+});
+
 // Hint prose is a sentence, so it must not inherit dense-meta's monospace or
 // dense-label's uppercase — the two treatments that already existed.
 test('hint text renders prose without the mono or uppercase treatments', () => {

@@ -23,3 +23,12 @@ test('the header reports the story count', () => {
     )
   ).toBeDefined();
 });
+
+// The gallery is a page like any other: the crumb on the header, the story frames as
+// quaternary cards.
+test('the header carries the Gallery crumb', () => {
+  render(<GalleryView />);
+  expect(
+    screen.getByText('Gallery').closest('[data-slot=page-header]')
+  ).not.toBeNull();
+});

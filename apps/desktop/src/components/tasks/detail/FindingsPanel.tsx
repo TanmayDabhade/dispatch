@@ -4,20 +4,17 @@ import { useState } from 'react';
 import {
   countOpenFindings,
   groupOpenFindingsBySeverity,
+  severityColor,
+  severityLabel,
 } from '../../../lib/findings';
 import { MainSection } from './MainSection';
-import { cn } from '@/lib/utils';
-import { Button } from '@/ui/button';
+import { LabelPill, PillButton } from '@/ui/ai/pill';
 import { Textarea } from '@/ui/textarea';
 
-const SEVERITY_TONE: Record<Finding['severity'], string> = {
-  critical: 'text-state-failed',
-  important: 'text-state-waiting',
-  minor: 'text-muted-foreground',
-};
-
 // Two explicit actions, never a bare "submit" — both disabled until a
-// reason is actually typed, so the ruling requirement can't be missed.
+// reason is actually typed, so the ruling requirement can't be missed. Laid
+// out as a composer card: a borderless textarea over a row of pill buttons,
+// `Block` in red text rather than a filled destructive button.
 function AdjudicateFindingForm({
   onSubmit,
 }: {
@@ -42,33 +39,36 @@ function AdjudicateFindingForm({
   }
 
   return (
-    <div className="border-border mt-1.5 flex flex-col gap-1.5 rounded-md border border-dashed p-2">
+    <div
+      data-slot="adjudicate-form"
+      className="bg-field rounded-card border-border-strong focus-within:ring-ring mt-3 flex flex-col gap-2 border-[0.5px] p-2.5 focus-within:ring-1"
+    >
       <Textarea
+        variant="borderless"
+        rows={1}
+        aria-label="Ruling"
         value={ruling}
         onChange={(e) => setRuling(e.target.value)}
         placeholder="Ruling (required to park or block)"
-        className="min-h-[44px] text-[12px]"
+        className="min-h-5 resize-none text-[13px] leading-5"
       />
       {error !== null && (
-        <div className="text-destructive text-[11px]">{error}</div>
+        <div className="text-red font-book text-[12px]">{error}</div>
       )}
-      <div className="flex gap-2">
-        <Button
-          size="sm"
-          variant="secondary"
+      <div className="flex items-center gap-2">
+        <PillButton
           disabled={empty || pending !== null}
           onClick={() => void submit('parked')}
         >
           {pending === 'parked' ? 'Parking…' : 'Park'}
-        </Button>
-        <Button
-          size="sm"
-          variant="destructive"
+        </PillButton>
+        <PillButton
+          className="text-red"
           disabled={empty || pending !== null}
           onClick={() => void submit('blocked')}
         >
           {pending === 'blocked' ? 'Blocking…' : 'Block'}
-        </Button>
+        </PillButton>
       </div>
     </div>
   );
@@ -91,8 +91,8 @@ export function FindingsPanel({
   const groups = groupOpenFindingsBySeverity(findings);
   const counts = countOpenFindings(findings);
   if (groups.length === 0) return null;
-  // The header names the severity mix so it's visible without scrolling the
-  // grouped body below — e.g. "3 open (1 critical, 2 minor)".
+  // The heading's trailing text names the severity mix so it's visible
+  // without scrolling the grouped body below — e.g. "3 open (1 critical, 2 minor)".
   const bySeverity = [
     counts.critical > 0 ? `${counts.critical} critical` : null,
     counts.important > 0 ? `${counts.important} important` : null,
@@ -100,37 +100,54 @@ export function FindingsPanel({
   ]
     .filter((s): s is string => s !== null)
     .join(', ');
-  const title =
+  const summary =
     bySeverity === ''
-      ? `Findings · ${counts.open} open`
-      : `Findings · ${counts.open} open (${bySeverity})`;
+      ? `${counts.open} open`
+      : `${counts.open} open (${bySeverity})`;
   return (
-    <MainSection title={title}>
+    <MainSection
+      title="Findings"
+      trailing={
+        <span
+          data-slot="findings-summary"
+          className="text-muted-foreground font-book text-[12px] tabular-nums"
+        >
+          {summary}
+        </span>
+      }
+    >
       <div className="flex flex-col gap-3">
         {groups.map((group) => (
-          <div key={group.severity} className="flex flex-col gap-1.5">
-            <span
-              className={cn(
-                'text-[11px] font-medium tracking-wide uppercase',
-                SEVERITY_TONE[group.severity]
-              )}
-            >
-              {group.severity} · {group.findings.length}
-            </span>
+          <div
+            key={group.severity}
+            data-slot="findings-group"
+            className="flex flex-col gap-1.5"
+          >
+            <div className="flex items-center gap-2">
+              <LabelPill color={severityColor(group.severity)}>
+                {severityLabel(group.severity)}
+              </LabelPill>
+              <span className="text-muted-foreground font-book text-[12px] tabular-nums">
+                {group.findings.length}
+              </span>
+            </div>
             <ul className="flex flex-col gap-2">
               {group.findings.map((finding) => (
                 <li
                   key={finding.id}
-                  className="border-border/60 rounded-md border px-2.5 py-2"
+                  data-slot="finding-card"
+                  className="bg-surface-quaternary rounded-card border-border-strong border-[0.5px] p-3"
                 >
-                  <div className="text-[13px] font-medium">{finding.title}</div>
+                  <div className="text-foreground text-[13px] font-medium">
+                    {finding.title}
+                  </div>
                   {finding.file !== null && (
-                    <div className="text-muted-foreground font-mono text-[11px]">
+                    <div className="text-muted-foreground mt-0.5 font-mono text-[12px] break-all">
                       {finding.file}
                       {finding.line !== null ? `:${finding.line}` : ''}
                     </div>
                   )}
-                  <p className="text-muted-foreground mt-1 text-[12.5px] whitespace-pre-wrap">
+                  <p className="text-muted-foreground font-book mt-1 text-[13px] whitespace-pre-wrap">
                     {finding.detail}
                   </p>
                   {needsRuling && (

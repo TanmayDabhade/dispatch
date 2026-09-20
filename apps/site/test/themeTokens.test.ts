@@ -38,8 +38,10 @@ test('the real tokens.css splits cleanly', async () => {
     Bun.resolveSync('@dispatch/tokens/tokens.css', import.meta.dir)
   ).text();
   const out = themeAwareTokens(real);
-  expect(out).toContain(':root{--surface-page: #fafafb;');
-  expect(out).toContain(':root[data-theme="dark"]{--surface-page: #17181a;');
+  // The frame is the first token in each block; the page surface aliases the panel.
+  expect(out).toContain(':root{--surface-frame: #efeff0;');
+  expect(out).toContain('--surface-page: var(--surface-panel);');
+  expect(out).toContain(':root[data-theme="dark"]{--surface-frame: #08080a;');
 });
 
 test('a stylesheet with two dark blocks is rejected', () => {

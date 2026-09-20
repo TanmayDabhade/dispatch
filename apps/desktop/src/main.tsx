@@ -4,13 +4,11 @@ import { createRoot } from 'react-dom/client';
 
 import App from './App.tsx';
 
-// Self-hosted fonts (bundled via @fontsource — no CDN, no network fetch at runtime).
-// Only the weights actually referenced in this codebase's CSS are imported.
-import '@fontsource/inter/400.css';
-import '@fontsource/inter/500.css';
-import '@fontsource/inter/600.css';
+// Self-hosted fonts (bundled via @fontsource — no CDN, no network fetch at runtime). Inter
+// ships as one variable face so the 450 body weight exists; mono is the single weight the
+// CSS references.
+import '@fontsource-variable/inter';
 import '@fontsource/jetbrains-mono/400.css';
-import '@fontsource/jetbrains-mono/600.css';
 // Tailwind + shadcn theme first, so the hand-rolled token/global styles that follow win any
 // overlap during the migration to shadcn primitives.
 import './styles/tailwind.css';

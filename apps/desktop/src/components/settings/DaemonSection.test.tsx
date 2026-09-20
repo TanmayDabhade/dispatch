@@ -22,3 +22,18 @@ test('a failed daemon start shows the captured detail', () => {
   );
   expect(screen.getByText(/port 7777 in use/)).toBeDefined();
 });
+
+// The daemon row reads its state as a sentence-case word beside the dot.
+test('the daemon status reads Running while a client is up', () => {
+  render(<DaemonSection activeProject={project} data={data} />);
+  expect(screen.getByText('Running')).toBeDefined();
+  expect(screen.getByText('dispatchd')).toBeDefined();
+});
+
+test('the tracker statuses render as pills under a sentence-case heading', () => {
+  render(<DaemonSection activeProject={project} data={data} />);
+  expect(screen.getByRole('heading', { name: 'Tracker config' })).toBeDefined();
+  expect(screen.getByText('in-progress').getAttribute('data-slot')).toBe(
+    'pill'
+  );
+});

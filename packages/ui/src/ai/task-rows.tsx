@@ -1,5 +1,7 @@
 import type { KeyboardEvent, ReactNode } from 'react';
 
+import { StateMark } from '../chrome/state-mark';
+import type { FeedState } from '../lib/feedState';
 import { ShimmerLabel } from './shimmer';
 
 export type TaskRowState = 'running' | 'waiting' | 'failed' | 'done' | 'queued';
@@ -15,25 +17,25 @@ export type TaskRowProps = {
   actions?: ReactNode;
 };
 
-// Spelled out because Tailwind cannot build class names at runtime. Maps the row's own
-// state vocabulary onto the shared run-state palette: `running`→working, `done`→review,
-// `queued`→ready (the brief's mapping, not a 1:1 name match with the token suffixes).
-const DOT_CLASS: Record<TaskRowState, string> = {
-  running: 'bg-state-working',
-  waiting: 'bg-state-waiting',
-  failed: 'bg-state-failed',
-  done: 'bg-state-review',
-  queued: 'bg-state-ready',
+// Maps the row's own state vocabulary onto the feed states `StateMark` draws:
+// `running`→working, `done`→review, `queued`→ready (the brief's mapping, not a 1:1
+// name match).
+const MARK_STATE: Record<TaskRowState, FeedState> = {
+  running: 'working',
+  waiting: 'answer',
+  failed: 'failed',
+  done: 'review',
+  queued: 'ready',
 };
 
-/** One dense row in a task/run list: a state dot (pulsing while `running`), the
- * task's title and agent, a `detail` line that shimmers while running, an optional
- * `progress` caption, a trailing mono `elapsedLabel`, and a hover-revealed `actions`
- * slot. Failed rows get a soft red wash. Renders as a clickable row (keyboard
- * operable) when `onClick` is given, a static row otherwise — `actions`, if any,
- * stays a sibling rather than nesting inside it, so callers can put real `<button>`s
- * there without an invalid button-in-button. Matches the showcase's "Task Rows"
- * primitive, adapted to the run-state token model. */
+/** One 36px row in a task/run list (`min-h-9`; both text lines sit on a 16px leading
+ * so a title + `detail` pair still fits the 36px box): a 14px `StateMark`, the task's
+ * title and agent, a `detail` line that shimmers while running, an optional `progress`
+ * caption, a trailing `elapsedLabel`, and a hover-revealed `actions` slot. No wash on
+ * failed rows — the red mark carries it. Renders as a clickable row (keyboard operable)
+ * when `onClick` is given, a static row otherwise — `actions`, if any, stays a sibling
+ * rather than nesting inside it, so callers can put real `<button>`s there without an
+ * invalid button-in-button. */
 export function TaskRow({
   title,
   agent,
@@ -44,7 +46,6 @@ export function TaskRow({
   onClick,
   actions,
 }: TaskRowProps) {
-  const isFailed = state === 'failed';
   const isRunning = state === 'running';
   const interactive = onClick !== undefined;
 
@@ -62,41 +63,38 @@ export function TaskRow({
       tabIndex={interactive ? 0 : undefined}
       onClick={onClick}
       onKeyDown={interactive ? handleKeyDown : undefined}
-      className={`group/row ease-out-expo flex items-center gap-2.5 px-3 py-2 transition-colors duration-100 ${
-        isFailed ? 'bg-[var(--red-bg)]/50' : ''
-      } ${interactive ? 'hover:bg-surface-hover cursor-pointer' : ''}`}
+      className={`group/row ease-out-expo flex min-h-9 items-center gap-2.5 px-3 transition-colors duration-100 ${
+        interactive ? 'hover:bg-surface-hover cursor-pointer' : ''
+      }`}
     >
-      <span
-        aria-hidden
-        className={`size-2 shrink-0 rounded-full ${DOT_CLASS[state]} ${
-          isRunning ? 'motion-safe:animate-pulse' : ''
-        }`}
-      />
+      <StateMark state={MARK_STATE[state]} />
       <div className="min-w-0 flex-1">
-        <div className="flex items-baseline gap-1.5">
+        <div className="flex items-baseline gap-1.5 leading-4">
           <span className="text-foreground truncate text-[13px] font-medium">
             {title}
           </span>
-          <span className="text-muted-foreground shrink-0 text-[11.5px]">
+          <span className="text-muted-foreground font-book shrink-0 text-[12px]">
             {agent}
           </span>
         </div>
         {detail !== undefined &&
           (isRunning ? (
-            <ShimmerLabel className="block truncate">{detail}</ShimmerLabel>
+            <ShimmerLabel className="font-book block truncate text-[12px] leading-4">
+              {detail}
+            </ShimmerLabel>
           ) : (
-            <p className="text-muted-foreground truncate text-[12px]">
+            <p className="text-muted-foreground font-book truncate text-[12px] leading-4">
               {detail}
             </p>
           ))}
       </div>
       {progress !== undefined && (
-        <span className="text-muted-foreground shrink-0 font-mono text-[11.5px] tabular-nums">
+        <span className="text-muted-foreground font-book shrink-0 text-[12px] tabular-nums">
           {progress}
         </span>
       )}
       {elapsedLabel !== undefined && (
-        <span className="text-muted-foreground shrink-0 font-mono text-[12px] tabular-nums">
+        <span className="text-muted-foreground font-book shrink-0 text-[12px] tabular-nums">
           {elapsedLabel}
         </span>
       )}

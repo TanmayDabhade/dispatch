@@ -2,12 +2,10 @@ import type { DispatchConfig, NotificationKind } from '@dispatch/core/browser';
 import { isMaskedSecretUrl, NOTIFICATION_KINDS } from '@dispatch/core/browser';
 import { useEffect, useState } from 'react';
 
-import { Button } from '@/ui/button';
-import { Checkbox } from '@/ui/checkbox';
-import { HintText, Panel, PanelHeader, PanelRow } from '@/ui/chrome';
-import { Field, FieldDescription, FieldLabel } from '@/ui/field';
+import { SettingsGroup, SettingsRow } from './SettingsGroup';
+import { PillButton } from '@/ui/ai/pill';
+import { Switch } from '@/ui/ai/switch';
 import { Input } from '@/ui/input';
-import { Label } from '@/ui/label';
 
 interface NotificationsSectionProps {
   config: DispatchConfig;
@@ -95,101 +93,87 @@ export function NotificationsSection({
 
   return (
     <>
-      <Panel>
-        <PanelHeader>What interrupts you</PanelHeader>
-
-        <PanelRow>
-          <HintText>
-            Each kind reaches beyond the app when it is on: a native
-            notification while this window is in the background, and the webhook
-            below. The inbox and the feed keep every item either way.
-          </HintText>
-        </PanelRow>
-
+      <SettingsGroup
+        title="What interrupts you"
+        hint="Each kind reaches beyond the app when it is on: a native notification while this window is in the background, and the webhook below. The inbox and the feed keep every item either way."
+      >
         {NOTIFICATION_KINDS.map((kind) => (
-          <PanelRow key={kind} className="flex-col items-stretch gap-0.5">
-            <Label className="flex items-center gap-2 font-normal">
-              <Checkbox
-                className="size-3.5"
+          <SettingsRow
+            key={kind}
+            title={KIND_INFO[kind].label}
+            subtitle={KIND_INFO[kind].hint}
+            htmlFor={`notify-${kind}`}
+            control={
+              <Switch
+                id={`notify-${kind}`}
                 checked={config.notifications.kinds[kind]}
                 onCheckedChange={(checked) =>
                   void onSave({
-                    notifications: { kinds: { [kind]: checked === true } },
+                    notifications: { kinds: { [kind]: checked } },
                   })
                 }
               />
-              <span className="text-[13px]">{KIND_INFO[kind].label}</span>
-            </Label>
-            <span className="dense-meta pl-5.5">{KIND_INFO[kind].hint}</span>
-          </PanelRow>
+            }
+          />
         ))}
-      </Panel>
+      </SettingsGroup>
 
-      <Panel>
-        <PanelHeader>Webhook</PanelHeader>
-
-        <PanelRow className="flex-col items-stretch gap-1.5">
-          {masked && !replacing ? (
-            <div className="flex items-center gap-2">
-              <span className="text-[13px]">
+      <SettingsGroup title="Webhook">
+        {masked && !replacing ? (
+          <SettingsRow
+            title={
+              <>
                 Configured:{' '}
-                <span className="font-mono text-[12.5px]">{stored}</span>
-              </span>
-              <Button
-                size="sm"
-                variant="secondary"
-                className="ml-auto"
-                onClick={() => {
-                  setWebhook('');
-                  setRefused(false);
-                  setReplacing(true);
-                }}
-              >
-                Replace
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() =>
-                  void onSave({ notifications: { webhook: null } })
-                }
-              >
-                Clear
-              </Button>
-            </div>
-          ) : (
-            <Field className="gap-1.5">
-              <FieldLabel
-                htmlFor="webhook-url"
-                className="text-[12px] font-normal"
-              >
-                Webhook URL
-              </FieldLabel>
+                <span className="text-(--text-secondary)">{stored}</span>
+              </>
+            }
+            subtitle="The stored URL is a credential and is only ever shown by its origin. Replace to enter a new one, Clear to remove it."
+            control={
+              <>
+                <PillButton
+                  onClick={() => {
+                    setWebhook('');
+                    setRefused(false);
+                    setReplacing(true);
+                  }}
+                >
+                  Replace
+                </PillButton>
+                <PillButton
+                  onClick={() =>
+                    void onSave({ notifications: { webhook: null } })
+                  }
+                >
+                  Clear
+                </PillButton>
+              </>
+            }
+          />
+        ) : (
+          <SettingsRow
+            title="Webhook URL"
+            subtitle="Every newly-blocking item is POSTed here as JSON, subject to the toggles above. Point Slack, a Zap, or your own endpoint at it. Leave empty for no webhook."
+            htmlFor="webhook-url"
+            stacked
+            control={
               <Input
                 id="webhook-url"
                 value={webhook}
                 onChange={(e) => setWebhook(e.target.value)}
                 onBlur={commitWebhook}
                 placeholder="https://hooks.slack.com/services/…"
-                className="font-mono text-[12.5px]"
               />
-              {refused && (
-                <span className="text-state-failed text-[12px]">
-                  That is the masked form of a stored URL, not a URL. Paste the
-                  full webhook URL.
-                </span>
-              )}
-            </Field>
-          )}
-          <FieldDescription className="text-[11px]">
-            Every newly-blocking item is POSTed here as JSON, subject to the
-            toggles above. Point Slack, a Zap, or your own endpoint at it.
-            {masked
-              ? ' The stored URL is a credential and is only ever shown by its origin; Replace to enter a new one, Clear to remove it.'
-              : ' Leave empty for no webhook.'}
-          </FieldDescription>
-        </PanelRow>
-      </Panel>
+            }
+          >
+            {refused && (
+              <span className="text-state-failed text-[12px]">
+                That is the masked form of a stored URL, not a URL. Paste the
+                full webhook URL.
+              </span>
+            )}
+          </SettingsRow>
+        )}
+      </SettingsGroup>
     </>
   );
 }

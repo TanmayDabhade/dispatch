@@ -135,16 +135,16 @@ test('the state filter applies to conversation agents too', () => {
     ],
   });
 
-  fireEvent.click(screen.getByRole('button', { name: 'Live' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Live' }));
   expect(screen.getByText('Still planning')).toBeDefined();
   expect(screen.queryByText('Proposal ready')).toBeNull();
 
-  fireEvent.click(screen.getByRole('button', { name: 'Needs review' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Needs review' }));
   expect(screen.getByText('Proposal ready')).toBeDefined();
   expect(screen.queryByText('Still planning')).toBeNull();
 
   // An in-memory conversation is never closed out — it is dismissed and disappears.
-  fireEvent.click(screen.getByRole('button', { name: 'Closed' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Closed' }));
   expect(screen.queryByText('Still planning')).toBeNull();
   expect(screen.queryByText('Proposal ready')).toBeNull();
 });
@@ -196,16 +196,16 @@ test('the state filter narrows the list to one bucket', () => {
   expect(screen.getByText('Still working')).toBeDefined();
   expect(screen.getByText('Already closed')).toBeDefined();
 
-  fireEvent.click(screen.getByRole('button', { name: 'Needs review' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Needs review' }));
   expect(screen.getByText('Awaiting a look')).toBeDefined();
   expect(screen.queryByText('Still working')).toBeNull();
   expect(screen.queryByText('Already closed')).toBeNull();
 
-  fireEvent.click(screen.getByRole('button', { name: 'Live' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Live' }));
   expect(screen.getByText('Still working')).toBeDefined();
   expect(screen.queryByText('Awaiting a look')).toBeNull();
 
-  fireEvent.click(screen.getByRole('button', { name: 'Closed' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Closed' }));
   expect(screen.getByText('Already closed')).toBeDefined();
   expect(screen.queryByText('Still working')).toBeNull();
 });
@@ -272,8 +272,23 @@ test('a run row shows its fan-out, and the Fan-out chip keeps only runs with sub
     sessions: [session()],
   });
   expect(screen.getByText('4t · 3/8 agents live')).toBeDefined();
-  fireEvent.click(screen.getByRole('button', { name: 'Fan-out' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Fan-out' }));
   expect(screen.getByText('Fleet')).toBeDefined();
   expect(screen.queryByText('Solo')).toBeNull();
   expect(screen.queryByText('plan the widget')).toBeNull();
+});
+
+// The header: the page crumb on row 1, the state buckets as view-tab pills on row 2.
+test('the state filter renders as header view tabs with All active by default', () => {
+  mount();
+  expect(screen.getByText('All agents')).toBeDefined();
+  const tabs = screen.getAllByRole('tab');
+  expect(tabs.map((tab) => tab.textContent)).toEqual([
+    'All',
+    'Live',
+    'Needs review',
+    'Closed',
+    'Fan-out',
+  ]);
+  expect(tabs[0].getAttribute('aria-selected')).toBe('true');
 });

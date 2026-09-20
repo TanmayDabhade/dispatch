@@ -1,17 +1,17 @@
 import type { DraftRecord } from '@dispatch/client';
-import { CircleAlert, PanelTopOpen, Sparkles } from 'lucide-react';
+import { PanelTopOpen, Sparkles } from 'lucide-react';
 import { useState } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { DaemonUnavailable } from '../shell/DaemonUnavailable';
-import { Alert } from '@/ui/alert';
+import { Pill } from '@/ui/ai/pill';
 import { Button } from '@/ui/button';
 import {
   Dialog,
+  DialogBody,
+  DialogChrome,
   DialogContent,
   DialogFooter,
-  DialogHeader,
-  DialogTitle,
 } from '@/ui/dialog';
 import { Kbd } from '@/ui/kbd';
 import { Spinner } from '@/ui/spinner';
@@ -19,6 +19,8 @@ import { Textarea } from '@/ui/textarea';
 
 interface AiTaskComposerProps {
   data: DispatchProjectData;
+  /** The crumb's project chip (`[project] › New task`); the app name until a project is open. */
+  projectName?: string;
   /** The unwrapped start call — rejects on failure (unlike `data.handleStartDraft`) so the
    * composer can keep the typed prompt on screen with an inline error instead of losing it. */
   onStartDraft: (prompt: string) => Promise<DraftRecord>;
@@ -28,10 +30,13 @@ interface AiTaskComposerProps {
   onClose: () => void;
 }
 
-/** Describe-what-you-want task starter: submitting starts a background draft and closes right
- * away — the drafts tray picks up its progress, and review/save happens later from there. */
+/** Describe-what-you-want task starter on the new-issue dialog's grammar (§9): the same
+ * ~1024px sheet near the top, a borderless 15px prompt, and a single primary `Draft task`.
+ * Submitting starts a background draft and closes right away — the drafts tray picks up its
+ * progress, and review/save happens later from there. */
 export function AiTaskComposer({
   data,
+  projectName = 'Dispatch',
   onStartDraft,
   onQuickAdd,
   onClose,
@@ -54,6 +59,8 @@ export function AiTaskComposer({
     }
   }
 
+  const daemonDown = data.portLoading || data.portError || data.client === null;
+
   return (
     <Dialog
       open
@@ -61,31 +68,30 @@ export function AiTaskComposer({
         if (!open) onClose();
       }}
     >
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>New task</DialogTitle>
-        </DialogHeader>
+      <DialogContent
+        aria-label="New task"
+        showCloseButton={false}
+        className="top-[12%] w-[min(1024px,92vw)] max-w-none translate-y-0 sm:max-w-none"
+      >
+        <DialogChrome>
+          <Pill>{projectName}</Pill>
+          <span aria-hidden>›</span>
+          <span className="text-(--text-secondary)">New task</span>
+        </DialogChrome>
 
-        {data.portLoading || data.portError || data.client === null ? (
-          <DaemonUnavailable
-            starting={data.portLoading}
-            errorDetail={data.portErrorDetail}
-            onRetry={data.retryEnsureDispatchd}
-          />
+        {daemonDown ? (
+          <DialogBody className="pb-4">
+            <DaemonUnavailable
+              starting={data.portLoading}
+              errorDetail={data.portErrorDetail}
+              onRetry={data.retryEnsureDispatchd}
+            />
+          </DialogBody>
         ) : (
           <>
-            <div className="flex flex-col gap-3">
-              {error !== null && (
-                <Alert
-                  variant="destructive"
-                  className="border-destructive/30 bg-destructive/10 flex items-center gap-2 rounded-md px-3 py-2 text-[13px] has-[>svg]:gap-x-2 [&>svg]:translate-y-0"
-                >
-                  <CircleAlert className="size-4 shrink-0" />
-                  <span>{error}</span>
-                </Alert>
-              )}
+            <DialogBody className="gap-3 pt-1 pb-4">
               <Textarea
-                rows={5}
+                variant="borderless"
                 autoFocus
                 placeholder="What should change, and how you'll know it's done…"
                 aria-label="Describe the task"
@@ -99,43 +105,44 @@ export function AiTaskComposer({
                     void submit();
                   }
                 }}
-                className="resize-y text-[13px]"
+                className="min-h-[120px] text-[15px] leading-6"
               />
-              <div className="flex items-center justify-between gap-3">
+              {error !== null && (
+                <p role="alert" className="text-red text-[12px]">
+                  {error}
+                </p>
+              )}
+              <p className="font-book text-muted-foreground flex items-center gap-1.5 text-[12px]">
+                <Kbd>⌘⏎</Kbd>
+                to draft — nothing is created until you review it.
+              </p>
+            </DialogBody>
+
+            <DialogFooter
+              className="shadow-hairline-top"
+              leading={
                 <Button
                   type="button"
                   variant="ghost"
-                  size="sm"
                   onClick={onQuickAdd}
                   disabled={submitting}
                 >
-                  <PanelTopOpen className="size-3.5" />
+                  <PanelTopOpen />
                   Quick add…
                 </Button>
-                <span className="text-muted-foreground text-[11px]">
-                  <Kbd className="border-border bg-secondary h-auto rounded border py-0.5 font-mono text-[10px]">
-                    ⌘↵
-                  </Kbd>{' '}
-                  to draft — nothing is created until you review it.
-                </span>
-              </div>
-            </div>
-
-            <DialogFooter>
-              <Button variant="ghost" onClick={onClose} disabled={submitting}>
-                Cancel
-              </Button>
+              }
+            >
               <Button
                 disabled={submitting || prompt.trim() === ''}
                 onClick={() => void submit()}
               >
                 {submitting ? (
                   <>
-                    <Spinner className="size-4" /> Starting…
+                    <Spinner className="size-3.5" /> Starting…
                   </>
                 ) : (
                   <>
-                    <Sparkles className="size-4" /> Draft task
+                    <Sparkles /> Draft task
                   </>
                 )}
               </Button>

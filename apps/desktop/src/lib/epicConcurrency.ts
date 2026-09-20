@@ -1,8 +1,22 @@
-// EpicLaneHeader's concurrency stepper reads its value straight off a plain
-// `<input type="number">`, which browsers happily let a user type a
-// fraction, a negative number, or nothing at all into. Extracted as a pure
-// function (rather than inline in the component) purely so this rounding
-// rule is unit-testable the same way the rest of lib/ is.
+// The epic lane header's concurrency picker is a `SelectPill` (`1×` … `4×`): a fixed
+// menu rather than a free-text stepper, so the only parsing left is the menu value on the
+// way back. Both helpers stay pure so the rounding rule is unit-testable like the rest of
+// lib/.
+
+/** The concurrency choices the picker offers: 1 up to the larger of 4 and the project's
+ * configured default, so a config that asks for 6 agents is still selectable. */
+export function concurrencyChoices(defaultValue: number): number[] {
+  const top = Math.max(4, clampConcurrencyInput(String(defaultValue)));
+  return Array.from({ length: top }, (_, i) => i + 1);
+}
+
+/** The picker's label for one choice: `3×`. */
+export function concurrencyLabel(value: number): string {
+  return `${value}×`;
+}
+
+/** Rounds whatever the picker (or an older free-text input) hands back to a whole number
+ * of at least 1: fractions round, non-numbers and anything below 1 land on 1. */
 export function clampConcurrencyInput(raw: string): number {
   const parsed = Number(raw);
   if (!Number.isFinite(parsed)) return 1;

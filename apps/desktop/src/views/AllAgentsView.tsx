@@ -18,9 +18,10 @@ import type { RunStateBucket } from '../lib/runState';
 import { runStateBucket } from '../lib/runState';
 import { subagentSummaryLabel } from '../lib/subagentSummary';
 import { cn } from '@/lib/utils';
-import { type FilterChipOption, FilterChips } from '@/ui/ai/filter-table';
+import { PageHeader, type ViewTab, ViewTabs } from '@/ui/ai/page-header';
 import { TaskRow, TaskRowList } from '@/ui/ai/task-rows';
 import { Button } from '@/ui/button';
+import { EmptyState } from '@/ui/chrome';
 import { Skeleton } from '@/ui/skeleton';
 
 interface AllAgentsViewProps {
@@ -52,12 +53,9 @@ interface AllAgentsViewProps {
   onJumpToRun: (runId: string) => void;
 }
 
-/** The one filter control, in the order work moves through it — rendered via `FilterChips`,
- * but driven as a single-select tab group rather than a true multi-toggle: `onToggle` always
- * replaces the active id outright (never adds to/removes from it), and an explicit "All" chip
- * stands in for "no filter" rather than `FilterChips`' own empty-selection convention, since
- * this control has always shown exactly one bucket at a time. */
-const STATE_FILTERS: FilterChipOption[] = [
+/** The one filter control, in the order work moves through it — the header's view tabs,
+ * exactly one bucket at a time, with an explicit "All" tab standing in for "no filter". */
+const STATE_FILTERS: ViewTab[] = [
   { id: 'all', label: 'All' },
   { id: 'live', label: 'Live' },
   { id: 'needs-review', label: 'Needs review' },
@@ -187,13 +185,46 @@ export function AllAgentsView({
   }, [runs, sessions, stateFilter]);
   const shown = showAll ? ordered : ordered.slice(0, 25);
 
+  // Stays visible whenever it is on, or turning it on would remove the only control
+  // that turns it off — and with it the only way back to an archived run.
+  const archiveToggle = showArchiveToggle(showArchived, archivedRunCount) ? (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={() => onSetShowArchived(!showArchived)}
+    >
+      {showArchived
+        ? 'Hide archived'
+        : `Show archived (${String(archivedRunCount)})`}
+    </Button>
+  ) : undefined;
+
+  // The header carries the one control, four buckets — deliberately not a search box:
+  // this page is scanned down a column, and the question it gets asked is "what is still
+  // owed", not "where is that one run".
+  const header = (
+    <PageHeader
+      crumb={['All agents']}
+      actions={archiveToggle}
+      tabs={
+        <ViewTabs
+          label="Agent state"
+          tabs={STATE_FILTERS}
+          active={stateFilter}
+          onChange={(id) => setStateFilter(id as AgentFilter)}
+        />
+      }
+    />
+  );
+
   if (portLoading) {
     return (
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-2">
-          <Skeleton className="h-8 w-full" />
-          <Skeleton className="h-8 w-full" />
-          <Skeleton className="h-8 w-full" />
+      <div className="flex h-full min-h-0 flex-col">
+        {header}
+        <div className="flex flex-col gap-2 px-6 py-4">
+          <Skeleton className="h-9 w-full" />
+          <Skeleton className="h-9 w-full" />
+          <Skeleton className="h-9 w-full" />
         </div>
       </div>
     );
@@ -201,143 +232,128 @@ export function AllAgentsView({
 
   if (portError || client === null) {
     return (
-      <div className="flex flex-col gap-4">
-        <DaemonUnavailable
-          starting={false}
-          errorDetail={portErrorDetail}
-          onRetry={onRetry}
-        />
+      <div className="flex h-full min-h-0 flex-col">
+        {header}
+        <div className="px-6 py-4">
+          <DaemonUnavailable
+            starting={false}
+            errorDetail={portErrorDetail}
+            onRetry={onRetry}
+          />
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto">
-      <div className="flex items-center justify-end gap-2">
-        {/* One control, four buckets — deliberately not a search box: this page is scanned
-            down a column, and the question it gets asked is "what is still owed", not
-            "where is that one run". */}
-        <FilterChips
-          options={STATE_FILTERS}
-          active={[stateFilter]}
-          onToggle={(id) => setStateFilter(id as AgentFilter)}
-        />
-        {/* Stays visible whenever it is on, or turning it on would remove the only control
-            that turns it off — and with it the only way back to an archived run. */}
-        {showArchiveToggle(showArchived, archivedRunCount) && (
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={() => onSetShowArchived(!showArchived)}
-          >
-            {showArchived
-              ? 'Hide archived'
-              : `Show archived (${archivedRunCount})`}
-          </Button>
-        )}
-      </div>
-
-      {ordered.length === 0 ? (
-        <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-          <Radio className="text-muted-foreground size-5" />
-          <p className="text-muted-foreground max-w-sm text-[13px]">
-            {runs.length + sessions.length > 0
-              ? 'No agents match this filter.'
-              : archivedRunCount > 0
-                ? 'Every run here is archived — turn on Show archived to see them.'
-                : 'No agents have run yet — dispatch a task from the board to start one.'}
-          </p>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-2">
-          <TaskRowList>
-            {shown.map((entry) => {
-              if (entry.row === 'session') {
-                const { session } = entry;
+    <div className="flex h-full min-h-0 flex-col">
+      {header}
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 py-4">
+        {ordered.length === 0 ? (
+          <EmptyState
+            icon={Radio}
+            heading={
+              runs.length + sessions.length > 0
+                ? 'No agents match this filter'
+                : 'No agents have run yet'
+            }
+            description={
+              runs.length + sessions.length > 0
+                ? undefined
+                : archivedRunCount > 0
+                  ? 'Every run here is archived — turn on Show archived to see them.'
+                  : 'Dispatch a task from the board to start one.'
+            }
+            className="flex-1"
+          />
+        ) : (
+          <div className="flex flex-col gap-2">
+            <TaskRowList>
+              {shown.map((entry) => {
+                if (entry.row === 'session') {
+                  const { session } = entry;
+                  return (
+                    // Not clickable: a conversation agent has no run detail page to jump to —
+                    // its own surface (Plans, the drafts tray, Overseer) owns the full record.
+                    <TaskRow
+                      key={entry.key}
+                      title={session.title}
+                      agent={AGENT_SESSION_KIND_LABEL[session.kind]}
+                      state={feedStateToTaskRowState(
+                        agentSessionFeedState(session)
+                      )}
+                      elapsedLabel={formatRelativeTimeFromIso(
+                        session.updatedAt
+                      )}
+                    />
+                  );
+                }
+                const { run } = entry;
+                // A closed-out run has no feed state (deriveFeedState returns null — it is
+                // nobody's turn) — reads as `done`, same bucket a needs-review/landing run
+                // lands in (see `feedStateToTaskRowState`).
+                const feedState = deriveFeedState(run);
+                const kind = runKindLabel(run);
+                const archived = run.archivedAt !== undefined;
                 return (
-                  // Not clickable: a conversation agent has no run detail page to jump to —
-                  // its own surface (Plans, the drafts tray, Overseer) owns the full record.
                   <TaskRow
                     key={entry.key}
-                    title={session.title}
-                    agent={AGENT_SESSION_KIND_LABEL[session.kind]}
-                    state={feedStateToTaskRowState(
-                      agentSessionFeedState(session)
-                    )}
-                    elapsedLabel={formatRelativeTimeFromIso(session.updatedAt)}
+                    title={run.taskTitle}
+                    // Only the runs a person did not dispatch by hand: labelling every plain
+                    // agent run 'agent' would be a column of the same word, so those fall back
+                    // to the model name instead.
+                    agent={
+                      kind !== 'agent'
+                        ? kind
+                        : (modelDisplayName(run.model) ?? '')
+                    }
+                    state={
+                      feedState === null
+                        ? 'done'
+                        : feedStateToTaskRowState(feedState)
+                    }
+                    detail={outcomeLabel(run)}
+                    progress={runProgress(run)}
+                    elapsedLabel={formatRelativeTimeFromIso(run.updatedAt)}
+                    onClick={() => onJumpToRun(run.id)}
+                    actions={
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-pressed={archived}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onArchiveRun(run.id, !archived);
+                        }}
+                        aria-label={
+                          archived
+                            ? `Unarchive ${run.taskTitle}`
+                            : `Archive ${run.taskTitle}`
+                        }
+                        className={cn(archived && 'text-foreground')}
+                      >
+                        <Archive className="size-3.5" />
+                      </Button>
+                    }
                   />
                 );
-              }
-              const { run } = entry;
-              // A closed-out run has no feed state (deriveFeedState returns null — it is
-              // nobody's turn) — reads as `done`, same bucket a needs-review/landing run
-              // lands in (see `feedStateToTaskRowState`).
-              const feedState = deriveFeedState(run);
-              const kind = runKindLabel(run);
-              const archived = run.archivedAt !== undefined;
-              return (
-                <TaskRow
-                  key={entry.key}
-                  title={run.taskTitle}
-                  // Only the runs a person did not dispatch by hand: labelling every plain
-                  // agent run 'agent' would be a column of the same word, so those fall back
-                  // to the model name instead.
-                  agent={
-                    kind !== 'agent'
-                      ? kind
-                      : (modelDisplayName(run.model) ?? '')
-                  }
-                  state={
-                    feedState === null
-                      ? 'done'
-                      : feedStateToTaskRowState(feedState)
-                  }
-                  detail={outcomeLabel(run)}
-                  progress={runProgress(run)}
-                  elapsedLabel={formatRelativeTimeFromIso(run.updatedAt)}
-                  onClick={() => onJumpToRun(run.id)}
-                  actions={
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-xs"
-                      aria-pressed={archived}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onArchiveRun(run.id, !archived);
-                      }}
-                      aria-label={
-                        archived
-                          ? `Unarchive ${run.taskTitle}`
-                          : `Archive ${run.taskTitle}`
-                      }
-                      className={cn(
-                        'size-auto shrink-0 p-1',
-                        archived
-                          ? 'text-primary'
-                          : 'text-muted-foreground hover:text-foreground'
-                      )}
-                    >
-                      <Archive className="size-3.5" />
-                    </Button>
-                  }
-                />
-              );
-            })}
-          </TaskRowList>
+              })}
+            </TaskRowList>
 
-          {ordered.length > shown.length && (
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={() => setShowAll(true)}
-              className="text-muted-foreground hover:text-foreground h-auto justify-start px-3 py-2 text-left text-[length:inherit] font-normal hover:bg-transparent"
-            >
-              Show all {ordered.length}
-            </Button>
-          )}
-        </div>
-      )}
+            {ordered.length > shown.length && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowAll(true)}
+                className="justify-start px-3"
+              >
+                Show all {ordered.length}
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

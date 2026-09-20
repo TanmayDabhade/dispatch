@@ -74,7 +74,7 @@ export function QueueMergeControl({
   return (
     <div className="flex items-center gap-2">
       {activeEntry !== undefined ? (
-        <span className="text-muted-foreground inline-flex items-center gap-1.5 text-[12px]">
+        <span className="text-muted-foreground font-book inline-flex items-center gap-1.5 text-[12px]">
           <ListOrdered className="size-3.5" />
           {activeEntry.state === 'queued'
             ? `Queued · #${queuePosition}`
@@ -94,7 +94,7 @@ export function QueueMergeControl({
       )}
       {blockedReason !== undefined && (
         <span
-          className="text-muted-foreground max-w-40 truncate text-[11px]"
+          className="text-muted-foreground font-book max-w-40 truncate text-[12px]"
           title={blockedReason}
         >
           {blockedReason}
@@ -102,7 +102,7 @@ export function QueueMergeControl({
       )}
       {failedEntry !== undefined && (
         <span
-          className="text-destructive max-w-40 truncate text-[11px]"
+          className="text-state-failed font-book max-w-40 truncate text-[12px]"
           title={failedEntry.reason}
         >
           Failed: {failedEntry.reason ?? 'unknown error'}

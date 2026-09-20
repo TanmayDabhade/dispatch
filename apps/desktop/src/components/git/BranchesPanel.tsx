@@ -8,31 +8,21 @@ import type { BranchRowVM } from '@/lib/gitBranchRows';
 import { canActOnBranchRow } from '@/lib/gitBranchRows';
 import type { GitFilter } from '@/lib/gitHealth';
 import { computeGitHealth } from '@/lib/gitHealth';
-import { cn } from '@/lib/utils';
-import { Button } from '@/ui/button';
+import { IconButton } from '@/ui/ai/icon-button';
+import { ListRow } from '@/ui/ai/list-row';
+import { LabelPill, PillButton } from '@/ui/ai/pill';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
-const STATUS_CHIP: Record<BranchEntryStatus, { label: string; cls: string }> = {
-  active: {
-    label: 'Live',
-    cls: 'border-emerald-500/40 text-emerald-600 dark:text-emerald-400',
-  },
-  reviewable: {
-    label: 'Unreviewed',
-    cls: 'border-amber-500/40 text-amber-600 dark:text-amber-400',
-  },
-  leftover: {
-    label: 'Cleanup failed',
-    cls: 'border-red-500/40 text-red-600 dark:text-red-400',
-  },
-  orphan: {
-    label: 'Orphan',
-    cls: 'border-muted-foreground/40 text-muted-foreground',
-  },
-  epic: {
-    label: 'Epic',
-    cls: 'border-sky-500/40 text-sky-600 dark:text-sky-400',
-  },
-};
+// A worktree's status as a label pill: the dot carries the run-state colour, the text
+// stays on the neutral chip surface.
+const STATUS_CHIP: Record<BranchEntryStatus, { label: string; color: string }> =
+  {
+    active: { label: 'Live', color: 'var(--state-working-fg)' },
+    reviewable: { label: 'Unreviewed', color: 'var(--state-review-fg)' },
+    leftover: { label: 'Cleanup failed', color: 'var(--state-failed-fg)' },
+    orphan: { label: 'Orphan', color: 'var(--text-muted)' },
+    epic: { label: 'Epic', color: 'var(--state-landing-fg)' },
+  };
 
 interface BranchesPanelProps {
   rows: BranchRowVM[];
@@ -68,7 +58,7 @@ export function BranchesPanel({
   const health = useMemo(() => computeGitHealth(worktrees), [worktrees]);
 
   return (
-    <div className="flex flex-col gap-2 p-2">
+    <div className="flex flex-col gap-2 px-1 py-2">
       <GitSummary
         branches={worktrees}
         health={health}
@@ -78,22 +68,20 @@ export function BranchesPanel({
         onFocus={onFilterChange}
       />
       {health.mergedOrphans.length > 0 && (
-        <Button
-          variant="outline"
-          size="xs"
-          className="self-start"
+        <PillButton
+          className="ml-2 self-start"
           onClick={onDeleteAllMergedOrphans}
         >
           Delete {health.mergedOrphans.length} merged orphan
           {health.mergedOrphans.length === 1 ? '' : 's'}
-        </Button>
+        </PillButton>
       )}
       {rows.length === 0 ? (
-        <div className="text-muted-foreground p-2 text-[12px]">
+        <div className="text-muted-foreground font-book px-3 py-2 text-[13px]">
           No branches match this filter.
         </div>
       ) : (
-        <div className="flex flex-col">
+        <div className="flex flex-col" role="list" aria-label="Branches">
           {rows.map((row, index) => {
             const chip =
               row.worktree !== undefined
@@ -101,106 +89,89 @@ export function BranchesPanel({
                 : null;
             const canAct = canActOnBranchRow(row);
             return (
-              <div
+              <ListRow
                 key={row.name}
                 data-git-selected={index === selectedIndex ? 'true' : undefined}
                 onClick={() => onSelectIndex(index)}
-                role="button"
-                tabIndex={-1}
-                className={cn(
-                  'ease-out-expo rounded-control flex flex-col gap-1 px-2 py-1.5 transition-colors duration-100',
-                  index === selectedIndex
-                    ? 'bg-surface-hover'
-                    : 'hover:bg-surface-hover'
-                )}
-              >
-                <div className="flex items-center gap-1.5">
-                  {row.isCurrent ? (
-                    <Check className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                focused={index === selectedIndex}
+                role="listitem"
+                leading={
+                  row.isCurrent ? (
+                    <Check className="text-state-review" />
                   ) : (
-                    <GitBranch className="text-muted-foreground size-3.5 shrink-0" />
-                  )}
-                  <span className="truncate font-mono text-[12px]">
-                    {row.name}
-                  </span>
-                  {chip !== null && (
-                    <span
-                      className={cn(
-                        'rounded-chip shrink-0 border px-1.5 py-px text-[10px] font-medium',
-                        chip.cls
-                      )}
-                    >
-                      {chip.label}
-                    </span>
-                  )}
-                  {row.worktree?.dirty === true && (
-                    <span
-                      title="Uncommitted changes in this worktree"
-                      className="rounded-chip shrink-0 border border-orange-500/40 px-1.5 py-px text-[10px] font-medium text-orange-600 dark:text-orange-400"
-                    >
-                      Uncommitted
-                    </span>
-                  )}
-                  {row.worktree?.status === 'epic' &&
-                    (row.worktree.behindBase ?? 0) > 0 && (
-                      <span
-                        title={`This epic branch is missing ${row.worktree.behindBase} commit(s) from ${row.worktree.baseBranch ?? 'its base'} — merge it in to update (dispatch never rewrites an epic branch on its own)`}
-                        className="rounded-chip shrink-0 border border-amber-500/40 px-1.5 py-px text-[10px] font-medium text-amber-600 dark:text-amber-400"
-                      >
-                        {row.worktree.behindBase} behind{' '}
-                        {row.worktree.baseBranch ?? 'base'}
-                      </span>
+                    <GitBranch />
+                  )
+                }
+                title={row.name}
+                crumb={row.taskTitle ?? row.subject}
+                trailing={
+                  <>
+                    {chip !== null && (
+                      <LabelPill color={chip.color}>{chip.label}</LabelPill>
                     )}
-                </div>
-                <div className="text-muted-foreground/80 flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-5 text-[11px]">
-                  {row.taskTitle !== undefined && (
-                    <span className="truncate">{row.taskTitle}</span>
-                  )}
-                  {row.runId !== undefined && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="xs"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onOpenRun(row.runId);
-                      }}
-                      // `size="xs"` sets its own `h-6`/`text-xs` — both cancelled (`h-auto`,
-                      // `text-[length:inherit]`) so this restores the parent row's inherited
-                      // 11px instead of picking up either the xs size's 12px or Button's
-                      // default 14px.
-                      className="hover:text-foreground h-auto p-0 font-mono text-[length:inherit] font-normal underline-offset-2 hover:bg-transparent hover:underline"
-                    >
-                      {row.runId}
-                    </Button>
-                  )}
-                  <span>{row.shortSha}</span>
-                  <span className="truncate">{row.subject}</span>
-                  <span>{formatRelativeTimeFromIso(row.date)}</span>
-                </div>
-                {canAct && (
-                  <div className="pl-5">
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDispatchAgent(row.name);
-                      }}
-                      title="Start an agent working from this branch"
-                    >
-                      <Bot className="size-3" />
-                      Dispatch agent
-                    </Button>
-                  </div>
-                )}
-              </div>
+                    {row.worktree?.dirty === true && (
+                      <LabelPill
+                        color="var(--state-waiting-fg)"
+                        title="Uncommitted changes in this worktree"
+                      >
+                        Uncommitted
+                      </LabelPill>
+                    )}
+                    {row.worktree?.status === 'epic' &&
+                      (row.worktree.behindBase ?? 0) > 0 && (
+                        <LabelPill
+                          color="var(--state-waiting-fg)"
+                          title={`This epic branch is missing ${row.worktree.behindBase} commit(s) from ${row.worktree.baseBranch ?? 'its base'} — merge it in to update (dispatch never rewrites an epic branch on its own)`}
+                        >
+                          {row.worktree.behindBase} behind{' '}
+                          {row.worktree.baseBranch ?? 'base'}
+                        </LabelPill>
+                      )}
+                    {row.runId !== undefined && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenRun(row.runId);
+                        }}
+                        className="text-muted-foreground font-book text-[12px] underline-offset-2 hover:text-(--text-secondary) hover:underline"
+                      >
+                        {row.runId}
+                      </button>
+                    )}
+                    <span className="text-muted-foreground font-book text-[12px] tabular-nums">
+                      {row.shortSha}
+                    </span>
+                    {canAct && (
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <IconButton
+                              label="Dispatch agent"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onDispatchAgent(row.name);
+                              }}
+                            />
+                          }
+                        >
+                          <Bot />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          Start an agent working from this branch
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
+                  </>
+                }
+                date={formatRelativeTimeFromIso(row.date)}
+              />
             );
           })}
         </div>
       )}
       {health.orphans.length > 0 && (
-        <div className="text-muted-foreground flex items-center gap-1.5 px-2 text-[11px]">
+        <div className="text-muted-foreground font-book flex items-center gap-1.5 px-3 text-[12px]">
           <Sparkles className="size-3" />
           {health.orphans.length} orphaned worktree
           {health.orphans.length === 1 ? '' : 's'} — filter to “Orphaned” above

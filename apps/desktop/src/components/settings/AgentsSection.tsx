@@ -8,10 +8,8 @@ import { useEffect, useState } from 'react';
 
 import { MODELS } from '../../lib/models';
 import { EscalationEditor } from './EscalationEditor';
-import { HintText, Panel, PanelHeader, PanelRow } from '@/ui/chrome';
-import { Field, FieldDescription, FieldLabel } from '@/ui/field';
+import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
 import { Input } from '@/ui/input';
-import { Label } from '@/ui/label';
 import {
   Select,
   SelectContent,
@@ -115,201 +113,183 @@ export function AgentsSection({ config, onSave }: AgentsSectionProps) {
   }
 
   return (
-    <Panel>
-      <PanelHeader>How agents run</PanelHeader>
-
-      {MODEL_ROLES.map((role) => {
-        const info = ROLE_INFO[role];
-        return (
-          <PanelRow key={role}>
-            <div className="flex min-w-0 flex-1 flex-col">
-              <span className="text-[13px] font-medium">{info.label}</span>
-              <HintText>{info.hint}</HintText>
-            </div>
-            <Select
-              value={config.models[role]}
-              onValueChange={(id) => void onSave({ models: { [role]: id } })}
-            >
-              <SelectTrigger
-                size="sm"
-                aria-label={`${info.label} model`}
-                className="w-[168px] shrink-0 text-[12px]"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {MODELS.map((m) => (
-                  <SelectItem key={m.id} value={m.id}>
-                    {m.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </PanelRow>
-        );
-      })}
-
-      <PanelRow className="flex-col items-stretch gap-1.5">
-        <Field className="gap-1.5 [&>*]:w-auto">
-          <FieldLabel
-            htmlFor="how-many-run-at-once-when-you-dispatch-an-epic"
-            className="text-[12px] font-normal"
-          >
-            How many run at once when you dispatch an epic
-          </FieldLabel>
-          <Input
-            id="how-many-run-at-once-when-you-dispatch-an-epic"
-            value={concurrency}
-            onChange={(e) => setConcurrency(e.target.value)}
-            onBlur={() => {
-              const n = Number(concurrency);
-              if (
-                Number.isInteger(n) &&
-                n >= 1 &&
-                n !== config.orchestrator.epicConcurrency
-              ) {
-                void onSave({ epicConcurrency: n });
-              } else {
-                setConcurrency(String(config.orchestrator.epicConcurrency));
+    <>
+      <SettingsGroup title="Models">
+        {MODEL_ROLES.map((role) => {
+          const info = ROLE_INFO[role];
+          return (
+            <SettingsRow
+              key={role}
+              title={info.label}
+              subtitle={info.hint}
+              control={
+                <Select
+                  value={config.models[role]}
+                  onValueChange={(id) =>
+                    void onSave({ models: { [role]: id } })
+                  }
+                >
+                  <SelectTrigger
+                    aria-label={`${info.label} model`}
+                    className="w-[140px]"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MODELS.map((m) => (
+                      <SelectItem key={m.id} value={m.id}>
+                        {m.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               }
-            }}
-            inputMode="numeric"
-            className="w-20 font-mono text-[12.5px]"
-          />
-        </Field>
-      </PanelRow>
+            />
+          );
+        })}
+      </SettingsGroup>
 
-      <PanelRow className="flex-col items-stretch gap-1.5">
-        <span className="text-[12px]">
-          When an agent wants to do something consequential
-        </span>
-        {/* Native radios rather than the Radio primitive: these are styled
-            with `accent-*` as real inputs anyway, and a real input is what
-            keeps `getByLabelText(...).checked` meaningful in the tests. */}
-        <div
-          role="radiogroup"
-          aria-label="When an agent wants to do something consequential"
-          className="grid gap-1.5"
-        >
-          {PERMISSION_MODES.map(([mode, label]) => (
-            <Label key={mode} className="flex items-center gap-2 font-normal">
-              <input
-                type="radio"
-                name="permission-mode"
-                value={mode}
-                checked={config.orchestrator.permissionMode === mode}
-                onChange={() => void onSave({ permissionMode: mode })}
-                className="accent-accent size-3.5"
-              />
-              <span className="text-[13px]">{label}</span>
-            </Label>
-          ))}
-        </div>
-        <HintText>
-          Auto lets the SDK&rsquo;s own classifier approve every tool, so a
-          dispatched agent proceeds unattended instead of stalling on the first
-          Bash call.
-        </HintText>
-        {!OFFERED_MODES.includes(config.orchestrator.permissionMode) && (
-          <span className="dense-meta">
-            currently &ldquo;{config.orchestrator.permissionMode}&rdquo;, set in
-            .dispatch/config.yml
-          </span>
-        )}
-      </PanelRow>
-
-      <PanelRow className="flex-col items-stretch gap-1.5">
-        <Field className="gap-1.5 [&>*]:w-auto">
-          <FieldLabel htmlFor="turn-cap" className="text-[12px] font-normal">
-            Turn cap
-          </FieldLabel>
-          <Input
-            id="turn-cap"
-            value={maxTurns}
-            onChange={(e) => setMaxTurns(e.target.value)}
-            onBlur={() =>
-              saveCap(
-                'maxTurns',
-                maxTurns,
-                config.orchestrator.maxTurns,
-                setMaxTurns
-              )
-            }
-            inputMode="numeric"
-            placeholder="No cap"
-            className="w-24 font-mono text-[12.5px]"
-          />
-          <FieldDescription className="text-[11px]">
-            Ceiling on turns for one run. Leave empty for no cap.
-          </FieldDescription>
-        </Field>
-      </PanelRow>
-
-      <PanelRow className="flex-col items-stretch gap-1.5">
-        <Field className="gap-1.5 [&>*]:w-auto">
-          <FieldLabel
-            htmlFor="budget-cap-per-run"
-            className="text-[12px] font-normal"
-          >
-            Budget cap per run
-          </FieldLabel>
-          <Input
-            id="budget-cap-per-run"
-            value={maxBudgetUsd}
-            onChange={(e) => setMaxBudgetUsd(e.target.value)}
-            onBlur={() =>
-              saveCap(
-                'maxBudgetUsd',
-                maxBudgetUsd,
-                config.orchestrator.maxBudgetUsd,
-                setMaxBudgetUsd
-              )
-            }
-            inputMode="decimal"
-            placeholder="No cap"
-            className="w-24 font-mono text-[12.5px]"
-          />
-          <FieldDescription className="text-[11px]">
-            Dollar ceiling on one run&rsquo;s spend. Leave empty for no cap.
-          </FieldDescription>
-        </Field>
-      </PanelRow>
-
-      <PanelRow className="flex-col items-stretch gap-1.5">
-        <Field className="gap-1.5 [&>*]:w-auto">
-          <FieldLabel
-            htmlFor="fix-loop-round-cap"
-            className="text-[12px] font-normal"
-          >
-            Fix-loop round cap
-          </FieldLabel>
-          <Input
-            id="fix-loop-round-cap"
-            value={fixLoopCap}
-            onChange={(e) => setFixLoopCap(e.target.value)}
-            onBlur={() => {
-              const n = Number(fixLoopCap);
-              if (Number.isInteger(n) && n >= 1 && n !== config.fixLoop.cap) {
-                void onSave({ fixLoop: { cap: n } });
-              } else {
-                setFixLoopCap(String(config.fixLoop.cap));
-              }
-            }}
-            inputMode="numeric"
-            className="w-20 font-mono text-[12.5px]"
-          />
-          <FieldDescription className="text-[11px]">
-            Last round the fix loop may dispatch before demanding a ruling.
-          </FieldDescription>
-        </Field>
-      </PanelRow>
-
-      <div className="p-3">
-        <EscalationEditor
-          steps={config.fixLoop.escalation}
-          onChange={(escalation) => void onSave({ fixLoop: { escalation } })}
+      <SettingsGroup title="How agents run">
+        <SettingsRow
+          title="How many run at once when you dispatch an epic"
+          htmlFor="how-many-run-at-once-when-you-dispatch-an-epic"
+          control={
+            <Input
+              id="how-many-run-at-once-when-you-dispatch-an-epic"
+              value={concurrency}
+              onChange={(e) => setConcurrency(e.target.value)}
+              onBlur={() => {
+                const n = Number(concurrency);
+                if (
+                  Number.isInteger(n) &&
+                  n >= 1 &&
+                  n !== config.orchestrator.epicConcurrency
+                ) {
+                  void onSave({ epicConcurrency: n });
+                } else {
+                  setConcurrency(String(config.orchestrator.epicConcurrency));
+                }
+              }}
+              inputMode="numeric"
+              className="w-20 text-right tabular-nums"
+            />
+          }
         />
-      </div>
-    </Panel>
+
+        <SettingsRow
+          title="When an agent wants to do something consequential"
+          subtitle="Auto lets the SDK’s own classifier approve every tool, so a dispatched agent proceeds unattended instead of stalling on the first Bash call."
+          stacked
+        >
+          {/* Native radios rather than the Radio primitive: these are styled
+              with `accent-*` as real inputs anyway, and a real input is what
+              keeps `getByLabelText(...).checked` meaningful in the tests. */}
+          <div
+            role="radiogroup"
+            aria-label="When an agent wants to do something consequential"
+            className="grid gap-1.5"
+          >
+            {PERMISSION_MODES.map(([mode, label]) => (
+              <label
+                key={mode}
+                className="font-book flex items-center gap-2 text-[13px] text-(--text-secondary)"
+              >
+                <input
+                  type="radio"
+                  name="permission-mode"
+                  value={mode}
+                  checked={config.orchestrator.permissionMode === mode}
+                  onChange={() => void onSave({ permissionMode: mode })}
+                  className="accent-primary size-3.5"
+                />
+                <span>{label}</span>
+              </label>
+            ))}
+          </div>
+          {!OFFERED_MODES.includes(config.orchestrator.permissionMode) && (
+            <SettingsHint>
+              Currently &ldquo;{config.orchestrator.permissionMode}&rdquo;, set
+              in .dispatch/config.yml
+            </SettingsHint>
+          )}
+        </SettingsRow>
+
+        <SettingsRow
+          title="Turn cap"
+          subtitle="Ceiling on turns for one run. Leave empty for no cap."
+          htmlFor="turn-cap"
+          control={
+            <Input
+              id="turn-cap"
+              value={maxTurns}
+              onChange={(e) => setMaxTurns(e.target.value)}
+              onBlur={() =>
+                saveCap(
+                  'maxTurns',
+                  maxTurns,
+                  config.orchestrator.maxTurns,
+                  setMaxTurns
+                )
+              }
+              inputMode="numeric"
+              placeholder="No cap"
+              className="w-24 text-right tabular-nums"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Budget cap per run"
+          subtitle="Dollar ceiling on one run’s spend. Leave empty for no cap."
+          htmlFor="budget-cap-per-run"
+          control={
+            <Input
+              id="budget-cap-per-run"
+              value={maxBudgetUsd}
+              onChange={(e) => setMaxBudgetUsd(e.target.value)}
+              onBlur={() =>
+                saveCap(
+                  'maxBudgetUsd',
+                  maxBudgetUsd,
+                  config.orchestrator.maxBudgetUsd,
+                  setMaxBudgetUsd
+                )
+              }
+              inputMode="decimal"
+              placeholder="No cap"
+              className="w-24 text-right tabular-nums"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Fix-loop round cap"
+          subtitle="Last round the fix loop may dispatch before demanding a ruling."
+          htmlFor="fix-loop-round-cap"
+          control={
+            <Input
+              id="fix-loop-round-cap"
+              value={fixLoopCap}
+              onChange={(e) => setFixLoopCap(e.target.value)}
+              onBlur={() => {
+                const n = Number(fixLoopCap);
+                if (Number.isInteger(n) && n >= 1 && n !== config.fixLoop.cap) {
+                  void onSave({ fixLoop: { cap: n } });
+                } else {
+                  setFixLoopCap(String(config.fixLoop.cap));
+                }
+              }}
+              inputMode="numeric"
+              className="w-20 text-right tabular-nums"
+            />
+          }
+        />
+      </SettingsGroup>
+
+      <EscalationEditor
+        steps={config.fixLoop.escalation}
+        onChange={(escalation) => void onSave({ fixLoop: { escalation } })}
+      />
+    </>
   );
 }

@@ -6,6 +6,8 @@ import { ReviewThread } from './ReviewThread';
 import { Button } from '@/ui/button';
 import { SectionLabel } from '@/ui/chrome/SectionLabel';
 
+const META_CLASS = 'text-[12px] font-book text-muted-foreground tabular-nums';
+
 interface ReviewThreadIndexProps {
   comments: ReviewComment[];
   onResolve: (commentId: string, resolved: boolean) => Promise<void>;
@@ -56,34 +58,32 @@ export function ReviewThreadIndex({
       </SectionLabel>
 
       {comments.length === 0 ? (
-        <p className="text-muted-foreground text-[12.5px]">
+        <p className="text-muted-foreground font-book text-[13px]">
           {EMPTY_HINT[destination]}
         </p>
       ) : (
         [...byFile.entries()].map(([path, list]) => (
           <div key={path}>
-            <div className="dense-meta mb-1 truncate">{path}</div>
+            <div className="text-muted-foreground mb-1 truncate font-mono text-[12px]">
+              {path}
+            </div>
             {list.map((c) => (
               <div key={c.id}>
                 <div className="flex items-center gap-1.5 px-1">
-                  {/* Button's own `text-sm font-medium` are Tailwind utilities, which — per
-                      `.dense-meta`'s own doc comment in global.css — always beat a
-                      `@layer components` class on the same element regardless of source
-                      order. Both have to be cancelled explicitly or the line reference
-                      would render at the wrong size/weight. */}
                   <Button
                     type="button"
                     variant="ghost"
+                    size="xs"
                     disabled={onJumpTo === undefined}
                     onClick={() => onJumpTo?.(c)}
-                    className="dense-meta hover:text-accent-foreground h-auto p-0 text-[length:var(--text-meta)] font-normal hover:bg-transparent"
+                    className="font-book h-auto px-0 text-[12px] tabular-nums"
                   >
                     {c.startLine !== undefined && c.startLine !== c.line
                       ? `L${c.startLine}–${c.line}`
                       : `L${c.line}`}
                   </Button>
                   {c.pending && (
-                    <span className="dense-meta text-state-waiting">
+                    <span className={`${META_CLASS} text-state-waiting`}>
                       pending
                     </span>
                   )}

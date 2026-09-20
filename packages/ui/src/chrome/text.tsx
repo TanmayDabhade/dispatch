@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 
 import { cn } from '../lib/utils';
 
-/** Row metadata — ids, elapsed times, counts. Mono and tabular. */
+/** Row metadata — ids, elapsed times, counts. 12px sans, tabular digits. */
 export function MetaText({
   children,
   className,
@@ -10,10 +10,19 @@ export function MetaText({
   children: ReactNode;
   className?: string;
 }) {
-  return <span className={cn('dense-meta', className)}>{children}</span>;
+  return (
+    <span
+      className={cn(
+        'text-[12px] font-book text-muted-foreground tabular-nums',
+        className
+      )}
+    >
+      {children}
+    </span>
+  );
 }
 
-/** Explanatory prose under a control — a sentence, so neither mono nor uppercase. */
+/** Explanatory prose under a control — a sentence. */
 export function HintText({
   children,
   className,

@@ -32,11 +32,18 @@ interface SpendTableProps {
   activeKey?: string;
 }
 
+const HEAD_CLASS =
+  'text-muted-foreground h-8 px-0 text-[12px] font-medium whitespace-normal';
+const NUMBER_CLASS =
+  'text-muted-foreground font-book px-0 py-0 text-right text-[12px] tabular-nums whitespace-normal';
+
 /**
  * The "sessions + spend, grouped by X" table the Sessions hub renders for both its "spend by
  * model" and "spend by project" sections — one shared component owns the markup, each caller
  * only supplies its own rows and the label for the grouping column. Optionally clickable (see
- * `onRowClick`) so the same table doubles as the project filter control.
+ * `onRowClick`) so the same table doubles as the project filter control; clickable rows are
+ * focusable buttons (Enter/Space toggle) that expose the active filter as `aria-pressed`.
+ * Heads are 12px sentence case, numbers 12px sans with tabular digits, rows 36px.
  */
 export function SpendTable({
   columnLabel,
@@ -46,29 +53,18 @@ export function SpendTable({
   activeKey,
 }: SpendTableProps) {
   if (rows.length === 0) {
-    return (
-      <EmptyState
-        message={emptyMessage}
-        className="px-0 py-0 [&_[data-slot=empty-description]]:text-[13px]"
-      />
-    );
+    return <EmptyState description={emptyMessage} className="py-4" />;
   }
 
   return (
     <Table className="text-[13px]">
       <TableHeader>
-        {/* Table's base row hover (hover:bg-muted/50) doesn't apply to a header row in the
-            old design, so it's neutralized here same as the body rows below. */}
         <TableRow className="hover:bg-transparent">
-          <TableHead className="text-muted-foreground h-auto px-0 pb-2 text-[11px] font-medium tracking-wide whitespace-normal uppercase">
-            {columnLabel}
-          </TableHead>
-          <TableHead className="text-muted-foreground h-auto px-0 pb-2 text-right text-[11px] font-medium tracking-wide whitespace-normal uppercase">
+          <TableHead className={HEAD_CLASS}>{columnLabel}</TableHead>
+          <TableHead className={cn(HEAD_CLASS, 'text-right')}>
             Sessions
           </TableHead>
-          <TableHead className="text-muted-foreground h-auto px-0 pb-2 text-right text-[11px] font-medium tracking-wide whitespace-normal uppercase">
-            Spend
-          </TableHead>
+          <TableHead className={cn(HEAD_CLASS, 'text-right')}>Spend</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -76,20 +72,32 @@ export function SpendTable({
           <TableRow
             key={row.key}
             onClick={onRowClick ? () => onRowClick(row.key) : undefined}
+            onKeyDown={
+              onRowClick
+                ? (event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      onRowClick(row.key);
+                    }
+                  }
+                : undefined
+            }
+            role={onRowClick ? 'button' : undefined}
+            tabIndex={onRowClick ? 0 : undefined}
+            aria-pressed={onRowClick ? activeKey === row.key : undefined}
+            data-active={activeKey === row.key ? '' : undefined}
             className={cn(
-              'hover:bg-transparent',
+              'h-9 hover:bg-transparent',
               onRowClick &&
-                'hover:bg-accent/40 cursor-pointer transition-colors',
-              activeKey === row.key && 'bg-accent/50'
+                'hover:bg-surface-hover cursor-pointer transition-colors duration-100',
+              activeKey === row.key && 'bg-surface-selected'
             )}
           >
-            <TableCell className="text-foreground px-0 py-2 whitespace-normal">
+            <TableCell className="text-foreground px-0 py-0 font-medium whitespace-normal">
               {row.label}
             </TableCell>
-            <TableCell className="text-muted-foreground px-0 py-2 text-right font-mono whitespace-normal">
-              {row.sessionCount}
-            </TableCell>
-            <TableCell className="text-muted-foreground px-0 py-2 text-right font-mono whitespace-normal">
+            <TableCell className={NUMBER_CLASS}>{row.sessionCount}</TableCell>
+            <TableCell className={NUMBER_CLASS}>
               ${row.totalCostUsd.toFixed(2)}
             </TableCell>
           </TableRow>

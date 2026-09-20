@@ -60,7 +60,7 @@ export function LoadingState({
     <div className="flex w-fit items-center gap-2.5">
       {variant === 'grid' ? <PixelGrid /> : <DotsOrbit />}
       <ShimmerLabel className="text-[13px] font-medium">{label}</ShimmerLabel>
-      <span className="text-muted-foreground font-mono text-[12px] tabular-nums">
+      <span className="text-muted-foreground font-book text-[12px] tabular-nums">
         {elapsed}
       </span>
     </div>

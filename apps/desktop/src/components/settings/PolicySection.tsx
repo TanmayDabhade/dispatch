@@ -19,7 +19,8 @@ import { useEffect, useState } from 'react';
 
 import { relativeTime } from '../../lib/landingView';
 import { policyReceipts } from '../../lib/policyReceipts';
-import { HintText, Panel, PanelHeader, PanelRow } from '@/ui/chrome';
+import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
+import { PanelRow } from '@/ui/chrome';
 import {
   Select,
   SelectContent,
@@ -117,7 +118,7 @@ function AutonomySlider({ rung, onRungChange }: AutonomySliderProps) {
         onPointerUp={() => commit(draft)}
         onKeyUp={() => commit(draft)}
         style={{
-          backgroundImage: `linear-gradient(to right, var(--primary) ${String(percent)}%, var(--surface-inset) ${String(percent)}%)`,
+          backgroundImage: `linear-gradient(to right, var(--accent) ${String(percent)}%, var(--border-chip) ${String(percent)}%)`,
         }}
         className="[&::-moz-range-thumb]:bg-card [&::-moz-range-thumb]:shadow-btn [&::-webkit-slider-thumb]:bg-card [&::-webkit-slider-thumb]:shadow-btn h-1.5 w-full cursor-pointer appearance-none rounded-full outline-none [&::-moz-range-thumb]:size-3.5 [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-webkit-slider-thumb]:size-3.5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full"
       />
@@ -138,10 +139,10 @@ function AutonomySlider({ rung, onRungChange }: AutonomySliderProps) {
               type="button"
               aria-pressed={stop.rung === draft}
               onClick={() => commit(stop.rung)}
-              className={`rounded-chip min-w-0 flex-1 px-1 py-0.5 text-[11px] leading-tight transition-colors ${edge} ${
+              className={`rounded-control min-w-0 flex-1 px-1 py-0.5 text-[12px] leading-tight transition-colors duration-100 ${edge} ${
                 stop.rung === draft
                   ? 'text-foreground font-medium'
-                  : 'text-muted-foreground hover:text-foreground'
+                  : 'text-muted-foreground font-book hover:text-(--text-secondary)'
               }`}
             >
               {stop.label}
@@ -149,9 +150,7 @@ function AutonomySlider({ rung, onRungChange }: AutonomySliderProps) {
           );
         })}
       </div>
-      <p className="text-muted-foreground text-[12px]">
-        {RUNG_DESCRIPTIONS[draft] ?? active?.label}
-      </p>
+      <SettingsHint>{RUNG_DESCRIPTIONS[draft] ?? active?.label}</SettingsHint>
     </div>
   );
 }
@@ -167,85 +166,80 @@ interface GateTableProps {
  *  as fixed, visibly non-configurable rows. */
 function GateTable({ policy, onPinGate }: GateTableProps) {
   return (
-    <div className="flex flex-col">
+    <>
       {POLICY_GATES.map((gate) => {
         const ruling = consultPolicy(policy, gate);
         const pin = policy.gates[gate];
         return (
-          <div
+          <SettingsRow
             key={gate}
-            className="border-border/60 flex items-center gap-3 border-b py-2 last:border-b-0"
-          >
-            <div className="min-w-0 flex-1">
-              <div className="text-[13px] font-medium">
-                {GATE_COPY[gate].label}
-              </div>
-              <div className="text-muted-foreground text-[11.5px]">
-                {GATE_COPY[gate].meaning}
-              </div>
-            </div>
-            <span
-              className={`shrink-0 text-[11.5px] ${
-                ruling.mode === 'auto'
-                  ? 'text-state-review'
-                  : 'text-muted-foreground'
-              }`}
-            >
-              {ruling.mode === 'auto'
-                ? ruling.authorizedBy === 'override'
-                  ? 'Auto + records (pinned)'
-                  : 'Auto + records'
-                : pin === 'block'
-                  ? 'Blocks (pinned)'
-                  : 'Blocks'}
-            </span>
-            <Select
-              value={pin ?? 'rung'}
-              onValueChange={(next) =>
-                onPinGate(
-                  gate,
-                  next === 'rung' ? null : (next as PolicyGateMode)
-                )
-              }
-            >
-              <SelectTrigger
-                size="sm"
-                aria-label={`${GATE_COPY[gate].label} override`}
-                className="w-36 shrink-0 text-[12px]"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="rung">Rung decides</SelectItem>
-                <SelectItem value="block">Always block</SelectItem>
-                <SelectItem value="auto">Always auto</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+            title={GATE_COPY[gate].label}
+            subtitle={GATE_COPY[gate].meaning}
+            control={
+              <>
+                <span
+                  className={`font-book shrink-0 text-[12px] ${
+                    ruling.mode === 'auto'
+                      ? 'text-state-review'
+                      : 'text-muted-foreground'
+                  }`}
+                >
+                  {ruling.mode === 'auto'
+                    ? ruling.authorizedBy === 'override'
+                      ? 'Auto + records (pinned)'
+                      : 'Auto + records'
+                    : pin === 'block'
+                      ? 'Blocks (pinned)'
+                      : 'Blocks'}
+                </span>
+                <Select
+                  value={pin ?? 'rung'}
+                  onValueChange={(next) =>
+                    onPinGate(
+                      gate,
+                      next === 'rung' ? null : (next as PolicyGateMode)
+                    )
+                  }
+                >
+                  <SelectTrigger
+                    aria-label={`${GATE_COPY[gate].label} override`}
+                    className="w-[130px]"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="rung">Rung decides</SelectItem>
+                    <SelectItem value="block">Always block</SelectItem>
+                    <SelectItem value="auto">Always auto</SelectItem>
+                  </SelectContent>
+                </Select>
+              </>
+            }
+          />
         );
       })}
 
-      <div className="mt-3 flex flex-col gap-1">
-        <span className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
-          Irreversibility floor
-        </span>
-        {FLOOR_ROWS.map((row) => (
-          <div
-            key={row}
-            aria-disabled="true"
-            className="text-muted-foreground flex items-center gap-2 py-1 text-[12.5px]"
-          >
-            <Lock aria-hidden className="size-3 shrink-0" />
-            <span className="min-w-0 flex-1">{row}</span>
-            <span className="shrink-0 text-[11.5px]">Always blocks</span>
-          </div>
-        ))}
-        <HintText className="mt-1">
+      <PanelRow className="bg-surface-quaternary text-muted-foreground h-8 min-h-0 gap-2 py-0 text-[12px] font-medium">
+        Irreversibility floor
+      </PanelRow>
+      {FLOOR_ROWS.map((row) => (
+        <PanelRow
+          key={row}
+          aria-disabled="true"
+          className="text-muted-foreground min-h-8 flex-nowrap gap-2 py-1 text-[13px]"
+        >
+          <Lock aria-hidden className="size-3.5 shrink-0" />
+          <span className="min-w-0 flex-1">{row}</span>
+          <span className="font-book shrink-0 text-[12px]">Always blocks</span>
+        </PanelRow>
+      ))}
+      <PanelRow>
+        <SettingsHint>
           The floor does not move with the slider — these block at every rung,
           with no override.
-        </HintText>
-      </div>
-    </div>
+        </SettingsHint>
+      </PanelRow>
+    </>
   );
 }
 
@@ -297,92 +291,74 @@ export function PolicySection({
 
   return (
     <>
-      <Panel>
-        <PanelHeader>Autonomy</PanelHeader>
-        <PanelRow className="flex-col items-stretch gap-1.5">
+      <SettingsGroup title="Autonomy">
+        <PanelRow className="flex-col items-stretch gap-1.5 py-3">
           <AutonomySlider
             rung={policy.rung}
             onRungChange={(rung) => void onSave({ policy: { rung } })}
           />
         </PanelRow>
-      </Panel>
+      </SettingsGroup>
 
-      <Panel>
-        <PanelHeader>Gate table</PanelHeader>
-        <PanelRow className="flex-col items-stretch gap-1.5">
-          <HintText>
-            Per-gate pins win over the rung, in either direction. Every
-            auto-decision still records to the ledger, findings, and evidence.
-          </HintText>
-          <GateTable
-            policy={policy}
-            onPinGate={(gate, pin) =>
-              void onSave({ policy: { gates: { [gate]: pin } } })
-            }
-          />
-        </PanelRow>
-      </Panel>
+      <SettingsGroup
+        title="Gate table"
+        hint="Per-gate pins win over the rung, in either direction. Every auto-decision still records to the ledger, findings, and evidence."
+      >
+        <GateTable
+          policy={policy}
+          onPinGate={(gate, pin) =>
+            void onSave({ policy: { gates: { [gate]: pin } } })
+          }
+        />
+      </SettingsGroup>
 
-      <Panel>
-        <PanelHeader>Receipts</PanelHeader>
-        <PanelRow className="flex-col items-stretch gap-1.5">
-          {receiptsError && (
-            <HintText>Could not load the ledger for this project.</HintText>
-          )}
-          {!receiptsError && receipts !== null && receipts.length === 0 && (
-            <HintText>
+      <SettingsGroup title="Receipts">
+        {receiptsError && (
+          <PanelRow>
+            <SettingsHint>
+              Could not load the ledger for this project.
+            </SettingsHint>
+          </PanelRow>
+        )}
+        {!receiptsError && receipts !== null && receipts.length === 0 && (
+          <PanelRow>
+            <SettingsHint>
               No auto-decisions yet. When a gate auto-decides, its receipt lands
               in the ledger and shows up here.
-            </HintText>
-          )}
-          {!receiptsError && receipts !== null && receipts.length > 0 && (
-            <ul className="flex flex-col">
-              {receipts.map((entry) => {
-                const body = (
-                  <>
-                    <div className="flex items-baseline gap-2">
-                      <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium">
-                        {entry.title}
-                      </span>
-                      {entry.sourceTaskId !== null && (
-                        <span className="text-muted-foreground shrink-0 font-mono text-[11px]">
-                          {entry.sourceTaskId}
-                        </span>
-                      )}
-                      <span className="text-muted-foreground shrink-0 text-[11px]">
-                        {relativeTime(entry.createdAt, now)}
-                      </span>
-                    </div>
-                    <p className="text-muted-foreground truncate text-left text-[11.5px]">
-                      {entry.detail}
-                    </p>
-                  </>
-                );
-                const taskId = entry.sourceTaskId;
-                const canOpen = onOpenTask !== undefined && taskId !== null;
-                return (
-                  <li
-                    key={entry.id}
-                    className="border-border/60 border-b py-1.5 last:border-b-0"
-                  >
-                    {canOpen ? (
-                      <button
-                        type="button"
-                        onClick={() => onOpenTask(taskId)}
-                        className="hover:bg-surface-inset/60 -mx-1 block w-[calc(100%+0.5rem)] rounded-sm px-1 text-left"
-                      >
-                        {body}
-                      </button>
-                    ) : (
-                      body
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </PanelRow>
-      </Panel>
+            </SettingsHint>
+          </PanelRow>
+        )}
+        {!receiptsError &&
+          receipts !== null &&
+          receipts.map((entry) => {
+            const taskId = entry.sourceTaskId;
+            const canOpen = onOpenTask !== undefined && taskId !== null;
+            return (
+              <PanelRow
+                key={entry.id}
+                onClick={canOpen ? () => onOpenTask(taskId) : undefined}
+                className="flex-col items-stretch gap-0.5 py-2"
+              >
+                <div className="flex items-baseline gap-2">
+                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
+                    {entry.title}
+                  </span>
+                  {entry.sourceTaskId !== null && (
+                    <span className="text-muted-foreground font-book shrink-0 text-[12px] tracking-(--id-tracking)">
+                      {entry.sourceTaskId}
+                    </span>
+                  )}
+                  <span className="text-muted-foreground font-book shrink-0 text-[12px]">
+                    {relativeTime(entry.createdAt, now)}
+                  </span>
+                </div>
+                <p className="text-muted-foreground font-book truncate text-left text-[12px]">
+                  {entry.detail}
+                </p>
+              </PanelRow>
+            );
+          })}
+      </SettingsGroup>
     </>
   );
 }

@@ -2,6 +2,7 @@ import type { VerificationResult } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
 import {
+  isRevealableArtifact,
   summarizeVerification,
   verificationCheckDetail,
 } from './verificationSummary';
@@ -88,5 +89,13 @@ describe('verificationCheckDetail', () => {
         pass: false,
       })
     ).toBeNull();
+  });
+});
+
+describe('isRevealableArtifact', () => {
+  test('only an absolute path can be revealed in Finder', () => {
+    expect(isRevealableArtifact('/tmp/verify/screenshot.png')).toBe(true);
+    expect(isRevealableArtifact('screenshot.png')).toBe(false);
+    expect(isRevealableArtifact('https://example.com/report')).toBe(false);
   });
 });

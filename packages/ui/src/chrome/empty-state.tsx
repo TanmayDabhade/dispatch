@@ -1,43 +1,99 @@
 import type { LucideIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 
-import { Empty, EmptyContent, EmptyDescription, EmptyMedia } from '../empty';
+import { PillButton } from '../ai/pill';
+import { Button } from '../button';
+import { Kbd } from '../kbd';
 import { cn } from '../lib/utils';
 
-/** The centred icon + one line + one action shown when a surface has nothing. */
-export function EmptyState({
-  icon: Icon,
-  message,
-  action,
-  className,
-}: {
+export type EmptyStateProps = {
+  /** A ~60px line-art illustration, stroked at 1px in muted ink. */
+  illustration?: ReactNode;
+  /** Legacy: a lucide icon in the illustration slot. */
   icon?: LucideIcon;
-  message: string;
+  /** 13px/500. */
+  heading?: ReactNode;
+  /** 13px/450 muted, wraps at 340px. */
+  description?: ReactNode;
+  /** Legacy alias for `description`. */
+  message?: ReactNode;
+  /** The indigo pill, with an optional inline keycap hint (`N then P`). */
+  primary?: { label: ReactNode; onClick: () => void; hint?: ReactNode };
+  /** The control-surface pill beside it. */
+  secondary?: { label: ReactNode; onClick: () => void };
+  /** Legacy: arbitrary action markup under the text. */
   action?: ReactNode;
   className?: string;
-}) {
+};
+
+/** What a surface shows when it has nothing: a centred line-art illustration, a 13px
+ * heading, a short muted description, and a primary + secondary pill. `message` and
+ * `action` are the pre-Linear props and keep working. */
+export function EmptyState({
+  illustration,
+  icon: Icon,
+  heading,
+  description,
+  message,
+  primary,
+  secondary,
+  action,
+  className,
+}: EmptyStateProps) {
+  const descriptionText = description ?? message;
+  const art =
+    illustration ??
+    (Icon !== undefined ? (
+      <Icon className="size-[60px]" strokeWidth={1} />
+    ) : undefined);
   return (
-    // Empty's generated base classes (flex-1, rounded-lg border-dashed, text-balance,
-    // p-6/md:p-12) fight this bar's current layout, so every one is overridden back.
-    <Empty
+    <div
+      data-slot="empty-state"
       className={cn(
-        'flex-initial min-w-[auto] justify-start flex-col items-center gap-2 rounded-none border-none p-0 px-4 py-8 text-center text-wrap text-muted-foreground md:p-0',
+        'flex flex-col items-center justify-center gap-2 px-4 py-8 text-center',
         className
       )}
     >
-      {Icon && (
-        <EmptyMedia className="mb-0 bg-transparent p-0">
-          <Icon className="size-5" />
-        </EmptyMedia>
+      {art !== undefined && (
+        <div
+          aria-hidden
+          className="text-muted-foreground/60 mb-1 flex h-[60px] items-center justify-center [&_svg]:size-[60px] [&_svg]:stroke-1"
+        >
+          {art}
+        </div>
       )}
-      <EmptyDescription className="text-muted-foreground text-sm">
-        {message}
-      </EmptyDescription>
-      {action && (
-        <EmptyContent className="w-auto max-w-none min-w-[auto] gap-0 text-[length:inherit] text-wrap">
-          {action}
-        </EmptyContent>
+      {heading !== undefined && (
+        <p className="text-[13px] font-medium text-(--text-secondary)">
+          {heading}
+        </p>
       )}
-    </Empty>
+      {descriptionText !== undefined && (
+        <p className="font-book text-muted-foreground max-w-[340px] text-[13px]">
+          {descriptionText}
+        </p>
+      )}
+      {(primary !== undefined || secondary !== undefined) && (
+        <div className="mt-2 flex items-center gap-2">
+          {primary !== undefined && (
+            <Button onClick={primary.onClick} className="rounded-pill">
+              {primary.label}
+              {primary.hint !== undefined && (
+                <Kbd className="border-white/20 bg-white/15 text-white">
+                  {primary.hint}
+                </Kbd>
+              )}
+            </Button>
+          )}
+          {secondary !== undefined && (
+            <PillButton onClick={secondary.onClick}>
+              {secondary.label}
+            </PillButton>
+          )}
+        </div>
+      )}
+      {action !== undefined && (
+        <div className="mt-1 flex items-center gap-2">{action}</div>
+      )}
+    </div>
   );
 }

@@ -114,7 +114,7 @@ test('full mode: the start card takes an opening question through overseer.submi
   fireEvent.change(screen.getByLabelText('Overseer opening question'), {
     target: { value: 'status?' },
   });
-  await clickAndSettle(screen.getByRole('button', { name: 'Ask' }));
+  await clickAndSettle(screen.getByRole('button', { name: 'Send' }));
   expect(asked).toEqual(['status?']);
 });
 
@@ -212,10 +212,8 @@ test('an in-flight send keeps Send disabled on a freshly mounted chat', () => {
   });
   render(<OverseerChat overseer={overseer} compact />);
 
-  // Matched by its visible label rather than its accessible name: the button
-  // swaps in a spinner alongside the text while it is in flight.
-  const send = screen.getByText('Sending…').closest('button');
-  expect(send?.disabled).toBe(true);
+  const send = screen.getByRole<HTMLButtonElement>('button', { name: 'Send' });
+  expect(send.disabled).toBe(true);
 });
 
 // A permanently failed record fetch (404 + retry: false) is a broken
@@ -563,8 +561,9 @@ test('a parked tool call renders an allow/deny card wired to decideApproval', as
   ]);
 });
 
-// The opening composer picks the model the conversation opens on; an open
-// conversation names the model it started on and offers no picker.
+// The opening composer picks the model the conversation opens on (the
+// `PromptBar`'s own model select); an open conversation names the model it
+// started on and offers no picker.
 test('the opening composer offers the model picker and an open conversation names its model', () => {
   const picks: string[] = [];
   const fresh = overseerSession({
@@ -574,7 +573,7 @@ test('the opening composer offers the model picker and an open conversation name
     },
   });
   const first = render(<ChatWithDraft overseer={fresh} />);
-  const picker = screen.getByRole('button', { name: 'Overseer model' });
+  const picker = screen.getByRole('combobox', { name: 'Choose model' });
   expect(picker.textContent).toContain('Opus 5');
   first.unmount();
 
@@ -586,6 +585,23 @@ test('the opening composer offers the model picker and an open conversation name
       })}
     />
   );
-  expect(screen.queryByRole('button', { name: 'Overseer model' })).toBeNull();
+  expect(screen.queryByRole('combobox', { name: 'Choose model' })).toBeNull();
   expect(screen.getByText(/Fable 5\.1/)).toBeDefined();
+});
+
+// Card headings are 12px/500 sentence case, never uppercase tracked labels, and the
+// tool id beside them is book-weight sans.
+test('the confirm card heading is 12px sentence case and its tool id is sans', () => {
+  const overseer = overseerSession({
+    conversationId: 'w-1',
+    record: overseerRecord({ pendingActions: [overseerAction()] }),
+  });
+  render(<OverseerChat overseer={overseer} />);
+  const heading = screen.getByText('Needs your approval');
+  expect(heading.className).toContain('text-[12px]');
+  expect(heading.className).toContain('font-medium');
+  expect(heading.className).not.toContain('uppercase');
+  const toolId = screen.getByText('cancel_run');
+  expect(toolId.className).toContain('font-book');
+  expect(toolId.className).not.toContain('font-mono');
 });

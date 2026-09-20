@@ -1,7 +1,7 @@
 import { Sparkles } from 'lucide-react';
 
+import { PillButton } from '@/ui/ai/pill';
 import { Button } from '@/ui/button';
-import { ButtonGroup } from '@/ui/button-group';
 import { Checkbox } from '@/ui/checkbox';
 import { Label } from '@/ui/label';
 import { Spinner } from '@/ui/spinner';
@@ -36,7 +36,7 @@ export function CommitComposer({
     message.trim() !== '' && (stagedCount > 0 || amend) && !busy;
 
   return (
-    <div className="shadow-hairline-top flex flex-col gap-1.5 pt-2">
+    <div className="shadow-hairline-top flex shrink-0 flex-col gap-1.5 px-4 py-3">
       <div className="flex items-end gap-2">
         <Textarea
           id="git-commit-message"
@@ -48,31 +48,27 @@ export function CommitComposer({
           }
           value={message}
           onChange={(e) => onMessageChange(e.target.value)}
-          className="min-h-0 flex-1 text-[12px]"
+          aria-label="Commit message"
+          className="min-h-0 flex-1 text-[13px]"
         />
         <div className="flex flex-col gap-1.5">
-          <ButtonGroup orientation="vertical">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={stagedCount === 0 || generating}
-              onClick={onGenerate}
-              title="Generate a commit message from the staged diff"
-            >
-              {generating ? (
-                <Spinner className="size-3.5" />
-              ) : (
-                <Sparkles className="size-3.5" />
-              )}
-              Generate
-            </Button>
-            <Button size="sm" disabled={!canCommit} onClick={onCommit}>
-              {amend ? 'Amend' : 'Commit'}
-            </Button>
-          </ButtonGroup>
-          <Label className="text-muted-foreground flex items-center gap-1.5 px-1 text-[11px] font-normal">
+          <PillButton
+            disabled={stagedCount === 0 || generating}
+            onClick={onGenerate}
+            title="Generate a commit message from the staged diff"
+          >
+            {generating ? (
+              <Spinner className="size-3.5" />
+            ) : (
+              <Sparkles className="size-3.5" />
+            )}
+            Generate
+          </PillButton>
+          <Button size="sm" disabled={!canCommit} onClick={onCommit}>
+            {amend ? 'Amend' : 'Commit'}
+          </Button>
+          <Label className="text-muted-foreground font-book flex items-center gap-1.5 px-1 text-[12px]">
             <Checkbox
-              className="size-3.5"
               checked={amend}
               onCheckedChange={(checked) => onAmendChange(checked === true)}
             />

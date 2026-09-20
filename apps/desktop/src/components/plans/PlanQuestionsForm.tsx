@@ -62,12 +62,10 @@ export function PlanQuestionsForm({
   const busy = disabled || sending;
 
   return (
-    <div className="animate-in fade-in-0 bg-surface-inset shadow-hairline rounded-control flex flex-col gap-3 px-3 py-2.5 duration-150">
-      <div className="flex items-center gap-2">
-        <MessageCircleQuestion className="text-state-waiting size-3.5 shrink-0" />
-        <span className="dense-label text-state-waiting font-medium">
-          The planner is asking you
-        </span>
+    <div className="bg-state-waiting-surface rounded-card flex flex-col gap-3 border-[0.5px] border-(--state-waiting-edge) px-3 py-2.5">
+      <div className="text-state-waiting flex items-center gap-1.5 text-[12px] font-medium">
+        <MessageCircleQuestion className="size-3.5 shrink-0" />
+        The planner is asking you
       </div>
       {questions.map((q) => (
         <div key={q.id} className="flex flex-col gap-1.5">
@@ -99,12 +97,12 @@ export function PlanQuestionsForm({
             }
             disabled={busy}
             aria-label={q.question}
-            className="min-h-0 resize-y text-[12.5px]"
+            className="min-h-0 resize-y"
           />
         </div>
       ))}
       {error !== null && (
-        <div className="text-destructive text-[12px]">{error}</div>
+        <div className="text-state-failed text-[12px]">{error}</div>
       )}
       <div className="flex justify-end gap-2">
         <Button

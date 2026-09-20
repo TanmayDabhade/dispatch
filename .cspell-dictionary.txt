@@ -150,6 +150,7 @@ fakesha
 falsiness
 fanout
 fastq
+favourite
 fdir
 fedcba
 ffee
@@ -224,6 +225,8 @@ jsonpointer
 katex
 keepme
 keycap
+keycaps
+Keycaps
 keydowns
 keymap
 Keymap
@@ -267,6 +270,7 @@ musleabihf
 myconstant
 napi
 ncarto
+neighbours
 neutralised
 neutralises
 newthing
@@ -348,6 +352,7 @@ recognisably
 recognise
 recognised
 recognises
+recolour
 recoloured
 recoverably
 redispatch
@@ -411,6 +416,7 @@ screenshotted
 scriptable
 seqs
 serde
+serialises
 serialising
 sess
 shellout
@@ -499,6 +505,7 @@ unarchiving
 unawaited
 unbash
 unbuilt
+unbulleted
 unbypassable
 unclosable
 unconfig
@@ -512,6 +519,7 @@ unfiled
 unfoldable
 ungap
 ungated
+Ungroup
 unhovered
 unhydratable
 unignorable
@@ -561,6 +569,7 @@ unstarted
 unsubmitted
 untargeted
 unticked
+untinted
 unvalidated
 unviewed
 Unviewed

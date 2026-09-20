@@ -1,9 +1,14 @@
 import type { TaskDoc } from '@dispatch/core/browser';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
 
-import { toggleCollapsedEpic } from '../../lib/collapsedEpics';
+import { toggleCollapsedGroup } from '../../lib/collapsedEpics';
+import {
+  type CreateTaskPreset,
+  type ShellActions,
+  ShellActionsProvider,
+} from '../shell/ShellActionsContext';
 import { TaskBoard } from './TaskBoard';
 import { TooltipProvider } from '@/ui/tooltip';
 
@@ -20,10 +25,11 @@ function task(
       title,
       status,
       kind,
-      priority: 2,
+      priority: 'medium',
       parent,
+      milestone: null,
       labels: [],
-      assignee: null,
+      assignee: 'none',
       blockedBy: [],
       created: '2026-08-10T00:00:00.000Z',
       updated: '2026-08-10T00:00:00.000Z',
@@ -49,33 +55,78 @@ const TASKS = [
   task('t-loose', 'Unparented card', 'done'),
 ];
 
+/** The shell seam the board needs: `+` presets. Records what it was asked. */
+function shellWith(presets: CreateTaskPreset[]) {
+  const noop = () => {};
+  const actions = {
+    openTask: noop,
+    peekTask: noop,
+    openCreateTask: (preset?: CreateTaskPreset) => {
+      presets.push(preset ?? {});
+    },
+    createPreset: null,
+    closeCreateTask: noop,
+    openPalette: noop,
+    toggleSidebar: noop,
+    sidebarHidden: false,
+    openOverseer: noop,
+    setProjectView: noop,
+    setGlobalView: noop,
+    openShortcuts: noop,
+    copyTaskId: noop,
+  } satisfies ShellActions;
+  return function Shell({ children }: { children: ReactNode }) {
+    return (
+      <ShellActionsProvider value={actions}>{children}</ShellActionsProvider>
+    );
+  };
+}
+
 /** Owns the collapsed-lane state the same way `BoardView` does, so a click on a lane header
  * actually folds the lane in the test rather than being swallowed by a static prop. */
-function Harness(props: Partial<Parameters<typeof TaskBoard>[0]> = {}) {
+function Harness({
+  presets = [],
+  ...props
+}: Partial<Parameters<typeof TaskBoard>[0]> & {
+  presets?: CreateTaskPreset[];
+}) {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  const Shell = shellWith(presets);
   return (
-    <TooltipProvider>
-      <TaskBoard
-        tasks={TASKS}
-        statuses={STATUSES}
-        epics={EPICS}
-        readyIds={new Set()}
-        blockedIds={new Set()}
-        liveRunStateByTaskId={new Map()}
-        latestRunByTaskId={new Map()}
-        epicProgressById={new Map()}
-        epicConcurrencyDefault={3}
-        collapsedLaneKeys={collapsed}
-        onToggleLane={(key) =>
-          setCollapsed((prev) => toggleCollapsedEpic(prev, key))
-        }
-        onSelect={() => {}}
-        onWorkEpic={async () => {}}
-        onStopEpic={async () => {}}
-        {...props}
-      />
-    </TooltipProvider>
+    <Shell>
+      <TooltipProvider>
+        <TaskBoard
+          tasks={TASKS}
+          statuses={STATUSES}
+          epics={EPICS}
+          readyIds={new Set()}
+          blockedIds={new Set()}
+          liveRunStateByTaskId={new Map()}
+          latestRunByTaskId={new Map()}
+          epicProgressById={new Map()}
+          epicConcurrencyDefault={3}
+          groupByEpic
+          collapsedLaneKeys={collapsed}
+          onToggleLane={(key) =>
+            setCollapsed((prev) => toggleCollapsedGroup(prev, key))
+          }
+          onSelect={() => {}}
+          onWorkEpic={async () => {}}
+          onStopEpic={async () => {}}
+          {...props}
+        />
+      </TooltipProvider>
+    </Shell>
   );
+}
+
+// A menu positions itself a microtask after mount (floating-ui), so an open menu is
+// rendered — and its items clicked — inside an async `act` that lets that settle.
+async function settle(work: () => void) {
+  await act(async () => {
+    work();
+    await Promise.resolve();
+  });
 }
 
 /** Every card @dnd-kit has actually made draggable, by the title it renders. A card `useDraggable`
@@ -92,19 +143,32 @@ function draggableTitles(): string[] {
     .map((el) => (el.textContent ?? '').replace(/\s+/g, ' '));
 }
 
-function laneToggle(name: RegExp) {
+/** The lane headers on screen, by title, in order. */
+function laneTitles(): string[] {
+  return Array.from(document.querySelectorAll('[data-lane-key]')).map(
+    (section) =>
+      section.querySelector('[data-slot=group-header-name] button')
+        ?.textContent ?? ''
+  );
+}
+
+/** The lane's title button — an exact name, since the lane's `+` is named after it too. */
+function laneToggle(name: string) {
   return screen.getByRole('button', { name });
+}
+
+function columnHeaders(): HTMLElement[] {
+  return Array.from(
+    document.querySelectorAll<HTMLElement>('[data-slot=board-column-header]')
+  );
 }
 
 test('every epic with children heads a lane, and the no-epic lane comes last', () => {
   render(<Harness />);
-  const lanes = screen
-    .getAllByRole('button', { expanded: true })
-    .map((el) => el.textContent ?? '');
-  expect(lanes).toHaveLength(3);
-  expect(lanes[0]).toContain('Payments epic');
-  expect(lanes[1]).toContain('Search epic');
-  expect(lanes[2]).toContain('No epic');
+  expect(laneTitles()).toEqual(['Payments epic', 'Search epic', 'No epic']);
+  for (const title of laneTitles()) {
+    expect(laneToggle(title).getAttribute('aria-expanded')).toBe('true');
+  }
 });
 
 // Twenty epics with three active ones must not render seventeen blank rows.
@@ -117,31 +181,30 @@ test('clicking an epic header hides its cards, and clicking again brings them ba
   render(<Harness />);
   expect(screen.queryByText('Card one')).not.toBeNull();
 
-  fireEvent.click(laneToggle(/Payments epic/));
+  fireEvent.click(laneToggle('Payments epic'));
   expect(screen.queryByText('Card one')).toBeNull();
   expect(screen.queryByText('Card three')).toBeNull();
   // A sibling lane is untouched — collapse is per epic, not a board-wide mode.
   expect(screen.queryByText('Card four')).not.toBeNull();
 
-  fireEvent.click(laneToggle(/Payments epic/));
+  fireEvent.click(laneToggle('Payments epic'));
   expect(screen.queryByText('Card one')).not.toBeNull();
 });
 
-// The count in a column header must never quietly shrink when work is folded away — the
-// hidden cards are still there, and the header has to say so.
-test('a collapsed epic moves its cards into a "+N hidden" badge on the affected columns', () => {
+// The column count is the one number that never moves: folding a lane hides cards, it does
+// not remove work from the status.
+test('a column header keeps its plain count when a lane collapses', () => {
   render(<Harness />);
+  const todo = columnHeaders()[0];
+  expect(todo.textContent).toContain('3');
+  fireEvent.click(laneToggle('Payments epic'));
+  expect(columnHeaders()[0].textContent).toContain('3');
   expect(screen.queryByText(/hidden/)).toBeNull();
-
-  fireEvent.click(laneToggle(/Payments epic/));
-  const hidden = screen.getAllByText(/hidden/).map((el) => el.textContent);
-  // "todo" hides t-1 and t-2, "done" hides t-3, "in-progress" had none so gets no badge.
-  expect(hidden).toEqual(['+2 hidden', '+1 hidden']);
 });
 
 test('the no-epic lane collapses like any other', () => {
   render(<Harness />);
-  fireEvent.click(laneToggle(/No epic/));
+  fireEvent.click(laneToggle('No epic'));
   expect(screen.queryByText('Unparented card')).toBeNull();
 });
 
@@ -163,17 +226,22 @@ test('an archived card is not draggable', () => {
   expect(titles.some((t) => t.includes('Card two'))).toBe(true);
 });
 
-test('the epic header carries the epic dispatch and graph controls', () => {
+test('the epic header carries the epic dispatch and graph controls as pills', () => {
   render(<Harness />);
   expect(screen.queryByRole('button', { name: 'Open e-1' })).not.toBeNull();
   expect(
     screen.queryByRole('button', { name: 'View dependency graph for e-1' })
   ).not.toBeNull();
-  expect(
-    screen.queryByLabelText('Epic dispatch concurrency for e-1')
-  ).not.toBeNull();
+  const concurrency = screen.getByLabelText(
+    'Epic dispatch concurrency for e-1'
+  );
+  expect(concurrency.tagName).toBe('BUTTON');
+  expect(concurrency.textContent).toBe('3×');
+  expect(concurrency.className).toContain('rounded-pill');
   // The "No epic" lane has nothing to dispatch, so it gets none of them.
-  expect(screen.getAllByRole('button', { name: 'Work' })).toHaveLength(2);
+  const work = screen.getAllByRole('button', { name: 'Work' });
+  expect(work).toHaveLength(2);
+  expect(work[0]?.className).toContain('rounded-pill');
 });
 
 test('the epic dispatch button routes through the confirmation preview', () => {
@@ -185,7 +253,7 @@ test('the epic dispatch button routes through the confirmation preview', () => {
 
 // The land affordance follows the server's own readiness rule (every child done or
 // cancelled): a finished epic's header swaps the then-useless Work button for Land.
-test('a finished epic swaps Work for a Land button that lands it', () => {
+test('a finished epic swaps Work for a Land button that lands it', async () => {
   const landed: string[] = [];
   const progress = new Map([
     [
@@ -215,8 +283,70 @@ test('a finished epic swaps Work for a Land button that lands it', () => {
   const land = screen.getAllByRole('button', { name: 'Land' });
   expect(land).toHaveLength(1);
   expect(screen.getAllByRole('button', { name: 'Work' })).toHaveLength(1);
-  fireEvent.click(land[0]);
+  // The `◔ 3/3` progress glyph sits beside it.
+  expect(document.querySelector('[data-slot=epic-progress]')?.textContent).toBe(
+    '3/3'
+  );
+  await settle(() => {
+    fireEvent.click(land[0]);
+  });
   expect(landed).toEqual(['e-1']);
+});
+
+// The regression this guards: a dash length computed from a wider circle than the pie is
+// drawn on filled the disk at twice the real fraction (a full disk at 50%).
+test('the ◔ progress pie exposes exactly the done fraction of its arc', () => {
+  const progress = new Map([
+    [
+      'e-1',
+      {
+        epicId: 'e-1',
+        active: false,
+        children: [
+          { id: 't-1', title: 'Card one', status: 'landed' },
+          { id: 't-2', title: 'Card two', status: 'ready' },
+        ],
+        liveRuns: [],
+      },
+    ],
+  ]);
+  render(<Harness epicProgressById={progress} />);
+  expect(document.querySelector('[data-slot=epic-progress]')?.textContent).toBe(
+    '1/2'
+  );
+  const pie = document.querySelector(
+    '[data-slot=epic-progress-glyph] circle[r="2"]'
+  );
+  const [dash] = (pie?.getAttribute('stroke-dasharray') ?? '').split(' ');
+  const offset = Number(pie?.getAttribute('stroke-dashoffset'));
+  // The pie is `StatusIcon`'s: a 12.19 arc, half of it hidden by the offset at 1/2 done.
+  expect(Number(dash)).toBeCloseTo(12.19, 2);
+  expect(offset).toBeCloseTo(6.09, 2);
+});
+
+test('the concurrency pill opens a radio menu with the current choice checked', async () => {
+  render(<Harness />);
+  await settle(() => {
+    fireEvent.click(
+      screen.getAllByLabelText('Epic dispatch concurrency for e-1')[0]
+    );
+  });
+  const items = screen.getAllByRole('menuitemradio');
+  expect(items.map((item) => item.textContent)).toEqual([
+    '1×',
+    '2×',
+    '3×',
+    '4×',
+  ]);
+  expect(
+    items.map((item) => item.getAttribute('aria-checked') === 'true')
+  ).toEqual([false, false, true, false]);
+  await settle(() => {
+    fireEvent.click(items[0]);
+  });
+  expect(
+    screen.getAllByLabelText('Epic dispatch concurrency for e-1')[0].textContent
+  ).toBe('1×');
 });
 
 test('no Land button renders without land wiring or finished progress', () => {
@@ -224,9 +354,128 @@ test('no Land button renders without land wiring or finished progress', () => {
   expect(screen.queryByRole('button', { name: 'Land' })).toBeNull();
 });
 
-test('a column header "+" opens the create modal pre-set to that status', () => {
-  const added: string[] = [];
-  render(<Harness onAddTask={(status) => added.push(status)} />);
+test('columns are 348px with 12px side padding, headers 44px, cards 322px', () => {
+  render(<Harness />);
+  const headers = columnHeaders();
+  expect(headers).toHaveLength(3);
+  for (const header of headers) {
+    expect(header.className).toContain('w-[348px]');
+    expect(header.className).toContain('px-3');
+    expect(header.className).toContain('h-11');
+  }
+  // Glyph, 12px muted name, plain count — nothing mono, no pill around the name.
+  const todo = headers[0];
+  expect(todo.querySelector('svg[aria-label="Status: todo"]')).not.toBeNull();
+  expect(todo.querySelector('.text-\\[12px\\]')?.textContent).toBe('Todo');
+  expect(todo.className).not.toContain('font-mono');
+  const card = screen.getByText('Card one').closest('[data-slot=task-card]');
+  expect(card?.className).toContain('w-[322px]');
+  expect(card?.className).toContain('bg-surface-quaternary');
+  expect(card?.className).toContain('shadow-card');
+  // Column stacks carry no background of their own — cards sit on the panel.
+  const column = document.querySelector('[data-slot=board-column]');
+  expect(column?.className).not.toMatch(/\bbg-(?!surface-hover)/);
+});
+
+test('the column ··· menu offers collapse, hide and dispatch-all', async () => {
+  const collapsed: string[] = [];
+  const hidden: string[] = [];
+  render(
+    <Harness
+      onToggleColumnCollapsed={(s) => collapsed.push(s)}
+      onHideColumn={(s) => hidden.push(s)}
+    />
+  );
+  await settle(() => {
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Todo column options' })
+    );
+  });
+  const items = screen.getAllByRole('menuitem').map((i) => i.textContent);
+  expect(items).toEqual([
+    'Collapse column',
+    'Hide column',
+    'Dispatch all ready',
+  ]);
+  await settle(() => {
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Collapse column' }));
+  });
+  expect(collapsed).toEqual(['todo']);
+  await settle(() => {
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Done column options' })
+    );
+  });
+  await settle(() => {
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Hide column' }));
+  });
+  expect(hidden).toEqual(['done']);
+});
+
+test('Dispatch all ready dispatches every ready card in the column', async () => {
+  const dispatched: string[] = [];
+  render(
+    <Harness
+      readyIds={new Set(['t-1', 't-4', 't-loose'])}
+      onDispatch={(id) => {
+        dispatched.push(id);
+        return Promise.resolve();
+      }}
+    />
+  );
+  await settle(() => {
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Todo column options' })
+    );
+  });
+  await settle(() => {
+    fireEvent.click(
+      screen.getByRole('menuitem', { name: 'Dispatch all ready (2)' })
+    );
+  });
+  expect(dispatched.sort()).toEqual(['t-1', 't-4']);
+});
+
+test('a collapsed column folds to a strip that expands on click', () => {
+  const toggled: string[] = [];
+  render(
+    <Harness
+      collapsedColumns={new Set(['in-progress'])}
+      onToggleColumnCollapsed={(s) => toggled.push(s)}
+    />
+  );
+  const strip = columnHeaders()[1];
+  expect(strip.dataset['collapsed']).toBe('true');
+  expect(strip.className).toContain('w-11');
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Expand In Progress column' })
+  );
+  expect(toggled).toEqual(['in-progress']);
+});
+
+test('a column header "+" opens the creator pre-set to that status', () => {
+  const presets: CreateTaskPreset[] = [];
+  render(<Harness presets={presets} />);
   fireEvent.click(screen.getByRole('button', { name: 'New task in done' }));
-  expect(added).toEqual(['done']);
+  expect(presets).toEqual([{ status: 'done' }]);
+});
+
+test('a lane header "+" presets the epic', () => {
+  const presets: CreateTaskPreset[] = [];
+  render(<Harness presets={presets} />);
+  fireEvent.click(
+    screen.getByRole('button', { name: 'New task in Payments epic' })
+  );
+  expect(presets).toEqual([{ epic: 'e-1' }]);
+});
+
+test('the flat board has no lane headers and crumbs each card with its epic', () => {
+  render(<Harness groupByEpic={false} />);
+  expect(document.querySelector('[data-slot=group-header]')).toBeNull();
+  const card = screen.getByText('Card one').closest('[data-slot=task-card]');
+  const meta = card?.querySelector('[data-slot=task-card-meta]');
+  expect(meta?.textContent).toContain('t-1');
+  expect(meta?.querySelector('[data-slot=task-card-crumb]')?.textContent).toBe(
+    'Payments epic'
+  );
 });

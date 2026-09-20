@@ -1,220 +1,203 @@
-import { statusTone } from '../../lib/taskDisplay';
 import { cn } from '@/lib/utils';
 
-// A single 14x14 viewBox shared by every glyph below — sized via the `size-3.5` Tailwind
-// class (not SVG width/height attributes) so callers can override size the same way lucide
-// icons in this codebase already do, by passing a different `size-*` class through
-// `className`.
+// Linear's status glyph, geometry read from its SVG DOM: a 14×14 viewBox, an outer ring at
+// r=6 (stroke 1.5) and an inner "pie" drawn as an r=2 circle with a 4-wide stroke whose
+// dasharray exposes a fraction of the circumference, rotated so it starts at 12 o'clock.
+// Sized via the `size-3.5` Tailwind class (not SVG width/height) so callers override size
+// the way they do for lucide icons — by passing a different `size-*` class.
 const VIEWBOX = 14;
-const CENTER = VIEWBOX / 2;
-const RADIUS = 5.25;
-// Thicker than the 1.4 these glyphs shipped with: at 16px a 1.4 stroke reads as a smudge
-// rather than a deliberate icon, which is what made the board feel washed out.
-const STROKE_WIDTH = 1.7;
+const CENTER = 7;
+const RING_RADIUS = 6;
+const RING_STROKE = 1.5;
+// Linear's solid ring is itself a dash pattern with no gap; the offset keeps its seam off the
+// 12 o'clock mark, and the backlog ring only changes the pattern.
+const RING_DASH = '3.14 0';
+const RING_DASH_OFFSET = -0.7;
+const BACKLOG_RING_DASH = '1.4 1.74';
+const BACKLOG_RING_DASH_OFFSET = 0.65;
+// The pie's dash length is the visible arc at 100%; the offset hides `1 - fraction` of it.
+const PIE_RADIUS = 2;
+const PIE_STROKE = 4;
+const PIE_DASH = 12.189379495928398;
+const PIE_DASHARRAY = `${PIE_DASH} ${PIE_DASH * 2}`;
+// The done/cancelled disk: an r=3 circle with a 6-wide stroke covers the whole ring interior.
+const DISK_RADIUS = 3;
+const DISK_STROKE = 6;
+const DISK_DASHARRAY = '18.84955592153876 37.69911184307752';
+const ROTATE_TO_NOON = `rotate(-90 ${CENTER} ${CENTER})`;
 
-type StatusShape = 'dashed' | 'empty' | 'pie' | 'check' | 'x';
+// Linear's own check and × paths, filled in the panel colour so they read as cut-outs.
+const CHECK_PATH =
+  'M10.951 4.24896C11.283 4.58091 11.283 5.11909 10.951 5.45104L5.95104 10.451C5.61909 10.783 5.0809 10.783 4.74896 10.451L2.74896 8.45104C2.41701 8.11909 2.41701 7.5809 2.74896 7.24896C3.0809 6.91701 3.61909 6.91701 3.95104 7.24896L5.35 8.64792L9.74896 4.24896C10.0809 3.91701 10.6191 3.91701 10.951 4.24896Z';
+const X_PATH =
+  'M4.396 4.396C4.723 4.068 5.253 4.068 5.581 4.396L7 5.815L8.419 4.396C8.747 4.068 9.277 4.068 9.604 4.396C9.932 4.723 9.932 5.253 9.604 5.581L8.185 7L9.604 8.419C9.932 8.747 9.932 9.277 9.604 9.604C9.277 9.932 8.747 9.932 8.419 9.604L7 8.185L5.581 9.604C5.253 9.932 4.723 9.932 4.396 9.604C4.068 9.277 4.068 8.747 4.396 8.419L5.815 7L4.396 5.581C4.068 5.253 4.068 4.723 4.396 4.396Z';
+const CUTOUT_FILL = 'var(--surface-page)';
 
-// The same six-tone vocabulary `statusTone` returns — reused here (not redeclared) so a
-// status's `tone` field below and its `statusTone()` fallback always speak the same language.
-type Tone = ReturnType<typeof statusTone>;
+type StatusShape = 'backlog' | 'pie' | 'done' | 'cancelled';
 
 interface StatusVisual {
   shape: StatusShape;
-  /** Tailwind text-color class — drives both `stroke="currentColor"` and
-   * `fill="currentColor"` below. */
+  /** Tailwind text-color class — the glyph strokes in `currentColor`. */
   colorClass: string;
-  /** Which of `statusTone`'s six tones this status's `colorClass` corresponds to. Callers that
-   * need a status's color in a context other than `currentColor` text (e.g. EpicDagView's SVG
-   * rect stroke/fill, which can't reuse `colorClass` directly) key off this instead of
-   * re-deriving a color from `statusTone()` alone, which would drift from `colorClass` above
-   * for the built-ins (e.g. in-progress is amber here but blue under plain `statusTone`). */
-  tone: Tone;
-  /** Pie fill fraction (0..1), only meaningful when `shape === 'pie'`. */
+  /** The same colour as a CSS value, for tinting a group header or a graph node. */
+  color: string;
+  /** Pie fill fraction (0..1) for the ring shapes; Linear draws the (empty) pie for backlog
+   * and todo too, so both carry 0. */
   fraction?: number;
 }
 
-// Linear's exact treatment for the built-in tracker statuses: a shape that reads as "how far
-// along is this" (dashed ring -> empty ring -> filling pie -> filled check) plus a deliberate
-// color, independent of `statusTone`'s badge-oriented palette (see the fallback below for why
-// those two mappings intentionally differ). The pie fills as the pipeline advances:
-// working half, review three-quarter, landing near-full.
+// Linear's defaults mapped onto the tracker's built-in pipeline: dashed backlog ring, empty
+// todo ring, a pie that fills as the work advances (working half, review three-quarter,
+// landing nine-tenths), an indigo check disk for landed, a cancelled disk for dropped.
 const KNOWN_STATUS_VISUALS: Record<string, StatusVisual> = {
   draft: {
-    shape: 'dashed',
-    colorClass: 'text-muted-foreground/70',
-    tone: 'gray',
+    shape: 'backlog',
+    fraction: 0,
+    colorClass: 'text-status-backlog',
+    color: 'var(--status-backlog)',
   },
-  ready: { shape: 'empty', colorClass: 'text-muted-foreground', tone: 'gray' },
+  ready: {
+    shape: 'pie',
+    fraction: 0,
+    colorClass: 'text-status-todo',
+    color: 'var(--status-todo)',
+  },
   working: {
     shape: 'pie',
     fraction: 0.5,
-    colorClass: 'text-state-waiting',
-    tone: 'amber',
+    colorClass: 'text-status-progress',
+    color: 'var(--status-progress)',
   },
   review: {
     shape: 'pie',
     fraction: 0.75,
-    colorClass: 'text-primary',
-    tone: 'accent',
+    colorClass: 'text-status-green',
+    color: 'var(--status-green)',
   },
   landing: {
     shape: 'pie',
     fraction: 0.9,
-    colorClass: 'text-state-landing',
-    tone: 'blue',
+    colorClass: 'text-teal',
+    color: 'var(--teal)',
   },
-  // Green rather than the indigo this shipped with: landed and review were both indigo, so
-  // the two columns that matter most were indistinguishable at a glance. Green completes an
-  // amber -> indigo -> green progression across the board.
-  landed: { shape: 'check', colorClass: 'text-state-review', tone: 'green' },
+  landed: {
+    shape: 'done',
+    colorClass: 'text-status-done',
+    color: 'var(--status-done)',
+  },
   dropped: {
-    shape: 'x',
-    colorClass: 'text-muted-foreground',
-    tone: 'gray',
+    shape: 'cancelled',
+    colorClass: 'text-status-cancelled',
+    color: 'var(--status-cancelled)',
   },
 };
 
-// Fallback palette for a custom tracker status (anything not in the six built-ins above) —
-// keyed by the same six-tone vocabulary `statusTone` already returns for the rest of the app,
-// so a project's own `.dispatch/config.yml` status list always renders *something* sensible
-// (an empty ring in a deliberate color) rather than an unstyled shape.
-const FALLBACK_TONE_COLOR_CLASS: Record<Tone, string> = {
-  green: 'text-state-review',
-  blue: 'text-state-landing',
-  amber: 'text-state-waiting',
-  red: 'text-destructive',
-  gray: 'text-muted-foreground',
-  accent: 'text-primary',
+// A custom tracker status (anything not in the built-ins above, from a project's own
+// `.dispatch/config.yml` status list) renders as the empty todo ring, so it always has a
+// deliberate colour rather than an unstyled shape.
+const CUSTOM_STATUS_VISUAL: StatusVisual = {
+  shape: 'pie',
+  fraction: 0,
+  colorClass: 'text-status-todo',
+  color: 'var(--status-todo)',
 };
 
 /**
- * Resolves a status string to its full visual treatment — shape, color, and (for custom
- * statuses) which of `statusTone`'s six tones it maps to. A call site that needs a status's
- * color outside this component should render `StatusIcon` itself (the graph's ContextCard
- * nodes do) rather than re-deriving colors from a second status->color map.
+ * Resolves a status string to its shape and colour. A call site that needs a status's colour
+ * outside this component should use `statusColor` below rather than keep a second
+ * status->colour map.
  */
 function resolveStatusVisual(status: string): StatusVisual {
-  const known = KNOWN_STATUS_VISUALS[status];
-  if (known !== undefined) return known;
-  const tone = statusTone(status);
-  return {
-    shape: 'empty',
-    colorClass: FALLBACK_TONE_COLOR_CLASS[tone] ?? 'text-muted-foreground',
-    tone,
-  };
+  return KNOWN_STATUS_VISUALS[status] ?? CUSTOM_STATUS_VISUAL;
 }
 
-/** Builds the `d` attribute for a pie slice covering `fraction` (0..1) of a circle centered
- * at `(cx, cy)` with radius `r`, starting at 12 o'clock and sweeping clockwise — this is what
- * draws the in-progress/in-review half- and three-quarter-filled rings. `fraction` is assumed
- * to be strictly between 0 and 1 (0/1 degenerate to a zero-area or ambiguous arc, so the
- * `check`/`empty` shapes are used for those cases instead of a pie). */
-function pieSlicePath(
-  cx: number,
-  cy: number,
-  r: number,
-  fraction: number
-): string {
-  const startAngle = -Math.PI / 2;
-  const endAngle = startAngle + fraction * 2 * Math.PI;
-  const x1 = cx + r * Math.cos(startAngle);
-  const y1 = cy + r * Math.sin(startAngle);
-  const x2 = cx + r * Math.cos(endAngle);
-  const y2 = cy + r * Math.sin(endAngle);
-  const largeArcFlag = fraction > 0.5 ? 1 : 0;
-  return `M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${largeArcFlag} 1 ${x2} ${y2} Z`;
+/** The CSS colour a status paints with (`var(--status-progress)` for working, …) — what a
+ * group header sets as its `--tint` and what a graph node strokes its border in. */
+export function statusColor(status: string): string {
+  return resolveStatusVisual(status).color;
+}
+
+/** The dashoffset that leaves `fraction` of the pie visible — 0 hides everything, 1 shows
+ * the full arc. Exported for the test that pins the per-status geometry. */
+export function pieDashOffset(fraction: number): number {
+  return PIE_DASH * (1 - fraction);
 }
 
 export interface StatusIconProps {
   status: string;
+  /** Paints the glyph in the blocked red — a task held by an unmet dependency keeps its
+   * status shape but loses its status colour, the way Linear's blocked statuses read. */
+  blocked?: boolean;
   className?: string;
 }
 
 /**
- * Linear's signature status glyph: a small circle whose stroke/fill pattern encodes how far
- * along a task is — dashed ring (backlog), empty ring (todo), a half/three-quarter pie fill
- * (in-progress/in-review), a filled circle with a check (done), or an X (cancelled). Renders
- * identically in column headers, list group headers, and next to each card/row title (the
- * three call sites the redesign brief asks for), taking only a `status` string so every call
- * site stays config-driven rather than each needing its own copy of the status->glyph map.
+ * Linear's signature status glyph at its exact geometry: a ring whose interior fills as a
+ * task advances — dashed ring (backlog), empty ring (todo), a half/three-quarter pie
+ * (in progress/in review), a filled disk with a check cut-out (done), or a disk with an ×
+ * (cancelled). Renders identically in group headers, board columns, and next to every
+ * card/row title, taking only a `status` string so every call site stays config-driven.
  */
-export function StatusIcon({ status, className }: StatusIconProps) {
+export function StatusIcon({
+  status,
+  blocked = false,
+  className,
+}: StatusIconProps) {
   const visual = resolveStatusVisual(status);
-  const pieRadius = RADIUS - STROKE_WIDTH / 2;
+  const backlog = visual.shape === 'backlog';
 
   return (
     <svg
       viewBox={`0 0 ${VIEWBOX} ${VIEWBOX}`}
-      className={cn('size-4 shrink-0', visual.colorClass, className)}
+      fill="none"
+      className={cn(
+        'size-3.5 shrink-0',
+        blocked ? 'text-status-blocked' : visual.colorClass,
+        className
+      )}
       role="img"
       aria-label={`Status: ${status}`}
+      data-status-shape={visual.shape}
     >
-      {visual.shape === 'dashed' && (
+      <circle
+        cx={CENTER}
+        cy={CENTER}
+        r={RING_RADIUS}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={RING_STROKE}
+        strokeDasharray={backlog ? BACKLOG_RING_DASH : RING_DASH}
+        strokeDashoffset={backlog ? BACKLOG_RING_DASH_OFFSET : RING_DASH_OFFSET}
+      />
+      {(visual.shape === 'backlog' || visual.shape === 'pie') && (
         <circle
           cx={CENTER}
           cy={CENTER}
-          r={RADIUS}
+          r={PIE_RADIUS}
           fill="none"
           stroke="currentColor"
-          strokeWidth={STROKE_WIDTH}
-          strokeDasharray="2 1.6"
+          strokeWidth={PIE_STROKE}
+          strokeDasharray={PIE_DASHARRAY}
+          strokeDashoffset={pieDashOffset(visual.fraction ?? 0)}
+          transform={ROTATE_TO_NOON}
         />
       )}
-      {visual.shape === 'empty' && (
-        <circle
-          cx={CENTER}
-          cy={CENTER}
-          r={RADIUS}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={STROKE_WIDTH}
-        />
-      )}
-      {visual.shape === 'pie' && (
+      {(visual.shape === 'done' || visual.shape === 'cancelled') && (
         <>
           <circle
             cx={CENTER}
             cy={CENTER}
-            r={RADIUS}
+            r={DISK_RADIUS}
             fill="none"
             stroke="currentColor"
-            strokeWidth={STROKE_WIDTH}
-            strokeOpacity={0.35}
+            strokeWidth={DISK_STROKE}
+            strokeDasharray={DISK_DASHARRAY}
+            strokeDashoffset={0}
+            transform={ROTATE_TO_NOON}
           />
           <path
-            d={pieSlicePath(CENTER, CENTER, pieRadius, visual.fraction ?? 0.5)}
-            fill="currentColor"
-          />
-        </>
-      )}
-      {visual.shape === 'check' && (
-        <>
-          <circle cx={CENTER} cy={CENTER} r={RADIUS} fill="currentColor" />
-          <path
-            d="M4.1 7.2 L6.1 9.2 L9.9 4.9"
-            fill="none"
-            stroke="var(--color-background)"
-            strokeWidth={1.6}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </>
-      )}
-      {visual.shape === 'x' && (
-        <>
-          <circle
-            cx={CENTER}
-            cy={CENTER}
-            r={RADIUS}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={STROKE_WIDTH}
-          />
-          <path
-            d="M4.9 4.9 L9.1 9.1 M9.1 4.9 L4.9 9.1"
-            stroke="currentColor"
-            strokeWidth={1.3}
-            strokeLinecap="round"
+            fill={CUTOUT_FILL}
+            d={visual.shape === 'done' ? CHECK_PATH : X_PATH}
           />
         </>
       )}

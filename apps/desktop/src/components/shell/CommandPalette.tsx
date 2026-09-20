@@ -1,23 +1,33 @@
-import { SearchIcon } from 'lucide-react';
+import {
+  ArrowRightIcon,
+  CircleDashedIcon,
+  InboxIcon,
+  LayersIcon,
+  PlayIcon,
+  ZapIcon,
+} from 'lucide-react';
+import type { KeyboardEvent, ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 
-import type { PaletteItem } from '../../lib/paletteMatch';
+import type { PaletteEntry } from '../../lib/paletteEntries';
 import { rankPaletteItems } from '../../lib/paletteMatch';
+import {
+  groupPaletteSections,
+  rememberRecent,
+} from '../../lib/paletteSections';
+import { useShellActions } from './ShellActionsContext';
+import { EmptyState } from '@/ui/chrome/empty-state';
 import {
   Command,
   CommandEmpty,
+  CommandGroup,
   CommandInput,
   CommandItem,
   CommandList,
+  CommandShortcut,
 } from '@/ui/command';
 import { Dialog, DialogContent, DialogTitle } from '@/ui/dialog';
-
-export interface PaletteEntry extends PaletteItem {
-  /** A short tag shown at the entry's right edge — "task", "go to", "action" — so the fuzzy
-   * list stays scannable once tasks and view-switch actions are mixed together. */
-  kind: string;
-  run: () => void;
-}
+import { Kbd } from '@/ui/kbd';
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -25,23 +35,45 @@ interface CommandPaletteProps {
   onClose: () => void;
 }
 
+/** The 14px glyph a row shows when its entry brings none: one per section, with the
+ * "Dispatch …" task rows (`dispatch-<task id>` in `buildPaletteEntries`) getting a play
+ * glyph so they read as verbs. */
+function defaultIcon(entry: PaletteEntry): ReactNode {
+  if (entry.id.startsWith('dispatch-')) return <PlayIcon />;
+  switch (entry.section) {
+    case 'inbox':
+      return <InboxIcon />;
+    case 'tasks':
+      return <CircleDashedIcon />;
+    case 'views':
+      return <LayersIcon />;
+    case 'navigation':
+      return <ArrowRightIcon />;
+    case 'actions':
+      return <ZapIcon />;
+  }
+}
+
 /**
- * The Linear-signature ⌘K palette: fuzzy-matches task ids/titles and app actions ("Dispatch
- * <task>", "New task", every view switch) against a single query. Ranking stays
- * `rankPaletteItems` (cmdk's own filtering is off, `shouldFilter={false}`) so the fuzzy-match
- * scoring this app ships is the only ranking that ever runs. cmdk itself now owns arrow-key
- * selection, wraparound, and Enter; `Dialog` (Radix) owns the backdrop, focus trap/restore,
- * and Escape — Escape reaches `onClose` once, through `Dialog`'s `onOpenChange`, and the
- * app-level `navReducer` closes the palette via the same `onClose` callback rather than a
- * second Escape listener (see `useGlobalKeyboard`'s `isAnyModalOpen`, which now recognizes
- * this dialog like every other one and steps aside while it's open).
+ * The ⌘K command menu: a 720×450 dialog pinned 121px from the top, fuzzy-matching task
+ * ids/titles and app actions against one query and listing the hits in Linear's sections
+ * (Inbox, Tasks, Views, Navigation, Actions) with per-section caps from
+ * `lib/paletteSections`. Ranking stays `rankPaletteItems` (cmdk's own filtering is off,
+ * `shouldFilter={false}`); cmdk owns arrow-key selection, wraparound and Enter; `Dialog`
+ * owns the backdrop, focus trap and Escape, which reaches `onClose` once through
+ * `onOpenChange`. `Tab` with a non-empty query hands the text to the Overseer instead of
+ * running a row. A long title truncates; the task id and keycaps keep their width.
  */
 export function CommandPalette({
   isOpen,
   entries,
   onClose,
 }: CommandPaletteProps) {
+  const { openOverseer } = useShellActions();
   const [query, setQuery] = useState('');
+  // Ids of the rows run most recently, newest first; they lead their section while the
+  // query is empty. Kept for the life of the shell, not persisted.
+  const [recentIds, setRecentIds] = useState<string[]>([]);
 
   // Reset to a clean search every time the palette closes, so reopening it never shows a
   // stale filter from the last time it was used.
@@ -49,53 +81,78 @@ export function CommandPalette({
     if (!isOpen) setQuery('');
   }, [isOpen]);
 
-  const ranked = useMemo(
-    () => rankPaletteItems(entries, query),
-    [entries, query]
+  const sections = useMemo(
+    () =>
+      groupPaletteSections(rankPaletteItems(entries, query), {
+        query,
+        recentIds,
+      }),
+    [entries, query, recentIds]
   );
+
+  function runEntry(entry: PaletteEntry) {
+    setRecentIds((ids) => rememberRecent(ids, entry.id));
+    onClose();
+    entry.run();
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== 'Tab' || event.shiftKey) return;
+    const prompt = query.trim();
+    if (prompt === '') return;
+    event.preventDefault();
+    onClose();
+    openOverseer(prompt);
+  }
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent
-        className="bg-popover rounded-card shadow-overlay top-24 flex max-h-[60vh] w-[min(34rem,90vw)] max-w-none translate-y-0 flex-col gap-0 overflow-hidden p-0 duration-150 sm:max-w-none"
+        className="rounded-popover top-[121px] h-[450px] max-h-[calc(100vh-121px-2rem)] w-[720px] max-w-[calc(100vw-2rem)] translate-y-0 overflow-hidden sm:max-w-[calc(100vw-2rem)]"
         showCloseButton={false}
       >
-        <DialogTitle className="sr-only">Command palette</DialogTitle>
-        <Command shouldFilter={false}>
+        <DialogTitle className="sr-only">Command menu</DialogTitle>
+        <Command shouldFilter={false} onKeyDown={handleKeyDown}>
           <CommandInput
             value={query}
             onValueChange={setQuery}
-            placeholder="Jump to a task, dispatch work, or switch views…"
+            placeholder="Type a command or search…"
+            hint={
+              <>
+                <span>Ask Overseer</span>
+                <Kbd>Tab</Kbd>
+              </>
+            }
           />
-          <CommandList className="max-h-none">
-            <CommandEmpty>
-              <span
-                aria-hidden
-                className="bg-surface-inset text-muted-foreground shadow-hairline rounded-control flex size-8 items-center justify-center"
-              >
-                <SearchIcon className="size-3.5" />
-              </span>
-              <span>No matches.</span>
+          <CommandList className="max-h-none flex-1">
+            <CommandEmpty className="p-0">
+              <EmptyState
+                heading="No results"
+                description="Try another task id or title, or press Tab to ask the Overseer."
+                className="py-6"
+              />
             </CommandEmpty>
-            {ranked.map((entry) => (
-              <CommandItem
-                key={entry.id}
-                value={entry.id}
-                onSelect={() => {
-                  onClose();
-                  entry.run();
-                }}
-              >
-                <span className="truncate">{entry.label}</span>
-                {entry.sublabel !== undefined && (
-                  <span className="text-muted-foreground min-w-0 flex-1 truncate font-mono text-[11px]">
-                    {entry.sublabel}
-                  </span>
-                )}
-                <span className="text-muted-foreground shrink-0 text-[11px]">
-                  {entry.kind}
-                </span>
-              </CommandItem>
+            {sections.map((slice) => (
+              <CommandGroup key={slice.section} heading={slice.heading}>
+                {slice.items.map((entry) => (
+                  <CommandItem
+                    key={entry.id}
+                    value={entry.id}
+                    onSelect={() => runEntry(entry)}
+                  >
+                    {entry.icon ?? defaultIcon(entry)}
+                    <span className="min-w-0 truncate">{entry.label}</span>
+                    {entry.sublabel !== undefined && (
+                      <span className="text-muted-foreground shrink-0">
+                        {entry.sublabel}
+                      </span>
+                    )}
+                    {entry.shortcut !== undefined && (
+                      <CommandShortcut>{entry.shortcut}</CommandShortcut>
+                    )}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
             ))}
           </CommandList>
         </Command>

@@ -6,7 +6,7 @@ import { Waypoints } from 'lucide-react';
 import { DEFAULT_REVIEW_CAP, summarizeImpact } from '../../lib/impactSummary';
 import type { InsightDelta } from '@/ui/ai/insight-cards';
 import { InsightCard } from '@/ui/ai/insight-cards';
-import { Badge } from '@/ui/badge';
+import { Pill } from '@/ui/ai/pill';
 import {
   EmptyState,
   HintText,
@@ -164,10 +164,10 @@ function ImpactBadges({
     degraded || (sources.includes('scanner') && !sources.includes('carto'));
 
   const badge = (
-    <Badge variant="secondary">
+    <Pill>
       <Waypoints className="size-3" />
       {summary.sourceLabel}
-    </Badge>
+    </Pill>
   );
 
   return (
@@ -180,7 +180,7 @@ function ImpactBadges({
       ) : (
         badge
       )}
-      {truncated && <Badge variant="outline">capped</Badge>}
+      {truncated && <Pill>Capped</Pill>}
     </>
   );
 }

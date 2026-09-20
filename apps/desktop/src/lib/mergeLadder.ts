@@ -33,7 +33,31 @@ function prNumberFrom(prUrl: string | undefined): string | undefined {
   return prUrl?.match(/\/(\d+)\/?$/)?.[1];
 }
 
-/** Human-readable text for a ladder state, used as the dot's `title` and in the task header. */
+// The run-state role each rung paints with: resting grey until something merges, amber
+// while the merge is local only (a push is still owed), the landing teal once it is on origin.
+const MERGE_LADDER_TINT: Record<MergeLadderState, string> = {
+  unmerged: 'var(--state-ready-fg)',
+  'merged-local': 'var(--state-waiting-fg)',
+  'on-origin': 'var(--state-landing-fg)',
+};
+
+/** The `--state-*` colour for a ladder state, as a CSS value a `LabelPill` dot can take. */
+export function mergeLadderTint(state: MergeLadderState): string {
+  return MERGE_LADDER_TINT[state];
+}
+
+const MERGE_LADDER_PILL_LABEL: Record<MergeLadderState, string> = {
+  unmerged: 'Not merged',
+  'merged-local': 'Merged locally',
+  'on-origin': 'On origin',
+};
+
+/** The two-word pill wording for a rung; `mergeLadderLabel` below is the full sentence. */
+export function mergeLadderPillLabel(state: MergeLadderState): string {
+  return MERGE_LADDER_PILL_LABEL[state];
+}
+
+/** Human-readable text for a ladder state, used as the pill's `title` and in the task header. */
 export function mergeLadderLabel(
   state: MergeLadderState,
   branch?: string,

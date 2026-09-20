@@ -184,7 +184,7 @@ function InsightChart({ series, unit }: { series: number[]; unit: string }) {
       </svg>
       {hovered && hoveredValue !== undefined && (
         <span
-          className="bg-foreground text-background rounded-chip pointer-events-none absolute top-0 -translate-x-1/2 -translate-y-full px-1.5 py-0.5 font-mono text-[10.5px] tabular-nums"
+          className="bg-foreground text-background rounded-chip font-book pointer-events-none absolute top-0 -translate-x-1/2 -translate-y-full px-1.5 py-0.5 text-[11px] tabular-nums"
           style={{
             left: `${String((hovered.x / CHART_WIDTH) * 100)}%`,
           }}
@@ -230,7 +230,7 @@ export function InsightCard({
           <span className="text-muted-foreground text-[11px] tabular-nums">
             Trend snapshot
           </span>
-          <span className="text-muted-foreground font-mono text-[10.5px] tabular-nums">
+          <span className="text-muted-foreground font-book text-[12px] tabular-nums">
             {unit}
           </span>
         </div>

@@ -93,15 +93,29 @@ function hastClassName(node: HastLike | undefined): string | undefined {
 // highlighter runs, so the `code` renderer below only ever handles inline code. Fenced blocks
 // are intercepted at the `pre` level instead (react-markdown only emits `<pre>` around a code
 // block), where the raw source is lifted straight off the hast node.
+//
+// `variant: 'prose'` is the task page's long-form measure (Linear's 15px/450 on a 24px line,
+// headings held at 15px/600 so a description never shouts over the title); the default
+// inherits the caller's size for transcripts, chat and cards.
 export function Markdown({
   content,
   className,
+  variant = 'inline',
 }: {
   content: string;
   className?: string;
+  variant?: 'inline' | 'prose';
 }) {
   return (
-    <div className={cn('dispatch-md', className)}>
+    <div
+      data-slot="markdown"
+      data-variant={variant}
+      className={cn(
+        'dispatch-md',
+        variant === 'prose' && 'dispatch-md-prose',
+        className
+      )}
+    >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -111,7 +125,7 @@ export function Markdown({
             </a>
           ),
           code: ({ children }) => (
-            <code className="bg-muted rounded px-1 py-0.5 font-mono text-[0.85em]">
+            <code className="bg-surface-quaternary rounded-[4px] px-1 py-0.5 font-mono text-[0.85em]">
               {children}
             </code>
           ),

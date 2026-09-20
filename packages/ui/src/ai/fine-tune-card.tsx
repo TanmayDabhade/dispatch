@@ -106,7 +106,7 @@ function SliderControl({
         }}
         className="[&::-moz-range-thumb]:bg-card [&::-moz-range-thumb]:shadow-btn [&::-webkit-slider-thumb]:bg-card [&::-webkit-slider-thumb]:shadow-btn h-1.5 w-20 flex-1 cursor-pointer appearance-none rounded-full outline-none [&::-moz-range-thumb]:size-3 [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-webkit-slider-thumb]:size-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full"
       />
-      <span className="text-foreground w-8 shrink-0 text-right font-mono text-[11.5px] tabular-nums">
+      <span className="text-foreground font-book w-8 shrink-0 text-right text-[12px] tabular-nums">
         {value}
         {unit ?? ''}
       </span>

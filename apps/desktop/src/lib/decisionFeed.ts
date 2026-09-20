@@ -10,7 +10,7 @@
 import type { TaskTab } from './appNav';
 
 /** Mirrors DecisionKind in packages/server/src/decisionFeed.ts. */
-export type DecisionKind =
+type DecisionKind =
   | 'approval'
   | 'scope-request'
   | 'question'
@@ -114,13 +114,3 @@ export function decisionTarget(item: DecisionItem): DecisionTarget | null {
   if (item.runId !== undefined) return { kind: 'run', runId: item.runId };
   return null;
 }
-
-/** The row's kind chip — a two-word ceiling, since it sits beside the summary
- * rather than replacing it. */
-export const DECISION_KIND_LABELS: Record<DecisionKind, string> = {
-  approval: 'Approval',
-  'scope-request': 'Scope',
-  question: 'Question',
-  'fix-loop-capped': 'Fix loop',
-  'run-stalled': 'Stalled',
-};

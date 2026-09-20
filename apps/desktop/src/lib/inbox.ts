@@ -121,6 +121,16 @@ export function markAllRead(state: InboxState): InboxState {
   };
 }
 
+/** Flips one entry to read — the Inbox page selecting a notification row to read it in the
+ * right pane. Returns `state` unchanged when the entry is unknown or already read. */
+export function markRead(state: InboxState, id: string): InboxState {
+  const entry = state.entries.find((e) => e.id === id);
+  if (entry === undefined || entry.read) return state;
+  return {
+    entries: state.entries.map((e) => (e.id === id ? { ...e, read: true } : e)),
+  };
+}
+
 /** Count of unread entries — the sidebar bell's badge. */
 export function unreadCount(state: InboxState): number {
   return state.entries.reduce((count, e) => (e.read ? count : count + 1), 0);

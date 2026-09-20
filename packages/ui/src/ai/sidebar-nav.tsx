@@ -1,162 +1,160 @@
-import { Fragment, type ReactNode } from 'react';
+import { ChevronDownIcon } from 'lucide-react';
+import type { ReactNode } from 'react';
 
 import { cn } from '../lib/utils';
-import { Tooltip, TooltipContent, TooltipTrigger } from '../tooltip';
 
 export type SidebarNavItem = {
   id: string;
   label: string;
   icon?: ReactNode;
+  /** Trailing count — plain 11px text, no pill. */
   count?: number | string;
   state?: 'default' | 'attention';
   /** Blocks selection and greys the row out — the "Overview" row before a project has
    * resolved, for example. */
   disabled?: boolean;
-  /** Trailing content shown only when the rail is expanded, after the count — a
-   * keyboard-shortcut hint (`⌘1`) in Dispatch's own rail. */
-  hint?: ReactNode;
-  /** Accessible name to use once `collapsed` hides the visible label — e.g. a
-   * notifications row whose collapsed name should fold in the unread count
-   * ("Notifications (4 unread)"). Falls back to `label` when omitted. */
+  /** Accessible name when the visible label is not the whole story — a row whose name
+   * should fold in its count ("Inbox (4)"). Falls back to `label` when omitted. */
   ariaLabel?: string;
-  /** Extra content rendered directly below the row while the rail is expanded — a nested
-   * control that belongs to this destination (Dispatch's Tasks row hangs its layout
-   * switcher here). Hidden entirely when collapsed, like `hint`. */
-  children?: ReactNode;
+  /** Nested one level (16px), as a team's Home/Issues/Projects rows sit under the team. */
+  indent?: 1;
 };
 
 export type SidebarNavSection = {
   id: string;
+  /** Sentence-case heading. A section without one is the fixed top group. */
   label?: string;
   items: SidebarNavItem[];
+  /** The heading becomes a button with a chevron that hides the items. Owned by the
+   * caller: `collapsed` says which way it is, `onToggle` is asked to flip it. */
+  collapsible?: boolean;
+  collapsed?: boolean;
+  onToggle?: () => void;
+  /** Rendered in place of `items` (a live-agents list that isn't a list of destinations)
+   * — still hidden when collapsed. */
+  content?: ReactNode;
 };
 
 export type SidebarNavProps = {
+  /** The top strip above the sections — the project switcher row in the app. */
   header?: ReactNode;
   sections: SidebarNavSection[];
   activeId: string;
   onSelect: (id: string) => void;
-  footer?: ReactNode;
-  /** Icon-only rail: hides labels, section headings, counts, and hints, sizing each row
-   * to a square, exposing the label through `aria-label`/`title`, and showing it again
-   * in a themed tooltip on hover (via `ui/tooltip.tsx`) since there's nowhere left for
-   * it to sit inline. Task 25 extension — the showcase only specs the expanded rail,
-   * but the real app sidebar has always had a collapsible icon strip and this is the
-   * minimal way to keep it without forking the primitive's markup. */
-  collapsed?: boolean;
-  /** Escape hatch for the root's width classes, merged in via `cn` (later classes win
-   * on conflicting Tailwind groups). Standalone uses (the gallery story) get the
-   * primitive's own animated `w-60`/`w-14`; an embedding shell that already animates
-   * its own container's width — the app's shadcn `Sidebar`, which transitions
-   * `--sidebar-width`/`--sidebar-width-icon` — should pass `"w-full"` here instead of
-   * letting two widths animate in parallel and drift out of sync. */
   className?: string;
 };
 
-/** Workspace navigation column: an optional `header` slot (workspace switcher, quick
- * search), stacked `sections` of items with dense uppercase labels, and an optional
- * `footer` slot. The active item gets a flat `bg-surface-hover-strong` fill — not the
- * accent color, matching the showcase's neutral-selection treatment — while other
- * items only shade on hover. Items with `state: 'attention'` show a small accent dot
- * next to their trailing count. Task 25 rebuilds the real app sidebar on this exact
- * prop contract. Matches the showcase's "Sidebar Nav" primitive. */
+export const SIDEBAR_ROW_CLASS =
+  'flex h-7 w-full items-center gap-2 rounded-control pr-[9px] pl-2 text-left text-[13px] font-medium transition-colors duration-100 outline-none disabled:pointer-events-none disabled:opacity-50 [&>svg]:size-3.5';
+export const SIDEBAR_ROW_INACTIVE_CLASS =
+  'text-muted-foreground hover:bg-surface-hover';
+export const SIDEBAR_ROW_ACTIVE_CLASS =
+  'bg-surface-selected text-(--text-secondary) [&>svg]:text-foreground';
+
+/** Linear's rail grammar: 28px rows, 14px icons, 13px/500 labels, muted at rest and lifted
+ * onto the selected surface when active (neutral, never the accent). Headings are 12px
+ * sentence case with a chevron when the section collapses. Counts are plain 11px text;
+ * `state: 'attention'` adds the 6px indigo dot. The rail never has an icon-only mode —
+ * the shell hides it entirely instead. */
 export function SidebarNav({
   header,
   sections,
   activeId,
   onSelect,
-  footer,
-  collapsed = false,
   className,
 }: SidebarNavProps) {
   return (
     <div
-      className={cn(
-        'bg-background ease-out-expo flex h-full flex-col gap-2 p-2 transition-[width] duration-200 motion-reduce:transition-none',
-        collapsed ? 'w-14' : 'w-60',
-        className
-      )}
+      data-slot="sidebar-nav"
+      className={cn('flex h-full flex-col gap-2 px-2 pt-1', className)}
     >
       {header !== undefined && <div>{header}</div>}
-      <nav className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto">
-        {sections.map((section) => (
-          <div key={section.id}>
-            {section.label !== undefined && !collapsed && (
-              <div className="dense-label px-2 pt-1 pb-1">{section.label}</div>
-            )}
-            <div className="flex flex-col gap-px">
-              {section.items.map((item) => {
-                const isActive = item.id === activeId;
-                const accessibleLabel = item.ariaLabel ?? item.label;
-                const row = (
+      <nav className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto">
+        {sections.map((section) => {
+          const collapsed = section.collapsible === true && section.collapsed;
+          return (
+            <div key={section.id} data-section={section.id}>
+              {section.label !== undefined &&
+                (section.collapsible ? (
                   <button
-                    key={item.id}
                     type="button"
-                    aria-current={isActive ? 'page' : undefined}
-                    aria-label={collapsed ? accessibleLabel : undefined}
-                    title={collapsed ? accessibleLabel : undefined}
-                    disabled={item.disabled}
-                    onClick={() => onSelect(item.id)}
-                    className={`rounded-control ease-out-expo flex w-full items-center gap-2 px-2 py-1.5 text-left text-[13px] transition-colors duration-150 active:scale-[0.96] disabled:pointer-events-none disabled:opacity-50 motion-reduce:active:scale-100 ${
-                      collapsed ? 'justify-center' : ''
-                    } ${
-                      isActive
-                        ? 'bg-surface-hover-strong text-foreground font-medium'
-                        : 'text-muted-foreground hover:bg-surface-hover hover:text-foreground'
-                    }`}
+                    aria-expanded={!collapsed}
+                    onClick={section.onToggle}
+                    className="text-muted-foreground rounded-control flex h-7 w-full items-center gap-1 px-2 text-left text-[12px] font-medium transition-colors duration-100 outline-none hover:text-(--text-secondary)"
                   >
-                    {item.icon !== undefined && (
-                      <span aria-hidden className="shrink-0 [&>svg]:size-3.5">
-                        {item.icon}
-                      </span>
-                    )}
-                    {!collapsed && (
-                      <>
-                        <span className="min-w-0 flex-1 truncate">
-                          {item.label}
-                        </span>
-                        {item.state === 'attention' && (
-                          <span
-                            aria-hidden
-                            className="bg-primary size-1.5 shrink-0 rounded-full"
-                          />
-                        )}
-                        {item.count !== undefined && (
-                          <span className="text-muted-foreground shrink-0 font-mono text-[11px] tabular-nums">
-                            {item.count}
-                          </span>
-                        )}
-                        {item.hint}
-                      </>
-                    )}
+                    <span className="min-w-0 truncate">{section.label}</span>
+                    <ChevronDownIcon
+                      aria-hidden
+                      className={cn(
+                        'size-3 shrink-0 transition-transform duration-100',
+                        collapsed && '-rotate-90'
+                      )}
+                      strokeWidth={2}
+                    />
                   </button>
-                );
-                // Collapsed, the label text is gone from the row itself — `aria-label`/
-                // `title` cover accessibility and a bare hover, but the rail has always
-                // shown a themed flyout naming the row too (shadcn's `SidebarMenuButton`
-                // `tooltip` prop did this before the reskin), so it's restored here
-                // rather than left to the browser's native title tooltip alone.
-                return collapsed ? (
-                  <Tooltip key={item.id}>
-                    <TooltipTrigger render={row} />
-                    <TooltipContent side="right">
-                      {accessibleLabel}
-                    </TooltipContent>
-                  </Tooltip>
-                ) : item.children !== undefined ? (
-                  <Fragment key={item.id}>
-                    {row}
-                    {item.children}
-                  </Fragment>
                 ) : (
-                  row
-                );
-              })}
+                  <div className="text-muted-foreground flex h-7 items-center px-2 text-[12px] font-medium">
+                    {section.label}
+                  </div>
+                ))}
+              {!collapsed &&
+                (section.content !== undefined ? (
+                  section.content
+                ) : (
+                  <div className="flex flex-col gap-px">
+                    {section.items.map((item) => {
+                      const isActive = item.id === activeId;
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          data-nav-item={item.id}
+                          aria-current={isActive ? 'page' : undefined}
+                          aria-label={item.ariaLabel}
+                          disabled={item.disabled}
+                          onClick={() => onSelect(item.id)}
+                          className={cn(
+                            SIDEBAR_ROW_CLASS,
+                            isActive
+                              ? SIDEBAR_ROW_ACTIVE_CLASS
+                              : SIDEBAR_ROW_INACTIVE_CLASS,
+                            item.indent === 1 && 'pl-6'
+                          )}
+                        >
+                          {item.icon !== undefined && (
+                            <span
+                              aria-hidden
+                              className={cn(
+                                'shrink-0 [&>svg]:size-3.5',
+                                isActive && '[&>svg]:text-foreground'
+                              )}
+                            >
+                              {item.icon}
+                            </span>
+                          )}
+                          <span className="min-w-0 flex-1 truncate">
+                            {item.label}
+                          </span>
+                          {item.state === 'attention' && (
+                            <span
+                              aria-hidden
+                              className="bg-primary size-1.5 shrink-0 rounded-full"
+                            />
+                          )}
+                          {item.count !== undefined && (
+                            <span className="text-muted-foreground font-book shrink-0 text-[11px] tabular-nums">
+                              {item.count}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </nav>
-      {footer !== undefined && <div>{footer}</div>}
     </div>
   );
 }

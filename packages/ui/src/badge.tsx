@@ -5,19 +5,23 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from './lib/utils';
 
 const badgeVariants = cva(
-  'inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-chip border border-transparent px-2 py-0.5 text-xs font-medium whitespace-nowrap transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&>svg]:pointer-events-none [&>svg]:size-3',
+  'inline-flex h-6 w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-pill border-[0.5px] border-border-chip px-2 text-[12px] font-medium whitespace-nowrap transition-[color,box-shadow] focus-visible:ring-2 focus-visible:ring-ring [&>svg]:pointer-events-none [&>svg]:size-3',
   {
+    // A badge is the 24px pill: quaternary surface, chip ring, secondary text. Only
+    // `default` keeps the indigo fill, for the rare filled case.
     variants: {
       variant: {
-        default: 'bg-primary text-primary-foreground [a&]:hover:bg-primary/90',
+        default:
+          'border-transparent bg-primary text-primary-foreground [a&]:hover:bg-[var(--accent-hover)]',
         secondary:
-          'bg-secondary text-secondary-foreground [a&]:hover:bg-secondary/90',
+          'bg-surface-quaternary text-(--text-secondary) [a&]:hover:bg-surface-active',
         destructive:
-          'bg-destructive text-white focus-visible:ring-destructive/20 dark:bg-destructive/60 dark:focus-visible:ring-destructive/40 [a&]:hover:bg-destructive/90',
+          'bg-surface-quaternary text-red [a&]:hover:bg-surface-active',
         outline:
-          'border-border text-foreground [a&]:hover:bg-accent [a&]:hover:text-accent-foreground',
-        ghost: '[a&]:hover:bg-accent [a&]:hover:text-accent-foreground',
-        link: 'text-primary underline-offset-4 [a&]:hover:underline',
+          'bg-surface-quaternary text-(--text-secondary) [a&]:hover:bg-surface-active',
+        ghost:
+          'border-transparent text-muted-foreground [a&]:hover:bg-surface-hover',
+        link: 'border-transparent text-primary underline-offset-4 [a&]:hover:underline',
       },
     },
     defaultVariants: {

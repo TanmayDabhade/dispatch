@@ -142,3 +142,19 @@ test('New conversation stays locked through a transient refetch error', () => {
   fireEvent.click(reset);
   expect(resets).toBe(0);
 });
+
+// The page header: the `Overseer` crumb, with the reset as a ghost action beside it.
+test('the header carries the crumb and the reset as a ghost action', () => {
+  const overseer = overseerSession({
+    conversationId: 'w-1',
+    record: overseerRecord(),
+  });
+  render(<OverseerView data={DAEMON_UP} overseer={overseer} />);
+  const header = screen
+    .getByText('Overseer')
+    .closest('[data-slot=page-header]');
+  expect(header).not.toBeNull();
+  const reset = screen.getByRole('button', { name: /New conversation/ });
+  expect(reset.getAttribute('data-variant')).toBe('ghost');
+  expect(header?.contains(reset)).toBe(true);
+});

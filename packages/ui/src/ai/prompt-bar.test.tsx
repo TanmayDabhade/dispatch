@@ -96,4 +96,34 @@ describe('PromptBar', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Remove boot.rs' }));
     expect(removedId).toBe('ref-1');
   });
+
+  // The frame is the comment composer (quaternary card, half-pixel border), the
+  // reference chips are `Pill`s, and send is an icon button that goes indigo only
+  // once there is something to send.
+  test('the composer, chips and send button carry the Linear treatment', () => {
+    const { container, rerender } = render(
+      <PromptBar
+        value=""
+        onChange={() => {}}
+        onSubmit={() => {}}
+        references={[{ id: 'ref-1', label: 'boot.rs' }]}
+      />
+    );
+    const frame = container.firstElementChild as HTMLElement;
+    expect(frame.className).toContain('bg-surface-quaternary');
+    expect(frame.className).toContain('border-[0.5px]');
+    expect(
+      container.querySelector('[data-slot="pill"]')?.textContent
+    ).toContain('boot.rs');
+    const send = screen.getByRole('button', { name: 'Send' });
+    expect(send.getAttribute('data-slot')).toBe('icon-button');
+    expect(send.className).not.toContain('bg-primary');
+
+    rerender(
+      <PromptBar value="ship it" onChange={() => {}} onSubmit={() => {}} />
+    );
+    expect(screen.getByRole('button', { name: 'Send' }).className).toContain(
+      'bg-primary'
+    );
+  });
 });

@@ -1,4 +1,10 @@
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/ui/dialog';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/ui/dialog';
 import { Kbd } from '@/ui/kbd';
 
 const ENTRIES: [string, string][] = [
@@ -34,16 +40,18 @@ export function GitKeymapDialog({ open, onClose }: GitKeymapDialogProps) {
         <DialogHeader>
           <DialogTitle>Keyboard shortcuts</DialogTitle>
         </DialogHeader>
-        <dl className="grid grid-cols-[5rem_1fr] gap-x-3 gap-y-1.5 text-[12px]">
-          {ENTRIES.map(([key, label]) => (
-            <div key={key} className="contents">
-              <dt>
-                <Kbd className="font-mono">{key}</Kbd>
-              </dt>
-              <dd>{label}</dd>
-            </div>
-          ))}
-        </dl>
+        <DialogBody className="pb-4">
+          <dl className="font-book grid grid-cols-[5rem_1fr] items-center gap-x-3 gap-y-2 text-[13px]">
+            {ENTRIES.map(([key, label]) => (
+              <div key={key} className="contents">
+                <dt>
+                  <Kbd>{key}</Kbd>
+                </dt>
+                <dd>{label}</dd>
+              </div>
+            ))}
+          </dl>
+        </DialogBody>
       </DialogContent>
     </Dialog>
   );

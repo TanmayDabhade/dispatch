@@ -4,11 +4,25 @@ import { useMemo, useState } from 'react';
 
 import { buildDispatchPreview } from '@/lib/dispatchPreview';
 import { cn } from '@/lib/utils';
+import { ListRow } from '@/ui/ai/list-row';
+import { Pill, PillButton } from '@/ui/ai/pill';
 import { Button } from '@/ui/button';
-import { Dialog, DialogContent, DialogTitle } from '@/ui/dialog';
-import { FieldLabel } from '@/ui/field';
-import { Input } from '@/ui/input';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/ui/dialog';
 import { ScrollArea } from '@/ui/scroll-area';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/ui/select';
 
 interface DispatchDialogProps {
   /** What the user selected — every one of these appears in the preview. */
@@ -24,10 +38,12 @@ interface DispatchDialogProps {
 }
 
 const DISPOSITION_LABEL = {
-  'starts-now': 'starts now',
-  queued: 'queued',
-  'not-ready': 'cannot start',
+  'starts-now': 'Starts now',
+  queued: 'Queued',
+  'not-ready': 'Cannot start',
 } as const;
+
+const CONCURRENCY_MAX = 10;
 
 /**
  * Confirms a bulk dispatch by showing exactly what it will do.
@@ -50,9 +66,21 @@ export function DispatchDialog({
   onConfirm,
   onCancel,
 }: DispatchDialogProps) {
-  const [concurrency, setConcurrency] = useState(String(defaultConcurrency));
+  const [concurrency, setConcurrency] = useState(
+    Math.max(1, Math.floor(defaultConcurrency) || 1)
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // 1…10, stretched to include a configured default above that so it stays selectable —
+  // keyed on the default, not the current pick, so choosing a lower value can't drop it.
+  const concurrencyOptions = useMemo(() => {
+    const top = Math.max(
+      CONCURRENCY_MAX,
+      Math.max(1, Math.floor(defaultConcurrency) || 1)
+    );
+    return Array.from({ length: top }, (_, i) => i + 1);
+  }, [defaultConcurrency]);
 
   const preview = useMemo(
     () =>
@@ -60,7 +88,7 @@ export function DispatchDialog({
         tasks,
         readyIds,
         runningNow,
-        concurrency: Number(concurrency) || 1,
+        concurrency,
       }),
     [tasks, readyIds, runningNow, concurrency]
   );
@@ -72,88 +100,84 @@ export function DispatchDialog({
         if (!open) onCancel();
       }}
     >
-      {/* `shadow-hairline-strong` is a theme-scale token (tailwind.css), not one of
-          twMerge's built-in shadow names, so it can't dedupe against DialogContent's
-          own `shadow-lg` — both classes would survive and `shadow-lg` would win in the
-          compiled CSS. Spelling it out as `shadow-[inset_0_0_0_1px_var(--border-strong)]`
-          (the value `--hairline-strong` resolves to, see tokens.css) is recognized by
-          twMerge as the same "shadow" group as `shadow-lg`, so it actually overrides it. */}
-      <DialogContent className="bg-card w-[min(560px,100%)] gap-0 rounded-xl border-none p-5 shadow-[inset_0_0_0_1px_var(--border-strong)] sm:max-w-[560px]">
-        <DialogTitle className="text-[17px] leading-none font-medium">
-          {title}
-        </DialogTitle>
-        <p className="text-muted-foreground mt-1 text-[12.5px]">
-          {preview.summary}
-        </p>
+      <DialogContent
+        showCloseButton={false}
+        className="w-[min(560px,92vw)] max-w-none sm:max-w-none"
+      >
+        <DialogHeader className="pt-4">
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{preview.summary}</DialogDescription>
+        </DialogHeader>
 
-        <div className="mt-3 flex items-center gap-2">
-          <FieldLabel
-            htmlFor="dispatch-concurrency"
-            className="text-muted-foreground w-auto text-[12px] font-normal"
-          >
+        <div className="flex items-center gap-2 px-4 py-2">
+          <span className="font-book text-muted-foreground text-[13px]">
             Run at most
-          </FieldLabel>
-          {/* Same trap as the DialogContent above: `shadow-hairline` doesn't dedupe
-              against Input's built-in `shadow-xs`, so both survive and `shadow-xs`
-              wins. Spelled out, twMerge treats it as the same "shadow" group. */}
-          <Input
-            id="dispatch-concurrency"
-            value={concurrency}
-            onChange={(e) => setConcurrency(e.target.value)}
-            inputMode="numeric"
-            className="h-auto w-14 rounded-md px-2 py-1 text-center font-mono text-[12.5px] shadow-[inset_0_0_0_1px_var(--border-default)] outline-none"
-          />
-          <span className="text-muted-foreground text-[12px]">at a time</span>
+          </span>
+          <Select
+            value={String(concurrency)}
+            onValueChange={(value) => setConcurrency(Number(value) || 1)}
+          >
+            <SelectTrigger aria-label="Concurrency" className="min-w-14">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {concurrencyOptions.map((n) => (
+                <SelectItem key={n} value={String(n)}>
+                  {String(n)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <span className="font-book text-muted-foreground text-[13px]">
+            at a time
+          </span>
         </div>
 
-        <ScrollArea className="mt-3 max-h-64">
-          <ul>
+        <ScrollArea className="max-h-72 px-1">
+          <div role="table" aria-label="Tasks to dispatch">
             {preview.rows.map((row) => (
-              <li
+              <ListRow
                 key={row.taskId}
-                className="grid grid-cols-[64px_minmax(0,1fr)_90px] items-center gap-2 py-1"
-              >
-                <span className="dense-meta">{row.taskId}</span>
-                <span
-                  className={cn(
-                    'truncate text-[13px]',
-                    row.disposition === 'starts-now'
-                      ? 'text-foreground'
-                      : 'text-muted-foreground'
-                  )}
-                >
-                  {row.title}
-                </span>
-                <span
-                  className={cn(
-                    'dense-meta text-right',
-                    row.disposition === 'starts-now' &&
-                      'text-accent-foreground',
-                    row.disposition === 'not-ready' && 'text-state-blocked'
-                  )}
-                >
-                  {DISPOSITION_LABEL[row.disposition]}
-                </span>
-              </li>
+                id={row.taskId}
+                title={
+                  <span
+                    className={cn(
+                      row.disposition !== 'starts-now' &&
+                        'text-muted-foreground'
+                    )}
+                  >
+                    {row.title}
+                  </span>
+                }
+                trailing={
+                  <Pill
+                    data-disposition={row.disposition}
+                    className={cn(
+                      row.disposition === 'not-ready' && 'text-status-blocked'
+                    )}
+                  >
+                    {DISPOSITION_LABEL[row.disposition]}
+                  </Pill>
+                }
+              />
             ))}
-          </ul>
+          </div>
         </ScrollArea>
 
         {error !== null && (
-          <p className="text-state-failed mt-2 text-[12px]">{error}</p>
+          <p role="alert" className="text-red px-4 pt-2 text-[12px]">
+            {error}
+          </p>
         )}
 
-        <div className="mt-4 flex justify-end gap-2">
-          <Button variant="secondary" size="sm" onClick={onCancel}>
-            Cancel
-          </Button>
+        <DialogFooter>
+          <PillButton onClick={onCancel}>Cancel</PillButton>
           <Button
-            size="sm"
             disabled={busy || preview.startsNow + preview.queued === 0}
             onClick={() => {
               setBusy(true);
               setError(null);
-              void onConfirm(Number(concurrency) || 1)
+              void onConfirm(concurrency)
                 .catch((err: unknown) => {
                   // Only an Error carries a message worth showing; anything else stringifies
                   // to "[object Object]", which tells the reader nothing.
@@ -164,10 +188,10 @@ export function DispatchDialog({
                 .finally(() => setBusy(false));
             }}
           >
-            <Zap className="size-3.5" />
+            <Zap />
             Dispatch {preview.startsNow + preview.queued}
           </Button>
-        </div>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

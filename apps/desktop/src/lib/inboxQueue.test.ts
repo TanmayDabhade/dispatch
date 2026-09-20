@@ -1,8 +1,25 @@
 import type { RepoPr, RunMeta, RunQuestion } from '@dispatch/client';
+import type { TaskDoc } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
-import type { InboxInput } from './inboxQueue';
-import { buildInbox } from './inboxQueue';
+import type { InboxEntry } from './inbox';
+import type { InboxData, InboxInput } from './inboxQueue';
+import {
+  buildInbox,
+  buildInboxItems,
+  filterInboxItems,
+  groupInboxItems,
+  inboxItemActor,
+  inboxItemBadge,
+  inboxItemState,
+  inboxItemText,
+  isInboxItemRead,
+  loadReadIds,
+  markAllItemsRead,
+  saveReadIds,
+  specForTask,
+  unreadInboxCount,
+} from './inboxQueue';
 
 function run(over: Partial<RunMeta> = {}): RunMeta {
   return {
@@ -200,5 +217,197 @@ describe('readyToLand', () => {
       })
     );
     expect(data.readyToLand.map((r) => r.runId)).toEqual(['r-new']);
+  });
+});
+
+describe('inbox items', () => {
+  const reviewRow = () => ({
+    runId: 'r-1',
+    taskId: 't-1',
+    title: 'Do the thing',
+    state: 'review' as const,
+    epicTitle: null,
+    priority: null,
+    since: '2026-08-04T00:00:00.000Z',
+    activity: '3 turns',
+    attention: null,
+    fixLoop: null,
+  });
+  const entry = (over: Partial<InboxEntry> = {}): InboxEntry => ({
+    id: 'n-1',
+    ts: '2026-08-03T00:00:00.000Z',
+    title: 'Run finished',
+    body: 'Earlier task',
+    target: { kind: 'run', runId: 'r-old' },
+    read: false,
+    ...over,
+  });
+  const data = (): InboxData => ({
+    sections: [{ state: 'review', rows: [reviewRow()] }],
+    readyToLand: [
+      { ...reviewRow(), runId: 'r-2', taskId: 't-2', state: 'landing' },
+    ],
+    prs: [
+      {
+        number: 9,
+        url: 'https://github.com/x/y/pull/9',
+        title: 'Standalone',
+        author: 'octocat',
+        updatedAt: '2026-08-02T00:00:00.000Z',
+      } as RepoPr,
+    ],
+    total: 3,
+  });
+
+  test('asks come first, then ready-to-land, PRs and the record', () => {
+    const items = buildInboxItems(data(), [entry()]);
+    expect(items.map((i) => i.kind)).toEqual([
+      'ask',
+      'landing',
+      'pr',
+      'notification',
+    ]);
+    expect(items.map((i) => i.key)).toEqual([
+      'review:t-1:r-1',
+      'landing:t-2:r-2',
+      'pr:9',
+      'notification:n-1',
+    ]);
+  });
+
+  test('the filter splits live asks from the record', () => {
+    const items = buildInboxItems(data(), [entry()]);
+    expect(filterInboxItems(items, 'needs-you').map((i) => i.kind)).toEqual([
+      'ask',
+      'landing',
+      'pr',
+    ]);
+    expect(filterInboxItems(items, 'earlier').map((i) => i.kind)).toEqual([
+      'notification',
+    ]);
+    expect(filterInboxItems(items, 'all')).toHaveLength(4);
+  });
+
+  test('read state: a live key is read once seen, a notification carries its own flag', () => {
+    const items = buildInboxItems(data(), [entry({ read: true })]);
+    const none = new Set<string>();
+    expect(unreadInboxCount(items, none)).toBe(3);
+    expect(isInboxItemRead(items[3], none)).toBe(true);
+    const seen = new Set(['review:t-1:r-1']);
+    expect(isInboxItemRead(items[0], seen)).toBe(true);
+    expect(unreadInboxCount(items, seen)).toBe(2);
+  });
+
+  test('a notification read on the page is read by key before its record catches up', () => {
+    const items = buildInboxItems(data(), [entry({ read: false })]);
+    const notification = items[3];
+    if (notification?.kind !== 'notification')
+      throw new Error('no notification');
+    expect(isInboxItemRead(notification, new Set())).toBe(false);
+    expect(isInboxItemRead(notification, new Set([notification.key]))).toBe(
+      true
+    );
+  });
+
+  test('a row that changes state comes back unread', () => {
+    const before = buildInboxItems(data(), []);
+    const read = markAllItemsRead(before, new Set());
+    const failed = data();
+    failed.sections = [
+      { state: 'failed', rows: [{ ...reviewRow(), state: 'failed' }] },
+    ];
+    const after = buildInboxItems(failed, []);
+    expect(isInboxItemRead(after[0], read)).toBe(false);
+  });
+
+  test('mark-all adds every live key and leaves the record to its seam', () => {
+    const items = buildInboxItems(data(), [entry()]);
+    const read = markAllItemsRead(items, new Set());
+    expect([...read]).toEqual(['review:t-1:r-1', 'landing:t-2:r-2', 'pr:9']);
+    // Nothing new to add returns the same set.
+    expect(markAllItemsRead(items, read)).toBe(read);
+  });
+
+  test('grouping by kind labels each group in feed order', () => {
+    const groups = groupInboxItems(buildInboxItems(data(), [entry()]));
+    expect(groups.map((g) => [g.id, g.label, g.items.length])).toEqual([
+      ['review', 'Review', 1],
+      ['landing', 'Ready to land', 1],
+      ['pr', 'Pull requests', 1],
+      ['earlier', 'Earlier', 1],
+    ]);
+  });
+
+  test('the row anatomy: badge, state glyph, actor, title and subtitle', () => {
+    const [ask, landing, pr, note] = buildInboxItems(data(), [
+      entry({
+        title: 'Merge blocked. Action needed.',
+        target: { kind: 'queue' },
+      }),
+    ]);
+    expect(inboxItemBadge(ask)).toBe('check');
+    expect(inboxItemBadge(landing)).toBe('merge');
+    expect(inboxItemBadge(pr)).toBe('pr');
+    expect(inboxItemBadge(note)).toBe('alert');
+    expect(inboxItemState(note)).toBe('unblock');
+    expect(inboxItemActor(note)).toBe('Merge queue');
+    expect(inboxItemActor(pr)).toBe('octocat');
+    expect(inboxItemText(ask)).toEqual({
+      id: 't-1',
+      title: 'Do the thing',
+      subtitle: 'Review · 3 turns',
+    });
+    expect(inboxItemText(pr).subtitle).toBe('Pull request by octocat');
+  });
+
+  test('read ids round-trip through storage and forget keys no longer listed', () => {
+    const store = new Map<string, string>();
+    const storage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+    };
+    saveReadIds(
+      '/repo',
+      new Set(['review:t-1:r-1', 'review:t-9:r-9']),
+      new Set(['review:t-1:r-1']),
+      storage
+    );
+    expect([...loadReadIds('/repo', storage)]).toEqual(['review:t-1:r-1']);
+    expect(loadReadIds('/other', storage).size).toBe(0);
+    store.set('dispatch:inbox-read:/broken', '{not json');
+    expect(loadReadIds('/broken', storage).size).toBe(0);
+  });
+});
+
+describe('specForTask', () => {
+  test('projects a task doc onto the spec view shape', () => {
+    const doc = {
+      meta: {
+        id: 't-1',
+        title: 'Cache the index',
+        status: 'ready',
+        priority: 'high',
+        writes: ['src/cache.ts'],
+        risk: 'elevated',
+        blockedBy: ['t-0', 't-missing'],
+      },
+      body: '## Description\n\nMake it fast.\n\n## Acceptance Criteria\n\n- [ ] warm start\n- [x] cold start\n\n## Activity\n',
+    } as unknown as TaskDoc;
+    const blocker = {
+      meta: { id: 't-0', title: 'Pick a store' },
+    } as unknown as TaskDoc;
+    expect(specForTask(doc, [doc, blocker])).toEqual({
+      title: 'Cache the index',
+      status: 'ready',
+      priority: 'high',
+      description: 'Make it fast.',
+      acceptanceCriteria: ['warm start', 'cold start'],
+      writes: ['src/cache.ts'],
+      risk: 'elevated',
+      blockedBy: [
+        { key: 't-0', title: 'Pick a store' },
+        { key: 't-missing', title: 't-missing' },
+      ],
+    });
   });
 });

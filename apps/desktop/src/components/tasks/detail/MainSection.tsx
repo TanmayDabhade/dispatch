@@ -1,21 +1,35 @@
 import type { ReactNode } from 'react';
 
-// A titled block in the main column (Description, Acceptance Criteria,
-// Sessions, Activity) — a quiet header plus its content, separated from
-// neighbors by whitespace rather than the heavy top-borders the old
-// single-column layout stacked on every section.
+import { cn } from '@/lib/utils';
+
+// A titled block in the task page's main column (Acceptance criteria, Sessions, Ledger,
+// Fix loop…): Linear's sentence-case 12px/500 muted heading over its content, separated
+// from its neighbours by whitespace rather than rules. `trailing` sits at the heading's
+// right edge (a count, an icon button).
 export function MainSection({
   title,
+  trailing,
   children,
+  className,
 }: {
-  title: string;
+  title: ReactNode;
+  trailing?: ReactNode;
   children: ReactNode;
+  className?: string;
 }) {
   return (
-    <section className="flex flex-col gap-1.5">
-      <h3 className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
-        {title}
-      </h3>
+    <section
+      data-slot="main-section"
+      className={cn('flex flex-col gap-2', className)}
+    >
+      <div className="flex h-7 items-center gap-2">
+        <h3 className="text-muted-foreground text-[12px] font-medium">
+          {title}
+        </h3>
+        {trailing !== undefined && (
+          <div className="ml-auto flex items-center gap-1">{trailing}</div>
+        )}
+      </div>
       {children}
     </section>
   );

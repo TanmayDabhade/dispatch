@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, mock } from 'bun:test';
+import { describe, expect, it, mock, test } from 'bun:test';
 
 import type { ChatTarget } from './SnippetComposer';
 import { SnippetComposer } from './SnippetComposer';
@@ -87,4 +87,19 @@ describe('SnippetComposer', () => {
     );
     expect(screen.getByText(/can edit this branch/i)).toBeTruthy();
   });
+});
+
+// The frame is the prompt bar's: a quaternary card with a half-pixel border, and the
+// attachment chips are pills.
+test('attachments render as pills on the prompt-bar frame', () => {
+  render(
+    <SnippetComposer
+      targets={[{ id: 'a', label: 'Agent', canAct: true }]}
+      attachments={[{ file: 'src/a.ts', startLine: 2, endLine: 4, text: 'x' }]}
+      onRemoveAttachment={() => {}}
+      onSend={() => Promise.resolve()}
+    />
+  );
+  const chip = screen.getByText('src/a.ts (2-4)').closest('[data-slot=pill]');
+  expect(chip).not.toBeNull();
 });

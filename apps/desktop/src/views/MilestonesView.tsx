@@ -1,82 +1,162 @@
 import type { TaskDoc } from '@dispatch/core/browser';
-import { statusLabel } from '@dispatch/core/browser';
-import { ChevronRight, Target, TriangleAlert } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { Target } from 'lucide-react';
+import type { KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
-import { PriorityIcon } from '../components/tasks/PriorityIcon';
-import { StatusIcon } from '../components/tasks/StatusIcon';
+import { useShellActions } from '../components/shell/ShellActionsContext';
+import { pieDashOffset, StatusIcon } from '../components/tasks/StatusIcon';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
-import { deriveMilestoneStatus } from '../lib/milestoneRisk';
 import {
-  isMilestoneFinished,
-  rollupMilestoneStatus,
-} from '../lib/milestoneRollup';
-import { cn } from '@/lib/utils';
-import { Button } from '@/ui/button';
+  readCollapsedGroups,
+  toggleCollapsedGroup,
+  TOGGLED_MILESTONES_STORAGE_KEY,
+  writeCollapsedGroups,
+} from '../lib/collapsedEpics';
+import { groupTasks, visibleRowIds } from '../lib/listGrouping';
+import {
+  deriveMilestoneStatus,
+  milestoneHealthPill,
+} from '../lib/milestoneRisk';
+import { isMilestoneFinished } from '../lib/milestoneRollup';
+import {
+  DEFAULT_TASKS_DISPLAY,
+  type TasksDisplayPrefs,
+} from '../lib/tasksPrefs';
+import {
+  handleTaskListKeyDown,
+  type OpenPicker,
+  TaskListRow,
+} from './TaskListRow';
+import { GroupHeader } from '@/ui/ai/group-header';
+import { IconButton } from '@/ui/ai/icon-button';
+import { LabelPill } from '@/ui/ai/pill';
 import { EmptyState } from '@/ui/chrome';
-import { ProgressTrack } from '@/ui/chrome/ProgressTrack';
-import { StateDot } from '@/ui/chrome/StateDot';
 
 interface MilestonesViewProps {
   data: DispatchProjectData;
   onOpenTask: (taskId: string) => void;
+  /** The Display popover's model; the milestones layout reads its ordering and row
+   * properties and always groups by milestone. */
+  display?: TasksDisplayPrefs;
+  onRequestFilter?: () => void;
+  onRequestDisplay?: () => void;
 }
 
-function isClosed(task: TaskDoc): boolean {
-  return task.meta.status === 'landed' || task.meta.status === 'dropped';
-}
+// The pie's full arc is `StatusIcon`'s (Linear's) dash length — `pieDashOffset(0)` hides all
+// of it, so it is that length; reading it back keeps the two glyphs on one recipe.
+const PIE_DASH = pieDashOffset(0);
+const PIE_DASHARRAY = `${PIE_DASH} ${PIE_DASH * 2}`;
 
-interface MilestoneGroup {
-  epic: TaskDoc;
-  children: TaskDoc[];
-  done: number;
-  /** The milestone's own rolled-up pipeline state — see `rollupMilestoneStatus`. */
-  rollup: string;
-  finished: boolean;
+// A milestone's progress glyph at 12px: `StatusIcon`'s r=6 ring and r=2 pie, the pie filled
+// to `fraction` by the same dashoffset the status icons use — the `◔ 2/5` Linear draws in a
+// sub-issues header.
+function ProgressGlyph({ fraction }: { fraction: number }) {
+  return (
+    <svg
+      viewBox="0 0 14 14"
+      fill="none"
+      aria-hidden
+      className="size-3 shrink-0 text-(--text-secondary)"
+    >
+      <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.5" />
+      <circle
+        cx="7"
+        cy="7"
+        r="2"
+        stroke="currentColor"
+        strokeWidth="4"
+        strokeDasharray={PIE_DASHARRAY}
+        strokeDashoffset={pieDashOffset(fraction)}
+        transform="rotate(-90 7 7)"
+      />
+    </svg>
+  );
 }
 
 /**
- * Milestones view — each milestone rendered as a big task: the epic wears its own rolled-up
- * pipeline state (the same status glyph vocabulary its children use, via
- * `rollupMilestoneStatus`), a progress track, and its tasks inside. A finished milestone
- * (every child landed/dropped) reads as landed: checked glyph, dimmed, collapsed, and
- * sorted to the bottom. Milestone = epic here, front-running the epic→milestone rename
- * (e-be4827) — the old free-form `meta.milestone` string grouping is retired.
+ * Milestones: every milestone is a status-tinted `GroupHeader` — the rolled-up status glyph
+ * (the same vocabulary its tasks use), the title, a `◔ n/m` progress glyph and, when there
+ * is something to say, one `At risk` / `N running` pill — over the same 36px `TaskListRow`s
+ * the Tasks list renders, with the same pickers and single-key shortcuts. A finished
+ * milestone (every child landed/dropped) reads as landed and sinks to the bottom, starting
+ * collapsed. Milestone = epic here, front-running the epic→milestone rename (e-be4827).
  */
-export function MilestonesView({ data, onOpenTask }: MilestonesViewProps) {
-  // Which milestones the user has flipped away from their default expansion (unfinished
-  // start open, finished start collapsed).
-  const [toggledIds, setToggledIds] = useState<ReadonlySet<string>>(
-    () => new Set()
+export function MilestonesView({
+  data,
+  onOpenTask,
+  display,
+  onRequestFilter,
+  onRequestDisplay,
+}: MilestonesViewProps) {
+  const shell = useShellActions();
+  const prefs = useMemo<TasksDisplayPrefs>(
+    () => ({ ...(display ?? DEFAULT_TASKS_DISPLAY), grouping: 'milestone' }),
+    [display]
+  );
+  const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
+  const [picker, setPicker] = useState<OpenPicker | null>(null);
+  // Milestones the user has flipped away from their default fold (unfinished start open,
+  // finished start collapsed). Session-scoped under this page's own key so the fold survives
+  // a view switch; the list's key stores "collapsed", which would read backwards here.
+  const [toggled, setToggled] = useState<ReadonlySet<string>>(() =>
+    readCollapsedGroups(TOGGLED_MILESTONES_STORAGE_KEY)
+  );
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const epicById = useMemo(() => {
+    const map = new Map<string, TaskDoc>();
+    for (const epic of data.epics) map.set(epic.meta.id, epic);
+    return map;
+  }, [data.epics]);
+
+  // Every milestone, empty ones included — a milestone with no tasks yet is still a plan.
+  const groups = useMemo(
+    () =>
+      groupTasks(
+        data.tasks,
+        { ...prefs, showEmptyGroups: true },
+        {
+          statuses: data.config?.statuses ?? [],
+          epics: data.epics,
+        }
+      ).filter((g) => g.epicId !== null),
+    [data.tasks, data.config, data.epics, prefs]
   );
 
-  const groups = useMemo<MilestoneGroup[]>(() => {
-    const childrenByEpic = new Map<string, TaskDoc[]>();
-    for (const doc of data.tasks) {
-      if (doc.meta.kind === 'epic' || doc.meta.parent === null) continue;
-      const bucket = childrenByEpic.get(doc.meta.parent);
-      if (bucket !== undefined) bucket.push(doc);
-      else childrenByEpic.set(doc.meta.parent, [doc]);
+  // A finished milestone's default is folded, so its key in `toggled` means "opened".
+  const collapsed = useMemo(() => {
+    const set = new Set<string>();
+    for (const g of groups) {
+      const finished = isMilestoneFinished(g.rows.map((r) => r.doc));
+      if (finished !== toggled.has(g.key)) set.add(g.key);
     }
-    const result = data.epics.map((epic) => {
-      const children = childrenByEpic.get(epic.meta.id) ?? [];
-      return {
-        epic,
-        children,
-        done: children.filter(isClosed).length,
-        rollup: rollupMilestoneStatus(children),
-        finished: isMilestoneFinished(children),
-      };
-    });
-    // Finished milestones sink to the bottom; everything else keeps the project's epic order.
-    return [
-      ...result.filter((g) => !g.finished),
-      ...result.filter((g) => g.finished),
-    ];
-  }, [data.tasks, data.epics]);
+    return set;
+  }, [groups, toggled]);
 
-  if (data.portLoading || data.portError || data.client === null) {
+  const orderedIds = useMemo(
+    () => visibleRowIds(groups, collapsed),
+    [groups, collapsed]
+  );
+
+  useEffect(() => {
+    if (orderedIds.length === 0) {
+      setFocusedTaskId(null);
+    } else if (focusedTaskId === null || !orderedIds.includes(focusedTaskId)) {
+      setFocusedTaskId(orderedIds[0] ?? null);
+    }
+  }, [orderedIds, focusedTaskId]);
+
+  const daemonReady =
+    !data.portLoading && !data.portError && data.client !== null;
+  const showList = daemonReady && groups.length > 0;
+
+  // The grid takes focus once it is on screen so j/k/s/p work without a click first.
+  useEffect(() => {
+    if (showList) listRef.current?.focus();
+  }, [showList]);
+
+  if (!daemonReady) {
     return (
       <DaemonUnavailable
         starting={data.portLoading}
@@ -86,152 +166,158 @@ export function MilestonesView({ data, onOpenTask }: MilestonesViewProps) {
     );
   }
 
-  function toggle(id: string) {
-    setToggledIds((prev) => {
-      const next = new Set(prev);
-      if (!next.delete(id)) next.add(id);
+  function toggle(key: string) {
+    setToggled((prev) => {
+      const next = toggleCollapsedGroup(prev, key);
+      writeCollapsedGroups(TOGGLED_MILESTONES_STORAGE_KEY, next);
       return next;
     });
   }
 
+  // Only a keyboard move scrolls — a hover that set the cursor must not shift the list under
+  // the pointer.
+  function moveCursor(id: string | null) {
+    setFocusedTaskId(id);
+    if (id === null) return;
+    listRef.current
+      ?.querySelector(`[data-row-id="${id}"]`)
+      ?.scrollIntoView({ block: 'nearest' });
+  }
+
+  function handleKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    handleTaskListKeyDown(e, {
+      orderedIds,
+      focusedTaskId,
+      setFocusedTaskId: moveCursor,
+      onOpen: onOpenTask,
+      onPeek: shell.peekTask,
+      onDispatch: (id) => {
+        if (data.readyIds.has(id)) void data.handleDispatch(id);
+      },
+      onCopyId: shell.copyTaskId,
+      setPicker,
+      onEscape: () => {
+        if (picker === null) return false;
+        setPicker(null);
+        return true;
+      },
+      onRequestFilter,
+      onRequestDisplay,
+    });
+  }
+
+  if (!showList) {
+    return (
+      <EmptyState
+        icon={Target}
+        heading="No milestones yet"
+        description="A milestone is an epic with its tasks under it. Plan work… drafts one for you."
+        primary={{
+          label: 'Plan work…',
+          onClick: () => shell.setProjectView('plans'),
+        }}
+        secondary={{
+          label: 'New task',
+          onClick: () => shell.openCreateTask(),
+        }}
+        className="h-full"
+      />
+    );
+  }
+
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3">
-      {groups.length === 0 ? (
-        <EmptyState
-          icon={Target}
-          message="No milestones yet. “Plan work…” drafts one with its tasks."
-          className="flex-1 justify-center gap-2 p-0 text-[13px] [&_[data-slot=empty-description]]:text-[length:inherit] [&_[data-slot=empty-icon]_svg]:size-6"
-        />
-      ) : (
-        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
-          {groups.map((group) => {
-            const expanded = toggledIds.has(group.epic.meta.id)
-              ? group.finished
-              : !group.finished;
-            const pct =
-              group.children.length === 0
-                ? 0
-                : group.done / group.children.length;
-            const status = deriveMilestoneStatus(
-              group.children,
-              data.latestRunByTaskId,
-              group.finished
-            );
-            const stalled = status.health === 'stalled';
-            return (
-              <div
-                key={group.epic.meta.id}
-                className={cn(
-                  // `shrink-0` matters: these are flex children of an overflow-y-auto
-                  // column, and the default flex-shrink would squash every card to fit.
-                  'bg-card rounded-card shadow-card shrink-0 overflow-hidden',
-                  group.finished && 'opacity-60 saturate-50'
-                )}
-              >
-                <div className="flex flex-col gap-2 px-3 py-2.5">
-                  <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-xs"
-                      onClick={() => toggle(group.epic.meta.id)}
-                      aria-expanded={expanded}
-                      aria-label={`${expanded ? 'Collapse' : 'Expand'} ${group.epic.meta.title}`}
-                      className="text-muted-foreground shrink-0"
-                    >
-                      <ChevronRight
-                        className={cn(
-                          'size-3.5 transition-transform',
-                          expanded && 'rotate-90'
-                        )}
-                      />
-                    </Button>
-                    {/* The milestone wears its rolled-up state in the same glyph
-                        vocabulary as its tasks — a big task, not a different species. */}
-                    <StatusIcon status={group.rollup} className="size-4" />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="xs"
-                      onClick={() => onOpenTask(group.epic.meta.id)}
-                      className="text-foreground h-auto min-w-0 flex-1 justify-start px-0 text-left text-[14px] font-medium hover:bg-transparent"
-                    >
-                      <span className="min-w-0 truncate">
-                        {group.epic.meta.title}
-                      </span>
-                    </Button>
-                    <span className="dense-meta shrink-0 capitalize">
-                      {statusLabel(group.rollup)}
-                    </span>
-                    <span className="dense-meta shrink-0">
-                      {group.done}/{group.children.length}
-                    </span>
-                    <PriorityIcon
-                      priority={group.epic.meta.priority}
-                      className="size-3.5 shrink-0"
+    <div
+      ref={listRef}
+      tabIndex={0}
+      role="grid"
+      aria-label="Milestones"
+      onKeyDown={handleKeyDown}
+      className="flex h-full min-h-0 flex-col overflow-y-auto px-2 pb-2 outline-none"
+    >
+      {groups.map((group) => {
+        const children = group.rows.map((r) => r.doc);
+        const done = children.filter(
+          (t) => t.meta.status === 'landed' || t.meta.status === 'dropped'
+        ).length;
+        const finished = isMilestoneFinished(children);
+        const status = deriveMilestoneStatus(
+          children,
+          data.latestRunByTaskId,
+          finished
+        );
+        const health = milestoneHealthPill(status);
+        const isCollapsed = collapsed.has(group.key);
+        const epicId = group.epicId ?? '';
+        return (
+          <div key={group.key} data-group-key={group.key}>
+            <GroupHeader
+              tint={group.tint ?? undefined}
+              icon={
+                group.icon?.kind === 'milestone' ? (
+                  <StatusIcon status={group.icon.status} />
+                ) : undefined
+              }
+              name={group.label}
+              collapsed={isCollapsed}
+              onToggle={() => toggle(group.key)}
+              onAdd={() => shell.openCreateTask(group.preset)}
+              addLabel={`New task in ${group.label}`}
+              actions={
+                <>
+                  <span
+                    data-slot="milestone-progress"
+                    aria-label={`${done} of ${children.length} landed`}
+                    className="flex shrink-0 items-center gap-1 text-[12px] font-medium text-(--text-secondary)"
+                  >
+                    <ProgressGlyph
+                      fraction={
+                        children.length === 0 ? 0 : done / children.length
+                      }
                     />
-                  </div>
-                  <ProgressTrack
-                    value={pct}
-                    label={`${group.epic.meta.title} progress`}
-                    className={cn(
-                      'bg-muted h-1 rounded-full',
-                      '[&>[data-slot=progress-indicator]]:transition-transform [&>[data-slot=progress-indicator]]:duration-300',
-                      group.finished
-                        ? '[&>[data-slot=progress-indicator]]:bg-state-review'
-                        : '[&>[data-slot=progress-indicator]]:bg-primary'
-                    )}
+                    {done}/{children.length}
+                  </span>
+                  {health !== null && (
+                    <LabelPill
+                      color={health.tint}
+                      title={status.reason ?? undefined}
+                    >
+                      {health.label}
+                    </LabelPill>
+                  )}
+                  {epicById.has(epicId) && (
+                    <IconButton
+                      label={`Open ${group.label}`}
+                      onClick={() => onOpenTask(epicId)}
+                    >
+                      <Target aria-hidden />
+                    </IconButton>
+                  )}
+                </>
+              }
+            />
+            {!isCollapsed &&
+              group.rows.map((row) => {
+                const id = row.doc.meta.id;
+                return (
+                  <TaskListRow
+                    key={id}
+                    doc={row.doc}
+                    data={data}
+                    prefs={prefs}
+                    indent={row.indent}
+                    showEpicChip={false}
+                    picker={picker}
+                    onPickerChange={setPicker}
+                    selected={false}
+                    focused={focusedTaskId === id}
+                    onOpen={() => onOpenTask(id)}
+                    onFocus={() => setFocusedTaskId(id)}
                   />
-                  {/* Never "at risk" without saying why — an unexplained warning is just
-                      anxiety. */}
-                  {stalled && status.reason !== null && (
-                    <div className="flex items-center gap-2">
-                      <TriangleAlert className="text-state-waiting size-3.5 shrink-0" />
-                      <span className="text-state-waiting text-[12.5px]">
-                        {status.reason}
-                      </span>
-                    </div>
-                  )}
-                  {status.working > 0 && !stalled && (
-                    <div className="flex items-center gap-2">
-                      <StateDot state="working" />
-                      <span className="text-muted-foreground text-[12.5px]">
-                        {status.working} running
-                      </span>
-                    </div>
-                  )}
-                </div>
-                {expanded && group.children.length > 0 && (
-                  <div className="border-border/60 bg-surface-inset flex flex-col gap-0.5 border-t p-1.5">
-                    {group.children.map((task) => (
-                      <Button
-                        key={task.meta.id}
-                        variant="ghost"
-                        size="xs"
-                        onClick={() => onOpenTask(task.meta.id)}
-                        className="hover:bg-surface-hover hover:text-foreground rounded-control h-auto w-full justify-start gap-2 px-2.5 py-1.5 text-left text-[length:inherit] font-normal has-[>svg]:px-2.5"
-                      >
-                        <PriorityIcon priority={task.meta.priority} />
-                        <StatusIcon status={task.meta.status} />
-                        <span
-                          className={cn(
-                            'min-w-0 flex-1 truncate text-[13px]',
-                            isClosed(task)
-                              ? 'text-muted-foreground'
-                              : 'text-foreground'
-                          )}
-                        >
-                          {task.meta.title}
-                        </span>
-                      </Button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
+                );
+              })}
+          </div>
+        );
+      })}
     </div>
   );
 }

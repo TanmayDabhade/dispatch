@@ -2,8 +2,8 @@ import type { GitStash } from '@dispatch/client';
 import { Trash2, Undo2 } from 'lucide-react';
 
 import { formatRelativeTimeFromIso } from '@/lib/format';
-import { cn } from '@/lib/utils';
-import { Button } from '@/ui/button';
+import { IconButton } from '@/ui/ai/icon-button';
+import { ListRow } from '@/ui/ai/list-row';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
 interface StashesPanelProps {
@@ -29,77 +29,70 @@ export function StashesPanel({
 }: StashesPanelProps) {
   if (loading) {
     return (
-      <div className="text-muted-foreground p-3 text-[12px]">Loading…</div>
+      <div className="text-muted-foreground font-book px-3 py-2 text-[13px]">
+        Loading…
+      </div>
     );
   }
   if (stashes.length === 0) {
     return (
-      <div className="text-muted-foreground p-3 text-[12px]">No stashes.</div>
+      <div className="text-muted-foreground font-book px-3 py-2 text-[13px]">
+        No stashes.
+      </div>
     );
   }
 
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col px-1 py-1" role="list" aria-label="Stashes">
       {stashes.map((stash, index) => (
-        <div
+        <ListRow
           key={stash.ref}
           data-git-selected={index === selectedIndex ? 'true' : undefined}
           onClick={() => onSelectIndex(index)}
-          role="button"
-          tabIndex={-1}
-          className={cn(
-            'ease-out-expo flex items-center gap-2 px-3 py-1.5 text-[12px] transition-colors duration-100',
-            index === selectedIndex
-              ? 'bg-surface-hover'
-              : 'hover:bg-surface-hover'
-          )}
-        >
-          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <span className="truncate">{stash.message}</span>
-            <span className="text-muted-foreground text-[10.5px]">
-              {formatRelativeTimeFromIso(stash.date)}
-            </span>
-          </div>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  disabled={busy}
-                  aria-label="Pop (S)"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onPop(stash.index);
-                  }}
-                />
-              }
-            >
-              <Undo2 className="size-3.5" />
-            </TooltipTrigger>
-            <TooltipContent>Pop (S)</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  disabled={busy}
-                  className="hover:text-destructive"
-                  aria-label="Drop"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onRequestDrop(stash);
-                  }}
-                />
-              }
-            >
-              <Trash2 className="size-3.5" />
-            </TooltipTrigger>
-            <TooltipContent>Drop</TooltipContent>
-          </Tooltip>
-        </div>
+          focused={index === selectedIndex}
+          role="listitem"
+          title={stash.message}
+          trailing={
+            <>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <IconButton
+                      label="Pop (S)"
+                      disabled={busy}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onPop(stash.index);
+                      }}
+                    />
+                  }
+                >
+                  <Undo2 />
+                </TooltipTrigger>
+                <TooltipContent>Pop (S)</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <IconButton
+                      label="Drop"
+                      className="hover:text-state-failed"
+                      disabled={busy}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRequestDrop(stash);
+                      }}
+                    />
+                  }
+                >
+                  <Trash2 />
+                </TooltipTrigger>
+                <TooltipContent>Drop</TooltipContent>
+              </Tooltip>
+            </>
+          }
+          date={formatRelativeTimeFromIso(stash.date)}
+        />
       ))}
     </div>
   );

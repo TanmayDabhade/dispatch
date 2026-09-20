@@ -36,23 +36,24 @@ function runBucket(conclusion: string): RunBucket {
 // many checks stay scannable in one column instead of full pills.
 const BUCKET_DOT_CLASS: Record<RunBucket, string> = {
   passed: 'bg-state-review',
-  failed: 'bg-destructive',
+  failed: 'bg-state-failed',
   pending: 'bg-state-waiting',
 };
+
+const META_CLASS = 'text-[12px] font-book text-muted-foreground';
 
 function CheckRunRow({ run }: { run: PrCheckRun }) {
   const bucket = runBucket(run.conclusion);
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex h-7 items-center gap-2 px-2">
       <span
         aria-hidden
-        className={cn(
-          'size-1.5 shrink-0 rounded-full',
-          BUCKET_DOT_CLASS[bucket]
-        )}
+        className={cn('size-2 shrink-0 rounded-full', BUCKET_DOT_CLASS[bucket])}
       />
-      <span className="min-w-0 flex-1 truncate">{run.name}</span>
-      <span className="dense-meta shrink-0 lowercase">
+      <span className="font-book min-w-0 flex-1 truncate text-[13px]">
+        {run.name}
+      </span>
+      <span className={cn(META_CLASS, 'shrink-0')}>
         {run.conclusion.toLowerCase()}
       </span>
       {run.url !== '' && (
@@ -61,7 +62,7 @@ function CheckRunRow({ run }: { run: PrCheckRun }) {
           target="_blank"
           rel="noreferrer"
           aria-label={`Open ${run.name} on GitHub`}
-          className="text-muted-foreground hover:text-foreground shrink-0"
+          className="text-muted-foreground shrink-0 hover:text-(--text-secondary)"
         >
           <ExternalLink className="size-3" />
         </a>
@@ -74,7 +75,7 @@ function CheckRunRow({ run }: { run: PrCheckRun }) {
  * checks — or, when `runs` is empty (an older daemon), the aggregate only. */
 export function ChecksPopover({ checks, url }: ChecksPopoverProps) {
   if (checks.total === 0) {
-    return <span className="dense-meta text-muted-foreground">no CI</span>;
+    return <span className={META_CLASS}>No CI</span>;
   }
 
   const hasNamedRuns = checks.runs.length > 0;
@@ -86,27 +87,27 @@ export function ChecksPopover({ checks, url }: ChecksPopoverProps) {
       >
         <PrChecksPill checks={checks} />
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-64 p-3">
-        <div className="flex flex-col gap-1.5 text-[12px]">
-          <div className="text-state-review flex items-center gap-1.5">
+      <PopoverContent align="start" className="w-64">
+        <div className="flex flex-col text-[13px]">
+          <div className="text-state-review flex h-7 items-center gap-2 px-2 font-medium">
             <Check className="size-3.5" />
             {checks.passed} passed
           </div>
           {checks.failed > 0 && (
-            <div className="text-destructive flex items-center gap-1.5">
+            <div className="text-state-failed flex h-7 items-center gap-2 px-2 font-medium">
               <X className="size-3.5" />
               {checks.failed} failed
             </div>
           )}
           {checks.pending > 0 && (
-            <div className="text-state-waiting flex items-center gap-1.5">
+            <div className="text-state-waiting flex h-7 items-center gap-2 px-2 font-medium">
               <Clock className="size-3.5" />
               {checks.pending} running
             </div>
           )}
 
           {hasNamedRuns ? (
-            <div className="border-border mt-1 flex max-h-48 flex-col gap-1.5 overflow-y-auto border-t pt-1.5">
+            <div className="shadow-hairline-top mt-1 flex max-h-48 flex-col overflow-y-auto pt-1">
               {checks.runs.map((run, i) => (
                 // Names aren't guaranteed unique; index is stable for this list's lifetime.
                 <CheckRunRow key={`${run.name}-${i}`} run={run} />
@@ -118,7 +119,10 @@ export function ChecksPopover({ checks, url }: ChecksPopoverProps) {
                 href={url}
                 target="_blank"
                 rel="noreferrer"
-                className="text-muted-foreground hover:text-foreground mt-1 inline-flex items-center gap-1 text-[11px]"
+                className={cn(
+                  META_CLASS,
+                  'hover:text-(--text-secondary) mt-1 inline-flex h-7 items-center gap-1 px-2'
+                )}
               >
                 View checks on GitHub
                 <ExternalLink className="size-3" />

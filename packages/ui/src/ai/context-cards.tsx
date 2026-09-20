@@ -24,15 +24,15 @@ export function ContextCard({
     <>
       <div className="border-border flex min-w-0 items-center gap-1.5 border-b px-3 py-2">
         <Icon aria-hidden className="text-muted-foreground size-3.5 shrink-0" />
-        <span className="text-foreground min-w-0 truncate font-mono text-[12.5px] font-medium">
+        <span className="text-foreground min-w-0 truncate text-[13px] font-medium">
           {source}
         </span>
       </div>
-      <p className="text-muted-foreground line-clamp-3 px-3 pt-2 pb-1 text-left text-[12.5px] leading-relaxed">
+      <p className="text-muted-foreground font-book line-clamp-3 px-3 pt-2 pb-1 text-left text-[13px] leading-relaxed">
         {snippet}
       </p>
       <div className="px-3 pb-2">
-        <span className="text-muted-foreground font-mono text-[11px] tabular-nums">
+        <span className="text-muted-foreground font-book text-[12px] tabular-nums">
           {charCount.toLocaleString()} characters
         </span>
       </div>

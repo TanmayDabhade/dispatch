@@ -3,7 +3,7 @@ import type { TaskDoc } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
 import type { BuildFeedInput } from './controlRoom';
-import { buildFeed, FEED_GROUPS, groupCap } from './controlRoom';
+import { buildFeed, FEED_GROUPS } from './controlRoom';
 import type { FeedState } from './feedState';
 
 function run(over: Partial<RunMeta> = {}): RunMeta {
@@ -61,12 +61,11 @@ function input(over: Partial<BuildFeedInput> = {}): BuildFeedInput {
     query: '',
     activeStates: new Set(),
     collapsed: new Set(),
-    expanded: new Set(),
     ...over,
   };
 }
 
-/** Many distinct runs in one state, for exercising the caps. */
+/** Many distinct runs in one state. */
 function runsInState(n: number, over: Partial<RunMeta>): RunMeta[] {
   return Array.from({ length: n }, (_, i) =>
     run({ id: `r-${i}`, taskId: `t-${i}`, taskTitle: `Task ${i}`, ...over })
@@ -118,44 +117,24 @@ describe('grouping', () => {
   });
 });
 
-describe('caps and show-more', () => {
-  test('working caps at 7 and reports the remainder', () => {
+describe('no caps', () => {
+  // A group shows every matching row: the header's count is the real one and nothing is
+  // held back behind a "show more". Linear's list has no cap either.
+  test('a long working group renders every row', () => {
     const model = buildFeed(
       input({ runs: runsInState(10, { state: 'running' }) })
     );
     const group = model.groups[0];
-    expect(group?.rows).toHaveLength(7);
-    expect(group?.hidden).toBe(3);
+    expect(group?.rows).toHaveLength(10);
     expect(group?.total).toBe(10);
+    expect(model.shown).toBe(10);
   });
 
-  test('other groups cap at 5', () => {
+  test('other groups are uncapped too', () => {
     const model = buildFeed(
       input({ runs: runsInState(9, { state: 'finished' }) })
     );
-    expect(model.groups[0]?.rows).toHaveLength(5);
-    expect(model.groups[0]?.hidden).toBe(4);
-  });
-
-  test('expanding a group shows everything and clears the remainder', () => {
-    const model = buildFeed(
-      input({
-        runs: runsInState(10, { state: 'running' }),
-        expanded: new Set<FeedState>(['working']),
-      })
-    );
-    expect(model.groups[0]?.rows).toHaveLength(10);
-    expect(model.groups[0]?.hidden).toBe(0);
-  });
-
-  // A capped group must never quietly drop rows: the count the header shows is the real one,
-  // and the difference is always reachable.
-  test('a capped group still reports its true total', () => {
-    const model = buildFeed(
-      input({ runs: runsInState(10, { state: 'running' }) })
-    );
-    const group = model.groups[0];
-    expect((group?.rows.length ?? 0) + (group?.hidden ?? 0)).toBe(group?.total);
+    expect(model.groups[0]?.rows).toHaveLength(9);
   });
 
   test('collapsing hides the rows but keeps the count', () => {
@@ -167,7 +146,6 @@ describe('caps and show-more', () => {
     );
     expect(model.groups[0]?.rows).toHaveLength(0);
     expect(model.groups[0]?.total).toBe(4);
-    expect(model.groups[0]?.hidden).toBe(0);
     expect(model.shown).toBe(0);
   });
 });
@@ -513,11 +491,6 @@ describe('group configuration', () => {
       'checking',
       'landing',
     ]);
-  });
-
-  test('working gets more room than the rest', () => {
-    expect(groupCap('working')).toBe(7);
-    expect(groupCap('review')).toBe(5);
   });
 });
 

@@ -2,7 +2,7 @@ import type { PlannedTask } from '@dispatch/client';
 import { useMemo } from 'react';
 
 import { type TaskSpec, TaskSpecView } from '../tasks/TaskSpecView';
-import { Dialog, DialogContent, DialogTitle } from '@/ui/dialog';
+import { Dialog, DialogChrome, DialogContent, DialogTitle } from '@/ui/dialog';
 
 /** Projects one still-unconfirmed plan task onto the shared spec shape. Blockers are keyed by
  * their proposal index (as a string), since drafts have no task ids yet. */
@@ -60,20 +60,24 @@ export function PlanTaskSpecDialog({
         if (!open) onClose();
       }}
     >
-      {/* Zero padding: the spec view carries RecommendationCard's own edge-to-edge section
-          layout, so the dialog is just the frame. The first-child pad keeps the title clear
-          of the dialog's absolute close button. */}
-      <DialogContent className="max-h-[85vh] gap-0 overflow-y-auto p-0 sm:max-w-xl">
-        {spec !== null && (
+      {/* The spec view carries its own edge-to-edge section layout, so the dialog is the
+          chrome row and the frame. */}
+      <DialogContent
+        showCloseButton={false}
+        className="max-h-[85vh] sm:max-w-xl"
+      >
+        {spec !== null && index !== null && (
           <>
+            <DialogChrome>Plan › Task {index + 1}</DialogChrome>
             {/* The spec body renders its own visible title; this satisfies the dialog's
                 accessible-name requirement without doubling it on screen. */}
             <DialogTitle className="sr-only">{spec.title}</DialogTitle>
-            <TaskSpecView
-              spec={spec}
-              onOpenBlocker={(key) => onOpenIndex(Number(key))}
-              className="[&>*:first-child]:pr-10"
-            />
+            <div className="min-h-0 overflow-y-auto">
+              <TaskSpecView
+                spec={spec}
+                onOpenBlocker={(key) => onOpenIndex(Number(key))}
+              />
+            </div>
           </>
         )}
       </DialogContent>

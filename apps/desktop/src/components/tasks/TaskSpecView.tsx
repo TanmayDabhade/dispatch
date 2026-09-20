@@ -2,11 +2,12 @@ import type { Priority, TaskRisk } from '@dispatch/core/browser';
 import { statusLabel } from '@dispatch/core/browser';
 import { Circle } from 'lucide-react';
 
+import { priorityLabel } from '../../lib/taskDisplay';
 import { Markdown } from '../runs/Markdown';
 import { PriorityIcon } from './PriorityIcon';
 import { StatusIcon } from './StatusIcon';
 import { cn } from '@/lib/utils';
-import { Badge } from '@/ui/badge';
+import { LabelPill, Pill } from '@/ui/ai/pill';
 
 /**
  * The spec-shaped slice of a task: what it is and what done means, independent of any live
@@ -26,14 +27,14 @@ export interface TaskSpec {
   blockedBy: { key: string; title: string }[];
 }
 
-const RISK_BADGE_CLASSES: Record<'elevated' | 'critical', string> = {
-  elevated:
-    'border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/10',
-  critical: 'border-destructive/40 text-destructive bg-destructive/10',
+// The risk pill's dot: amber for elevated, red for critical.
+const RISK_DOT: Record<'elevated' | 'critical', string> = {
+  elevated: 'var(--state-waiting-fg)',
+  critical: 'var(--state-failed-fg)',
 };
 
-/** One inset, top-bordered section with a micro-label — RecommendationCard's "Other
- * options" panel treatment, which is the shape every spec section below shares. */
+/** One section under a sentence-case 12px/500 heading, opened by a half-pixel hairline —
+ * whitespace and a rule, no inset fill. */
 function SpecSection({
   label,
   children,
@@ -42,10 +43,11 @@ function SpecSection({
   children: React.ReactNode;
 }) {
   return (
-    <div className="border-border bg-surface-inset border-t px-4 py-2.5">
-      <p className="text-muted-foreground pb-1.5 text-[11px] font-medium">
-        {label}
-      </p>
+    <div
+      data-slot="spec-section"
+      className="shadow-hairline-top flex flex-col gap-2 px-4 py-3"
+    >
+      <p className="text-muted-foreground text-[12px] font-medium">{label}</p>
       {children}
     </div>
   );
@@ -60,64 +62,49 @@ export interface TaskSpecViewProps {
 
 /**
  * Read-only rendering of one task's spec — status, priority, description, acceptance
- * criteria, declared writes, risk, and blockers — in the ai components' RecommendationCard
- * language: a round accent-tinted icon badge beside a bold title and muted rationale, then
- * inset top-bordered sections. Built for the plan page's draft-expansion dialog first,
- * shaped to become the task page's detail body when that view is rewritten: it takes only
- * the `TaskSpec` projection, never a live TaskDoc, so it stays free of run, ledger, and
- * fix-loop concerns by construction. Expects a zero-padding container (sections carry
- * their own edge-to-edge padding, like RecommendationCard).
+ * criteria, declared writes, risk, and blockers — on the task page's own grammar: the 14px
+ * status glyph inline with a 24px/600 title, the description as 15px/450 prose, property
+ * pills, then hairline-separated sections. Built for the plan page's draft-expansion dialog
+ * and the inbox's right pane: it takes only the `TaskSpec` projection, never a live
+ * TaskDoc, so it stays free of run, ledger, and fix-loop concerns by construction. Expects
+ * a zero-padding container (sections carry their own edge-to-edge padding).
  */
 export function TaskSpecView({
   spec,
   onOpenBlocker,
   className,
 }: TaskSpecViewProps) {
-  // 'routine' is the default risk everywhere — only the two elevated tiers earn a badge.
-  const riskBadge =
+  // 'routine' is the default risk everywhere — only the two elevated tiers earn a pill.
+  const riskPill =
     spec.risk === 'elevated' || spec.risk === 'critical' ? spec.risk : null;
 
   return (
-    <div className={cn('flex flex-col', className)}>
-      <div className="flex items-start gap-2.5 px-4 pt-4 pb-3">
-        {/* Accent tint like every ai-component badge; the glyph itself is the status, so the
-            card still leads with "this is a draft" without a gray-on-gray header. */}
-        <span className="bg-accent-tint flex size-7 shrink-0 items-center justify-center rounded-full">
-          <StatusIcon status={spec.status} className="text-primary size-4" />
-        </span>
-        <div className="min-w-0 flex-1 pt-0.5">
-          <h2 className="text-foreground text-[13px] font-semibold text-pretty">
+    <div data-slot="task-spec" className={cn('flex flex-col', className)}>
+      <div className="flex flex-col gap-3 px-4 pt-4 pb-3">
+        <div className="flex items-start gap-2">
+          <StatusIcon status={spec.status} className="mt-[9px]" />
+          <h2 className="text-foreground min-w-0 flex-1 text-[24px] leading-8 font-semibold tracking-[-0.16px] text-pretty">
             {spec.title}
           </h2>
-          {spec.description.trim() !== '' && (
-            <Markdown
-              content={spec.description}
-              className="text-muted-foreground mt-1 text-[12.5px] leading-relaxed"
-            />
+        </div>
+        {spec.description.trim() !== '' && (
+          <Markdown content={spec.description} variant="prose" />
+        )}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Pill>
+            <StatusIcon status={spec.status} />
+            {statusLabel(spec.status)}
+          </Pill>
+          <Pill>
+            <PriorityIcon priority={spec.priority} />
+            {priorityLabel(spec.priority)}
+          </Pill>
+          {riskPill !== null && (
+            <LabelPill color={RISK_DOT[riskPill]} className="capitalize">
+              {riskPill} risk
+            </LabelPill>
           )}
         </div>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
-        <Badge variant="outline" className="gap-1.5 font-normal">
-          <StatusIcon status={spec.status} className="size-3" />
-          {statusLabel(spec.status)}
-        </Badge>
-        <Badge variant="outline" className="gap-1.5 font-normal capitalize">
-          <PriorityIcon priority={spec.priority} className="size-3" />
-          {spec.priority}
-        </Badge>
-        {riskBadge !== null && (
-          <Badge
-            variant="outline"
-            className={cn(
-              'font-normal capitalize',
-              RISK_BADGE_CLASSES[riskBadge]
-            )}
-          >
-            {riskBadge} risk
-          </Badge>
-        )}
       </div>
 
       {spec.acceptanceCriteria.length > 0 && (
@@ -126,9 +113,9 @@ export function TaskSpecView({
             {spec.acceptanceCriteria.map((criterion, i) => (
               <li
                 key={i}
-                className="flex items-start gap-2 text-[12.5px] leading-snug"
+                className="font-book flex items-start gap-2 text-[13px] leading-5"
               >
-                <Circle className="text-muted-foreground/50 size-3 shrink-0 translate-y-0.5" />
+                <Circle className="text-muted-foreground/50 mt-1 size-3 shrink-0" />
                 <span>{criterion}</span>
               </li>
             ))}
@@ -140,13 +127,9 @@ export function TaskSpecView({
         <SpecSection label="Writes">
           <div className="flex flex-wrap gap-1.5">
             {spec.writes.map((glob) => (
-              <Badge
-                key={glob}
-                variant="secondary"
-                className="font-mono text-[11px] font-normal"
-              >
+              <Pill key={glob} className="font-mono font-normal">
                 {glob}
-              </Badge>
+              </Pill>
             ))}
           </div>
         </SpecSection>
@@ -154,24 +137,24 @@ export function TaskSpecView({
 
       {spec.blockedBy.length > 0 && (
         <SpecSection label="Blocked by">
-          {/* Full-width hover rows, not chips — RecommendationCard's alternatives list. */}
-          <div className="-mx-1.5 flex flex-col">
+          {/* Full-width hover rows, not chips — a blocker is a task you can jump to. */}
+          <div className="-mx-2 flex flex-col">
             {spec.blockedBy.map((blocker) =>
               onOpenBlocker !== undefined ? (
                 <button
                   key={blocker.key}
                   type="button"
                   onClick={() => onOpenBlocker(blocker.key)}
-                  className="hover:bg-surface-hover rounded-control ease-out-expo flex w-full items-center gap-2.5 px-1.5 py-1.5 text-left transition-colors duration-100"
+                  className="hover:bg-surface-hover rounded-control focus-visible:ring-ring flex h-8 w-full items-center gap-2 px-2 text-left transition-colors duration-100 outline-none focus-visible:ring-2"
                 >
-                  <span className="text-foreground min-w-0 flex-1 truncate text-[12.5px]">
+                  <span className="text-foreground min-w-0 flex-1 truncate text-[13px] font-medium">
                     {blocker.title}
                   </span>
                 </button>
               ) : (
                 <span
                   key={blocker.key}
-                  className="text-foreground flex w-full items-center px-1.5 py-1.5 text-[12.5px]"
+                  className="text-foreground flex h-8 w-full items-center px-2 text-[13px] font-medium"
                 >
                   <span className="min-w-0 flex-1 truncate">
                     {blocker.title}

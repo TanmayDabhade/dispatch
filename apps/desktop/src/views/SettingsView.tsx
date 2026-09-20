@@ -1,4 +1,4 @@
-import { FolderSearch } from 'lucide-react';
+import { FolderSearch, SearchIcon } from 'lucide-react';
 import { useCallback, useState } from 'react';
 
 import { AgentsSection } from '../components/settings/AgentsSection';
@@ -9,15 +9,22 @@ import { IntegrationsSection } from '../components/settings/IntegrationsSection'
 import { NotificationsSection } from '../components/settings/NotificationsSection';
 import { PolicySection } from '../components/settings/PolicySection';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import { cn } from '@/lib/utils';
+import { PageHeader } from '@/ui/ai/page-header';
+import {
+  SIDEBAR_ROW_ACTIVE_CLASS,
+  SIDEBAR_ROW_CLASS,
+  SIDEBAR_ROW_INACTIVE_CLASS,
+} from '@/ui/ai/sidebar-nav';
 import { EmptyState } from '@/ui/chrome';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/ui/tabs';
+import { Input } from '@/ui/input';
 
 interface SettingsViewProps {
   /** Just `{ path, name }`, the same minimal shape `App.tsx` derives from
    *  `currentProjectRoot()` — not the full observability-database `ProjectSummary`. */
   activeProject: { path: string; name: string } | null;
   data: DispatchProjectData;
-  /** Opens a task's full view — the Autonomy tab's receipts link through to
+  /** Opens a task's full view — the Autonomy page's receipts link through to
    *  the task ledger that holds each auto-decision. */
   onOpenTask?: (taskId: string) => void;
 }
@@ -28,20 +35,42 @@ type SaveState =
   | { kind: 'saved' }
   | { kind: 'error'; message: string };
 
-/** Settings for the active project: General / Autonomy / Agents /
- *  Integrations / Notifications / Daemon / Diffs tabs. Every tab but Diffs
- *  saves through the shell's one `save` and its one indicator beneath the tab
- *  bar; Diffs is a local display preference with its own storage and no save
- *  state. */
+type SettingsPage =
+  | 'general'
+  | 'autonomy'
+  | 'agents'
+  | 'integrations'
+  | 'notifications'
+  | 'daemon'
+  | 'diffs';
+
+/** The settings nav, in order: one `Project` group of pages. The label doubles as the
+ * page's H1. */
+const SETTINGS_PAGES: { id: SettingsPage; label: string }[] = [
+  { id: 'general', label: 'General' },
+  { id: 'autonomy', label: 'Autonomy' },
+  { id: 'agents', label: 'Agents' },
+  { id: 'integrations', label: 'Integrations' },
+  { id: 'notifications', label: 'Notifications' },
+  { id: 'daemon', label: 'Daemon' },
+  { id: 'diffs', label: 'Diffs' },
+];
+
+/** Settings for the active project, laid out as Linear's settings shell: a 200px nav of
+ *  pages on the left, the selected page as a centred column on the right. Every page but
+ *  Diffs saves through the one `save` here and its one indicator beside the page title;
+ *  Diffs is a local display preference with its own storage and no save state. */
 export function SettingsView({
   activeProject,
   data,
   onOpenTask,
 }: SettingsViewProps) {
   const [saveState, setSaveState] = useState<SaveState>({ kind: 'idle' });
+  const [page, setPage] = useState<SettingsPage>('general');
+  const [query, setQuery] = useState('');
 
   // The one save path every config-backed section's onSave goes through, so
-  // one indicator covers those tabs instead of each section reporting on its own.
+  // one indicator covers those pages instead of each section reporting on its own.
   const save = useCallback(
     async (patch: Parameters<DispatchProjectData['handleUpdateConfig']>[0]) => {
       setSaveState({ kind: 'saving' });
@@ -60,11 +89,13 @@ export function SettingsView({
 
   if (activeProject === null) {
     return (
-      <div className="flex max-w-2xl flex-col gap-5">
-        <h1 className="text-foreground text-[15px] font-medium">Settings</h1>
+      <div className="flex h-full min-h-0 flex-col">
+        <PageHeader crumb={['Settings']} />
         <EmptyState
           icon={FolderSearch}
-          message="Pick a project in the sidebar."
+          heading="No project selected"
+          description="Pick a project in the sidebar."
+          className="flex-1"
         />
       </div>
     );
@@ -77,78 +108,118 @@ export function SettingsView({
     handleUpdateConfig: save,
   };
 
+  const needle = query.trim().toLowerCase();
+  const visiblePages =
+    needle === ''
+      ? SETTINGS_PAGES
+      : SETTINGS_PAGES.filter((entry) =>
+          entry.label.toLowerCase().includes(needle)
+        );
+  const title =
+    SETTINGS_PAGES.find((entry) => entry.id === page)?.label ?? 'Settings';
+
   return (
-    <div className="flex max-w-2xl flex-col gap-5">
-      <h1 className="text-foreground text-[15px] font-medium">Settings</h1>
-
-      <Tabs defaultValue="general">
-        <TabsList>
-          <TabsTrigger value="general">General</TabsTrigger>
-          <TabsTrigger value="autonomy">Autonomy</TabsTrigger>
-          <TabsTrigger value="agents">Agents</TabsTrigger>
-          <TabsTrigger value="integrations">Integrations</TabsTrigger>
-          <TabsTrigger value="notifications">Notifications</TabsTrigger>
-          <TabsTrigger value="daemon">Daemon</TabsTrigger>
-          <TabsTrigger value="diffs">Diffs</TabsTrigger>
-        </TabsList>
-
-        <div className="flex h-5 items-center">
-          {saveState.kind === 'saving' && (
-            <span className="dense-meta">Saving…</span>
-          )}
-          {saveState.kind === 'saved' && (
-            <span className="dense-meta text-state-review">
-              Saved to .dispatch/config.yml
-            </span>
-          )}
-          {saveState.kind === 'error' && (
-            <span className="text-state-failed text-[12px]">
-              {saveState.message}
-            </span>
-          )}
-        </div>
-
-        <TabsContent value="general" className="flex flex-col gap-4">
-          {data.config !== null && (
-            <GeneralSection config={data.config} onSave={save} />
-          )}
-        </TabsContent>
-
-        <TabsContent value="autonomy" className="flex flex-col gap-4">
-          {data.config !== null && (
-            <PolicySection
-              config={data.config}
-              onSave={save}
-              client={data.client}
-              onOpenTask={onOpenTask}
+    <div className="flex h-full min-h-0 flex-col">
+      <PageHeader crumb={['Settings']} />
+      <div className="grid min-h-0 flex-1 grid-cols-[200px_minmax(0,1fr)]">
+        <nav
+          aria-label="Settings"
+          className="shadow-hairline-right flex min-h-0 flex-col gap-3 overflow-y-auto px-2 py-3"
+        >
+          <div className="relative">
+            <SearchIcon
+              aria-hidden
+              className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2"
             />
-          )}
-        </TabsContent>
+            <Input
+              type="search"
+              aria-label="Search settings"
+              placeholder="Search…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="pl-7"
+            />
+          </div>
+          <div>
+            <div className="text-muted-foreground flex h-7 items-center px-2 text-[12px] font-medium">
+              Project
+            </div>
+            <div className="flex flex-col gap-px">
+              {visiblePages.map((entry) => {
+                const active = entry.id === page;
+                return (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    aria-current={active ? 'page' : undefined}
+                    onClick={() => setPage(entry.id)}
+                    className={cn(
+                      SIDEBAR_ROW_CLASS,
+                      active
+                        ? SIDEBAR_ROW_ACTIVE_CLASS
+                        : SIDEBAR_ROW_INACTIVE_CLASS
+                    )}
+                  >
+                    <span className="min-w-0 flex-1 truncate">
+                      {entry.label}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </nav>
 
-        <TabsContent value="agents" className="flex flex-col gap-4">
-          {data.config !== null && (
-            <AgentsSection config={data.config} onSave={save} />
-          )}
-        </TabsContent>
+        <div className="min-h-0 overflow-y-auto px-6 py-4">
+          <div className="mx-auto flex w-full max-w-[540px] flex-col gap-6 pb-8">
+            <div className="flex items-baseline gap-3">
+              <h1 className="text-foreground text-[24px] leading-8 font-semibold tracking-[-0.16px]">
+                {title}
+              </h1>
+              {page !== 'diffs' && (
+                <span
+                  className={cn(
+                    'font-book text-[12px]',
+                    saveState.kind === 'error'
+                      ? 'text-state-failed'
+                      : 'text-muted-foreground'
+                  )}
+                >
+                  {saveState.kind === 'saving' && 'Saving…'}
+                  {saveState.kind === 'saved' &&
+                    'Saved to .dispatch/config.yml'}
+                  {saveState.kind === 'error' && saveState.message}
+                </span>
+              )}
+            </div>
 
-        <TabsContent value="integrations" className="flex flex-col gap-4">
-          <IntegrationsSection data={integrationsData} />
-        </TabsContent>
-
-        <TabsContent value="notifications" className="flex flex-col gap-4">
-          {data.config !== null && (
-            <NotificationsSection config={data.config} onSave={save} />
-          )}
-        </TabsContent>
-
-        <TabsContent value="daemon" className="flex flex-col gap-4">
-          <DaemonSection activeProject={activeProject} data={data} />
-        </TabsContent>
-
-        <TabsContent value="diffs" className="flex flex-col gap-4">
-          <DiffsSection />
-        </TabsContent>
-      </Tabs>
+            {page === 'general' && data.config !== null && (
+              <GeneralSection config={data.config} onSave={save} />
+            )}
+            {page === 'autonomy' && data.config !== null && (
+              <PolicySection
+                config={data.config}
+                onSave={save}
+                client={data.client}
+                onOpenTask={onOpenTask}
+              />
+            )}
+            {page === 'agents' && data.config !== null && (
+              <AgentsSection config={data.config} onSave={save} />
+            )}
+            {page === 'integrations' && (
+              <IntegrationsSection data={integrationsData} />
+            )}
+            {page === 'notifications' && data.config !== null && (
+              <NotificationsSection config={data.config} onSave={save} />
+            )}
+            {page === 'daemon' && (
+              <DaemonSection activeProject={activeProject} data={data} />
+            )}
+            {page === 'diffs' && <DiffsSection />}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
