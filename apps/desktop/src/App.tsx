@@ -13,7 +13,10 @@ import {
 import { AddProjectDialog } from './components/shell/AddProjectDialog';
 import { CommandPalette } from './components/shell/CommandPalette';
 import { ErrorBoundary } from './components/shell/ErrorBoundary';
-import { FrameStatusStrip } from './components/shell/FrameStatusStrip';
+import {
+  FrameStatusStrip,
+  type LiveCeilings,
+} from './components/shell/FrameStatusStrip';
 import { LiveRail } from './components/shell/LiveRail';
 import {
   type NotificationInbox,
@@ -81,6 +84,7 @@ import { GetStartedView } from './views/GetStartedView';
 import { ImpactView } from './views/ImpactView';
 import { InboxView } from './views/InboxView';
 import { LandingTableView } from './views/LandingTableView';
+import type { FocusEpicRequest } from './views/MilestonesView';
 import { OverseerView } from './views/OverseerView';
 import { OverviewView } from './views/OverviewView';
 import { PlansView } from './views/PlansView';
@@ -123,7 +127,11 @@ function App() {
   // panel header (via `PageHeaderShellContext`) when it is hidden.
   const trafficLightInset = useTrafficLightInset();
   // The Tasks view's layout, kept at App level until the Tasks header's view tabs own it.
-  const [tasksViewMode] = useTasksViewMode();
+  const [tasksViewMode, setTasksViewMode] = useTasksViewMode();
+  // A one-shot "go to this milestone" for the Tasks page's milestones layout — Plans'
+  // confirm or the live rail's milestone row. `nonce` tells two requests for one epic
+  // apart; cleared on leaving the board so a return visit does not replay it.
+  const [focusEpic, setFocusEpic] = useState<FocusEpicRequest | null>(null);
   // Text handed to the planner from elsewhere (Brain dump's "hand it to the planner", or one
   // inbox item's "plan it"). Keyed into PlansView so a second hand-off with different text
   // remounts the composer rather than being swallowed by its existing state.
@@ -325,6 +333,21 @@ function App() {
     dispatchNav({ type: 'setGlobalView', view });
   }, []);
 
+  // Opens the Tasks page on its milestones layout, focused on one epic; `dispatch` also
+  // opens the fan-out dialog there (Plans' "Create & send agents…").
+  const openMilestone = useCallback(
+    (epicId: string, { dispatch = false }: { dispatch?: boolean } = {}) => {
+      setTasksViewMode('milestones');
+      setFocusEpic({ epicId, dispatch, nonce: Date.now() });
+      selectProjectView('board');
+    },
+    [setTasksViewMode, selectProjectView]
+  );
+
+  useEffect(() => {
+    if (navState.projectView !== 'board') setFocusEpic(null);
+  }, [navState.projectView]);
+
   // Opens the task creator, optionally pre-filled — the single entry point every "New
   // task"/"+" affordance (the rail's pencil, a board column's or list group's hover "+", the
   // palette action, the global `c` shortcut) calls through, so the creator's preset is
@@ -456,6 +479,21 @@ function App() {
     () => data.runs.filter((run) => !isTerminalRunState(run.state)),
     [data.runs]
   );
+
+  // The live fan-outs summed for the status strip: settled spend across them and their
+  // spend ceilings added up — `null` ceilings when no live session set one.
+  const liveCeilings = useMemo<LiveCeilings | null>(() => {
+    const sessions = data.liveEpicSessions;
+    if (sessions.length === 0) return null;
+    let settledUsd = 0;
+    let ceilingUsd: number | null = null;
+    for (const progress of sessions) {
+      settledUsd += progress.spend.settledUsd;
+      const ceiling = progress.session?.maxSpendUsd ?? null;
+      if (ceiling !== null) ceilingUsd = (ceilingUsd ?? 0) + ceiling;
+    }
+    return { live: sessions.length, settledUsd, ceilingUsd };
+  }, [data.liveEpicSessions]);
 
   // How many runs the archive filter is holding back, computed off the *unfiltered* list so
   // the All-agents toggle can still say what turning it on would reveal while it is already
@@ -894,8 +932,11 @@ function App() {
                       <LiveRail
                         runs={data.runs}
                         overseer={overseer}
+                        sessions={data.liveEpicSessions}
+                        epics={data.epics}
                         onOpenTask={openTaskView}
                         onOpenOverseer={() => setGlobalView('overseer')}
+                        onOpenMilestone={(id) => openMilestone(id)}
                       />
                     ) : null
                   }
@@ -1089,6 +1130,7 @@ function App() {
                               projectName={activeProject?.name ?? null}
                               data={data}
                               mode={tasksViewMode}
+                              focusEpic={focusEpic}
                               onSelectTask={(taskId) =>
                                 dispatchNav({ type: 'openPeek', taskId })
                               }
@@ -1170,6 +1212,7 @@ function App() {
                               projectName={activeProject?.name}
                               data={data}
                               onGoToBoard={() => selectProjectView('board')}
+                              onOpenMilestone={openMilestone}
                               initialPrompt={planSeed ?? undefined}
                               key={planSeed ?? 'plans'}
                             />
@@ -1220,6 +1263,7 @@ function App() {
                   void data.handleUpdateConfig({ autoCommit: false })
                 }
                 spendToday={todaySpend}
+                ceilings={liveCeilings}
                 onOpenShortcuts={openShortcuts}
                 onOpenOverseer={() => setGlobalView('overseer')}
               />
