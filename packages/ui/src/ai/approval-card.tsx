@@ -25,9 +25,9 @@ export type ApprovalCardProps = {
   className?: string;
 };
 
-// One radio-style option row. A plain `<button>` carries the keyboard behavior for free —
-// focusable by default, Enter/Space fires `onClick` — so there's no custom key handler to
-// test; `role="radio"` layered on top only changes what assistive tech announces.
+// One radio-style option row: a 0.5px chip ring on the quaternary card, a neutral wash
+// when hovered or selected — never the accent. A plain `<button>` carries the keyboard
+// behavior for free; `role="radio"` only changes what assistive tech announces.
 function OptionRow({
   option,
   selected,
@@ -46,22 +46,23 @@ function OptionRow({
       aria-checked={selected}
       disabled={disabled}
       onClick={onSelect}
-      className={`ease-out-expo rounded-control flex items-start gap-2.5 border px-3 py-2.5 text-left transition-colors duration-100 disabled:pointer-events-none disabled:opacity-60 ${
-        selected
-          ? 'bg-accent-tint border-[var(--border-selected)] ring-1 ring-[var(--border-selected)]'
-          : 'hover:bg-surface-hover border-transparent'
-      }`}
+      className={cn(
+        'flex items-start gap-2.5 rounded-control border-[0.5px] border-border-chip px-3 py-2 text-left transition-colors duration-100 outline-none disabled:pointer-events-none disabled:opacity-60',
+        selected ? 'bg-surface-active' : 'hover:bg-surface-hover'
+      )}
     >
       <span
         aria-hidden
-        className={`ease-out-expo mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border transition-colors duration-150 ${
-          selected ? 'border-[var(--border-selected)]' : 'border-border'
-        }`}
+        className={cn(
+          'mt-0.5 flex size-3.5 shrink-0 items-center justify-center rounded-full border-[0.5px] transition-colors duration-100',
+          selected ? 'border-primary' : 'border-(--border-strong)'
+        )}
       >
         <span
-          className={`ease-out-expo size-1.5 rounded-full bg-[var(--border-selected)] transition-transform duration-150 motion-reduce:transition-none ${
+          className={cn(
+            'size-1.5 rounded-full bg-primary transition-transform duration-100 motion-reduce:transition-none',
             selected ? 'scale-100' : 'scale-0'
-          }`}
+          )}
         />
       </span>
       <span className="min-w-0 flex-1">
@@ -70,13 +71,13 @@ function OptionRow({
             {option.label}
           </span>
           {option.recommended === true && (
-            <span className="rounded-chip bg-accent-tint text-primary shrink-0 px-1.5 py-0.5 text-[11px] font-medium">
+            <span className="text-primary shrink-0 text-[11px] font-medium">
               Recommended
             </span>
           )}
         </span>
         {option.description !== undefined && (
-          <span className="text-muted-foreground mt-0.5 block text-[12px] leading-relaxed">
+          <span className="font-book text-muted-foreground mt-0.5 block text-[12px] leading-4">
             {option.description}
           </span>
         )}
@@ -85,13 +86,13 @@ function OptionRow({
   );
 }
 
-/** Human-in-the-loop question card: an agent's question with icon and optional detail,
- * radio-style option rows (hover, selected wash + ring, an optional "Recommended" chip),
- * and a confirmation row that appears once an option is picked. Fully controlled —
+/** Human-in-the-loop question card on the Linear card grammar — a quaternary surface with
+ * the half-pixel ring, 12px padding, 13px/500 question, 12px muted detail — with
+ * radio-style option rows (chip ring, neutral hover and selected wash, an optional
+ * "Recommended" tag) and a confirmation line once an option is picked. Fully controlled —
  * `selectedId` and `onSelect` live with the caller — so it also covers the disabled
- * "answered" state once a decision has already been made. Matches the showcase's
- * "Approval Card" primitive, adapted to a single-question options model so it can back
- * ApprovalCard/QuestionCard/ScopeRequestCard. */
+ * "answered" state once a decision has already been made. Backs ApprovalCard/
+ * QuestionCard/ScopeRequestCard. */
 export function ApprovalCard({
   question,
   detail,
@@ -108,16 +109,18 @@ export function ApprovalCard({
 
   return (
     <div
+      data-slot="approval-card"
       className={cn(
-        'bg-card rounded-card shadow-card w-full max-w-sm overflow-hidden',
+        'flex w-full max-w-sm flex-col gap-3 rounded-card bg-surface-quaternary p-3 shadow-card',
         className
       )}
     >
-      <div className="flex items-start gap-2.5 px-4 pt-4 pb-3">
-        <span className="bg-accent-tint text-primary flex size-7 shrink-0 items-center justify-center rounded-full">
-          <MessageCircleQuestionIcon aria-hidden className="size-4" />
-        </span>
-        <div className="min-w-0 flex-1 pt-0.5">
+      <div className="flex items-start gap-2.5">
+        <MessageCircleQuestionIcon
+          aria-hidden
+          className="text-muted-foreground mt-0.5 size-3.5 shrink-0"
+        />
+        <div className="min-w-0 flex-1">
           {/* divs, not <p>s: a pre-rendered Markdown `question`/`detail` contains its own
               block elements, which are invalid inside a paragraph. */}
           <div
@@ -127,33 +130,38 @@ export function ApprovalCard({
             {question}
           </div>
           {detail !== undefined && (
-            <div className="text-muted-foreground mt-1 text-[12.5px] leading-relaxed">
+            <div className="font-book text-muted-foreground mt-1 text-[12px] leading-4">
               {detail}
             </div>
           )}
         </div>
       </div>
 
-      <div
-        role="radiogroup"
-        aria-labelledby={questionId}
-        className="flex flex-col gap-1 px-2 pb-2"
-      >
-        {options.map((option) => (
-          <OptionRow
-            key={option.id}
-            option={option}
-            selected={option.id === selectedId}
-            disabled={disabled}
-            onSelect={() => onSelect(option.id)}
-          />
-        ))}
-      </div>
+      {options.length > 0 && (
+        <div
+          role="radiogroup"
+          aria-labelledby={questionId}
+          className="flex flex-col gap-1"
+        >
+          {options.map((option) => (
+            <OptionRow
+              key={option.id}
+              option={option}
+              selected={option.id === selectedId}
+              disabled={disabled}
+              onSelect={() => onSelect(option.id)}
+            />
+          ))}
+        </div>
+      )}
 
       {selectedOption && (
-        <div className="border-border bg-muted/40 flex items-center gap-2 border-t px-4 py-2.5">
-          <CheckIcon aria-hidden className="text-primary size-3.5 shrink-0" />
-          <span className="text-foreground text-[12.5px]">
+        <div className="shadow-hairline-top flex items-center gap-2 pt-2">
+          <CheckIcon
+            aria-hidden
+            className="text-status-green size-3.5 shrink-0"
+          />
+          <span className="font-book text-foreground text-[12px]">
             {disabled ? 'Answered — ' : 'Selected — '}
             <span className="font-medium">{selectedOption.label}</span>
           </span>

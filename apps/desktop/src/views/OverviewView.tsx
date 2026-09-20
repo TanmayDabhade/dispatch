@@ -1,4 +1,4 @@
-import { ChevronRight, CircleCheck, MoreHorizontal } from 'lucide-react';
+import { CircleCheck, SearchX } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { ControlRibbon } from '../components/overview/ControlRibbon';
@@ -9,18 +9,16 @@ import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { buildFeed } from '../lib/controlRoom';
 import type { FeedState } from '../lib/feedState';
-import { FEED_STATE_LABEL, isUrgentState } from '../lib/feedState';
-import { cn } from '@/lib/utils';
-import { Button } from '@/ui/button';
-import { StateDot } from '@/ui/chrome/StateDot';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/ui/collapsible';
+import { FEED_STATE_LABEL, feedTier, isUrgentState } from '../lib/feedState';
+import { GroupHeader } from '@/ui/ai/group-header';
+import { PageHeader } from '@/ui/ai/page-header';
+import { EmptyState } from '@/ui/chrome/empty-state';
+import { StateMark } from '@/ui/chrome/state-mark';
 
 interface OverviewViewProps {
   data: DispatchProjectData;
+  /** The first crumb segment; the page is `Control room`. */
+  projectName?: string | null;
   onOpenRun: (runId: string) => void;
   /** Opens the full-page Review for a run — where a diff gets read and annotated, as opposed
    * to the Runs surface, which is where a live agent gets watched. */
@@ -48,21 +46,35 @@ const COLLAPSIBLE_GROUPS: readonly FeedState[] = [
   'landing',
 ];
 
+// The group header's tint: the tier's colour, the same hue its rows' glyphs carry.
+const TIER_TINT = {
+  you: 'var(--state-waiting-fg)',
+  broken: 'var(--state-failed-fg)',
+  machine: 'var(--state-working-fg)',
+  resting: 'var(--state-ready-fg)',
+} as const;
+
+/** The status colour a feed state's group header is tinted with. */
+export function tintForState(state: FeedState): string {
+  return TIER_TINT[feedTier(state)];
+}
+
 /**
  * The Control room — the app's landing view and its answer to "what the hell is going on with
  * my agents."
  *
- * Three bands: a seven-counter ribbon, a filter bar, and one continuous feed grouped by state.
- * The feed replaces the old grid of per-bucket cards for one reason — a card grid answers "how
- * many" but never "what is happening", and its silent per-bucket slicing hid exactly the rows
- * you needed once a repo had more than a handful of agents. Here every group states its true
- * count, caps explicitly, and puts the remainder one click away.
+ * A panel header (`Project › Control room`; the state pills and the filter controls on its
+ * second row) over one continuous feed grouped by state: a status-tinted `GroupHeader` per
+ * group, every row a 36px `ListRow`. Groups are never capped — the header's count is the real
+ * one and every row is on screen — and the machine's groups fold while the urgent ones stay
+ * pinned open.
  *
- * Every row is one click from the surface that acts on it, and urgent rows carry enough context
- * to be acted on without leaving at all.
+ * Every row is one click from the surface that acts on it, and urgent rows carry enough
+ * context to be acted on without leaving at all.
  */
 export function OverviewView({
   data,
+  projectName,
   onOpenRun,
   onReviewRun,
   onOpenTask,
@@ -72,8 +84,9 @@ export function OverviewView({
   const [activeStates, setActiveStates] = useState<ReadonlySet<FeedState>>(
     new Set()
   );
+  const [activeEpic, setActiveEpic] = useState<string | null>(null);
+  const [needsYouOnly, setNeedsYouOnly] = useState(false);
   const [collapsed, setCollapsed] = useState<ReadonlySet<FeedState>>(new Set());
-  const [expanded, setExpanded] = useState<ReadonlySet<FeedState>>(new Set());
 
   const feed = useMemo(
     () =>
@@ -90,7 +103,6 @@ export function OverviewView({
         query,
         activeStates,
         collapsed,
-        expanded,
       }),
     [
       data.runs,
@@ -105,9 +117,34 @@ export function OverviewView({
       query,
       activeStates,
       collapsed,
-      expanded,
     ]
   );
+
+  // The facet menu's epic and needs-you filters apply on top of the feed: a group keeps its
+  // matching rows (and its header count follows), and one with none left disappears.
+  const groups = useMemo(() => {
+    if (activeEpic === null && !needsYouOnly) return feed.groups;
+    return feed.groups.flatMap((group) => {
+      if (needsYouOnly && !isUrgentState(group.state)) return [];
+      const rows = group.rows.filter(
+        (row) => activeEpic === null || row.epicTitle === activeEpic
+      );
+      if (rows.length === 0 && !group.collapsed) return [];
+      return [
+        { ...group, rows, total: group.collapsed ? group.total : rows.length },
+      ];
+    });
+  }, [feed.groups, activeEpic, needsYouOnly]);
+
+  const epics = useMemo(() => {
+    const set = new Set<string>();
+    for (const group of feed.groups) {
+      for (const row of group.rows) {
+        if (row.epicTitle !== null) set.add(row.epicTitle);
+      }
+    }
+    return [...set].sort();
+  }, [feed.groups]);
 
   if (data.portLoading || data.portError || data.client === null) {
     return (
@@ -119,8 +156,8 @@ export function OverviewView({
     );
   }
 
-  // Ready and blocked aren't in the feed — they're tasks, not runs — so their ribbon cells
-  // navigate to where you can act on them rather than filtering a feed they'd never appear in.
+  // Ready and blocked aren't in the feed — they're tasks, not runs — so their pills navigate
+  // to where you can act on them rather than filtering a feed they'd never appear in.
   function selectRibbon(state: FeedState) {
     if (state === 'ready' || state === 'blocked') {
       onGoToBoard();
@@ -150,117 +187,86 @@ export function OverviewView({
   };
 
   const allCollapsed = collapsed.size >= COLLAPSIBLE_GROUPS.length;
+  const filtered =
+    query !== '' ||
+    activeStates.size > 0 ||
+    activeEpic !== null ||
+    needsYouOnly;
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4">
-      <ControlRibbon
-        counts={feed.counts}
-        activeStates={activeStates}
-        onSelect={selectRibbon}
-      />
-
-      <FeedFilterBar
-        query={query}
-        onQueryChange={setQuery}
-        activeStates={activeStates}
-        onClearStates={() => setActiveStates(new Set())}
-        shown={feed.shown}
-        total={feed.total}
-        allCollapsed={allCollapsed}
-        onToggleCollapseAll={() =>
-          setCollapsed(allCollapsed ? new Set() : new Set(COLLAPSIBLE_GROUPS))
+    <div className="flex h-full min-h-0 flex-col">
+      <PageHeader
+        crumb={[
+          ...(projectName !== undefined && projectName !== null
+            ? [projectName]
+            : []),
+          'Control room',
+        ]}
+        tabs={
+          <ControlRibbon
+            counts={feed.counts}
+            activeStates={activeStates}
+            onSelect={selectRibbon}
+          />
+        }
+        controls={
+          <FeedFilterBar
+            query={query}
+            onQueryChange={setQuery}
+            activeStates={activeStates}
+            onToggleState={(state) =>
+              setActiveStates((prev) => toggle(prev, state))
+            }
+            onClearStates={() => setActiveStates(new Set())}
+            epics={epics}
+            activeEpic={activeEpic}
+            onEpicChange={setActiveEpic}
+            needsYouOnly={needsYouOnly}
+            onNeedsYouChange={setNeedsYouOnly}
+            allCollapsed={allCollapsed}
+            onToggleCollapseAll={() =>
+              setCollapsed(
+                allCollapsed ? new Set() : new Set(COLLAPSIBLE_GROUPS)
+              )
+            }
+          />
         }
       />
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {feed.groups.length === 0 ? (
-          <EmptyFeed filtered={query !== '' || activeStates.size > 0} />
+      <div
+        role="feed"
+        aria-label="Control room"
+        className="min-h-0 flex-1 overflow-y-auto px-2 pb-2"
+      >
+        {groups.length === 0 ? (
+          <EmptyFeed filtered={filtered} />
         ) : (
-          feed.groups.map((group) => {
+          groups.map((group) => {
+            // Urgent groups are pinned open: no chevron, no way to fold away the very rows
+            // this screen exists to surface.
             const pinned = isUrgentState(group.state);
-            const rows = (
-              <>
-                <div className="flex flex-col gap-0.5">
-                  {group.rows.map((row) => (
-                    <FeedRow key={row.runId} row={row} actions={actions} />
-                  ))}
-                </div>
-
-                {group.hidden > 0 && (
-                  <ShowMore
-                    label={`Show the other ${group.hidden} ${FEED_STATE_LABEL[
-                      group.state
-                    ].toLowerCase()}`}
-                    onClick={() =>
-                      setExpanded((prev) => toggle(prev, group.state))
-                    }
-                  />
-                )}
-                {expanded.has(group.state) && (
-                  <ShowMore
-                    label="Collapse back"
-                    onClick={() =>
-                      setExpanded((prev) => toggle(prev, group.state))
-                    }
-                  />
-                )}
-              </>
-            );
-            const headerInner = (
-              <>
-                <StateDot state={group.state} pulse={false} />
-                <span
-                  className={cn('dense-label', pinned && 'text-foreground')}
-                >
-                  {FEED_STATE_LABEL[group.state]}
-                </span>
-                <span className="dense-meta">{group.total}</span>
-                <span
-                  aria-hidden
-                  className="ml-1 h-px flex-1 bg-[linear-gradient(to_right,var(--border-default),transparent_70%)]"
-                />
-              </>
-            );
-
-            // Urgent groups are pinned open: no trigger, no chevron, no way to fold away
-            // the very rows this screen exists to surface.
-            if (pinned) {
-              return (
-                <div key={group.state} className="mb-1">
-                  <div className="text-muted-foreground flex w-full min-w-0 items-center gap-2 px-1 pt-3 pb-1.5">
-                    {headerInner}
-                  </div>
-                  {rows}
-                </div>
-              );
-            }
-
             return (
-              // Controlled off `collapsed` — the external `ReadonlySet` (and the collapse-all
-              // wiring above) stays the single source of truth, same as TasksListView's groups.
-              <Collapsible
-                key={group.state}
-                open={!group.collapsed}
-                onOpenChange={() =>
-                  setCollapsed((prev) => toggle(prev, group.state))
-                }
-                className="mb-1"
-              >
-                <CollapsibleTrigger
-                  render={
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      className="group text-muted-foreground hover:text-foreground h-auto w-full min-w-0 justify-start gap-2 px-1 pt-3 pb-1.5 text-left text-[length:inherit] font-normal hover:bg-transparent has-[>svg]:px-1"
-                    />
+              <div key={group.state} data-group={group.state} className="pt-2">
+                <GroupHeader
+                  tint={tintForState(group.state)}
+                  icon={<StateMark state={group.state} />}
+                  name={FEED_STATE_LABEL[group.state]}
+                  count={group.total}
+                  collapsed={group.collapsed}
+                  onToggle={
+                    pinned
+                      ? undefined
+                      : () => setCollapsed((prev) => toggle(prev, group.state))
                   }
-                >
-                  <ChevronRight className="size-3 shrink-0 transition-transform group-data-panel-open:rotate-90" />
-                  {headerInner}
-                </CollapsibleTrigger>
-
-                <CollapsibleContent>{rows}</CollapsibleContent>
-              </Collapsible>
+                />
+                {!group.collapsed && (
+                  <div className="flex flex-col pt-0.5">
+                    {group.rows.map((row) => (
+                      <FeedRow key={row.runId} row={row} actions={actions} />
+                    ))}
+                  </div>
+                )}
+              </div>
             );
           })
         )}
@@ -269,29 +275,22 @@ export function OverviewView({
   );
 }
 
-function ShowMore({ label, onClick }: { label: string; onClick: () => void }) {
-  return (
-    <Button
-      variant="ghost"
-      size="xs"
-      onClick={onClick}
-      className="text-muted-foreground hover:bg-muted/40 hover:text-foreground mt-0.5 h-auto w-full min-w-0 justify-start gap-2 rounded-md px-3 py-1.5 text-left text-[length:inherit] font-normal has-[>svg]:px-3"
-    >
-      <MoreHorizontal className="size-3.5" />
-      {label}
-    </Button>
-  );
-}
-
 /** Distinguishes "you filtered everything out" from "nothing is running" — the second is good
  * news and has to read that way rather than as a broken screen. */
 function EmptyFeed({ filtered }: { filtered: boolean }) {
-  return (
-    <div className="text-muted-foreground flex items-center gap-2 px-1 py-6 text-[12.5px]">
-      <CircleCheck className="size-4" />
-      {filtered
-        ? 'Nothing matches that filter.'
-        : 'Nothing running, nothing waiting on you.'}
-    </div>
+  return filtered ? (
+    <EmptyState
+      icon={SearchX}
+      heading="Nothing matches that filter"
+      description="Every row is hidden by the current filter. Clear it to see the feed."
+      className="flex-1 py-16"
+    />
+  ) : (
+    <EmptyState
+      icon={CircleCheck}
+      heading="All quiet"
+      description="Nothing running, nothing waiting on you."
+      className="flex-1 py-16"
+    />
   );
 }

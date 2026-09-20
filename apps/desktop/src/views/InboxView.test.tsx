@@ -1,13 +1,26 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { expect, test } from 'bun:test';
+import { fireEvent, render, screen, within } from '@testing-library/react';
+import { beforeEach, expect, test } from 'bun:test';
+import { type ReactNode, useState } from 'react';
 
+import {
+  type NotificationInbox,
+  NotificationInboxProvider,
+} from '../components/shell/NotificationInboxContext';
+import {
+  type ShellActions,
+  ShellActionsProvider,
+} from '../components/shell/ShellActionsContext';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { FeedRowModel } from '../lib/controlRoom';
+import type { InboxEntry } from '../lib/inbox';
 import type { InboxData } from '../lib/inboxQueue';
 import { InboxView } from './InboxView';
 
+// Read state persists in localStorage; start every test unread.
+beforeEach(() => window.localStorage.clear());
+
 /** A `DispatchProjectData` stub carrying only what InboxView reads — the
- *  daemon-availability fields plus the two merge-queue actions. */
+ *  daemon-availability fields plus the question/approval maps and merge actions. */
 function projectWith(
   overrides: Partial<DispatchProjectData> = {}
 ): DispatchProjectData {
@@ -17,11 +30,22 @@ function projectWith(
     portErrorDetail: null,
     client: {},
     runs: [],
+    tasks: [],
+    tasksIncludingArchived: [],
     retryEnsureDispatchd: () => {},
     openQuestions: new Map(),
+    pendingApprovals: new Map(),
+    scopeDecide: {
+      enabled: true,
+      notice: null,
+      explanation: null,
+      restart: null,
+    },
+    handleRestartDaemon: async () => {},
     handleMergeAllReady: async () => {},
     handleEnqueueMerge: async () => {},
     handleAnswerQuestion: async () => {},
+    handleApprove: async () => {},
     ...overrides,
   } as unknown as DispatchProjectData;
 }
@@ -33,6 +57,7 @@ function row(over: Partial<FeedRowModel> = {}): FeedRowModel {
     title: 'Do the thing',
     state: 'review',
     epicTitle: null,
+    priority: null,
     since: '2026-08-10T00:00:00.000Z',
     activity: null,
     attention: null,
@@ -41,94 +66,368 @@ function row(over: Partial<FeedRowModel> = {}): FeedRowModel {
   };
 }
 
-function dataWith(sections: InboxData['sections']): InboxData {
-  const total = sections.reduce((n, s) => n + s.rows.length, 0);
-  return { sections, readyToLand: [], prs: [], total };
+function dataWith(
+  sections: InboxData['sections'],
+  extra: Partial<InboxData> = {}
+): InboxData {
+  const readyToLand = extra.readyToLand ?? [];
+  const prs = extra.prs ?? [];
+  const total =
+    sections.reduce((n, s) => n + s.rows.length, 0) +
+    readyToLand.length +
+    prs.length;
+  return { sections, readyToLand, prs, total };
 }
 
-test('sections render in feed order with the whose-move labels', () => {
-  render(
-    <InboxView
-      data={dataWith([
-        {
-          state: 'answer',
-          rows: [row({ taskId: 't-a', runId: 'r-a', state: 'answer' })],
-        },
-        {
-          state: 'review',
-          rows: [
-            row({ taskId: 't-b', runId: 'r-b' }),
-            row({ taskId: 't-c', runId: 'r-c', title: 'Second review' }),
-          ],
-        },
-        {
-          state: 'failed',
-          rows: [
-            row({
-              taskId: 't-d',
-              runId: 'r-d',
-              state: 'failed',
-              attention: { reason: 'boom', detail: null },
-            }),
-          ],
-        },
-      ])}
-      project={projectWith()}
-      onOpenTask={() => {}}
-      onOpenPr={() => {}}
-    />
+function entry(over: Partial<InboxEntry> = {}): InboxEntry {
+  return {
+    id: '2026-08-09T00:00:00.000Z:Run finished',
+    ts: '2026-08-09T00:00:00.000Z',
+    title: 'Run finished',
+    body: 'Earlier task',
+    target: { kind: 'run', runId: 'r-old' },
+    read: false,
+    ...over,
+  };
+}
+
+interface Log {
+  opened: string[];
+  markAllRead: number;
+  navigated: string[];
+}
+
+function providersWith(log: Log, entries: InboxEntry[] = []) {
+  const noop = () => {};
+  const shell = {
+    openTask: (taskId: string) => log.opened.push(taskId),
+    peekTask: noop,
+    openCreateTask: noop,
+    createPreset: null,
+    closeCreateTask: noop,
+    openPalette: noop,
+    toggleSidebar: noop,
+    sidebarHidden: false,
+    openOverseer: noop,
+    setProjectView: noop,
+    setGlobalView: noop,
+    openShortcuts: noop,
+    copyTaskId: noop,
+  } as unknown as ShellActions;
+  // Stateful like the real seam: mark-all flips every entry's own read flag.
+  return function Providers({ children }: { children: ReactNode }) {
+    const [current, setCurrent] = useState(entries);
+    const inbox: NotificationInbox = {
+      entries: current,
+      unreadCount: current.filter((e) => !e.read).length,
+      markAllRead: () => {
+        log.markAllRead += 1;
+        setCurrent((prev) => prev.map((e) => ({ ...e, read: true })));
+      },
+      navigate: (target) => log.navigated.push(target.kind),
+    };
+    return (
+      <ShellActionsProvider value={shell}>
+        <NotificationInboxProvider value={inbox}>
+          {children}
+        </NotificationInboxProvider>
+      </ShellActionsProvider>
+    );
+  };
+}
+
+function renderInbox(
+  data: InboxData,
+  {
+    project = projectWith(),
+    entries = [],
+    onOpenPr = () => {},
+  }: {
+    project?: DispatchProjectData;
+    entries?: InboxEntry[];
+    onOpenPr?: (n: number) => void;
+  } = {}
+) {
+  const log: Log = { opened: [], markAllRead: 0, navigated: [] };
+  const Providers = providersWith(log, entries);
+  const result = render(
+    <Providers>
+      <InboxView
+        data={data}
+        project={project}
+        projectName="dispatch"
+        projectRoot="/tmp/dispatch"
+        onOpenPr={onOpenPr}
+      />
+    </Providers>
+  );
+  return { ...result, log };
+}
+
+const rows = () => screen.getAllByRole('option');
+// Scoped to the list: the selected item's title repeats in the right pane's header.
+const rowOf = (title: string) => {
+  const el = within(screen.getByRole('listbox'))
+    .getByText(title)
+    .closest('[role="option"]');
+  if (!(el instanceof HTMLElement)) throw new Error(`no row for ${title}`);
+  return el;
+};
+
+test('two panes: a 348px list under the crumb header and an empty right pane counting unread', () => {
+  const { container } = renderInbox(
+    dataWith([
+      {
+        state: 'answer',
+        rows: [row({ taskId: 't-a', runId: 'r-a', state: 'answer' })],
+      },
+      { state: 'review', rows: [row({ taskId: 't-b', runId: 'r-b' })] },
+    ]),
+    { entries: [entry({ read: true })] }
   );
 
-  expect(screen.getByText('Answer').closest('section')).not.toBeNull();
-  expect(screen.getByText('Review').closest('section')).not.toBeNull();
-  expect(screen.getByText('Failed').closest('section')).not.toBeNull();
-  // The row says why it needs a human, right in the row.
-  expect(screen.queryByText('boom')).not.toBeNull();
-});
-
-test('an empty inbox says so instead of rendering empty sections', () => {
-  render(
-    <InboxView
-      data={{ sections: [], readyToLand: [], prs: [], total: 0 }}
-      project={projectWith()}
-      onOpenTask={() => {}}
-      onOpenPr={() => {}}
-    />
+  const header = container.querySelector('[data-slot="page-header"]');
+  expect(header?.textContent).toContain('dispatch');
+  expect(header?.textContent).toContain('Inbox');
+  const grid = container.querySelector(
+    '.grid-cols-\\[348px_minmax\\(0\\,1fr\\)\\]'
   );
-  expect(screen.queryByText('Nothing waiting on you.')).not.toBeNull();
+  expect(grid).not.toBeNull();
+  expect(
+    container.querySelector('[data-slot="inbox-list-pane"]')
+  ).not.toBeNull();
+  const detail = container.querySelector('[data-slot="inbox-detail-pane"]');
+  // Two live rows unread, one notification already read.
+  expect(detail?.textContent).toContain('2 unread');
+  // The list pane header names itself and carries the three round icons.
+  expect(
+    screen.getByRole('button', { name: 'Mark all as read' })
+  ).toBeDefined();
+  expect(screen.getByRole('button', { name: 'Filter' })).toBeDefined();
+  expect(screen.getByRole('button', { name: 'Display' })).toBeDefined();
 });
 
-// The merge affordances: the section header queues everything ready; each
-// review row can queue just itself — without navigating.
+test('rows are 48px with an avatar badge, an unread dot, and the glyph over the time', () => {
+  renderInbox(
+    dataWith([
+      {
+        state: 'approve',
+        rows: [
+          row({
+            taskId: 't-a',
+            runId: 'r-a',
+            state: 'approve',
+            title: 'Needs a hand',
+            attention: { reason: 'Wants to run Bash', detail: null },
+          }),
+        ],
+      },
+    ]),
+    { entries: [entry({ read: true })] }
+  );
+
+  const live = rowOf('Needs a hand');
+  expect(live.className).toContain('h-12');
+  expect(live.querySelector('[data-slot="initials-avatar"]')).not.toBeNull();
+  expect(live.querySelector('[data-slot="inbox-badge"]')).not.toBeNull();
+  expect(live.querySelector('[data-slot="unread-dot"]')).not.toBeNull();
+  expect(live.textContent).toContain('t-a');
+  expect(live.textContent).toContain('Approve · Wants to run Bash');
+  // Unread: bright title.
+  expect(live.querySelector('[data-slot="inbox-title"]')?.className).toContain(
+    'text-foreground'
+  );
+
+  // Read: muted title, no dot.
+  const read = rowOf('Run finished');
+  expect(read.querySelector('[data-slot="unread-dot"]')).toBeNull();
+  expect(read.querySelector('[data-slot="inbox-title"]')?.className).toContain(
+    'text-muted-foreground'
+  );
+});
+
+test('selecting a row marks it read and shows it on the right; mark-all clears the rest', () => {
+  const { container, log } = renderInbox(
+    dataWith([
+      {
+        state: 'review',
+        rows: [
+          row({ taskId: 't-b', runId: 'r-b', title: 'First' }),
+          row({ taskId: 't-c', runId: 'r-c', title: 'Second' }),
+        ],
+      },
+    ]),
+    { entries: [entry()] }
+  );
+
+  fireEvent.click(rowOf('First'));
+  const first = rowOf('First');
+  expect(first.getAttribute('aria-selected')).toBe('true');
+  // Selection is the neutral selected surface, never the accent.
+  expect(first.className).toContain('bg-surface-selected');
+  expect(first.querySelector('[data-slot="unread-dot"]')).toBeNull();
+  expect(
+    rowOf('Second').querySelector('[data-slot="unread-dot"]')
+  ).not.toBeNull();
+
+  const detail = container.querySelector('[data-slot="inbox-detail-pane"]');
+  expect(detail?.textContent).toContain('First');
+  expect(
+    within(detail as HTMLElement).getByRole('button', { name: 'Open' })
+  ).toBeDefined();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Mark all as read' }));
+  expect(log.markAllRead).toBe(1);
+  expect(container.querySelectorAll('[data-slot="unread-dot"]')).toHaveLength(
+    0
+  );
+});
+
+test('j/k move the selection and Enter opens the selected task', () => {
+  const { log } = renderInbox(
+    dataWith([
+      {
+        state: 'review',
+        rows: [
+          row({ taskId: 't-b', runId: 'r-b', title: 'First' }),
+          row({ taskId: 't-c', runId: 'r-c', title: 'Second' }),
+        ],
+      },
+    ])
+  );
+  const list = screen.getByRole('listbox');
+  fireEvent.keyDown(list, { key: 'j' });
+  expect(rowOf('First').getAttribute('aria-selected')).toBe('true');
+  fireEvent.keyDown(list, { key: 'j' });
+  expect(rowOf('Second').getAttribute('aria-selected')).toBe('true');
+  fireEvent.keyDown(list, { key: 'k' });
+  expect(rowOf('First').getAttribute('aria-selected')).toBe('true');
+  fireEvent.keyDown(list, { key: 'Enter' });
+  expect(log.opened).toEqual(['t-b']);
+});
+
+test('the Open pill opens the selected task through the shell', () => {
+  const { container, log } = renderInbox(
+    dataWith([{ state: 'review', rows: [row({ title: 'Reviewable' })] }])
+  );
+  fireEvent.click(rowOf('Reviewable'));
+  const detail = container.querySelector('[data-slot="inbox-detail-pane"]');
+  fireEvent.click(
+    within(detail as HTMLElement).getByRole('button', { name: 'Open' })
+  );
+  expect(log.opened).toEqual(['t-1']);
+});
+
+test('an answer row shows its question card with the indigo Answer button on the right', () => {
+  const answers: string[] = [];
+  renderInbox(
+    dataWith([
+      {
+        state: 'answer',
+        rows: [
+          row({ taskId: 't-a', runId: 'r-a', state: 'answer', title: 'Asks' }),
+        ],
+      },
+    ]),
+    {
+      project: projectWith({
+        openQuestions: new Map([
+          [
+            'r-a',
+            [
+              {
+                id: 'q-1',
+                runId: 'r-a',
+                question: 'Which way?',
+                options: ['Left', 'Right'],
+                askedAt: '2026-08-10T00:00:00.000Z',
+                answer: null,
+              },
+            ],
+          ],
+        ]),
+        handleAnswerQuestion: (_run: string, _q: string, a: string) => {
+          answers.push(a);
+          return Promise.resolve();
+        },
+      } as unknown as Partial<DispatchProjectData>),
+    }
+  );
+  fireEvent.click(rowOf('Asks'));
+  expect(screen.getByText('Which way?')).toBeDefined();
+  fireEvent.click(screen.getByRole('radio', { name: 'Left' }));
+  expect(answers).toEqual(['Left']);
+  expect(screen.getByRole('button', { name: 'Answer' })).toBeDefined();
+});
+
+function liveAndPast() {
+  return renderInbox(
+    dataWith([{ state: 'review', rows: [row({ title: 'Live' })] }]),
+    { entries: [entry({ body: 'Past' })] }
+  );
+}
+
+test('the filter narrows to what needs you', async () => {
+  liveAndPast();
+  expect(rows()).toHaveLength(2);
+  fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+  fireEvent.click(
+    await screen.findByRole('menuitemradio', { name: 'Needs you' })
+  );
+  expect(rows()).toHaveLength(1);
+  expect(rowOf('Live')).toBeDefined();
+});
+
+test('the filter narrows to what already happened', async () => {
+  liveAndPast();
+  fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+  fireEvent.click(
+    await screen.findByRole('menuitemradio', { name: 'Earlier' })
+  );
+  expect(rows()).toHaveLength(1);
+  expect(rowOf('Run finished')).toBeDefined();
+});
+
+test('display groups the list by kind under group headers', async () => {
+  liveAndPast();
+  fireEvent.click(screen.getByRole('button', { name: 'Display' }));
+  fireEvent.click(
+    await screen.findByRole('menuitemcheckbox', { name: 'Group by kind' })
+  );
+  const headers = document.querySelectorAll('[data-slot="group-header"]');
+  expect(Array.from(headers, (h) => h.textContent)).toEqual([
+    'Review1',
+    'Earlier1',
+  ]);
+});
+
+// The merge affordances: the header ghost queues everything ready; each review row can
+// queue just itself — without navigating.
 test('queue-merge affordances call the queue, not navigation', () => {
   const calls: string[] = [];
   let mergeAll = 0;
-  let navigated = 0;
-
-  render(
-    <InboxView
-      data={dataWith([
-        {
-          state: 'review',
-          rows: [
-            row({ title: 'Ready to land' }),
-            row({ taskId: 't-2', runId: 'r-2', title: 'Also ready' }),
-          ],
-        },
-      ])}
-      project={projectWith({
-        handleMergeAllReady: async () => {
+  const { log } = renderInbox(
+    dataWith([
+      {
+        state: 'review',
+        rows: [
+          row({ title: 'Ready to land' }),
+          row({ taskId: 't-2', runId: 'r-2', title: 'Also ready' }),
+        ],
+      },
+    ]),
+    {
+      project: projectWith({
+        handleMergeAllReady: () => {
           mergeAll += 1;
+          return Promise.resolve();
         },
-        handleEnqueueMerge: async (runId: string) => {
+        handleEnqueueMerge: (runId: string) => {
           calls.push(runId);
+          return Promise.resolve();
         },
-      } as unknown as Partial<DispatchProjectData>)}
-      onOpenTask={() => {
-        navigated += 1;
-      }}
-      onOpenPr={() => {}}
-    />
+      } as unknown as Partial<DispatchProjectData>),
+    }
   );
 
   fireEvent.click(screen.getByRole('button', { name: /queue all for merge/i }));
@@ -138,40 +437,56 @@ test('queue-merge affordances call the queue, not navigation', () => {
     screen.getByRole('button', { name: 'Queue merge: Ready to land' })
   );
   expect(calls).toEqual(['r-1']);
-  expect(navigated).toBe(0);
+  expect(log.opened).toEqual([]);
 });
 
-test('an unclaimed PR renders with its number and opens the PR page', () => {
+test('an unclaimed PR renders with its number and Open goes to the PR page', () => {
   const opened: number[] = [];
-  render(
-    <InboxView
-      data={{
-        sections: [],
-        readyToLand: [],
-        prs: [
-          {
-            number: 9,
-            url: 'https://github.com/x/y/pull/9',
-            title: 'Standalone PR',
-            updatedAt: '2026-08-10T00:00:00.000Z',
-          } as InboxData['prs'][number],
-        ],
-        total: 1,
-      }}
-      project={projectWith()}
-      onOpenTask={() => {}}
-      onOpenPr={(n) => opened.push(n)}
-    />
+  const { container } = renderInbox(
+    dataWith([], {
+      prs: [
+        {
+          number: 9,
+          url: 'https://github.com/x/y/pull/9',
+          title: 'Standalone PR',
+          author: 'octocat',
+          headRefName: 'feat',
+          baseRefName: 'main',
+          isDraft: false,
+          updatedAt: '2026-08-10T00:00:00.000Z',
+        } as InboxData['prs'][number],
+      ],
+    }),
+    { onOpenPr: (n) => opened.push(n) }
   );
-  fireEvent.click(screen.getByText('Standalone PR'));
+  const pr = rowOf('Standalone PR');
+  expect(pr.textContent).toContain('#9');
+  fireEvent.click(pr);
+  const detail = container.querySelector('[data-slot="inbox-detail-pane"]');
+  expect(detail?.textContent).toContain('by octocat');
+  fireEvent.click(
+    within(detail as HTMLElement).getByRole('button', { name: 'Open' })
+  );
   expect(opened).toEqual([9]);
+});
+
+test('a notification row opens through the inbox seam', () => {
+  const { container, log } = renderInbox(dataWith([]), {
+    entries: [entry({ title: 'Merged', target: { kind: 'queue' } })],
+  });
+  fireEvent.click(rowOf('Merged'));
+  const detail = container.querySelector('[data-slot="inbox-detail-pane"]');
+  fireEvent.click(
+    within(detail as HTMLElement).getByRole('button', { name: 'Open' })
+  );
+  expect(log.navigated).toEqual(['queue']);
 });
 
 // A review row whose run the merge queue bounced says so on the row itself, so the
 // review list and the Landing table's "Failed to land" agree. Latest attempt wins — a
 // failure followed by a merge is not news — and a run back in the queue is the queue's
-// to report, not the badge's.
-test('a review row whose latest queue attempt failed is badged', () => {
+// to report, not the pill's.
+test('a review row whose latest queue attempt failed carries a Failed to land pill', () => {
   const attempt = (
     runId: string,
     state: 'queued' | 'merged' | 'failed',
@@ -186,20 +501,20 @@ test('a review row whose latest queue attempt failed is badged', () => {
     finishedAt: state === 'queued' ? undefined : '2026-08-10T00:05:00.000Z',
   });
 
-  render(
-    <InboxView
-      data={dataWith([
-        {
-          state: 'review',
-          rows: [
-            row({ taskId: 't-bounced', runId: 'bounced', title: 'Bounced' }),
-            row({ taskId: 't-healed', runId: 'healed', title: 'Healed' }),
-            row({ taskId: 't-requeued', runId: 'requeued', title: 'Requeued' }),
-            row({ taskId: 't-fine', runId: 'fine', title: 'Never queued' }),
-          ],
-        },
-      ])}
-      project={projectWith({
+  renderInbox(
+    dataWith([
+      {
+        state: 'review',
+        rows: [
+          row({ taskId: 't-bounced', runId: 'bounced', title: 'Bounced' }),
+          row({ taskId: 't-healed', runId: 'healed', title: 'Healed' }),
+          row({ taskId: 't-requeued', runId: 'requeued', title: 'Requeued' }),
+          row({ taskId: 't-fine', runId: 'fine', title: 'Never queued' }),
+        ],
+      },
+    ]),
+    {
+      project: projectWith({
         mergeQueue: {
           entries: [attempt('requeued', 'queued')],
           // Most-recent-first, as the server sends it.
@@ -210,19 +525,17 @@ test('a review row whose latest queue attempt failed is badged', () => {
             attempt('requeued', 'failed', 'flake'),
           ],
         },
-      } as unknown as Partial<DispatchProjectData>)}
-      onOpenTask={() => {}}
-      onOpenPr={() => {}}
-    />
+      } as unknown as Partial<DispatchProjectData>),
+    }
   );
 
-  const badged = screen
-    .getAllByText('failed to land')
-    .map((el) => el.closest('button')?.textContent ?? '');
-  expect(badged).toHaveLength(1);
-  expect(badged[0]).toContain('Bounced');
-  // The reason rides on the badge for hover, not in the row text.
-  expect(screen.getByText('failed to land').getAttribute('title')).toBe(
-    'verify failed: tests exited 1'
+  const pills = screen.getAllByText('Failed to land');
+  expect(pills).toHaveLength(1);
+  expect(pills[0]?.closest('[role="option"]')?.textContent).toContain(
+    'Bounced'
   );
+  // The reason rides on the pill for hover, not in the row text.
+  expect(
+    pills[0]?.closest('[data-slot="label-pill"]')?.getAttribute('title')
+  ).toBe('verify failed: tests exited 1');
 });

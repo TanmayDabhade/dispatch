@@ -132,7 +132,10 @@ export function ApprovalCard({
   ];
 
   return (
-    <div className="animate-in fade-in-0 flex flex-col gap-2 duration-150">
+    <div
+      data-slot="tool-approval-card"
+      className="animate-in fade-in-0 flex flex-col gap-2 duration-100"
+    >
       <AiApprovalCard
         // Full-width in the transcript — the primitive's gallery default is `max-w-sm`. The
         // detail stays a plain string: a tool name isn't agent-authored markdown.
@@ -152,7 +155,7 @@ export function ApprovalCard({
         // pre-reskin version removed the option row outright for the same reason.
         disabled={deciding || denying || !availability.enabled}
       />
-      <ScrollArea className="border-border bg-card max-h-40 rounded-md border">
+      <ScrollArea className="rounded-control border-border-chip bg-surface-quaternary max-h-40 border-[0.5px]">
         <pre className="text-muted-foreground p-2 font-mono text-[11px] break-words whitespace-pre-wrap">
           {formatInput(toolInput)}
         </pre>
@@ -160,16 +163,15 @@ export function ApprovalCard({
       {/* Same block the scope card shows: this window attached to a daemon it did not start,
           so it never saw the app token approving needs. */}
       {!availability.enabled && (
-        <div className="border-border bg-muted/40 flex flex-col gap-1.5 rounded-md border px-2.5 py-2">
-          <span className="text-[12px] font-medium">{availability.notice}</span>
-          <span className="text-muted-foreground text-[11px]">
+        <div className="rounded-control border-border-chip bg-surface-quaternary flex flex-col gap-1.5 border-[0.5px] px-2.5 py-2">
+          <span className="text-[13px] font-medium">{availability.notice}</span>
+          <span className="font-book text-muted-foreground text-[12px]">
             {availability.explanation}
           </span>
           {availability.restart?.safe === true &&
           onRestartDaemon !== undefined ? (
             <Button
               variant="secondary"
-              size="sm"
               className="self-start"
               disabled={restarting}
               onClick={() => void restart()}
@@ -178,15 +180,13 @@ export function ApprovalCard({
               {restarting ? 'Restarting…' : 'Restart daemon'}
             </Button>
           ) : (
-            <span className="text-muted-foreground text-[11px]">
+            <span className="font-book text-muted-foreground text-[12px]">
               {availability.restart?.blockedReason}
             </span>
           )}
         </div>
       )}
-      {error !== null && (
-        <div className="text-destructive text-[12px]">{error}</div>
-      )}
+      {error !== null && <div className="text-red text-[12px]">{error}</div>}
       {/* `denying` drives a real Collapsible rather than a plain conditional — no chevron
           here, just the reveal/animate-in behavior for the reason box. */}
       <Collapsible open={denying}>
@@ -196,12 +196,11 @@ export function ApprovalCard({
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             placeholder="Why not? The agent gets this as the reason it was refused."
-            className="min-h-[52px] w-full resize-y text-[12.5px]"
+            className="font-book min-h-[52px] w-full resize-y text-[13px]"
           />
           <div className="flex justify-end gap-2">
             <Button
               variant="ghost"
-              size="sm"
               disabled={deciding}
               onClick={() => {
                 setDenying(false);
@@ -211,7 +210,6 @@ export function ApprovalCard({
               Cancel
             </Button>
             <Button
-              size="sm"
               disabled={deciding}
               onClick={() => void decide(false, { reason })}
             >

@@ -49,27 +49,46 @@ export function describeError(err: unknown): string {
  * column, a row disappears — and a toast for those is noise that trains you to
  * ignore the ones that matter. These are the actions whose effect happens
  * somewhere you are not looking: a queue, a remote, a directory on disk.
+ *
+ * `taskIdArg` names the handler argument that carries a task id, so the toast
+ * can offer a `View task` link to it (`toastContract.viewTaskLink`).
  */
-const SUCCESS_MESSAGES: Record<string, string> = {
-  handleEnqueueMerge: 'Queued to merge',
-  handleEnqueueMergeStack: 'Stack queued to merge',
-  handleMergeAllReady: 'Ready work queued to merge',
-  handleReview: 'Review recorded',
-  handleOpenPr: 'Pull request opened',
-  handleFreeBranchDisk: 'Worktree reclaimed',
-  handleDeleteBranch: 'Branch deleted',
-  handleArchiveRun: 'Run archived',
-  handleCancelRun: 'Run cancelled',
+interface SuccessSpec {
+  message: string;
+  taskIdArg?: number;
+}
+
+const SUCCESS_MESSAGES: Record<string, SuccessSpec> = {
+  handleEnqueueMerge: { message: 'Queued to merge' },
+  handleEnqueueMergeStack: { message: 'Stack queued to merge' },
+  handleMergeAllReady: { message: 'Ready work queued to merge' },
+  handleReview: { message: 'Review recorded' },
+  handleOpenPr: { message: 'Pull request opened' },
+  handleFreeBranchDisk: { message: 'Worktree reclaimed' },
+  handleDeleteBranch: { message: 'Branch deleted' },
+  handleArchiveRun: { message: 'Run archived' },
+  handleCancelRun: { message: 'Run cancelled' },
+  // A dispatch happens on a worktree you are not looking at; the link is the
+  // way back to the run it started.
+  handleDispatch: { message: 'Task dispatched', taskIdArg: 0 },
   // Worth a toast even though the Stop button visibly changes: unlike every
   // other action here, nothing has finished yet — the agent is still working,
   // and the wording is what says the wait is expected rather than a stuck UI.
-  handleStopRun: 'Stopping. The agent finishes its current step.',
+  handleStopRun: { message: 'Stopping. The agent finishes its current step.' },
 };
+
+/** The task id a confirmed call was about, when its spec names the argument
+ * and the call actually passed a string there. */
+function taskIdOf(spec: SuccessSpec, args: unknown[]): string | undefined {
+  if (spec.taskIdArg === undefined) return undefined;
+  const value = args[spec.taskIdArg];
+  return typeof value === 'string' ? value : undefined;
+}
 
 export function withActionFeedback<T extends object>(
   api: T,
   onError: (action: string, message: string) => void,
-  onSuccess?: (message: string) => void
+  onSuccess?: (message: string, taskId?: string) => void
 ): T {
   // `object` rather than Record<string, unknown>: the Record constraint widens
   // every property of the wrapped type to unknown at the call site, which turns
@@ -86,7 +105,7 @@ export function withActionFeedback<T extends object>(
           return result
             .then((value: unknown) => {
               if (success !== undefined && onSuccess !== undefined) {
-                onSuccess(success);
+                onSuccess(success.message, taskIdOf(success, args));
               }
               return value;
             })

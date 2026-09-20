@@ -101,6 +101,24 @@ describe('success feedback', () => {
     expect(said).toEqual(['Run archived']);
   });
 
+  test('a dispatch confirms with the task id, so the toast can link to it', async () => {
+    const said: [string, string | undefined][] = [];
+    const api = withActionFeedback(
+      {
+        handleDispatch: (_taskId: string) => Promise.resolve(),
+        handleArchiveRun: () => Promise.resolve(),
+      },
+      () => {},
+      (message, taskId) => said.push([message, taskId])
+    );
+    await api.handleDispatch('t-8f2a');
+    await api.handleArchiveRun();
+    expect(said).toEqual([
+      ['Task dispatched', 't-8f2a'],
+      ['Run archived', undefined],
+    ]);
+  });
+
   test('a failed action is not also reported as a success', async () => {
     const said: string[] = [];
     const failed: string[] = [];

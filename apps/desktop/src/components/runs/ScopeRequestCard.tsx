@@ -77,7 +77,10 @@ export function ScopeRequestCard({
   ];
 
   return (
-    <div className="animate-in fade-in-0 flex flex-col gap-2 duration-150">
+    <div
+      data-slot="scope-request-card"
+      className="animate-in fade-in-0 flex flex-col gap-2 duration-100"
+    >
       <ApprovalCard
         // Full-width in the transcript; `reason` is agent-authored text, so it renders as
         // markdown rather than flattening to a plain string.
@@ -103,15 +106,14 @@ export function ScopeRequestCard({
         ))}
       </ul>
       {!availability.enabled && (
-        <div className="border-border bg-muted/40 flex flex-col gap-1.5 rounded-md border px-2.5 py-2">
-          <span className="text-[12px] font-medium">{availability.notice}</span>
-          <span className="text-muted-foreground text-[11px]">
+        <div className="rounded-control border-border-chip bg-surface-quaternary flex flex-col gap-1.5 border-[0.5px] px-2.5 py-2">
+          <span className="text-[13px] font-medium">{availability.notice}</span>
+          <span className="font-book text-muted-foreground text-[12px]">
             {availability.explanation}
           </span>
           {availability.restart?.safe === true ? (
             <Button
               variant="secondary"
-              size="sm"
               className="self-start"
               disabled={restarting}
               onClick={() => void restart()}
@@ -120,15 +122,13 @@ export function ScopeRequestCard({
               {restarting ? 'Restarting…' : 'Restart daemon'}
             </Button>
           ) : (
-            <span className="text-muted-foreground text-[11px]">
+            <span className="font-book text-muted-foreground text-[12px]">
               {availability.restart?.blockedReason}
             </span>
           )}
         </div>
       )}
-      {error !== null && (
-        <div className="text-destructive text-[12px]">{error}</div>
-      )}
+      {error !== null && <div className="text-red text-[12px]">{error}</div>}
     </div>
   );
 }

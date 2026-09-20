@@ -16,10 +16,11 @@ interface QuestionCardProps {
   onAnswer: (answer: string) => Promise<void>;
 }
 
-/** An agent's blocking question and the form that answers it. Loud, and its options are one
- * click, because the agent is parked inside a tool call until this is submitted. Built on the
- * `ui/ai/approval-card` primitive for the question header and suggested-answer options; a
- * free-text answer stays a separate textarea below since the primitive has no slot for one. */
+/** An agent's blocking question and the form that answers it. Its options are one click,
+ * because the agent is parked inside a tool call until this is submitted. Built on the
+ * `ui/ai/approval-card` primitive (quaternary card, chip-ringed option rows) for the question
+ * header and suggested-answer options; a free-text answer stays a 13px textarea below with
+ * the primary indigo `Answer`, since the primitive has no slot for one. */
 export function QuestionCard({
   question,
   options,
@@ -58,7 +59,10 @@ export function QuestionCard({
   }
 
   return (
-    <div className="animate-in fade-in-0 flex flex-col gap-2 duration-150">
+    <div
+      data-slot="question-card"
+      className="animate-in fade-in-0 flex flex-col gap-2 duration-100"
+    >
       <ApprovalCard
         // Full-width in the transcript, and the question is agent-authored text — render it
         // as markdown so lists/`code`/emphasis survive instead of flattening to plain text.
@@ -74,10 +78,8 @@ export function QuestionCard({
         selectedId={selectedId}
         disabled={sending}
       />
-      {error !== null && (
-        <div className="text-destructive text-[12px]">{error}</div>
-      )}
-      <div className="flex gap-2">
+      {error !== null && <div className="text-red text-[12px]">{error}</div>}
+      <div className="flex items-end gap-2">
         <Textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -93,11 +95,9 @@ export function QuestionCard({
               : 'Answer the agent…'
           }
           disabled={sending}
-          className="min-h-[52px] flex-1 resize-y text-[12.5px]"
+          className="font-book min-h-[52px] flex-1 resize-y text-[13px]"
         />
         <Button
-          size="sm"
-          className="self-end"
           disabled={sending || draft.trim() === ''}
           onClick={() => void answer(draft)}
         >
