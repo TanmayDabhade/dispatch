@@ -26,6 +26,8 @@ export const testConfig: DispatchConfig = {
     permissionMode: 'auto',
     epicConcurrency: 3,
     verifyTimeoutSec: 600,
+    maxConcurrency: 16,
+    runCostEstimateUsd: 10,
   },
   models: DEFAULT_MODELS,
   linear: DEFAULT_LINEAR,

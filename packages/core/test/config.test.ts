@@ -15,6 +15,7 @@ import {
   loadConfig,
   queueWeights,
 } from '../src/config.js';
+import { MAX_CONCURRENCY_HARD_CAP } from '../src/configTypes.js';
 import { DEFAULT_POLICY } from '../src/policy.js';
 import { DEFAULT_QUEUE_WEIGHTS } from '../src/scoring.js';
 
@@ -49,6 +50,8 @@ describe('loadConfig', () => {
         permissionMode: 'auto',
         epicConcurrency: 3,
         verifyTimeoutSec: 600,
+        maxConcurrency: 16,
+        runCostEstimateUsd: 10,
       },
       models: DEFAULT_MODELS,
       linear: DEFAULT_LINEAR,
@@ -163,6 +166,8 @@ describe('loadConfig', () => {
         permissionMode: 'auto',
         epicConcurrency: 3,
         verifyTimeoutSec: 600,
+        maxConcurrency: 16,
+        runCostEstimateUsd: 10,
       });
     });
 
@@ -178,7 +183,73 @@ describe('loadConfig', () => {
         permissionMode: 'plan',
         epicConcurrency: 5,
         verifyTimeoutSec: 600,
+        maxConcurrency: 16,
+        runCostEstimateUsd: 10,
       });
+    });
+
+    it('reads maxConcurrency and runCostEstimateUsd when set', () => {
+      mkdirSync(join(root, '.dispatch'), { recursive: true });
+      writeFileSync(
+        join(root, '.dispatch/config.yml'),
+        'orchestrator:\n  maxConcurrency: 32\n  runCostEstimateUsd: 2.5\n'
+      );
+      const { orchestrator } = loadConfig(root);
+      expect(orchestrator.maxConcurrency).toBe(32);
+      expect(orchestrator.runCostEstimateUsd).toBe(2.5);
+    });
+
+    it('throws when maxConcurrency exceeds the hard cap', () => {
+      mkdirSync(join(root, '.dispatch'), { recursive: true });
+      writeFileSync(
+        join(root, '.dispatch/config.yml'),
+        `orchestrator:\n  maxConcurrency: ${MAX_CONCURRENCY_HARD_CAP + 1}\n`
+      );
+      expect(() => loadConfig(root)).toThrow(
+        /orchestrator\.maxConcurrency must be an integer between 1 and 32/
+      );
+    });
+
+    it('throws when maxConcurrency is not an integer', () => {
+      mkdirSync(join(root, '.dispatch'), { recursive: true });
+      writeFileSync(
+        join(root, '.dispatch/config.yml'),
+        'orchestrator:\n  maxConcurrency: 4.5\n'
+      );
+      expect(() => loadConfig(root)).toThrow(
+        /orchestrator\.maxConcurrency must be an integer between 1 and 32/
+      );
+    });
+
+    it('throws when epicConcurrency exceeds the default maxConcurrency', () => {
+      mkdirSync(join(root, '.dispatch'), { recursive: true });
+      writeFileSync(
+        join(root, '.dispatch/config.yml'),
+        'orchestrator:\n  epicConcurrency: 20\n'
+      );
+      expect(() => loadConfig(root)).toThrow(
+        /orchestrator\.epicConcurrency \(20\) must not exceed orchestrator\.maxConcurrency \(16\)/
+      );
+    });
+
+    it('accepts epicConcurrency equal to a raised maxConcurrency', () => {
+      mkdirSync(join(root, '.dispatch'), { recursive: true });
+      writeFileSync(
+        join(root, '.dispatch/config.yml'),
+        'orchestrator:\n  epicConcurrency: 24\n  maxConcurrency: 24\n'
+      );
+      expect(loadConfig(root).orchestrator.epicConcurrency).toBe(24);
+    });
+
+    it('throws when runCostEstimateUsd is not positive', () => {
+      mkdirSync(join(root, '.dispatch'), { recursive: true });
+      writeFileSync(
+        join(root, '.dispatch/config.yml'),
+        'orchestrator:\n  runCostEstimateUsd: 0\n'
+      );
+      expect(() => loadConfig(root)).toThrow(
+        /orchestrator\.runCostEstimateUsd must be a positive number/
+      );
     });
 
     it('leaves epicConcurrency at the default of 3 when omitted', () => {
