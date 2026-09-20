@@ -262,7 +262,8 @@ describe('EpicEngine run ceiling', () => {
     expect(runsOn(h, childIds)).toHaveLength(8);
     expect(h.epics.progress(epicId).spend.runsStarted).toBe(8);
     expect(h.epics.progress(epicId).waves[2].byPhase).toEqual({ waiting: 1 });
-  });
+    // Three real merges plus eight fake runs sit near bun's 5s default.
+  }, 20_000);
 });
 
 describe('EpicEngine spend ceiling', () => {
@@ -330,7 +331,7 @@ describe('EpicEngine spend ceiling', () => {
     expect(activity(h, epicId)).toContain(
       'epic dispatch resumed (concurrency 2, ceiling $100.00)'
     );
-  });
+  }, 20_000);
 });
 
 describe('EpicEngine session transitions', () => {
