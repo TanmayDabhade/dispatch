@@ -148,12 +148,14 @@ export function ensureDispatchd(root: string): Promise<DaemonConnection> {
     // Browser-dev fallback: the daemon is already running (started outside the
     // app); take its port straight from the URL param instead of spawning one.
     // Structurally the attach path — a browser cannot read the daemon's stdout,
-    // so `?token=` can only ever carry the request-tier agent token.
+    // so `?token=` carries the request-tier agent token, and only a harness
+    // that preset the daemon's DISPATCH_APP_TOKEN can also hand over
+    // `?appToken=` for the decide tier.
     const port = browserParam('port');
     return port !== null
       ? Promise.resolve({
           port: Number(port),
-          appToken: null,
+          appToken: browserParam('appToken'),
           agentToken: browserParam('token'),
         })
       : Promise.reject(new Error('no ?port= param for browser-dev mode'));

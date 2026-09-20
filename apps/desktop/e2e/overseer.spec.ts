@@ -1,7 +1,7 @@
 import type { APIRequestContext } from '@playwright/test';
 import { expect, test } from '@playwright/test';
 
-import { DAEMON_PORT } from './paths';
+import { APP_TOKEN, DAEMON_PORT } from './paths';
 
 // Duplicated verbatim from `views.spec.ts`, following the convention its other
 // copy in `edit-diff.spec.ts` documents: this token resolution is small enough
@@ -20,7 +20,10 @@ function requireToken(): string {
 
 function authedUrl(baseURL: string | undefined): string {
   if (!baseURL) throw new Error('baseURL is not configured');
-  return `${baseURL}&token=${requireToken()}`;
+  // Approving or denying an overseer action is a decide-tier call, which the
+  // request-tier `token` cannot make — the harness's preset app token rides
+  // along so this flow can actually adjudicate.
+  return `${baseURL}&token=${requireToken()}&appToken=${APP_TOKEN}`;
 }
 
 // The same daemon the app under test talks to, hit directly. The deny path's
@@ -127,24 +130,19 @@ test.describe('overseer chat end to end', () => {
 
     // Route new conversations to the daemon's 'fake' overseer backend — set
     // before load, same as any localStorage-keyed devtool. The live rail
-    // starts collapsed (its own key — the retired dispatch:overview-rail is
-    // deliberately ignored by LiveRail): expanded, it repeats task titles as
-    // row buttons, double-counting the Runs-view assertions below.
     await page.addInitScript(() => {
       window.localStorage.setItem('dispatch.devFakeOverseer', '1');
-      window.localStorage.setItem('dispatch:live-rail', '1');
     });
     await page.goto(authedUrl(baseURL));
-    await page.getByText('Dispatch').first().waitFor();
+    await page.locator('#dispatch-sidebar').waitFor();
 
-    // The Overseer tab lives in the sidebar's global section (no ⌘N hint, so
-    // its accessible name is exactly its label). `exact` because role-name
-    // matching is case-insensitive substring by default: the rail names a
-    // waiting overseer row "<summary> overseer <time>", and any future button
-    // mentioning the word would otherwise make this ambiguous under strict
-    // mode. Nothing else is named exactly "Overseer".
-    await page.getByRole('button', { name: 'Overseer', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Overseer' })).toBeVisible();
+    // The Overseer row sits in the rail's fixed top group. Scoped to the rail
+    // because the frame's status strip carries a ghost "Overseer" link too,
+    // which would make an unscoped name lookup ambiguous under strict mode.
+    const rail = page.locator('#dispatch-sidebar');
+    const overseerRow = rail.getByRole('button', { name: /^Overseer/ });
+    await overseerRow.click();
+    await expect(page.getByLabel('Overseer opening question')).toBeVisible();
 
     // --- Status round trip (scripted turn 0) ---------------------------
     await page
@@ -152,7 +150,7 @@ test.describe('overseer chat end to end', () => {
       .fill("What's going on in this project?");
     // `exact` matters: role-name matching is substring-based, and "Ask"
     // otherwise also matches the sidebar's "Tasks" row.
-    await page.getByRole('button', { name: 'Ask', exact: true }).click();
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
     // The reply is derived from a real list_runs read against the fixture —
     // the exact counts belong to the fixture, so pin the shape, not the sum.
     await expect(
@@ -169,6 +167,11 @@ test.describe('overseer chat end to end', () => {
 
     const confirmHeader = page.getByText('Needs your approval');
     await expect(confirmHeader).toBeVisible({ timeout: 15_000 });
+
+    // While the approval waits, the rail's Overseer row carries the pending
+    // count — the only rail surface the parked overseer has now that the
+    // Runs | Overseer tab strip is gone.
+    await expect(overseerRow).toContainText('1');
 
     // The card's summary comes from dispatch_task.describe:
     //   Dispatch <id> "<title>" with the fake executor
@@ -202,17 +205,18 @@ test.describe('overseer chat end to end', () => {
     const titlePattern = new RegExp(
       taskTitle.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`)
     );
-    const runRows = page.getByRole('button', { name: titlePattern });
-    await page.keyboard.press('Meta+5');
+    // All agents lists one row per run on record, so the task's title count
+    // there is the number of runs it has.
+    const allAgents = rail.getByRole('button', { name: /^All agents/ });
+    const runRows = page.getByText(titlePattern);
+    await allAgents.click();
     // A row every fixture seeds — once it is up, the runs list has rendered
     // and counting is meaningful.
     await expect(
-      page
-        .getByRole('button', { name: /Rate limit the search endpoint/ })
-        .first()
+      page.getByText(/Rate limit the search endpoint/).first()
     ).toBeVisible();
     const rowsBefore = await runRows.count();
-    await page.getByRole('button', { name: 'Overseer', exact: true }).click();
+    await overseerRow.click();
 
     // --- Ask again (scripted turn 2), approve this time ----------------
     await page
@@ -235,91 +239,8 @@ test.describe('overseer chat end to end', () => {
     expect(dispatched.meta.taskId).toBe(taskId);
 
     // --- The approved dispatch is visible elsewhere in the app ---------
-    // ⌘5 is the Runs view: the task the summary named gains exactly one row.
-    await page.keyboard.press('Meta+5');
+    // All agents: the task the summary named gains exactly one row.
+    await allAgents.click();
     await expect(runRows).toHaveCount(rowsBefore + 1, { timeout: 15_000 });
-  });
-
-  /**
-   * The same gated flow driven from the LiveRail's Overseer tab — the compact
-   * surface the first test's collapsed rail deliberately hides. The rail
-   * stays expanded here (no Runs-view row counting happens in this test, so
-   * its run-row buttons are harmless), and the deny path is re-verified
-   * against the daemon; the approve path is the first test's job.
-   *
-   * NOT YET OBSERVED GREEN. `bun run e2e --list` discovers it, so it parses
-   * and type-checks, but no environment on this branch can run it: the
-   * webServer cannot `posix_spawn` git, and the storefront fixture
-   * (e2e/paths.ts) is gitignored and keyed by root path, so a worktree has
-   * none to seed from. Two of its assumptions are therefore held by unit
-   * tests instead, in the suite that does run — LiveRail.test.tsx pins that
-   * the rail's Overseer control is a role=tab (so `getByRole('button', {name:
-   * 'Overseer'})` below cannot go ambiguous against the sidebar's nav button)
-   * and that the waiting row is named "<summary> overseer" in lowercase, which
-   * is what the `/with the fake executor overseer/` locator depends on.
-   */
-  test('the rail Overseer tab drives the same human-gated flow', async ({
-    page,
-    baseURL,
-    request,
-  }, testInfo) => {
-    test.skip(testInfo.project.name !== 'dark', 'theme-independent flow');
-
-    baselineRunIds = await listRunIds(request);
-
-    await page.addInitScript(() => {
-      window.localStorage.setItem('dispatch.devFakeOverseer', '1');
-      window.localStorage.setItem('dispatch:live-rail', '0');
-    });
-    await page.goto(authedUrl(baseURL));
-    await page.getByText('Dispatch').first().waitFor();
-
-    // The rail's tabs are radix role=tab, so this never collides with the
-    // sidebar's "Overseer" nav *button* under strict mode.
-    const overseerTab = page.getByRole('tab', { name: 'Overseer' });
-    await overseerTab.click();
-
-    // The compact chat reuses the full page's aria-labels; the Overseer page
-    // itself is not open, so each resolves uniquely.
-    await page
-      .getByLabel('Overseer opening question')
-      .fill("What's going on in this project?");
-    await page.getByRole('button', { name: 'Ask', exact: true }).click();
-    await expect(
-      page.getByText(/Status check: this project has \d+ runs on record/)
-    ).toBeVisible({ timeout: 15_000 });
-
-    // --- Queue a mutation (scripted turn 1) from the rail ---------------
-    await page
-      .getByLabel('Follow-up message')
-      .fill('Dispatch the next ready task for me.');
-    await page.getByRole('button', { name: 'Send', exact: true }).click();
-    const confirmHeader = page.getByText('Needs your approval');
-    await expect(confirmHeader).toBeVisible({ timeout: 15_000 });
-
-    // While the approval waits, the Runs tab lists the overseer as a waiting
-    // agent named by the queued action, and clicking the row returns to the
-    // chat. Matched by accessible name rather than by text: the row's name
-    // ends "… with the fake executor overseer <time>", which the confirm card's
-    // own summary text does not, so this stays unambiguous even if the chat
-    // is on screen.
-    await page.getByRole('tab', { name: 'Runs' }).click();
-    const overseerRow = page.getByRole('button', {
-      name: /with the fake executor overseer/,
-    });
-    await expect(overseerRow).toBeVisible();
-    await overseerRow.click();
-    await expect(overseerTab).toHaveAttribute('aria-selected', 'true');
-
-    // --- Deny from the rail: nothing may happen server-side -------------
-    await page.getByRole('button', { name: /^Deny:/ }).click();
-    await expect(page.getByText(/^Denied: Dispatch /)).toBeVisible();
-    await expect(confirmHeader).toHaveCount(0);
-
-    const afterDeny = await listRunIds(request);
-    expect(
-      [...afterDeny].filter((id) => !baselineRunIds?.has(id)),
-      'denying from the rail must not create a run'
-    ).toEqual([]);
   });
 });

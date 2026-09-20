@@ -9,6 +9,7 @@ import {
 import { existsSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
+import { mintDaemonTokens } from './api.js';
 import { makeFakeGhRunner } from './fakeGh.js';
 import { resolveStoreBackend, startServer } from './index.js';
 import { ClaudeExecutor } from './orchestrator/executors/claude.js';
@@ -410,9 +411,20 @@ if (args.includes('--init')) {
 
 const enableFakes = process.env.DISPATCH_ENABLE_FAKES === '1';
 
+// A test harness that cannot read this process's stdout (Playwright's
+// webServer, the browser-dev URL) may preset the decide-tier token instead;
+// whoever launches the daemon with it is as trusted as whoever reads the
+// stdout line below. The agent token is always minted fresh.
+const presetAppToken = process.env.DISPATCH_APP_TOKEN?.trim();
+const tokens =
+  presetAppToken !== undefined && presetAppToken !== ''
+    ? { ...mintDaemonTokens(), appToken: presetAppToken }
+    : undefined;
+
 const handle = await startServer({
   rootDir,
   port,
+  tokens,
   // `--init` is the desktop's add-project spawn, which deliberately replaces
   // whatever daemon predates the project's tracker; `--replace` is the
   // explicit operator override.

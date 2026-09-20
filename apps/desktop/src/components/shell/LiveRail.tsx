@@ -60,14 +60,20 @@ export function LiveRail({
 
   if (live.length === 0 && !overseerRow) {
     return (
-      <p className="text-muted-foreground flex h-7 items-center px-2 text-[12px]">
+      <p
+        data-testid="live-rail"
+        className="text-muted-foreground flex h-7 items-center px-2 text-[12px]"
+      >
         No agents running.
       </p>
     );
   }
 
   return (
-    <div className="flex max-h-56 flex-col gap-px overflow-y-auto">
+    <div
+      data-testid="live-rail"
+      className="flex max-h-56 flex-col gap-px overflow-y-auto"
+    >
       {overseerRow && (
         <button
           type="button"

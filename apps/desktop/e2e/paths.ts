@@ -7,3 +7,9 @@ export const ROOT = resolve(REPO, '.agents/ignore/storefront');
 export const HOME = resolve(REPO, '.agents/ignore/storefront-home');
 export const DAEMON_PORT = 57999;
 export const VITE_PORT = 5199;
+// The decide-tier token the harness presets on its daemon (see
+// playwright.config.ts) and hands to the app as `?appToken=`, since a browser
+// cannot read the daemon's stdout line. A constant on purpose: the config and
+// every test worker are separate processes that must agree on it, and the
+// daemon it guards only exists on a fixed localhost port for the run.
+export const APP_TOKEN = 'e2e-app-token-storefront-harness';
