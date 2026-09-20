@@ -1,4 +1,8 @@
-import { CORE_VERSION } from '@dispatch/core';
+import type { ExecutorPricing } from '@dispatch/core';
+import { CORE_VERSION, loadConfig } from '@dispatch/core';
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   CodexAppServer,
@@ -77,27 +81,99 @@ function toCodexMcp(
   };
 }
 
+// The MCP servers a person configured for their own interactive Codex in
+// `$CODEX_HOME/config.toml` (default `~/.codex`). Codex starts every one of
+// them for any thread, dispatched runs included, so they are read here to be
+// switched off per run. Unreadable or absent config means none.
+export function codexUserMcpServerNames(): string[] {
+  const home = process.env.CODEX_HOME ?? join(homedir(), '.codex');
+  const path = join(home, 'config.toml');
+  if (!existsSync(path)) return [];
+  try {
+    const parsed = Bun.TOML.parse(readFileSync(path, 'utf8')) as {
+      mcp_servers?: unknown;
+    };
+    const servers = objectValue(parsed.mcp_servers);
+    return servers === undefined ? [] : Object.keys(servers);
+  } catch {
+    return [];
+  }
+}
+
+interface CodexTokenTotal {
+  totalTokens: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+}
+
+function tokenTotal(value: unknown): CodexTokenTotal | undefined {
+  const total = objectValue(value);
+  if (total === undefined) return undefined;
+  const count = (key: string): number =>
+    typeof total[key] === 'number' ? total[key] : 0;
+  return {
+    totalTokens: count('totalTokens'),
+    inputTokens: count('inputTokens'),
+    cachedInputTokens: count('cachedInputTokens'),
+    outputTokens: count('outputTokens'),
+  };
+}
+
+// Codex reports tokens, never dollars; the project's configured per-million
+// rates turn them into a cost. Codex counts cached input inside inputTokens.
+function codexCostUsd(
+  total: CodexTokenTotal,
+  pricing: ExecutorPricing
+): number {
+  const cached = Math.min(total.cachedInputTokens, total.inputTokens);
+  const uncached = total.inputTokens - cached;
+  const cachedRate = pricing.cachedInput ?? pricing.input;
+  return (
+    (uncached * pricing.input +
+      cached * cachedRate +
+      total.outputTokens * pricing.output) /
+    1_000_000
+  );
+}
+
+// The project's pricing for Codex, if configured; unreadable config means none.
+function codexPricingFor(projectRoot: string): ExecutorPricing | undefined {
+  try {
+    return loadConfig(projectRoot).executors?.codex?.pricing;
+  } catch {
+    return undefined;
+  }
+}
+
 /** The run-scoped MCP servers re-supplied on thread start and resume. */
 function buildCodexMcpServers(
   cwd: string,
   projectRoot: string,
   runId: string,
-  cartoSpec: (projectRoot: string) => StdioServerSpec | null
-): Record<string, unknown> {
+  cartoSpec: (projectRoot: string) => StdioServerSpec | null,
+  userServers: string[]
+): { config: Record<string, unknown>; disabled: string[] } {
   const carto = cartoSpec(projectRoot);
-  return {
-    mcp_servers: {
-      dispatch: toCodexMcp(dispatchMcpSpec(cwd, projectRoot, runId), {
-        tools: {
-          task_comment: { approval_mode: 'approve' },
-          record_evidence: { approval_mode: 'approve' },
-          record_mutation: { approval_mode: 'approve' },
-          ask_user: { approval_mode: 'approve' },
-        },
-      }),
-      ...(carto === null ? {} : { carto: toCodexMcp(carto) }),
-    },
+  const ours: Record<string, unknown> = {
+    dispatch: toCodexMcp(dispatchMcpSpec(cwd, projectRoot, runId), {
+      tools: {
+        task_comment: { approval_mode: 'approve' },
+        record_evidence: { approval_mode: 'approve' },
+        record_mutation: { approval_mode: 'approve' },
+        ask_user: { approval_mode: 'approve' },
+      },
+    }),
+    ...(carto === null ? {} : { carto: toCodexMcp(carto) }),
   };
+  // A person's own servers (a Stripe or PostHog connector, say) have no
+  // place in an autonomous run: cost, latency and reach nobody asked for.
+  // `enabled: false` merges into the user's table; a name Codex does not
+  // know would fail thread/start, which is why the list comes from the file.
+  const disabled = userServers.filter((name) => !(name in ours));
+  const mcpServers: Record<string, unknown> = { ...ours };
+  for (const name of disabled) mcpServers[name] = { enabled: false };
+  return { config: { mcp_servers: mcpServers }, disabled };
 }
 
 function textInput(text: string): object[] {
@@ -282,17 +358,27 @@ export const CODEX_EXECUTOR_PROFILE: ExecutorProfile = {
 export interface CodexExecutorOptions {
   /** Carto discovery, injectable so tests never depend on a local carto. */
   cartoSpec?: (projectRoot: string) => StdioServerSpec | null;
+  /** The user's own MCP server names, injectable so tests never read ~/.codex. */
+  userMcpServers?: () => string[];
+  /** Per-million token rates for the project, injectable for tests. */
+  pricing?: (projectRoot: string) => ExecutorPricing | undefined;
 }
 
 export class CodexExecutor implements Executor {
   readonly profile = CODEX_EXECUTOR_PROFILE;
   private readonly cartoSpec: (projectRoot: string) => StdioServerSpec | null;
+  private readonly userMcpServers: () => string[];
+  private readonly pricing: (
+    projectRoot: string
+  ) => ExecutorPricing | undefined;
 
   constructor(
     private readonly spawnProcess?: SpawnCodexAppServer,
     options: CodexExecutorOptions = {}
   ) {
     this.cartoSpec = options.cartoSpec ?? cartoMcpSpec;
+    this.userMcpServers = options.userMcpServers ?? codexUserMcpServerNames;
+    this.pricing = options.pricing ?? codexPricingFor;
   }
 
   start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
@@ -304,6 +390,8 @@ export class CodexExecutor implements Executor {
       );
     }
     const server = new CodexAppServer(opts.cwd, this.spawnProcess);
+    const pricing = this.pricing(opts.projectRoot ?? opts.cwd);
+    let lastUsage: CodexTokenTotal | undefined;
     let threadId: string | undefined;
     let turnId: string | undefined;
     let terminal = false;
@@ -344,7 +432,16 @@ export class CodexExecutor implements Executor {
       if (terminal || interrupted) return;
       terminal = true;
       pendingApprovals.clear();
-      events.onFinish({ ...result, sessionId: threadId, turns: 1 });
+      const costUsd =
+        pricing !== undefined && lastUsage !== undefined
+          ? codexCostUsd(lastUsage, pricing)
+          : undefined;
+      events.onFinish({
+        ...result,
+        sessionId: threadId,
+        turns: 1,
+        ...(costUsd === undefined ? {} : { costUsd }),
+      });
       server.close();
     };
 
@@ -422,12 +519,17 @@ export class CodexExecutor implements Executor {
       if (message.method === 'thread/tokenUsage/updated') {
         const params = objectValue(message.params);
         if (params?.threadId !== threadId || params?.turnId !== turnId) return;
-        const total = objectValue(objectValue(params?.tokenUsage)?.total);
+        const total = tokenTotal(objectValue(params?.tokenUsage)?.total);
         if (total === undefined) return;
+        lastUsage = total;
+        const cost =
+          pricing === undefined
+            ? ''
+            : ` ≈ $${codexCostUsd(total, pricing).toFixed(4)}`;
         events.onEntry({
           ts: new Date().toISOString(),
           kind: 'usage',
-          text: `tokens: ${String(total.totalTokens)} total (${String(total.inputTokens)} in, ${String(total.outputTokens)} out)`,
+          text: `tokens: ${String(total.totalTokens)} total (${String(total.inputTokens)} in, ${String(total.outputTokens)} out)${cost}`,
         });
         return;
       }
@@ -493,12 +595,20 @@ export class CodexExecutor implements Executor {
         if (interrupted) return;
         server.notify('initialized');
 
-        const config = buildCodexMcpServers(
+        const { config, disabled } = buildCodexMcpServers(
           opts.cwd,
           opts.projectRoot ?? opts.cwd,
           opts.runId ?? '',
-          this.cartoSpec
+          this.cartoSpec,
+          this.userMcpServers()
         );
+        if (disabled.length > 0) {
+          events.onEntry({
+            ts: new Date().toISOString(),
+            kind: 'system',
+            text: `disabled ${String(disabled.length)} MCP server(s) from your Codex config for this run: ${disabled.join(', ')}`,
+          });
+        }
         const resumed = opts.resumeSessionId !== undefined;
         const response = await server.request<CodexThreadResponse>(
           resumed ? 'thread/resume' : 'thread/start',

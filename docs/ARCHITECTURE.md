@@ -212,11 +212,15 @@ executor that wrote the work; review runs use the project default. Both
 executors share the Dispatch and carto MCP wiring in
 `orchestrator/dispatchMcp.ts`.
 
-Codex caveats: it reports token usage but no dollar cost (the finish line says
-`cost n/a`), it cannot enforce the run caps (a system entry notes any that were
-set), and Codex protects `.git` — including a worktree's gitdir — under
-`workspace-write`, so each commit goes through Codex's own approval reviewer
-under `permissionMode: auto`.
+Codex caveats: it reports token usage but no dollar cost unless
+`executors.codex.pricing` (USD per million input/cached-input/output tokens) is
+configured, so the finish line otherwise says `cost n/a`; it cannot enforce the
+run caps (a system entry notes any that were set); and Codex protects `.git` —
+including a worktree's gitdir — under `workspace-write`, so each commit goes
+through Codex's own approval reviewer under `permissionMode: auto`. The MCP
+servers a person configured for their own interactive Codex in
+`~/.codex/config.toml` are switched off for every dispatched run (a system entry
+names them); the run gets only Dispatch's own server and carto.
 
 Notable modules:
 

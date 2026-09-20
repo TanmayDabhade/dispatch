@@ -354,9 +354,24 @@ export interface ExecutorModels {
   plan?: string;
 }
 
+/** USD per million tokens, for an executor that reports usage but no cost. */
+export interface ExecutorPricing {
+  input: number;
+  /** Defaults to `input` when unset. */
+  cachedInput?: number;
+  output: number;
+}
+
 export interface ExecutorConfig {
   models: ExecutorModels;
+  pricing?: ExecutorPricing;
 }
+
+export const EXECUTOR_PRICING_FIELDS: readonly (keyof ExecutorPricing)[] = [
+  'input',
+  'cachedInput',
+  'output',
+];
 
 export const EXECUTOR_MODEL_ROLES: readonly (keyof ExecutorModels)[] = [
   'execute',
@@ -396,7 +411,10 @@ export interface ConfigPatch {
   /** Writes `orchestrator.executor`. */
   executor?: string;
   /** Written key-by-key under `executors.<name>.models`. */
-  executors?: Record<string, { models?: Partial<ExecutorModels> }>;
+  executors?: Record<
+    string,
+    { models?: Partial<ExecutorModels>; pricing?: ExecutorPricing }
+  >;
   linear?: Partial<LinearConfig>;
   fixLoop?: Partial<FixLoopConfig>;
   verify?: Partial<VerifyConfig>;

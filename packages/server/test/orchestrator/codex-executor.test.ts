@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'bun:test';
 import { EventEmitter } from 'node:events';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 
 import {
@@ -11,6 +14,7 @@ import {
   CODEX_EXECUTOR_PROFILE,
   CodexExecutor,
   codexPermission,
+  codexUserMcpServerNames,
 } from '../../src/orchestrator/executors/codex.js';
 import type {
   ExecutorEvents,
@@ -138,6 +142,10 @@ function startHarness(
   model?: string,
   options: {
     cartoSpec?: (projectRoot: string) => StdioServerSpec | null;
+    userMcpServers?: () => string[];
+    pricing?: () =>
+      | { input: number; cachedInput?: number; output: number }
+      | undefined;
   } = {}
 ): {
   entries: NormalizedEntry[];
@@ -152,6 +160,8 @@ function startHarness(
   const finishes: Parameters<ExecutorEvents['onFinish']>[0][] = [];
   const executor = new CodexExecutor(() => process, {
     cartoSpec: options.cartoSpec ?? (() => null),
+    userMcpServers: options.userMcpServers ?? (() => []),
+    pricing: options.pricing ?? (() => undefined),
   });
   const run = executor.start(
     {
@@ -265,7 +275,106 @@ describe('CodexAppServer transport', () => {
   });
 });
 
+describe('codexUserMcpServerNames', () => {
+  it('reads the mcp_servers table names from $CODEX_HOME/config.toml, tolerating absence and garbage', () => {
+    const original = process.env.CODEX_HOME;
+    const home = mkdtempSync(join(tmpdir(), 'codex-home-'));
+    try {
+      process.env.CODEX_HOME = home;
+      expect(codexUserMcpServerNames()).toEqual([]);
+      mkdirSync(home, { recursive: true });
+      writeFileSync(
+        join(home, 'config.toml'),
+        'model = "gpt-5.5"\n\n[mcp_servers.posthog]\ncommand = "npx"\n\n[mcp_servers.node_repl]\ncommand = "node"\n[mcp_servers.node_repl.env]\nFOO = "1"\n'
+      );
+      expect(codexUserMcpServerNames().sort()).toEqual([
+        'node_repl',
+        'posthog',
+      ]);
+      writeFileSync(join(home, 'config.toml'), 'not = = toml');
+      expect(codexUserMcpServerNames()).toEqual([]);
+    } finally {
+      if (original === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = original;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('CodexExecutor', () => {
+  it('prices token usage with the configured rates and reports the cost on finish', async () => {
+    const process = scriptedProcess({
+      afterTurn(fake) {
+        fake.notify('thread/tokenUsage/updated', {
+          threadId: 'thread-new',
+          turnId: 'turn-1',
+          tokenUsage: {
+            total: {
+              totalTokens: 1200,
+              inputTokens: 1000,
+              cachedInputTokens: 500,
+              outputTokens: 200,
+            },
+          },
+        });
+        fake.notify('turn/completed', {
+          threadId: 'thread-new',
+          turn: { id: 'turn-1', status: 'completed', error: null },
+        });
+      },
+    });
+    const harness = startHarness(process, undefined, undefined, {
+      pricing: () => ({ input: 2, cachedInput: 0.2, output: 8 }),
+    });
+    await waitFor(() => harness.finishes.length === 1);
+    // 500 uncached × $2 + 500 cached × $0.20 + 200 out × $8, per million.
+    expect(harness.finishes[0]).toEqual({
+      state: 'finished',
+      sessionId: 'thread-new',
+      turns: 1,
+      costUsd: 0.0027,
+    });
+    expect(harness.entries.find((entry) => entry.kind === 'usage')?.text).toBe(
+      'tokens: 1200 total (1000 in, 200 out) ≈ $0.0027'
+    );
+  });
+
+  it("switches off the user's own MCP servers for the run and says so", async () => {
+    const process = scriptedProcess();
+    const harness = startHarness(process, undefined, undefined, {
+      cartoSpec: (root) => ({
+        command: '/bin/sh',
+        args: ['-c', 'x', 'sh', root, '/opt/carto'],
+        env: {},
+      }),
+      userMcpServers: () => ['posthog', 'carto', 'stripe'],
+    });
+    await waitFor(() =>
+      process.requests.some((request) => request.method === 'thread/start')
+    );
+    const start = process.requests.find(
+      (request) => request.method === 'thread/start'
+    );
+    const config = (start?.params?.config ?? {}) as {
+      mcp_servers?: Record<string, unknown>;
+    };
+    const servers = config.mcp_servers ?? {};
+    expect(Object.keys(servers).sort()).toEqual([
+      'carto',
+      'dispatch',
+      'posthog',
+      'stripe',
+    ]);
+    expect(servers.posthog).toEqual({ enabled: false });
+    expect(servers.stripe).toEqual({ enabled: false });
+    // A user server sharing our name is replaced by ours, not disabled.
+    expect(servers.carto).toMatchObject({ command: '/bin/sh', required: true });
+    expect(harness.entries.find((entry) => entry.kind === 'system')?.text).toBe(
+      'disabled 2 MCP server(s) from your Codex config for this run: posthog, stripe'
+    );
+    process.kill();
+  });
+
   it('adds a carto server next to dispatch when carto is available', async () => {
     const process = scriptedProcess();
     startHarness(process, undefined, undefined, {
