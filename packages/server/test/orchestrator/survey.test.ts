@@ -851,4 +851,56 @@ describe('Orchestrator.dispatchOrResume', () => {
     expect(meta.resumedFrom).toBeUndefined();
     expect(meta.executor).toBe('claude');
   });
+
+  it('resolves a fresh run model from the selected executor', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    writeFileSync(
+      join(repo, '.dispatch/config.yml'),
+      'models:\n  execute: configured-claude-model\n' +
+        'executors:\n  codex:\n    models:\n      execute: configured-codex-model\n'
+    );
+    const claude = new StallingExecutor();
+    const codex = new StallingExecutor();
+    const bare = new StallingExecutor();
+    orchestrator.registerExecutor('claude', claude);
+    orchestrator.registerExecutor('codex', codex);
+    orchestrator.registerExecutor('bare', bare);
+
+    const dispatchWith = async (
+      title: string,
+      request: { executor?: string; model?: string }
+    ): Promise<string | undefined> => {
+      const task = store.create({ title });
+      const meta = await orchestrator.dispatchOrResume(task.meta.id, request);
+      return meta.model;
+    };
+
+    expect(await dispatchWith('Default', {})).toBe('configured-claude-model');
+    expect(await dispatchWith('Claude', { executor: 'claude' })).toBe(
+      'configured-claude-model'
+    );
+    expect(
+      await dispatchWith('Named claude', {
+        executor: 'claude',
+        model: 'explicit-claude-model',
+      })
+    ).toBe('explicit-claude-model');
+    expect(await dispatchWith('Codex', { executor: 'codex' })).toBe(
+      'configured-codex-model'
+    );
+    expect(
+      await dispatchWith('Named codex', { executor: 'codex', model: 'gpt-6' })
+    ).toBe('gpt-6');
+    expect(await dispatchWith('Bare', { executor: 'bare' })).toBeUndefined();
+    expect(claude.started.map(({ model }) => model)).toEqual([
+      'configured-claude-model',
+      'configured-claude-model',
+      'explicit-claude-model',
+    ]);
+    expect(codex.started.map(({ model }) => model)).toEqual([
+      'configured-codex-model',
+      'gpt-6',
+    ]);
+    expect(bare.started.map(({ model }) => model)).toEqual([undefined]);
+  });
 });

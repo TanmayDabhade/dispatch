@@ -18,7 +18,7 @@ import { capText, warnOnce } from './client.js';
  * write — and the result annotates the landing row; it never blocks a merge.
  */
 
-export interface ChecklistItem {
+interface ChecklistItem {
   text: string;
   /** Probability the diff implements this requirement. */
   probability: number;

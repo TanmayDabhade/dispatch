@@ -137,7 +137,8 @@ export class EpicEngine {
     // C2(a): validate the executor BEFORE creating any session state — a
     // bogus name must 400 cleanly with nothing left behind for a
     // subsequent, correctly-specified retry to trip over.
-    const executor = opts.executor ?? 'claude';
+    const executor =
+      opts.executor ?? this.ctx.orchestrator.defaultExecutorName();
     const knownExecutors = this.ctx.orchestrator.registeredExecutorNames();
     if (!knownExecutors.includes(executor)) {
       throw new OrchestratorClientError(

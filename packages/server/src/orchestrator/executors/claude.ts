@@ -8,15 +8,12 @@ import type {
   SDKResultMessage,
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
-import type { CartoMode } from '@dispatch/core';
-import { loadConfig } from '@dispatch/core';
 import type { CartoBinary } from '@dispatch/core/carto';
-import { discoverCarto, supportsMcpServe } from '@dispatch/core/carto';
-import { createRequire } from 'node:module';
-import { dirname, join } from 'node:path';
 
 import { floorCheckForToolInput } from '../../floor.js';
 import { openClaudeQuery, rewriteMissingCliError } from '../claudeCli.js';
+import type { StdioServerSpec } from '../dispatchMcp.js';
+import { cartoMcpSpec, cartoSpecFor, dispatchMcpSpec } from '../dispatchMcp.js';
 import type {
   ApprovalDecision,
   Executor,
@@ -27,179 +24,31 @@ import type {
 } from '../types.js';
 import { isSubagentSpawn, SubagentTracker } from './subagentTracker.js';
 
-// Locates the dispatch MCP server's stdio entry point via Node's own module
-// resolution rather than a hardcoded relative path — the exact pattern
-// packages/cli/src/commands/daemon.ts's `resolveDaemonBin` already uses for
-// @dispatch/server's bin. `@dispatch/mcp`'s `exports` map only exposes
-// `./package.json` for this purpose (see its package.json — mirroring
-// @dispatch/server's own minimal export), so this resolve() call has
-// something to anchor on regardless of whether the CLI is run from source or
-// from a built `dist/`; the bin script itself sits alongside it at
-// `src/bin.ts`, run directly by Bun (which executes TypeScript natively, no
-// build step required).
-//
-// TODO(Phase 6 packaging): once dispatchd ships as a packaged binary rather
-// than running from source under `bun`, this should resolve the *built*
-// `dist/bin.js` (or shell out to the `dispatch-mcp` bin on PATH once one is
-// installed alongside the packaged server) instead of `src/bin.ts` — mirror
-// whatever bin-resolution story the packaged @dispatch/server ends up using.
-function resolveMcpBin(): string {
-  const pkgJsonPath = createRequire(import.meta.url).resolve(
-    '@dispatch/mcp/package.json'
-  );
-  return join(dirname(pkgJsonPath), 'src', 'bin.ts');
-}
-
-// Builds the `mcpServers` entry the SDK's `query()` needs to actually load
-// the dispatch MCP server for a run — see the module-level comment on why
-// this is required at all. Rooted at the run's own git WORKTREE (`cwd`) via
-// `--root` so task_list/task_get/task_save/task_next read and write the
-// exact task files the run's own repo checkout sees; `DISPATCH_PROJECT_ROOT`
-// is set to the dispatch PROJECT's root (a different directory than the
-// worktree) so run_list/agent_message's daemon discovery and task_comment's
-// write both target the project's real daemon file and `.dispatch/tasks`
-// instead of the worktree's copy — see packages/mcp/src/tools.ts's
-// `projectRoot()` helper for why those two specifically cannot use the
-// worktree. `DISPATCH_RUN_ID` (agent-comms) is this run's own id — the
-// dispatch MCP server's `agent_message`/`message_user` tools (packages/mcp/
-// src/tools.ts) read it back out so a calling agent never has to know or
-// supply its own run id just to be identified as the sender/raiser.
-// The only inherited environment variables the dispatch MCP server child is
-// given. This is an ALLOWLIST, and deliberately so: the SDK serializes this
-// `env` into the `--mcp-config` value on the spawned CLI's **argv**, where it
-// is readable by any local process through `ps`. Copying the whole
-// `process.env` (what this used to do) therefore published every credential
-// dispatchd happened to inherit — GITHUB_TOKEN, API keys, DB passwords — to
-// anything that could list processes.
-//
-// A denylist can't work here; secrets have no reliable naming convention. An
-// allowlist can, because the child's needs are tiny and known: the three
-// DISPATCH_* variables it actually reads (see packages/mcp/src/tools.ts and
-// daemon.ts) plus the handful the runtime itself needs to start.
-//
-// Note this restricts *only* the MCP server child. The agent's own tools run
-// in the Claude Code CLI's environment, so nothing here limits what a
-// dispatched agent can use in Bash.
-const MCP_ENV_PASSTHROUGH: readonly string[] = [
-  // Required for `bun` to be found and to run at all.
-  'PATH',
-  'HOME',
-  'TMPDIR',
-  // Locale — keeps the child's stdio encoding matching the parent's.
-  'LANG',
-  'LC_ALL',
-  // Bun's own install/cache root, when the install isn't in the default place.
-  'BUN_INSTALL',
-  // Redirects all dispatch state away from the real home directory; the
-  // child's own daemon discovery reads it (packages/mcp/src/daemon.ts), so
-  // dropping it would break every test harness and non-default install.
-  'DISPATCH_HOME',
-];
-
-// Per-call ceiling the CLI enforces on dispatch's own MCP tools. Must stay
-// above `ask_user`'s 30-minute wait budget or it cuts that tool call off.
-const DISPATCH_MCP_TOOL_TIMEOUT_MS = 31 * 60_000;
-
-function buildDispatchMcpServerConfig(
-  cwd: string,
-  projectRoot: string,
-  runId: string
-): McpServerConfig {
-  // `McpStdioServerConfig.env` is `Record<string, string>`, but `process.env`
-  // is `Record<string, string | undefined>` (any key can be unset) — drop the
-  // unset ones rather than passing `undefined` through. An explicit `env` on
-  // the spawned child replaces its inherited environment entirely (unlike
-  // omitting `env`, which inherits as-is), so this must carry everything the
-  // child needs — see MCP_ENV_PASSTHROUGH for why that set is an allowlist
-  // rather than the whole environment.
-  const env: Record<string, string> = {};
-  for (const key of MCP_ENV_PASSTHROUGH) {
-    const value = process.env[key];
-    if (value !== undefined) env[key] = value;
-  }
-  env.DISPATCH_PROJECT_ROOT = projectRoot;
-  env.DISPATCH_RUN_ID = runId;
-  // `DISPATCH_MCP_BIN` is set by the packaged desktop app's sidecar wiring to
-  // the bundled, `bun build --compile`d MCP server binary — run it directly so
-  // a self-contained release needs neither `bun` on PATH nor the monorepo
-  // checkout `resolveMcpBin()` walks to. Unset in dev / a plain `dispatch
-  // serve`, where the TS entry runs through `bun` as before.
-  const mcpBin = process.env.DISPATCH_MCP_BIN;
-  if (mcpBin !== undefined && mcpBin !== '') {
-    return {
-      type: 'stdio',
-      command: mcpBin,
-      args: ['--root', cwd],
-      env,
-      timeout: DISPATCH_MCP_TOOL_TIMEOUT_MS,
-    };
-  }
+// The Agent SDK's shape of one provider-neutral stdio server spec (see
+// ../dispatchMcp.ts for what each server is and why its env is an allowlist).
+function toSdkMcp(spec: StdioServerSpec): McpServerConfig {
   return {
     type: 'stdio',
-    command: 'bun',
-    args: [resolveMcpBin(), '--root', cwd],
-    env,
-    timeout: DISPATCH_MCP_TOOL_TIMEOUT_MS,
+    command: spec.command,
+    args: spec.args,
+    env: spec.env,
+    ...(spec.timeoutMs !== undefined ? { timeout: spec.timeoutMs } : {}),
   };
 }
 
-// Same allowlist rationale as MCP_ENV_PASSTHROUGH above; CARTO_MCP_TIER stays
-// absent so the agent's tool menu stays at carto's ~10-tool core.
-const CARTO_MCP_ENV_PASSTHROUGH: readonly string[] = [
-  'PATH',
-  'HOME',
-  'TMPDIR',
-  'LANG',
-  'LC_ALL',
-];
-
-// McpStdioServerConfig has no `cwd`, so `carto serve` (whose root is cwd, no
-// arg) runs via a shell wrapper. projectRoot/binary.path are passed as
-// positional params ($1/$2), never spliced into the script text, so the
-// shell never re-parses them — interpolating them (even JSON-escaped) would
-// let a `$(...)` or backtick in either value run as a shell command.
-//
-// Only reached for carto >= 2.1.4: earlier releases' `carto serve` didn't
-// connect its MCP transport when required as a library rather than run as
-// __main__ (carto#9), so cartoMcpServers below withholds the entry entirely.
+// Kept as the SDK-shaped entry points the overseer and tests use.
 export function buildCartoMcpServerConfig(
   projectRoot: string,
   binary: CartoBinary
 ): McpServerConfig {
-  const env: Record<string, string> = {};
-  for (const key of CARTO_MCP_ENV_PASSTHROUGH) {
-    const value = process.env[key];
-    if (value !== undefined) env[key] = value;
-  }
-  return {
-    type: 'stdio',
-    command: '/bin/sh',
-    args: ['-c', 'cd "$1" && exec "$2" serve', 'sh', projectRoot, binary.path],
-    env,
-  };
+  return toSdkMcp(cartoSpecFor(projectRoot, binary));
 }
 
-// Contributes a `carto` entry only when `carto.enabled` allows it, the
-// binary is actually present, and that binary is new enough to answer over
-// MCP — `off` means no MCP entry at all, and a spawn failure or a server
-// that never connects would cost every run a startup error for no benefit.
-// Runs once per dispatched run (Orchestrator calls start() once), so the
-// config read here is not on a hot path; a malformed config degrades to the
-// default `on`.
 export function cartoMcpServers(
   projectRoot: string
 ): Record<string, McpServerConfig> {
-  let mode: CartoMode = 'on';
-  try {
-    mode = loadConfig(projectRoot).carto.enabled;
-  } catch {
-    // A config Dispatch can't read must not decide carto policy by itself.
-  }
-  if (mode === 'off') return {};
-  const discovery = discoverCarto();
-  if (!discovery.ok) return {};
-  if (!supportsMcpServe(discovery.binary.version)) return {};
-  return { carto: buildCartoMcpServerConfig(projectRoot, discovery.binary) };
+  const spec = cartoMcpSpec(projectRoot);
+  return spec === null ? {} : { carto: toSdkMcp(spec) };
 }
 
 // A resolver for one canUseTool call this run is currently blocked on,
@@ -769,10 +618,12 @@ export class ClaudeExecutor implements Executor {
       // never pass it (FakeExecutor fixtures; a real run always passes it —
       // see orchestrator.ts).
       mcpServers: {
-        dispatch: buildDispatchMcpServerConfig(
-          opts.cwd,
-          opts.projectRoot ?? opts.cwd,
-          opts.runId ?? ''
+        dispatch: toSdkMcp(
+          dispatchMcpSpec(
+            opts.cwd,
+            opts.projectRoot ?? opts.cwd,
+            opts.runId ?? ''
+          )
         ),
         ...cartoMcpServers(opts.projectRoot ?? opts.cwd),
       },

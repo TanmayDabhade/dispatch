@@ -17,6 +17,8 @@ export interface OrchestratorConfig {
   maxBudgetUsd?: number;
   permissionMode: string;
   epicConcurrency: number;
+  /** The executor a dispatch runs on when the caller names none. */
+  executor: string;
 }
 
 export interface RepoDigestConfig {
@@ -67,6 +69,10 @@ export interface DispatchConfig {
   verifySteps?: VerifyStep[];
   orchestrator: OrchestratorConfig;
   models: ModelConfig;
+  /** Per-executor overrides of the execute-side model roles (see
+   *  `executorModels`). `loadConfig` always populates it; optional only so
+   *  hand-built config literals (test fixtures) stay valid. */
+  executors?: Record<string, ExecutorConfig>;
   linear: LinearConfig;
   fixLoop: FixLoopConfig;
   /** How to run this project for a `verify` run to exercise it. Absent means
@@ -340,6 +346,56 @@ export const MODEL_ROLES: readonly (keyof ModelConfig)[] = [
   'judge',
 ];
 
+/** The two model roles a run's executor decides: the coding model and the
+ *  lighter tier judged/reviewed routine work drops to. Either may be unset,
+ *  meaning "whatever that executor runs by default". */
+export interface ExecutorModels {
+  execute?: string;
+  plan?: string;
+}
+
+/** USD per million tokens, for an executor that reports usage but no cost. */
+export interface ExecutorPricing {
+  input: number;
+  /** Defaults to `input` when unset. */
+  cachedInput?: number;
+  output: number;
+}
+
+export interface ExecutorConfig {
+  models: ExecutorModels;
+  pricing?: ExecutorPricing;
+}
+
+export const EXECUTOR_PRICING_FIELDS: readonly (keyof ExecutorPricing)[] = [
+  'input',
+  'cachedInput',
+  'output',
+];
+
+export const EXECUTOR_MODEL_ROLES: readonly (keyof ExecutorModels)[] = [
+  'execute',
+  'plan',
+];
+
+/** The executor `orchestrator.executor` names when the config is silent. */
+export const DEFAULT_EXECUTOR_NAME = 'claude';
+
+// The one place a model is chosen for an executor: `models.execute`/`plan`
+// stay the Claude aliases, an `executors.<name>.models` block overlays them for
+// claude and is the whole answer for any other executor.
+export function executorModels(
+  config: Pick<DispatchConfig, 'models' | 'executors'>,
+  name: string
+): ExecutorModels {
+  const own = config.executors?.[name]?.models ?? {};
+  if (name !== DEFAULT_EXECUTOR_NAME) return { ...own };
+  return {
+    execute: own.execute ?? config.models.execute,
+    plan: own.plan ?? config.models.plan,
+  };
+}
+
 /** The subset of config the Settings screen can change. Everything else — statuses chief
  *  among them — is structural, and editing it from a form would invalidate existing tasks. */
 export interface ConfigPatch {
@@ -352,6 +408,13 @@ export interface ConfigPatch {
   maxBudgetUsd?: number | null;
   permissionMode?: OrchestratorConfig['permissionMode'];
   models?: Partial<ModelConfig>;
+  /** Writes `orchestrator.executor`. */
+  executor?: string;
+  /** Written key-by-key under `executors.<name>.models`. */
+  executors?: Record<
+    string,
+    { models?: Partial<ExecutorModels>; pricing?: ExecutorPricing }
+  >;
   linear?: Partial<LinearConfig>;
   fixLoop?: Partial<FixLoopConfig>;
   verify?: Partial<VerifyConfig>;

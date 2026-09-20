@@ -591,6 +591,7 @@ function App() {
     return {
       doc,
       defaultModel: resolveExecuteModel(data.config),
+      executors: data.executors ?? undefined,
       statuses: data.config.statuses,
       ready: data.readyIds.has(doc.meta.id),
       run: data.latestRunByTaskId.get(doc.meta.id),

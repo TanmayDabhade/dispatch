@@ -49,8 +49,10 @@ describe('loadConfig', () => {
         permissionMode: 'auto',
         epicConcurrency: 3,
         verifyTimeoutSec: 600,
+        executor: 'claude',
       },
       models: DEFAULT_MODELS,
+      executors: {},
       linear: DEFAULT_LINEAR,
       fixLoop: DEFAULT_FIX_LOOP,
       carto: DEFAULT_CARTO,
@@ -163,6 +165,7 @@ describe('loadConfig', () => {
         permissionMode: 'auto',
         epicConcurrency: 3,
         verifyTimeoutSec: 600,
+        executor: 'claude',
       });
     });
 
@@ -178,6 +181,7 @@ describe('loadConfig', () => {
         permissionMode: 'plan',
         epicConcurrency: 5,
         verifyTimeoutSec: 600,
+        executor: 'claude',
       });
     });
 

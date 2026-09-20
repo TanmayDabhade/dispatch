@@ -1,4 +1,4 @@
-import { loadConfig } from '@dispatch/core';
+import { executorModels, loadConfig } from '@dispatch/core';
 import type { TaskDoc, TaskStorePort, VerifyConfig } from '@dispatch/core';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
@@ -246,11 +246,13 @@ export class VerificationRunner {
       };
     }
     const recipe = config.verify;
+    const executor = this.ctx.orchestrator.executorForTask(opts.taskId);
     const meta = await this.ctx.orchestrator.dispatchAuxRun({
       taskId: opts.taskId,
       kind: 'verify',
       head: opts.head,
-      model: config.models.execute,
+      executor,
+      model: executorModels(config, executor).execute,
       buildPrompt: ({ runId, worktreePath }) => {
         const artifactsDir = verifyDir(this.ctx.rootDir, runId);
         mkdirSync(artifactsDir, { recursive: true });

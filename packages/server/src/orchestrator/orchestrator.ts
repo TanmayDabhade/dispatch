@@ -1,5 +1,6 @@
 import {
   DISPATCH_DIR,
+  executorModels,
   generateRunId,
   loadConfig,
   nextSubagentStatus,
@@ -80,6 +81,8 @@ import type {
   BranchEntryStatus,
   Executor,
   ExecutorEvents,
+  ExecutorInfo,
+  ExecutorProfile,
   ExecutorStartOptions,
   NormalizedEntry,
   ReviewFailure,
@@ -89,6 +92,7 @@ import type {
   RunSurvey,
 } from './types.js';
 import {
+  DEFAULT_EXECUTOR_PROFILE,
   MergeEnvironmentError,
   OrchestratorClientError,
   OrchestratorConflictError,
@@ -187,7 +191,6 @@ interface ScopeRequestCarrier {
 // resolveExecutorForResume below), since that's overwhelmingly the common
 // case (a run created with a dev-only executor, now being resumed under a
 // daemon that only has the real one).
-const DEFAULT_EXECUTOR_NAME = 'claude';
 
 // The ref namespace every run's branch is created under (see dispatch()) and
 // the prefix listBranches() enumerates. Kept as one constant so the writer and
@@ -456,6 +459,61 @@ export class Orchestrator {
     return [...this.executors.keys()];
   }
 
+  /** The executor a dispatch runs on when nobody names one: `orchestrator.executor`. */
+  defaultExecutorName(): string {
+    return this.orchestratorCaps().executor;
+  }
+
+  /** Every registered executor with its profile flags, for clients that offer a choice. */
+  describeExecutors(): ExecutorInfo[] {
+    return [...this.executors.keys()].sort().map((name) => {
+      const profile = this.executorProfile(name);
+      return {
+        name,
+        reportsCost: profile.reportsCost,
+        reportsTurns: profile.reportsTurns,
+        enforcesCaps: profile.enforcesCaps,
+      };
+    });
+  }
+
+  /** A registered executor's profile, or the Claude-shaped default for one that declares none. */
+  executorProfile(name: string): ExecutorProfile {
+    return this.executors.get(name)?.profile ?? DEFAULT_EXECUTOR_PROFILE;
+  }
+
+  // The executor a task's follow-up runs (fix, verify, review) should use: the
+  // newest execute run's, so a task stays with one provider, else the default.
+  executorForTask(taskId: string): string {
+    const newest = this.registry
+      .list()
+      .filter(
+        (run) =>
+          run.taskId === taskId &&
+          (run.kind === undefined || run.kind === 'execute')
+      )
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+    if (newest !== undefined && this.executors.has(newest.executor)) {
+      return newest.executor;
+    }
+    return this.defaultExecutorName();
+  }
+
+  // Refuses, before any worktree or run record exists, an executor that cannot
+  // honour the project's permission mode.
+  private assertPermissionMode(
+    executorName: string,
+    permissionMode: string
+  ): void {
+    const refusal =
+      this.executorProfile(executorName).permissionRefusal(permissionMode);
+    if (refusal !== null) {
+      throw new OrchestratorClientError(
+        `executor ${executorName} cannot run under permissionMode ${permissionMode}: ${refusal}`
+      );
+    }
+  }
+
   list(): RunMeta[] {
     return this.registry.list();
   }
@@ -626,6 +684,10 @@ export class Orchestrator {
     if (executor === undefined) {
       throw new OrchestratorClientError(`unknown executor: ${executorName}`);
     }
+    this.assertPermissionMode(
+      executorName,
+      this.orchestratorCaps().permissionMode
+    );
 
     const { base: baseBranch, stackParents } = await this.resolveBase(task);
     const now = new Date().toISOString();
@@ -724,7 +786,11 @@ export class Orchestrator {
       );
     }
     const { executor, name: executorName } = this.resolveExecutorForResume(
-      opts.executor ?? DEFAULT_EXECUTOR_NAME
+      opts.executor ?? this.defaultExecutorName()
+    );
+    this.assertPermissionMode(
+      executorName,
+      this.orchestratorCaps().permissionMode
     );
 
     const now = new Date().toISOString();
@@ -1946,8 +2012,14 @@ export class Orchestrator {
       }
     }
     const executorName =
-      request.executor ?? request.defaults?.executor ?? DEFAULT_EXECUTOR_NAME;
-    const { model, reason } = await this.modelForFreshRun(taskId, request);
+      request.executor ??
+      request.defaults?.executor ??
+      this.defaultExecutorName();
+    const { model, reason } = await this.modelForFreshRun(
+      taskId,
+      executorName,
+      request
+    );
     const meta = await this.dispatch(taskId, executorName, {
       model,
       actor: request.actor,
@@ -1967,26 +2039,33 @@ export class Orchestrator {
   // The model a fresh dispatch runs on. Anything the caller NAMED wins, so
   // the named-vs-defaulted distinction resume turns on is untouched
   // (resumeHonoursRequest has already run, on the raw request). With nothing
-  // named, a judgment may lower the tier for routine, small work (see
-  // judgments/modelTier.ts); otherwise the caller's default, then the
-  // project's configured `models.execute` as the last fallback, so a caller
-  // that resolves no default still lands where settings chose. Resolving
-  // that per caller instead is what silently ran a whole 2026-09-08 fleet on
-  // the CLI's default model: only the HTTP route passed `defaults`, while the
-  // epic auto-fill and the overseer's dispatch tool passed none, and the
-  // config key looked ignored.
+  // named, the executor's own configured tiers decide (see executorModels): a
+  // judgment may lower routine, small work to the `plan` tier when the
+  // executor has one; otherwise the caller's default, then the executor's
+  // configured `execute` model, which is undefined for an executor left on its
+  // own default. Resolved here rather than per caller so the epic auto-fill,
+  // the overseer's dispatch tool and the HTTP route all land the same way.
   private async modelForFreshRun(
     taskId: string,
+    executorName: string,
     request: { model?: string; defaults?: { model?: string } }
   ): Promise<RunModelChoice> {
     if (request.model !== undefined) {
       return { model: request.model, reason: null };
     }
-    const models = loadConfig(this.ctx.rootDir).models;
+    const models = executorModels(loadConfig(this.ctx.rootDir), executorName);
     const task = this.ctx.store.get(taskId);
     const judgments = this.ctx.judgments ?? null;
-    if (task !== null && judgments !== null) {
-      const judged = await judgeRunModel(judgments, task, models);
+    if (
+      task !== null &&
+      judgments !== null &&
+      models.execute !== undefined &&
+      models.plan !== undefined
+    ) {
+      const judged = await judgeRunModel(judgments, task, {
+        execute: models.execute,
+        plan: models.plan,
+      });
       if (judged.reason !== null) return judged;
     }
     return { model: request.defaults?.model ?? models.execute, reason: null };
@@ -4375,7 +4454,11 @@ export class Orchestrator {
         filesChanged = 0;
       }
     }
-    const cost = (effectiveFinish.costUsd ?? 0).toFixed(2);
+    // An executor that reports no cost (Codex) must not read as free.
+    const cost =
+      effectiveFinish.costUsd === undefined
+        ? 'cost n/a'
+        : `$${effectiveFinish.costUsd.toFixed(2)}`;
     const now = new Date().toISOString();
     // An unreadable or unwritable task file must not skip the hooks below,
     // which are what free the epic engine's next dispatch.
@@ -4383,7 +4466,7 @@ export class Orchestrator {
       const task = this.ctx.store.get(meta.taskId);
       if (task === null) return;
       const patch: UpdatePatch = {
-        appendActivity: `${now} [run ${runId}] finished: ${effectiveFinish.state} — ${filesChanged} files, $${cost}`,
+        appendActivity: `${now} [run ${runId}] finished: ${effectiveFinish.state} — ${filesChanged} files, ${cost}`,
         // The run's own executor reaching its own terminal state — credited
         // to the agent that ran it, not whoever happens to be operating the
         // daemon right now.
@@ -4418,11 +4501,12 @@ export class Orchestrator {
     if (direct !== undefined) {
       return { executor: direct, name: executorName, substituted: false };
     }
-    const fallbackDefault = this.executors.get(DEFAULT_EXECUTOR_NAME);
+    const defaultName = this.defaultExecutorName();
+    const fallbackDefault = this.executors.get(defaultName);
     if (fallbackDefault !== undefined) {
       return {
         executor: fallbackDefault,
-        name: DEFAULT_EXECUTOR_NAME,
+        name: defaultName,
         substituted: true,
       };
     }

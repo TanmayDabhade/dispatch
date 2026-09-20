@@ -123,10 +123,9 @@ export interface ExecutorStartOptions {
   permissionMode: string;
   maxTurns?: number;
   maxBudgetUsd?: number;
-  // The Claude model this run should use (an SDK model id like
-  // 'claude-opus-5' or an alias like 'sonnet'), chosen at dispatch time.
-  // Optional — omitted falls back to the SDK/CLI default, so FakeExecutor
-  // fixtures and callers that don't care never need to set it.
+  // The executor-specific model this run should use, chosen at dispatch time.
+  // Optional — omitted uses that executor's default behavior, so fixtures and
+  // callers that don't care never need to set it.
   model?: string;
   // The dispatch PROJECT's root directory — distinct from `cwd`, which for a
   // real run is the run's own git worktree (a different directory than the
@@ -148,10 +147,39 @@ export interface ExecutorStartOptions {
   runId?: string;
 }
 
-// The load-bearing seam (spec §2): every agent backend — FakeExecutor here in
-// O1, the real Claude Agent SDK in O2 — implements this one interface so the
-// orchestrator never branches on which executor is running.
+// What the orchestrator may assume about an executor beyond `start()`: which
+// finish fields are real, whether it enforces the run caps itself, and which
+// permission modes it can honour. Missing profile means "behaves like Claude".
+export interface ExecutorProfile {
+  /** Whether onFinish carries a real costUsd. */
+  reportsCost: boolean;
+  /** Whether onFinish carries a real turn count. */
+  reportsTurns: boolean;
+  /** Whether the executor itself honours maxTurns/maxBudgetUsd. */
+  enforcesCaps: boolean;
+  /** Why this executor cannot run under `permissionMode`, or null when it can. */
+  permissionRefusal(permissionMode: string): string | null;
+}
+
+/** One registered executor as GET /api/executors reports it. */
+export interface ExecutorInfo {
+  name: string;
+  reportsCost: boolean;
+  reportsTurns: boolean;
+  enforcesCaps: boolean;
+}
+
+export const DEFAULT_EXECUTOR_PROFILE: ExecutorProfile = {
+  reportsCost: true,
+  reportsTurns: true,
+  enforcesCaps: true,
+  permissionRefusal: () => null,
+};
+
+// The load-bearing seam: every agent backend implements this one interface so
+// the orchestrator never branches on which executor is running.
 export interface Executor {
+  readonly profile?: ExecutorProfile;
   start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun;
 }
 
