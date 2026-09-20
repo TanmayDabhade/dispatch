@@ -116,6 +116,15 @@ const taskSummaryShape = {
   updated: z.string(),
 };
 
+// The daemon's readiness reading — mirrors ReadinessReading in
+// packages/server/src/judgments/readiness.ts.
+const readinessShape = z.object({
+  level: z.number(),
+  label: z.string(),
+  confidence: z.number(),
+  splitProbability: z.number(),
+});
+
 const taskMetaShape = {
   ...taskSummaryShape,
   external: z.string().nullable(),
@@ -647,9 +656,19 @@ async function taskNext(rootDir: string): Promise<ToolOutcome> {
     // cache, so this is the same graph rule the local branch below runs —
     // not a second implementation of it.
     try {
-      const docs = await daemonDocs(route.daemon, '/api/tasks/ready');
+      // The daemon attaches a readiness reading per task when it has a
+      // judgment client; passed through so an agent can tell a bare title
+      // from a real spec before it picks one up.
+      const docs = await daemonRequest<(TaskDoc & { readiness?: unknown })[]>(
+        route.daemon,
+        '/api/tasks/ready'
+      );
       return toolResult({
-        tasks: docs.map(toSummary),
+        tasks: docs.map((doc) =>
+          doc.readiness === undefined
+            ? toSummary(doc)
+            : { ...toSummary(doc), readiness: doc.readiness }
+        ),
         problems: route.problems,
       });
     } catch (err) {
@@ -1533,7 +1552,15 @@ export function registerDispatchTools(
       description:
         'List tasks ready to start now: kind task, status todo, all blockers done. Priority-ordered.',
       outputSchema: {
-        tasks: z.array(z.object(taskSummaryShape)),
+        tasks: z.array(
+          z.object({
+            ...taskSummaryShape,
+            // Present only through a daemon with a judgment client: how
+            // completely the spec says what done looks like (0 = title
+            // only .. 3 = criteria and surface both named).
+            readiness: readinessShape.optional(),
+          })
+        ),
         problems: z.array(z.string()),
       },
       annotations: { readOnlyHint: true },

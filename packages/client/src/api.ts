@@ -1202,6 +1202,17 @@ export interface InboxClusterSnapshot {
   updatedAt: string;
 }
 
+/** How completely a task spec says what done looks like — mirrors
+ * ReadinessReading in packages/server/src/judgments/readiness.ts. */
+export interface ReadinessReading {
+  /** 0 = title only .. 3 = acceptance criteria and surface both named. */
+  level: 0 | 1 | 2 | 3;
+  label: string;
+  confidence: number;
+  /** Probability the task bundles two or more independently doable changes. */
+  splitProbability: number;
+}
+
 /** What the triage judged one capture to be — mirrors InboxTriage in
  * packages/server/src/judgments/inboxTriage.ts. */
 export interface InboxTriage {
@@ -1774,7 +1785,11 @@ export interface ApiClient {
   /** The board syncer's last attempt plus live pending counts — the sync chip's data source. */
   fetchSyncStatus(): Promise<SyncStatus>;
   fetchTasks(filter?: TaskFilter): Promise<TaskDoc[]>;
-  fetchReadyTasks(): Promise<TaskDoc[]>;
+  /** Each doc carries `readiness` when the daemon has a judgment client. */
+  fetchReadyTasks(): Promise<(TaskDoc & { readiness?: ReadinessReading })[]>;
+  /** The cached readiness readings by task id, for the board — no judging
+   * happens here; `fetchReadyTasks` is what refreshes stale ones. */
+  fetchReadiness(): Promise<Record<string, ReadinessReading>>;
   fetchTask(id: string): Promise<TaskDoc>;
   createTask(input: CreateInput): Promise<TaskDoc>;
   updateTask(id: string, patch: UpdatePatch): Promise<TaskDoc>;
@@ -2329,6 +2344,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     fetchTasks: (filter = {}) =>
       request(target, `/api/tasks${taskQueryString(filter)}`),
     fetchReadyTasks: () => request(target, '/api/tasks/ready'),
+    fetchReadiness: () => request(target, '/api/tasks/readiness'),
     fetchTask: (id) => request(target, `/api/tasks/${id}`),
     createTask: (input) =>
       request(target, '/api/tasks', { method: 'POST', ...jsonBody(input) }),

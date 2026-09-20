@@ -14,7 +14,7 @@ import type { TaskDoc } from './types.js';
  * initiative rank, and due-date proximity once the planning hierarchy exists;
  * those arrive as new rows in the factor table below, not as a rewrite here.
  */
-export type ScoreFactorKey = 'urgency' | 'unblocking' | 'age';
+export type ScoreFactorKey = 'urgency' | 'unblocking' | 'age' | 'readiness';
 
 /** How much each factor counts, keyed by factor. 0 turns a factor off. */
 export type QueueWeights = Record<ScoreFactorKey, number>;
@@ -23,13 +23,25 @@ export type QueueWeights = Record<ScoreFactorKey, number>;
  * Urgency leads because a person set it deliberately; unblocking is worth
  * roughly two thirds of that because freeing other work is real but indirect;
  * age is a small counterweight that eventually rescues a starved task rather
- * than a driver of ordering on its own.
+ * than a driver of ordering on its own. Readiness sits between: a judged
+ * title-only spec should lose to a well-specified peer but not to age alone.
  */
 export const DEFAULT_QUEUE_WEIGHTS: QueueWeights = Object.freeze({
   urgency: 1,
   unblocking: 0.6,
   age: 0.3,
+  readiness: 0.5,
 });
+
+/** The daemon's readiness reading for one task, as the ranking consumes it
+ *  (see packages/server's judgments/readiness.ts for the full reading). */
+export interface ReadinessLevel {
+  /** 0 (title only) .. 3 (criteria and surface both named). */
+  level: number;
+}
+
+/** The rubric's top level; a value of 1 means "fully specified". */
+const READINESS_TOP_LEVEL = 3;
 
 /**
  * The dependent count at which the unblocking factor reaches 0.5. The curve is
@@ -86,6 +98,10 @@ export interface RankOptions {
   now: string;
   /** Keep only the top N. Applied after ranking. */
   limit?: number;
+  /** Readiness readings by task id. Omitted — no judgment client, or none
+   *  judged yet — the readiness factor drops out of the weighted mean
+   *  entirely, so the ranking is byte-for-byte what it was without it. */
+  readiness?: Record<string, ReadinessLevel>;
 }
 
 /** What a factor is, without the function that computes it: the shape config
@@ -104,6 +120,7 @@ export interface QueueFactorInfo {
 interface ScoringContext {
   nowMs: number;
   dependents: Map<string, DependentCount>;
+  readiness: Record<string, ReadinessLevel> | undefined;
 }
 
 interface DependentCount {
@@ -168,6 +185,20 @@ function readAge(task: TaskDoc, ctx: ScoringContext): FactorReading {
   };
 }
 
+// A judged task reads its level as a fraction of the rubric top; a task the
+// daemon has no reading for scores as fully ready, so a missing judgment never
+// demotes. When no readings exist at all the factor's weight is zeroed in
+// rankTasks, so this value never moves a score.
+function readReadiness(task: TaskDoc, ctx: ScoringContext): FactorReading {
+  const reading = ctx.readiness?.[task.meta.id];
+  if (reading === undefined) return { value: 1, detail: 'not judged' };
+  const level = Math.min(READINESS_TOP_LEVEL, Math.max(0, reading.level));
+  return {
+    value: level / READINESS_TOP_LEVEL,
+    detail: `spec level ${level} of ${READINESS_TOP_LEVEL}`,
+  };
+}
+
 // The factor table, in the order a breakdown renders. This is the extension
 // point: the full scoring service appends `project`, `initiative`, and
 // `dueDate` rows here (plus their keys, weights, and any derived context) and
@@ -191,6 +222,12 @@ const FACTORS: readonly FactorDefinition[] = [
     label: 'Age',
     describes: 'how long the task has been waiting',
     read: readAge,
+  },
+  {
+    key: 'readiness',
+    label: 'Spec readiness',
+    describes: 'how completely the task says what done looks like',
+    read: readReadiness,
   },
 ];
 
@@ -331,17 +368,26 @@ export function rankTasks(
       tasks,
       candidates.map((task) => task.meta.id)
     ),
+    readiness: options.readiness,
   };
 
+  // Without readings the readiness factor leaves the mean altogether: the
+  // score is a weighted mean, so even a constant value would otherwise
+  // rescale every total against the pre-judgment ranking.
+  const weightFor = (key: ScoreFactorKey): number =>
+    key === 'readiness' && options.readiness === undefined
+      ? 0
+      : usableWeight(options.weights, key);
+
   const weightSum = QUEUE_FACTOR_KEYS.reduce(
-    (sum, key) => sum + usableWeight(options.weights, key),
+    (sum, key) => sum + weightFor(key),
     0
   );
 
   const scored = candidates.map((task): ScoredTask => {
     const factors = FACTORS.map((factor): ScoreFactor => {
       const { value, detail } = factor.read(task, ctx);
-      const weight = usableWeight(options.weights, factor.key);
+      const weight = weightFor(factor.key);
       return {
         key: factor.key,
         value,

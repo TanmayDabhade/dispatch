@@ -8,6 +8,7 @@ import {
 import type { QueueFactorInfo } from '@dispatch/core';
 
 import type { ApiContext } from '../api.js';
+import { ReadinessStore } from '../judgments/readiness.js';
 import { errorResponse, jsonResponse, parseCountParam } from './http.js';
 
 // The GET /api/queue response body. Deliberately not exported: nothing outside
@@ -51,6 +52,16 @@ export function getQueue(ctx: ApiContext, url: URL): Response {
   const weights = queueWeights(loadConfig(ctx.rootDir));
   if (!weights.ok) return errorResponse(422, weights.error);
   const generatedAt = new Date().toISOString();
+  // Cached readings only — the ready route is what judges stale tasks. An
+  // empty cache is passed as `undefined` so the readiness factor stays out
+  // of the mean and the ranking matches a daemon with no judgment client.
+  const cached = new ReadinessStore(ctx.rootDir).load();
+  const readiness =
+    Object.keys(cached).length === 0
+      ? undefined
+      : Object.fromEntries(
+          Object.entries(cached).map(([id, entry]) => [id, entry.reading])
+        );
   const snapshot: QueueSnapshot = {
     factors: QUEUE_FACTORS,
     weights: weights.weights,
@@ -59,6 +70,7 @@ export function getQueue(ctx: ApiContext, url: URL): Response {
       weights: weights.weights,
       now: generatedAt,
       limit: limit.value,
+      readiness,
     }),
   };
   return jsonResponse(snapshot);

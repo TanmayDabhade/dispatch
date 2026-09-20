@@ -51,6 +51,7 @@ export type {
   QueueFactorInfo,
   QueueWeights,
   RankOptions,
+  ReadinessLevel,
   ScoredTask,
   ScoreFactor,
   ScoreFactorKey,

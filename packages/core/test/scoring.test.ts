@@ -408,7 +408,7 @@ describe('weighting and the breakdown', () => {
   });
 
   it('falls back to oldest-then-id ordering when every weight is zero', () => {
-    const weights = { urgency: 0, unblocking: 0, age: 0 };
+    const weights = { urgency: 0, unblocking: 0, age: 0, readiness: 0 };
     const newer = make({ id: 't-aaaaaa', created: daysAgo(1) });
     const older = make({ id: 't-bbbbbb', created: daysAgo(9) });
 
@@ -455,7 +455,7 @@ describe('unusable weights', () => {
     const low = make({ id: 't-bbbbbb', priority: 'low' });
 
     const ranked = rankTasks([urgent, low], {
-      weights: { urgency: 1, unblocking: Number.NaN, age: 0 },
+      weights: { urgency: 1, unblocking: Number.NaN, age: 0, readiness: 0 },
       now: NOW,
     });
 
@@ -469,7 +469,12 @@ describe('unusable weights', () => {
 
   it('ignores an Infinity weight rather than collapsing the score to NaN', () => {
     const [entry] = rankTasks([make({ priority: 'urgent' })], {
-      weights: { urgency: Number.POSITIVE_INFINITY, unblocking: 1, age: 0 },
+      weights: {
+        urgency: Number.POSITIVE_INFINITY,
+        unblocking: 1,
+        age: 0,
+        readiness: 0,
+      },
       now: NOW,
     });
 
@@ -481,11 +486,63 @@ describe('unusable weights', () => {
   // but a caller handing rankTasks raw JSON can still get one here.
   it('ignores a negative weight', () => {
     const [entry] = rankTasks([make({ priority: 'urgent' })], {
-      weights: { urgency: 1, unblocking: 0, age: -5 },
+      weights: { urgency: 1, unblocking: 0, age: -5, readiness: 0 },
       now: NOW,
     });
 
     expect(entry?.score).toBe(1);
     expect(entry?.factors.find((f) => f.key === 'age')?.weight).toBe(0);
+  });
+});
+
+describe('readiness factor', () => {
+  it('is inert when no readings are supplied: scores match a ranking without it', () => {
+    const tasks = [
+      make({ id: 't-000001', priority: 'urgent', created: daysAgo(10) }),
+      make({ id: 't-000002', priority: 'low', created: daysAgo(2) }),
+    ];
+    const without = rankTasks(tasks, {
+      weights: { ...DEFAULT_QUEUE_WEIGHTS, readiness: 0 },
+      now: NOW,
+    });
+    const withDefault = rankTasks(tasks, {
+      weights: DEFAULT_QUEUE_WEIGHTS,
+      now: NOW,
+    });
+    expect(withDefault.map((s) => [s.task.meta.id, s.score])).toEqual(
+      without.map((s) => [s.task.meta.id, s.score])
+    );
+    const factor = withDefault[0]?.factors.find((f) => f.key === 'readiness');
+    expect(factor?.weight).toBe(0);
+    expect(factor?.detail).toBe('not judged');
+  });
+
+  it('demotes a task judged title-only and reads the level as its value', () => {
+    const tasks = [make({ id: 't-000001' }), make({ id: 't-000002' })];
+    const ranked = rankTasks(tasks, {
+      weights: only('readiness'),
+      now: NOW,
+      readiness: { 't-000001': { level: 0 }, 't-000002': { level: 3 } },
+    });
+    expect(ranked.map((s) => s.task.meta.id)).toEqual(['t-000002', 't-000001']);
+    expect(ranked[0]?.factors.find((f) => f.key === 'readiness')?.value).toBe(
+      1
+    );
+    expect(ranked[1]?.factors.find((f) => f.key === 'readiness')?.value).toBe(
+      0
+    );
+  });
+
+  it('treats an unjudged task as fully ready when others are judged', () => {
+    const tasks = [make({ id: 't-000001' }), make({ id: 't-000002' })];
+    const ranked = rankTasks(tasks, {
+      weights: only('readiness'),
+      now: NOW,
+      readiness: { 't-000002': { level: 1 } },
+    });
+    const unjudged = ranked.find((s) => s.task.meta.id === 't-000001');
+    const factor = unjudged?.factors.find((f) => f.key === 'readiness');
+    expect(factor?.value).toBe(1);
+    expect(factor?.detail).toBe('not judged');
   });
 });

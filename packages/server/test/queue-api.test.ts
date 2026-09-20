@@ -151,7 +151,12 @@ describe('GET /api/queue', () => {
 
     const body = await json<QueueBody>(await getQueue());
 
-    expect(body.weights).toEqual({ urgency: 1, unblocking: 0.6, age: 0.3 });
+    expect(body.weights).toEqual({
+      urgency: 1,
+      unblocking: 0.6,
+      age: 0.3,
+      readiness: 0.5,
+    });
     expect(body.factors).toEqual([
       {
         key: 'urgency',
@@ -167,6 +172,11 @@ describe('GET /api/queue', () => {
         key: 'age',
         label: 'Age',
         describes: 'how long the task has been waiting',
+      },
+      {
+        key: 'readiness',
+        label: 'Spec readiness',
+        describes: 'how completely the task says what done looks like',
       },
     ]);
     expect(Date.parse(body.generatedAt)).not.toBeNaN();
@@ -188,7 +198,12 @@ describe('GET /api/queue', () => {
 
     const body = await json<QueueBody>(await getQueue());
 
-    expect(body.weights).toEqual({ urgency: 0, unblocking: 0, age: 1 });
+    expect(body.weights).toEqual({
+      urgency: 0,
+      unblocking: 0,
+      age: 1,
+      readiness: 0.5,
+    });
     expect(body.tasks.map((entry) => entry.task.meta.id)).toEqual([
       't-bbbbbb',
       't-aaaaaa',
@@ -224,7 +239,7 @@ describe('GET /api/queue', () => {
     const body = await json<QueueBody>(await getQueue());
 
     expect(body.tasks).toEqual([]);
-    expect(body.factors).toHaveLength(3);
+    expect(body.factors).toHaveLength(4);
   });
 
   // A blocker in review is dispatch-satisfied, so the orchestrator would start
@@ -283,6 +298,7 @@ describe('GET /api/queue with a broken queue block', () => {
       urgency: 1,
       unblocking: 0.6,
       age: 0.3,
+      readiness: 0.5,
     });
   });
 });
@@ -308,7 +324,12 @@ describe('PATCH /api/config queue.weights', () => {
     expect(res.status).toBe(200);
 
     const after = await json<QueueBody>(await getQueue());
-    expect(after.weights).toEqual({ urgency: 0, unblocking: 0, age: 1 });
+    expect(after.weights).toEqual({
+      urgency: 0,
+      unblocking: 0,
+      age: 1,
+      readiness: 0.5,
+    });
     expect(after.tasks.map((e) => e.task.meta.id)).toEqual([
       't-bbbbbb',
       't-aaaaaa',
@@ -329,6 +350,7 @@ describe('PATCH /api/config queue.weights', () => {
       urgency: 2,
       unblocking: 0.6,
       age: 5,
+      readiness: 0.5,
     });
   });
 

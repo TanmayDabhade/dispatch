@@ -60,6 +60,7 @@ export type {
   InboxItem,
   InboxTriage,
   InboxTriageSnapshot,
+  ReadinessReading,
   InboxKind,
   CreateNoteInput,
   LandedRow,

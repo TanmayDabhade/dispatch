@@ -94,6 +94,7 @@ import {
   triageInbox,
   untriagedForClustering,
 } from './judgments/inboxTriage.js';
+import { readinessFor, ReadinessStore } from './judgments/readiness.js';
 import { buildLandingSnapshot } from './landing.js';
 import type { LedgerStorePort } from './ledger.js';
 import { HttpLinearClient } from './linear/client.js';
@@ -3738,6 +3739,37 @@ async function clusterInbox(ctx: ApiContext): Promise<Response> {
   }
 }
 
+// GET /api/tasks/ready — the ready set with each task's readiness reading
+// attached (`readiness` absent when no judgment client is configured or the
+// task could not be judged). Stale tasks are judged here, on demand, so the
+// reading is as fresh as the text it describes.
+async function getReadyTasks(ctx: ApiContext): Promise<Response> {
+  const ready = ctx.cache.ready();
+  const readings = await readinessFor(
+    ctx.judgments,
+    ready,
+    new ReadinessStore(ctx.rootDir)
+  );
+  return jsonResponse(
+    ready.map((doc) => {
+      const readiness = readings[doc.meta.id];
+      return readiness === undefined ? doc : { ...doc, readiness };
+    })
+  );
+}
+
+// The readiness cache as `{ [taskId]: reading }`, with the hashes dropped:
+// they are the store's concern, not the client's.
+function cachedReadiness(ctx: ApiContext): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [id, entry] of Object.entries(
+    new ReadinessStore(ctx.rootDir).load()
+  )) {
+    out[id] = entry.reading;
+  }
+  return out;
+}
+
 // GET /api/inbox/clusters — the persisted result of the last clustering pass,
 // or null when none has ever run (or the cache was corrupt).
 function getInboxClusters(ctx: ApiContext): Response {
@@ -4195,7 +4227,16 @@ export async function handleApi(
         segments[1] === 'ready' &&
         method === 'GET'
       ) {
-        return jsonResponse(ctx.cache.ready());
+        return await getReadyTasks(ctx);
+      }
+      // GET /api/tasks/readiness — the cached readings as-is, for the board,
+      // which renders the whole task list rather than the ready route.
+      if (
+        segments.length === 2 &&
+        segments[1] === 'readiness' &&
+        method === 'GET'
+      ) {
+        return jsonResponse(cachedReadiness(ctx));
       }
       if (segments.length === 2 && method === 'GET') {
         const doc = ctx.cache.get(segments[1]);

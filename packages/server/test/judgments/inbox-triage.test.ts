@@ -56,10 +56,12 @@ function task(
       model: null,
       selfReview: true,
       writes: [],
+      external: null,
+      exercised: false,
       created: '2026-09-01T00:00:00.000Z',
       updated: '2026-09-01T00:00:00.000Z',
       ...over,
-    } as TaskDoc['meta'],
+    },
     body,
   };
 }

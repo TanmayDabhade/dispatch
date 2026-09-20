@@ -16,7 +16,7 @@ import { dirname, join } from 'node:path';
 import type { InboxItem, InboxKind } from '../inbox.js';
 import { INBOX_KINDS } from '../inbox.js';
 import type { JudgmentClient } from './client.js';
-import { capText, warnOnce } from './client.js';
+import { capText, mapLimit, warnOnce } from './client.js';
 
 /**
  * Triage for inbox captures: per item, which kind it really is, which open
@@ -267,26 +267,6 @@ export function interpretTriage(
     epicConfidence: epic?.confidence ?? 0,
     duplicates,
   };
-}
-
-// Runs `fn` over `items` with at most `limit` in flight.
-async function mapLimit<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T) => Promise<R>
-): Promise<R[]> {
-  const results: R[] = new Array<R>(items.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) {
-      const i = next++;
-      results[i] = await fn(items[i]);
-    }
-  };
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, worker)
-  );
-  return results;
 }
 
 /**
