@@ -1075,6 +1075,22 @@ export interface AgentSessionMeta {
   updatedAt: string;
 }
 
+// Mirrors packages/server/src/orchestrator/types.ts's ExecutorInfo.
+export interface ExecutorInfo {
+  name: string;
+  /** Whether a finished run's `costUsd` is real; a `false` executor's runs show no cost. */
+  reportsCost: boolean;
+  reportsTurns: boolean;
+  /** Whether the executor honours `orchestrator.maxTurns`/`maxBudgetUsd` itself. */
+  enforcesCaps: boolean;
+}
+
+export interface ExecutorsResponse {
+  executors: ExecutorInfo[];
+  /** `orchestrator.executor`: what a dispatch that names no executor runs on. */
+  default: string;
+}
+
 // Mirrors EpicSessionState / EpicPauseReason in
 // packages/server/src/orchestrator/epic.ts.
 export type EpicSessionState = 'active' | 'paused' | 'stopped' | 'complete';
@@ -1216,6 +1232,9 @@ export interface InboxItem {
 export interface InboxConvertResult {
   id: string;
   taskId?: string;
+  /** An existing task the triage judged this capture a duplicate of; the
+   * task was still created — this is a heads-up, not a refusal. */
+  duplicateOf?: string;
   error?: string;
 }
 
@@ -1946,9 +1965,12 @@ export interface ApiClient {
   // re-dispatch cannot silently abandon work an agent had nearly finished.
   createRun(
     taskId: string,
-    opts?: { executor?: 'fake' | 'claude'; model?: string; fresh?: boolean }
+    opts?: { executor?: string; model?: string; fresh?: boolean }
   ): Promise<RunMeta>;
   fetchRuns(): Promise<RunMeta[]>;
+  // The executors this daemon registered (`GET /api/executors`) and which
+  // one a dispatch that names none runs on.
+  fetchExecutors(): Promise<ExecutorsResponse>;
   // Every in-memory conversation agent (planner chats, enrich agents, task
   // drafts, overseer chats), newest activity first — the non-run half of the
   // All agents page; merge with `fetchRuns` for the full picture. Refetch on
@@ -2524,6 +2546,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         }),
       }),
     fetchRuns: () => request(target, '/api/runs'),
+    fetchExecutors: () => request(target, '/api/executors'),
     fetchAgentSessions: () => request(target, '/api/agents'),
     fetchRun: (id) => request(target, `/api/runs/${id}`),
     fetchRunClaims: () => request(target, '/api/runs/claims'),

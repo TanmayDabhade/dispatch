@@ -374,9 +374,9 @@ describe('headless dispatcher loop (real daemon, built CLI subprocess)', () => {
       dispatchHome,
     });
     expect(result.code).not.toBe(0);
-    expect(result.stderr).toContain(
-      'invalid executor: wombat (expected claude|fake)'
-    );
+    // The list names what this daemon registered, which depends on the
+    // machine (codex only when installed), so only the shape is asserted.
+    expect(result.stderr).toContain('invalid executor: wombat (expected ');
   });
 
   it('--json shapes: runs, run show, and task list are all valid parseable JSON', () => {

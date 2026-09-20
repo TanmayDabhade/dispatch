@@ -41,7 +41,7 @@ export interface TriageCandidate {
   title: string;
 }
 
-export type TriageKind = InboxKind | 'noise';
+type TriageKind = InboxKind | 'noise';
 
 export interface InboxTriage {
   itemId: string;
@@ -66,6 +66,13 @@ export interface InboxTriageSnapshot {
 /** Below this the epic Choice is treated as "no home" and the item still
  *  goes to the clusterer. */
 const EPIC_CONFIDENCE = 0.6;
+/** A judged kind replaces the capture-time regex guess only at or above this. */
+const KIND_CONFIDENCE = 0.6;
+/** A paste is cut at a line only when "starts a new thought" wins by this
+ *  much — an ambiguous boundary keeps the paste whole, as before. */
+const SPLIT_CONFIDENCE = 0.7;
+/** Lines beyond this are never asked about; a longer paste stays one item. */
+const MAX_SPLIT_LINES = 40;
 /** A duplicate noul at or above this is surfaced to the user. */
 const DUPLICATE_PROBABILITY = 0.7;
 /** How many lexical near-matches get a duplicate question. */
@@ -354,5 +361,158 @@ export class InboxTriageSnapshotStore {
   save(snapshot: InboxTriageSnapshot): void {
     mkdirSync(dirname(this.file), { recursive: true });
     writeFileSync(this.file, `${JSON.stringify(snapshot, null, 2)}\n`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Splitting a paste into separate captures
+// ---------------------------------------------------------------------------
+
+type SplitQuestions = Record<
+  `boundary_${number}`,
+  ChoiceQuestion<Record<'continues' | 'starts', string>>
+>;
+
+/** One Choice per non-blank line after the first: does it continue the
+ *  thought above it, or start a separate one? Blank lines are never asked
+ *  about — they travel with the line that follows. */
+export function splitQuestions(lines: string[]): SplitQuestions {
+  const questions = {} as SplitQuestions;
+  lines.forEach((line, i) => {
+    if (i === 0 || line.trim() === '' || i >= MAX_SPLIT_LINES) return;
+    questions[`boundary_${i}`] = choice(
+      {
+        line: i,
+        question:
+          'Does `lines[' +
+          String(i) +
+          ']` continue the thought written on the non-blank line before it, or start a separate thought someone would capture on its own?',
+      },
+      {
+        continues:
+          'adds detail, a step, an example or context to the thought above it',
+        starts:
+          'a different topic, task, bug or idea that stands on its own without the lines above',
+      }
+    );
+  });
+  return questions;
+}
+
+type SplitAnswers = Record<string, ChoiceResponse | undefined>;
+
+/** Cuts `lines` into segments at every confident `starts` boundary. A blank
+ *  line goes with the segment after it, so a paragraph break never leaves a
+ *  trailing empty line on the segment above. */
+export function interpretSplit(
+  lines: string[],
+  answers: SplitAnswers
+): string[] {
+  const segments: string[][] = [[]];
+  let pendingBlank: string[] = [];
+  lines.forEach((line, i) => {
+    if (line.trim() === '') {
+      if (i > 0) pendingBlank.push(line);
+      return;
+    }
+    const answer = answers[`boundary_${i}`];
+    const cut =
+      i > 0 &&
+      answer?.choice === 'starts' &&
+      answer.confidence >= SPLIT_CONFIDENCE;
+    if (cut) segments.push([]);
+    const current = segments[segments.length - 1];
+    if (!cut) current.push(...pendingBlank);
+    pendingBlank = [];
+    current.push(line);
+  });
+  return segments.map((seg) => seg.join('\n'));
+}
+
+/**
+ * The captures a raw paste should become: the paste whole, as before, unless
+ * the model finds confident boundaries between separate thoughts. Segments
+ * are returned RAW — the store normalizes each one (leading marker, trim)
+ * exactly as it does a single capture, so nothing is stripped twice. No
+ * client, one line, or a failed request all mean "one item".
+ */
+export async function splitCapture(
+  client: JudgmentClient | null,
+  raw: string
+): Promise<string[]> {
+  const lines = raw.replace(/\r\n/g, '\n').split('\n');
+  const questions = client === null ? {} : splitQuestions(lines);
+  if (client === null || Object.keys(questions).length === 0) return [raw];
+  try {
+    const { answers } = await client.judge({ lines }, questions);
+    return interpretSplit(lines, answers as SplitAnswers);
+  } catch (err) {
+    warnOnce('inbox split', err);
+    return [raw];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Applying a judged kind, and keeping the snapshot fresh in the background
+// ---------------------------------------------------------------------------
+
+/**
+ * Which items should take the model's kind: only ones judged for the FIRST
+ * time (no entry in `previous`), with a confident, non-noise kind that
+ * differs from what capture guessed. A re-judge after a text edit never
+ * overrides a kind — by then it may be one a person chose.
+ */
+export function judgedKindChanges(
+  items: InboxItem[],
+  previous: InboxTriageSnapshot | null,
+  next: InboxTriageSnapshot
+): { id: string; kind: InboxKind }[] {
+  const changes: { id: string; kind: InboxKind }[] = [];
+  for (const item of items) {
+    if (previous?.items[item.id] !== undefined) continue;
+    const triage = next.items[item.id];
+    if (triage === undefined || triage.kind === 'noise') continue;
+    if (triage.kindConfidence < KIND_CONFIDENCE || triage.kind === item.kind)
+      continue;
+    changes.push({ id: item.id, kind: triage.kind });
+  }
+  return changes;
+}
+
+/**
+ * Runs one triage pass at a time, coalescing pings. A ping during a run
+ * schedules exactly one more, so a burst of captures costs one pass for the
+ * batch plus one for anything that landed mid-pass — never one per ping.
+ * A pass that throws is logged and does not wedge the next one.
+ */
+export class InboxTriageScheduler {
+  private inFlight: Promise<void> | null = null;
+  private again = false;
+
+  constructor(private readonly pass: () => Promise<void>) {}
+
+  request(): void {
+    if (this.inFlight !== null) {
+      this.again = true;
+      return;
+    }
+    this.inFlight = this.run();
+  }
+
+  /** Resolves once no pass is running or pending — for tests and shutdown. */
+  async idle(): Promise<void> {
+    while (this.inFlight !== null) await this.inFlight;
+  }
+
+  private async run(): Promise<void> {
+    do {
+      this.again = false;
+      try {
+        await this.pass();
+      } catch (err) {
+        warnOnce('inbox triage pass', err);
+      }
+    } while (this.again);
+    this.inFlight = null;
   }
 }

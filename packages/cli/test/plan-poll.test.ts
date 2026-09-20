@@ -23,6 +23,7 @@ function makeClient(getPlan: ApiClient['getPlan']): ApiClient {
     startEpic: () => Promise.reject(new Error('not used')),
     pauseEpic: () => Promise.reject(new Error('not used')),
     resumeEpic: () => Promise.reject(new Error('not used')),
+    fetchExecutors: () => Promise.resolve({ executors: [], default: 'claude' }),
     stopEpic: () => Promise.reject(new Error('not used')),
     getEpicProgress: () => Promise.reject(new Error('not used')),
     getScopeRequest: () => Promise.reject(new Error('not used')),

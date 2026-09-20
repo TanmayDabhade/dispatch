@@ -487,6 +487,19 @@ export function createTaskApiClient(
 
 // Bound client returned by `createApiClient` — every method carries `baseUrl` already.
 // Task CRUD lives on `TaskApiClient` above instead.
+// Mirrors packages/server/src/orchestrator/types.ts's ExecutorInfo.
+interface ExecutorInfo {
+  name: string;
+  reportsCost: boolean;
+  reportsTurns: boolean;
+  enforcesCaps: boolean;
+}
+
+interface ExecutorsResponse {
+  executors: ExecutorInfo[];
+  default: string;
+}
+
 export interface ApiClient {
   baseUrl: string;
   // `fresh` forces a brand-new run. Without it the daemon resumes the task's
@@ -527,6 +540,8 @@ export interface ApiClient {
     epicId: string,
     opts?: Omit<EpicSessionOptions, 'executor'>
   ): Promise<EpicSession>;
+  /** `GET /api/executors`: what the daemon can dispatch on and its default. */
+  fetchExecutors(): Promise<ExecutorsResponse>;
   stopEpic(epicId: string): Promise<EpicSession>;
   getEpicProgress(epicId: string): Promise<EpicProgress>;
   getScopeRequest(runId: string, requestId: string): Promise<ScopeRequest>;
@@ -591,6 +606,7 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
       request(target, `/api/epics/${epicId}/pause`, { method: 'POST' }),
     resumeEpic: (epicId, opts = {}) =>
       request(target, `/api/epics/${epicId}/resume`, { ...jsonBody(opts) }),
+    fetchExecutors: () => request(target, '/api/executors'),
     stopEpic: (epicId) =>
       request(target, `/api/epics/${epicId}/stop`, { ...jsonBody({}) }),
     getEpicProgress: (epicId) =>

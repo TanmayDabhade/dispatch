@@ -53,6 +53,12 @@ import { InboxStore } from './inbox.js';
 import type { InboxClusterer } from './inboxClusterer.js';
 import { createJudgmentClient } from './judgments/client.js';
 import type { JudgmentClient } from './judgments/client.js';
+import {
+  InboxTriageScheduler,
+  InboxTriageSnapshotStore,
+  judgedKindChanges,
+  triageInbox,
+} from './judgments/inboxTriage.js';
 import { computeChecklist } from './judgments/landingChecklist.js';
 import { LedgerStore } from './ledger.js';
 import type { LedgerStorePort } from './ledger.js';
@@ -61,6 +67,7 @@ import { LinearSync } from './linear/sync.js';
 import { NoteStore } from './notes.js';
 import { EpicEngine } from './orchestrator/epic.js';
 import { ClaudeExecutor } from './orchestrator/executors/claude.js';
+import { CodexExecutor } from './orchestrator/executors/codex.js';
 import { FixLoop, FixLoopStore } from './orchestrator/fixLoop.js';
 import { JjManager } from './orchestrator/jj.js';
 import { MergeQueue } from './orchestrator/mergeQueue.js';
@@ -157,9 +164,10 @@ export interface StartServerOptions {
   // directly.
   storeBackend?: TaskStoreBackend;
   // Overrides which executors get registered on the orchestrator, in place
-  // of the production default (ClaudeExecutor as 'claude' only — Phase 7
-  // moved FakeExecutor's registration behind bin.ts's DISPATCH_ENABLE_FAKES
-  // gate rather than always registering it here). Tests that dispatch
+  // of the production defaults (ClaudeExecutor as 'claude', CodexExecutor as
+  // 'codex' when the codex CLI is installed — Phase 7 moved FakeExecutor
+  // behind bin.ts's DISPATCH_ENABLE_FAKES gate rather than always registering
+  // it here). Tests that dispatch
   // through the real HTTP surface without exercising the real Agent SDK
   // (e.g. a request that omits `executor` and so defaults to 'claude') use
   // this to register a FakeExecutor under 'claude' too — the point being
@@ -274,6 +282,13 @@ const DEFAULT_WEB_DIST_DIR = join(moduleDir, '..', '..', 'web', 'dist');
  * daemon that scaffolded files and then opened a database would find an empty
  * project and report nothing wrong.
  */
+// Codex is offered only when its CLI is actually installed, so no picker ever
+// lists an executor whose first run would die on spawn.
+export function registerCodexIfInstalled(orchestrator: Orchestrator): void {
+  if (Bun.which('codex') === null) return;
+  orchestrator.registerExecutor('codex', new CodexExecutor());
+}
+
 export function resolveStoreBackend(rootDir: string): TaskStoreBackend {
   const recorded = readProjectBackend(rootDir);
   if (recorded !== null) return recorded;
@@ -723,8 +738,9 @@ async function bootServer(
     // nothing in the audit trail until an unrelated task edit came along.
     if (isReceiptEvent(event)) receiptsScheduler?.notifyChanged();
   });
-  // The orchestrator's own executor registry: 'claude' (Slice O2's real
-  // Agent SDK executor) is the production default per api.ts's createRun.
+  // The orchestrator's own executor registry: the real 'claude' backend, plus
+  // 'codex' when its CLI is installed. A call that omits `executor` runs on
+  // the project's `orchestrator.executor` (see Orchestrator.defaultExecutorName).
   // FakeExecutor is NOT registered by default (Phase 7) — bin.ts registers
   // it under 'fake' only when DISPATCH_ENABLE_FAKES=1, a test/e2e-only hook.
   // Tests override this default entirely via `registerExecutors` (see its
@@ -855,6 +871,7 @@ async function bootServer(
     opts.registerExecutors(orchestrator);
   } else {
     orchestrator.registerExecutor('claude', new ClaudeExecutor());
+    registerCodexIfInstalled(orchestrator);
   }
   // Questions an agent raised mid-run. A run going terminal drops its own, so
   // the app never shows a card whose answer nobody is listening for.
@@ -1093,6 +1110,31 @@ async function bootServer(
   // has already read one should never serve an inbox that is missing it — a half-migrated state
   // is the one outcome worth ruling out entirely.
   const inboxStore = new InboxStore(rootDir, actorContext.member.handle);
+  // The inbox's judgment pass, run in the background on every capture and
+  // text edit (see judgments/inboxTriage.ts). Incremental: only items whose
+  // text changed are sent, so a capture costs one call for that item. A
+  // first-time reading also replaces the capture-time regex kind guess.
+  const triageStore = new InboxTriageSnapshotStore(rootDir);
+  const inboxTriage = new InboxTriageScheduler(async () => {
+    if (judgments === null) return;
+    const previous = triageStore.load();
+    const next = await triageInbox(
+      judgments,
+      inboxStore.listAll(),
+      cache.query(),
+      previous
+    );
+    if (next === null) return;
+    triageStore.save(next);
+    for (const { id, kind } of judgedKindChanges(
+      inboxStore.list(),
+      previous,
+      next
+    )) {
+      inboxStore.update(id, { kind });
+    }
+    events.broadcast({ type: 'inbox.changed' });
+  });
   const migratedLegacy = inboxStore.migrateLegacy();
   if (migratedLegacy > 0) {
     console.log(
@@ -1257,6 +1299,7 @@ async function bootServer(
     startedAt,
     noteStore: new NoteStore(rootDir),
     inboxStore,
+    inboxTriage,
     findingStore,
     ledgerStore,
     reviewRunner,

@@ -393,12 +393,15 @@ export function registerPlanCommands(program: Command, ctx: CliContext): void {
       '--max-runs <n>',
       'pause once the session has started this many runs'
     )
-    .option('--executor <name>', 'claude|fake', 'claude')
+    .option(
+      '--executor <name>',
+      "an executor the daemon registered; defaults to the project's"
+    )
     .option('--json')
     .action(
       async (
         epicId: string,
-        opts: SessionCeilingOptions & { executor: string; json?: boolean }
+        opts: SessionCeilingOptions & { executor?: string; json?: boolean }
       ) => {
         const { client } = await daemonFor(ctx);
         const session = await client.startEpic(epicId, {

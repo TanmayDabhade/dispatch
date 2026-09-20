@@ -76,7 +76,7 @@ function dataWith(
     handleUpdate: async () => {},
     handleDispatch: (
       taskId: string,
-      _executor?: 'fake' | 'claude',
+      _executor?: string,
       _model?: string,
       opts?: { batch?: boolean }
     ) => {

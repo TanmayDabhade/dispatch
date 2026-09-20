@@ -12,8 +12,10 @@ import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
 import { initGitRepo } from './helpers.js';
 
 // dispatchOrResume's model choice with a judgment client: a routine task
-// judged small runs on models.plan; a model the caller names is never
-// overridden; no client dispatches on the configured default as before.
+// judged small runs on the executor's plan tier; a model the caller names is
+// never overridden; no client dispatches on the configured default as before.
+// The scripted executor is registered as `claude` so the `models:` block
+// applies to it, and as `codex` for the per-executor block.
 
 let fakeHome: string;
 let repo: string;
@@ -53,7 +55,9 @@ function makeOrchestrator(judgments: JudgmentClient | null): {
   const store = TaskStore.init(repo);
   writeFileSync(
     join(repo, '.dispatch', 'config.yml'),
-    'models:\n  execute: coding-model\n  plan: planning-model\n'
+    'models:\n  execute: coding-model\n  plan: planning-model\n' +
+      'executors:\n  codex:\n    models:\n      execute: codex-coding\n' +
+      '  tiered:\n    models:\n      execute: tiered-coding\n      plan: tiered-planning\n'
   );
   const cache = new TaskCache();
   cache.rebuild(store);
@@ -64,10 +68,12 @@ function makeOrchestrator(judgments: JudgmentClient | null): {
     events: new EventBus(),
     judgments,
   });
-  orchestrator.registerExecutor(
-    'fake',
-    new FakeExecutor({ steps: [], finish: { state: 'finished' } })
-  );
+  for (const name of ['claude', 'codex', 'tiered', 'bare']) {
+    orchestrator.registerExecutor(
+      name,
+      new FakeExecutor({ steps: [], finish: { state: 'finished' } })
+    );
+  }
   return { orchestrator, store };
 }
 
@@ -77,7 +83,7 @@ describe('dispatchOrResume model tier', () => {
     const task = store.create({ title: 'Rename a flag', status: 'ready' });
 
     const meta = await orchestrator.dispatchOrResume(task.meta.id, {
-      executor: 'fake',
+      executor: 'claude',
       defaults: { model: 'coding-model' },
     });
     expect(meta.model).toBe('planning-model');
@@ -91,7 +97,7 @@ describe('dispatchOrResume model tier', () => {
     const task = store.create({ title: 'Rename a flag', status: 'ready' });
 
     const meta = await orchestrator.dispatchOrResume(task.meta.id, {
-      executor: 'fake',
+      executor: 'claude',
       model: 'named-model',
     });
     expect(meta.model).toBe('named-model');
@@ -105,7 +111,7 @@ describe('dispatchOrResume model tier', () => {
       status: 'ready',
     });
     const m1 = await substantial.orchestrator.dispatchOrResume(t1.meta.id, {
-      executor: 'fake',
+      executor: 'claude',
       defaults: { model: 'coding-model' },
     });
     expect(m1.model).toBe('coding-model');
@@ -113,8 +119,33 @@ describe('dispatchOrResume model tier', () => {
     const none = makeOrchestrator(null);
     const t2 = none.store.create({ title: 'Rename a flag', status: 'ready' });
     const m2 = await none.orchestrator.dispatchOrResume(t2.meta.id, {
-      executor: 'fake',
+      executor: 'claude',
     });
     expect(m2.model).toBe('coding-model');
+  });
+
+  it('judges only executors that configure both tiers; others keep their own default', async () => {
+    const { orchestrator, store } = makeOrchestrator(stub('small', 0.9));
+    const codexTask = store.create({ title: 'Rename a flag', status: 'ready' });
+    const codex = await orchestrator.dispatchOrResume(codexTask.meta.id, {
+      executor: 'codex',
+    });
+    expect(codex.model).toBe('codex-coding');
+    expect(store.get(codexTask.meta.id)?.body).not.toContain('judged');
+
+    const tieredTask = store.create({
+      title: 'Rename a flag',
+      status: 'ready',
+    });
+    const tiered = await orchestrator.dispatchOrResume(tieredTask.meta.id, {
+      executor: 'tiered',
+    });
+    expect(tiered.model).toBe('tiered-planning');
+
+    const bareTask = store.create({ title: 'Rename a flag', status: 'ready' });
+    const bare = await orchestrator.dispatchOrResume(bareTask.meta.id, {
+      executor: 'bare',
+    });
+    expect(bare.model).toBeUndefined();
   });
 });

@@ -12,10 +12,14 @@ import { capText, warnOnce } from './client.js';
  * a task's own `model` override, is never touched (see dispatchOrResume).
  */
 
-export type Complexity = 'trivial' | 'small' | 'substantial';
+type Complexity = 'trivial' | 'small' | 'substantial';
+
+/** The two tiers a judged run can land on; both must be known to judge at all. */
+export type ExecuteTierModels = Pick<ModelConfig, 'execute' | 'plan'>;
 
 export interface RunModelChoice {
-  model: string;
+  /** Undefined when the executor runs on its own default model. */
+  model: string | undefined;
   /** Why the tier was lowered, for the task's Activity log; null when the
    *  configured coding model stands. */
   reason: string | null;
@@ -57,7 +61,7 @@ export function modelTierState(task: TaskDoc): EntryType {
 export function chooseRunModel(
   risk: TaskRisk,
   answer: Pick<ChoiceResponse, 'choice' | 'confidence'> | null,
-  models: ModelConfig
+  models: ExecuteTierModels
 ): RunModelChoice {
   if (
     answer === null ||
@@ -79,7 +83,7 @@ export function chooseRunModel(
 export async function judgeRunModel(
   client: JudgmentClient | null,
   task: TaskDoc,
-  models: ModelConfig
+  models: ExecuteTierModels
 ): Promise<RunModelChoice> {
   if (client === null || task.meta.model !== null) {
     return { model: models.execute, reason: null };

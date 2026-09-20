@@ -4,6 +4,7 @@ import type {
   ConfirmResult,
   DraftRecord,
   EpicProgress,
+  ExecutorsResponse,
   FixLoopState,
   LandingSnapshot,
   LinearIssueLink,
@@ -229,6 +230,8 @@ export interface DispatchProjectData {
   showArchived: boolean;
   setShowArchived: (value: boolean) => void;
   config: DispatchConfig | null;
+  /** What the daemon can dispatch on and which executor it defaults to; null until fetched. */
+  executors: ExecutorsResponse | null;
   // The full, unfiltered run list — archivedAt is orthogonal to a task's status (an archived
   // task need not be done/cancelled), so every eligibility computation here (countMergeReady,
   // the merge queue) MUST keep reading this rather than `visibleRuns`, or a still-mergeable
@@ -495,7 +498,7 @@ export interface DispatchProjectData {
   ) => Promise<DraftRecord>;
   handleDispatch: (
     taskId: string,
-    executor?: 'fake' | 'claude',
+    executor?: string,
     model?: string,
     opts?: DispatchOptions
   ) => Promise<void>;
@@ -815,6 +818,16 @@ export function useDispatchProject(
       return client.fetchConfig();
     },
     enabled: client !== null,
+  });
+  // Registered at daemon boot, so it only needs fetching once per connection.
+  const { data: executors } = useQuery({
+    queryKey: ['dispatch-executors', port] as const,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchExecutors();
+    },
+    enabled: client !== null,
+    staleTime: Infinity,
   });
   // The OS-notification toggles live at module level in notifications.ts
   // because the WS handler below fires `notify` without re-subscribing on a
@@ -1384,6 +1397,11 @@ export function useDispatchProject(
             void queryClient.invalidateQueries({ queryKey: runDiffQueryKey });
           } else if (event.type === 'inbox.changed') {
             void queryClient.invalidateQueries({ queryKey: inboxQueryKey });
+            // The daemon triages captures in the background and announces
+            // the result on the same event, so the hints refresh with the rows.
+            void queryClient.invalidateQueries({
+              queryKey: inboxTriageQueryKey,
+            });
           } else if (event.type === 'git.changed') {
             // Prefix match: invalidates every query useGit.ts builds in one call.
             void queryClient.invalidateQueries({ queryKey: gitQueryRootKey });
@@ -1602,6 +1620,7 @@ export function useDispatchProject(
     draftsQueryKey,
     agentSessionsQueryKey,
     inboxQueryKey,
+    inboxTriageQueryKey,
     reviewQueryKey,
     runDiffQueryKey,
     epicProgressKeyPrefix,
@@ -1952,16 +1971,19 @@ export function useDispatchProject(
   const handleDispatch = useCallback(
     async (
       taskId: string,
-      executor?: 'fake' | 'claude',
+      executor?: string,
       model?: string,
       opts?: DispatchOptions
     ): Promise<void> => {
       if (client === null) return;
-      // A real ('claude') dispatch always carries a model: the per-dispatch
-      // override, else resolveExecuteModel's. The fake executor ignores it.
+      // Only a Claude dispatch carries the picker's model (the picker lists
+      // Claude ids); any other executor resolves its own default server-side.
+      const effective = executor ?? executors?.default ?? 'claude';
       const meta = await client.createRun(taskId, {
         executor,
-        model: model ?? resolveExecuteModel(config),
+        model:
+          model ??
+          (effective === 'claude' ? resolveExecuteModel(config) : undefined),
       });
       void queryClient.invalidateQueries({ queryKey: runsQueryKey });
       void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
@@ -1973,6 +1995,7 @@ export function useDispatchProject(
     [
       client,
       config,
+      executors,
       queryClient,
       runsQueryKey,
       tasksQueryKey,
@@ -2658,6 +2681,7 @@ export function useDispatchProject(
     showArchived,
     setShowArchived,
     config: config ?? null,
+    executors: executors ?? null,
     runs: runs ?? [],
     visibleRuns,
     health,

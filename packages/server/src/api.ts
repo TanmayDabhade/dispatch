@@ -91,9 +91,10 @@ import {
 import type { JudgmentClient } from './judgments/client.js';
 import {
   InboxTriageSnapshotStore,
-  triageInbox,
+  splitCapture,
   untriagedForClustering,
 } from './judgments/inboxTriage.js';
+import type { InboxTriageScheduler } from './judgments/inboxTriage.js';
 import {
   checklistSummary,
   readChecklist,
@@ -198,6 +199,9 @@ export interface ApiContext {
   // The TypeSafe judgment client, or null when no key is configured — every
   // consumer falls back to its pre-judgment behaviour on null.
   judgments: JudgmentClient | null;
+  // Keeps `.dispatch/inbox-triage.json` current in the background: pinged on
+  // every capture and text edit, so a row is judged moments after it lands.
+  inboxTriage: InboxTriageScheduler;
   reviewComments: ReviewCommentStore;
   conversations: ConversationStore;
   questions: QuestionRegistry;
@@ -621,16 +625,12 @@ async function createRun(
     return errorResponse(400, 'invalid fresh: expected a boolean');
   }
   // Named vs defaulted is the whole distinction dispatchOrResume turns on, so
-  // the raw fields go through untouched and only the FALLBACKS are resolved
-  // here: omitting `model` still runs a fresh dispatch on the project's
-  // configured `models.execute` (so a script or an older UI build lands where
-  // settings chose), while naming one that the resumable run cannot honour is
-  // what sends the call down the fresh path in the first place.
+  // the raw fields go through untouched; the orchestrator resolves the
+  // executor's own default model for a fresh run.
   const meta = await ctx.orchestrator.dispatchOrResume(taskId, {
     executor: typeof executorField === 'string' ? executorField : undefined,
     model: typeof modelField === 'string' ? modelField : undefined,
     fresh: freshField === true,
-    defaults: { model: loadConfig(ctx.rootDir).models.execute },
   });
   return jsonResponse(meta, 201);
 }
@@ -792,6 +792,23 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     // Like permissionMode: core's updateConfig rejects an unknown role or bad
     // value before writing, and that ConfigError becomes the 400 below.
     patch.models = body.models as Partial<ModelConfig>;
+  }
+  if ('executor' in body) {
+    if (typeof body.executor !== 'string') {
+      return errorResponse(400, 'executor must be a string');
+    }
+    patch.executor = body.executor;
+  }
+  if ('executors' in body) {
+    if (
+      typeof body.executors !== 'object' ||
+      body.executors === null ||
+      Array.isArray(body.executors)
+    ) {
+      return errorResponse(400, 'executors must be an object');
+    }
+    // Like models: core's updateConfig validates each role before writing.
+    patch.executors = body.executors as NonNullable<ConfigPatch['executors']>;
   }
   if ('linear' in body) {
     if (
@@ -3630,12 +3647,15 @@ async function addInbox(req: Request, ctx: ApiContext): Promise<Response> {
     kind = body.kind as InboxKind;
   }
 
-  const created = ctx.inboxStore.add({
-    text,
-    kind,
-    createdByRunId:
-      typeof body.createdByRunId === 'string' ? body.createdByRunId : null,
-  });
+  // A multi-line paste may hold several thoughts; the judgment says where
+  // one ends and the next begins (see splitCapture). One line, no client, or
+  // no confident boundary all yield the single item this always made.
+  const createdByRunId =
+    typeof body.createdByRunId === 'string' ? body.createdByRunId : null;
+  const segments = await splitCapture(ctx.judgments, text);
+  const created = ctx.inboxStore.addMany(
+    segments.map((segment) => ({ text: segment, kind, createdByRunId }))
+  );
   // `normalizeCapture` strips the leading bullet or checkbox from the capture's
   // FIRST line (one dump is one item, so only that line is a marker), leaving
   // nothing when the whole capture was that one marker — a 201 there would
@@ -3644,6 +3664,9 @@ async function addInbox(req: Request, ctx: ApiContext): Promise<Response> {
     return errorResponse(400, 'text contained no capturable lines');
   }
   ctx.events.broadcast({ type: 'inbox.changed' });
+  // The kind, epic and duplicate reading lands a moment later, off the
+  // request: the row must appear the instant it is typed.
+  ctx.inboxTriage.request();
   return jsonResponse(created, 201);
 }
 
@@ -3674,6 +3697,8 @@ async function updateInbox(
       done: typeof body.done === 'boolean' ? body.done : undefined,
     });
     ctx.events.broadcast({ type: 'inbox.changed' });
+    // New words, new reading — the snapshot is keyed by text hash.
+    if (typeof body.text === 'string') ctx.inboxTriage.request();
     return jsonResponse(item);
   } catch (err) {
     return errorResponse(404, (err as Error).message);
@@ -3714,9 +3739,15 @@ async function convertInbox(req: Request, ctx: ApiContext): Promise<Response> {
   if (ids.length === 0) return errorResponse(400, 'ids is required');
 
   const items = new Map(ctx.inboxStore.list().map((i) => [i.id, i]));
+  // The triage's reading of each item, when it has one: a confident epic
+  // becomes the new task's parent, and the strongest duplicate that is a
+  // real task is reported back — never a refusal, a person asked for this.
+  const triage = new InboxTriageSnapshotStore(ctx.rootDir).load();
   const results: {
     id: string;
     taskId?: string;
+    /** An existing task the triage judged this capture a duplicate of. */
+    duplicateOf?: string;
     error?: string;
   }[] = [];
   const links: { id: string; taskId: string }[] = [];
@@ -3737,13 +3768,27 @@ async function convertInbox(req: Request, ctx: ApiContext): Promise<Response> {
       // task's description — a paragraph is not a title.
       const [firstLine = '', ...restLines] = item.text.split('\n');
       const description = restLines.join('\n').trim();
+      const reading = triage?.items[id];
+      const parent =
+        reading?.epicId != null &&
+        ctx.cache.get(reading.epicId)?.meta.kind === 'epic'
+          ? reading.epicId
+          : null;
+      const duplicateOf = reading?.duplicates.find(
+        (d) => ctx.cache.get(d.id) !== null
+      )?.id;
       const task = ctx.store.create({
         title: firstLine,
         kind: 'task',
         ...(description === '' ? {} : { description }),
+        ...(parent === null ? {} : { parent }),
       });
       links.push({ id, taskId: task.meta.id });
-      results.push({ id, taskId: task.meta.id });
+      results.push({
+        id,
+        taskId: task.meta.id,
+        ...(duplicateOf === undefined ? {} : { duplicateOf }),
+      });
     } catch (err) {
       results.push({ id, error: (err as Error).message });
     }
@@ -3808,15 +3853,12 @@ async function clusterInbox(ctx: ApiContext): Promise<Response> {
     const localIds = new Set(localOpen.map((i) => i.id));
     const all = ctx.inboxStore.listAll();
     // Triage first: an item with a confident epic has its home and never
-    // reaches the clusterer, so the model call below only sees the rest.
-    const triageStore = new InboxTriageSnapshotStore(ctx.rootDir);
-    const triage = await triageInbox(
-      ctx.judgments,
-      all,
-      ctx.cache.query(),
-      triageStore.load()
-    );
-    if (triage !== null) triageStore.save(triage);
+    // reaches the clusterer, so the model call below only sees the rest. The
+    // background scheduler owns the pass; waiting on it here keeps one writer
+    // on the snapshot file.
+    ctx.inboxTriage.request();
+    await ctx.inboxTriage.idle();
+    const triage = new InboxTriageSnapshotStore(ctx.rootDir).load();
     const groups = await clusterer.cluster(untriagedForClustering(all, triage));
     const localGroups = filterGroupsToLocalItems(groups, localIds);
     // Persisted so a page load renders this pass instead of billing a new one;
@@ -5219,6 +5261,19 @@ export async function handleApi(
     // enrich/"add detail" agents, task drafts, overseer chats), normalized for
     // the All agents page. Task runs are not repeated here: GET /api/runs
     // already lists them, and the client merges the two.
+    // GET /api/executors — what this daemon can dispatch on, so no client has
+    // to hard-code executor names.
+    if (
+      segments[0] === 'executors' &&
+      segments.length === 1 &&
+      method === 'GET'
+    ) {
+      return jsonResponse({
+        executors: ctx.orchestrator.describeExecutors(),
+        default: ctx.orchestrator.defaultExecutorName(),
+      });
+    }
+
     if (segments[0] === 'agents' && segments.length === 1 && method === 'GET') {
       return jsonResponse(
         buildAgentSessions(

@@ -232,7 +232,7 @@ export class EpicEngine {
   }
 
   // POST /api/epics/:id/dispatch. `concurrency` defaults to the project's
-  // `orchestrator.epicConcurrency` config; `executor` defaults to 'claude'
+  // `orchestrator.epicConcurrency` config; `executor` defaults to the project's
   // but tests override it (see the Global Constraints note on honoring a
   // body override) to dispatch through FakeExecutor instead.
   // Async only because the initial fillQueue is awaited: start() must still
@@ -257,7 +257,8 @@ export class EpicEngine {
     // C2(a): validate everything BEFORE creating any session state — a
     // bogus name or ceiling must 400 cleanly with nothing left behind for a
     // subsequent, correctly-specified retry to trip over.
-    const executor = opts.executor ?? 'claude';
+    const executor =
+      opts.executor ?? this.ctx.orchestrator.defaultExecutorName();
     const knownExecutors = this.ctx.orchestrator.registeredExecutorNames();
     if (!knownExecutors.includes(executor)) {
       throw new OrchestratorClientError(

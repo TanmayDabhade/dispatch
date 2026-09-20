@@ -190,6 +190,88 @@ async function settle(work: () => void) {
 }
 
 describe('TaskPage', () => {
+  test('the executor picker appears only when the daemon offers a choice, and hides the Claude model pill for another executor', async () => {
+    const dispatched: { executor?: string; model?: string }[] = [];
+    const executors = {
+      executors: [
+        {
+          name: 'claude',
+          reportsCost: true,
+          reportsTurns: true,
+          enforcesCaps: true,
+        },
+        {
+          name: 'codex',
+          reportsCost: false,
+          reportsTurns: true,
+          enforcesCaps: false,
+        },
+        {
+          name: 'fake',
+          reportsCost: true,
+          reportsTurns: true,
+          enforcesCaps: true,
+        },
+      ],
+      default: 'claude',
+    };
+    mountPage(undefined, {
+      executors,
+      onDispatch: (_id, executor, model) => {
+        dispatched.push({ executor, model });
+        return Promise.resolve();
+      },
+    });
+    expect(screen.getByRole('button', { name: 'Executor' }).textContent).toBe(
+      'claude'
+    );
+    expect(screen.getByRole('button', { name: 'Model' })).toBeTruthy();
+
+    await settle(() =>
+      fireEvent.click(screen.getByRole('button', { name: 'Executor' }))
+    );
+    await settle(() =>
+      fireEvent.click(screen.getByRole('menuitem', { name: 'codex' }))
+    );
+    expect(screen.getByRole('button', { name: 'Executor' }).textContent).toBe(
+      'codex'
+    );
+    expect(screen.queryByRole('button', { name: 'Model' })).toBeNull();
+
+    await settle(() =>
+      fireEvent.click(screen.getByRole('button', { name: 'Dispatch' }))
+    );
+    expect(dispatched).toEqual([{ executor: 'codex', model: undefined }]);
+  });
+
+  test('a single real executor shows no picker and dispatches with the Claude model', async () => {
+    const dispatched: { executor?: string; model?: string }[] = [];
+    mountPage(undefined, {
+      executors: {
+        executors: [
+          {
+            name: 'claude',
+            reportsCost: true,
+            reportsTurns: true,
+            enforcesCaps: true,
+          },
+        ],
+        default: 'claude',
+      },
+      onDispatch: (_id, executor, model) => {
+        dispatched.push({ executor, model });
+        return Promise.resolve();
+      },
+    });
+    expect(screen.queryByRole('button', { name: 'Executor' })).toBeNull();
+    await settle(() =>
+      fireEvent.click(screen.getByRole('button', { name: 'Dispatch' }))
+    );
+    expect(dispatched).toEqual([
+      { executor: undefined, model: 'claude-sonnet-4-5' },
+    ]);
+  });
+
   test('the header crumb reads Project › Tasks › id Title with the three icons', () => {
     mountPage();
     const crumb = document.querySelector('[data-slot="page-header-crumb"]');

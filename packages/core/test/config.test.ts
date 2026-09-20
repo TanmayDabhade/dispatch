@@ -52,8 +52,10 @@ describe('loadConfig', () => {
         verifyTimeoutSec: 600,
         maxConcurrency: 16,
         runCostEstimateUsd: 10,
+        executor: 'claude',
       },
       models: DEFAULT_MODELS,
+      executors: {},
       linear: DEFAULT_LINEAR,
       fixLoop: DEFAULT_FIX_LOOP,
       carto: DEFAULT_CARTO,
@@ -168,6 +170,7 @@ describe('loadConfig', () => {
         verifyTimeoutSec: 600,
         maxConcurrency: 16,
         runCostEstimateUsd: 10,
+        executor: 'claude',
       });
     });
 
@@ -185,6 +188,7 @@ describe('loadConfig', () => {
         verifyTimeoutSec: 600,
         maxConcurrency: 16,
         runCostEstimateUsd: 10,
+        executor: 'claude',
       });
     });
 

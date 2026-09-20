@@ -51,6 +51,18 @@ void mock.module('@dispatch/client', () => ({
   createApiClient: () => ({
     baseUrl: `http://127.0.0.1:${PORT}`,
     fetchRuns: () => Promise.resolve(runsFixture),
+    fetchExecutors: () =>
+      Promise.resolve({
+        executors: [
+          {
+            name: 'claude',
+            reportsCost: true,
+            reportsTurns: true,
+            enforcesCaps: true,
+          },
+        ],
+        default: 'claude',
+      }),
     listScopeRequests: (runId: string) => {
       scopeRequestListings.push(runId);
       return Promise.resolve(openScopeRequests.get(runId) ?? []);

@@ -40,6 +40,8 @@ export type {
   EpicSessionState,
   EpicSpend,
   EpicWave,
+  ExecutorInfo,
+  ExecutorsResponse,
   Finding,
   FindingRecommendation,
   FindingSeverity,

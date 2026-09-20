@@ -191,11 +191,36 @@ daemon lost track of it. Recovery information instead of a hand inspection.
 **Run kinds:** `execute` writes code, `review` judges a diff and emits findings,
 `verify` runs checks against finished work.
 
-**Executors** are pluggable (`registerExecutor`). Production registers exactly
-one, `ClaudeExecutor`, over `@anthropic-ai/claude-agent-sdk`. `FakeExecutor` and
-`FakePlanner` exist behind the `DISPATCH_ENABLE_FAKES` gate and are what
-`apps/demo` and much of the test suite run against — the demo sandbox is a real
-daemon with a scripted agent, not a mock UI.
+**Executors** are pluggable (`registerExecutor`). Production registers
+`ClaudeExecutor` over `@anthropic-ai/claude-agent-sdk`, plus `CodexExecutor`
+over the Codex App Server (`codex app-server --stdio`) when a `codex` binary is
+on PATH. `FakeExecutor` and `FakePlanner` exist behind the
+`DISPATCH_ENABLE_FAKES` gate and are what `apps/demo` and much of the test suite
+run against — the demo sandbox is a real daemon with a scripted agent, not a
+mock UI.
+
+Each executor carries an `ExecutorProfile` (`orchestrator/types.ts`): whether
+its finishes report cost and turns, whether it enforces `maxTurns`/
+`maxBudgetUsd` itself, and which `permissionMode`s it can honour — the
+orchestrator refuses a dispatch its executor cannot run before provisioning a
+worktree. `GET /api/executors` publishes the registry with those flags and the
+configured default, so no client hard-codes executor names. Model choice goes
+through `executorModels()` in core: `models.execute`/`plan` stay the Claude
+aliases, `executors.<name>.models` overlays them per executor, and
+`orchestrator.executor` names the default. Fix and verify runs follow the
+executor that wrote the work; review runs use the project default. Both
+executors share the Dispatch and carto MCP wiring in
+`orchestrator/dispatchMcp.ts`.
+
+Codex caveats: it reports token usage but no dollar cost unless
+`executors.codex.pricing` (USD per million input/cached-input/output tokens) is
+configured, so the finish line otherwise says `cost n/a`; it cannot enforce the
+run caps (a system entry notes any that were set); and Codex protects `.git` —
+including a worktree's gitdir — under `workspace-write`, so each commit goes
+through Codex's own approval reviewer under `permissionMode: auto`. The MCP
+servers a person configured for their own interactive Codex in
+`~/.codex/config.toml` are switched off for every dispatched run (a system entry
+names them); the run gets only Dispatch's own server and carto.
 
 Notable modules:
 

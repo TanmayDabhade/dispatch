@@ -1,4 +1,4 @@
-import { loadConfig } from '@dispatch/core';
+import { executorModels, loadConfig } from '@dispatch/core';
 import type {
   ActorContext,
   EscalationStep,
@@ -695,7 +695,10 @@ export class FixLoop {
       strategy: step.strategy,
       findings: open,
     });
-    const { models } = loadConfig(this.ctx.rootDir);
+    // The fix stays on whatever executor wrote the work, in that executor's
+    // own model namespace.
+    const executor = this.ctx.orchestrator.executorForTask(state.taskId);
+    const models = executorModels(loadConfig(this.ctx.rootDir), executor);
     const model =
       step.modelTier === 'high'
         ? models.execute
@@ -720,6 +723,7 @@ export class FixLoop {
       taskId: state.taskId,
       kind: 'execute',
       head: previous?.branch ?? state.baseSha,
+      executor,
       model,
       buildPrompt: () => prompt,
     });
@@ -730,7 +734,7 @@ export class FixLoop {
   private canResume(
     previous: RunMeta | null,
     tier: EscalationStep['modelTier'],
-    highModel: string
+    highModel: string | undefined
   ): previous is RunMeta {
     return (
       canBuildOn(previous) &&
