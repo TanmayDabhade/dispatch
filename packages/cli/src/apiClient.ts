@@ -400,14 +400,14 @@ export function createTaskApiClient(
 // Bound client returned by `createApiClient` — every method carries `baseUrl` already.
 // Task CRUD lives on `TaskApiClient` above instead.
 // Mirrors packages/server/src/orchestrator/types.ts's ExecutorInfo.
-export interface ExecutorInfo {
+interface ExecutorInfo {
   name: string;
   reportsCost: boolean;
   reportsTurns: boolean;
   enforcesCaps: boolean;
 }
 
-export interface ExecutorsResponse {
+interface ExecutorsResponse {
   executors: ExecutorInfo[];
   default: string;
 }
