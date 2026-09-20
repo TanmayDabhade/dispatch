@@ -1,4 +1,7 @@
 import { CORE_VERSION } from '@dispatch/core';
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   CodexAppServer,
@@ -77,27 +80,53 @@ function toCodexMcp(
   };
 }
 
+// The MCP servers a person configured for their own interactive Codex in
+// `$CODEX_HOME/config.toml` (default `~/.codex`). Codex starts every one of
+// them for any thread, dispatched runs included, so they are read here to be
+// switched off per run. Unreadable or absent config means none.
+export function codexUserMcpServerNames(): string[] {
+  const home = process.env.CODEX_HOME ?? join(homedir(), '.codex');
+  const path = join(home, 'config.toml');
+  if (!existsSync(path)) return [];
+  try {
+    const parsed = Bun.TOML.parse(readFileSync(path, 'utf8')) as {
+      mcp_servers?: unknown;
+    };
+    const servers = objectValue(parsed.mcp_servers);
+    return servers === undefined ? [] : Object.keys(servers);
+  } catch {
+    return [];
+  }
+}
+
 /** The run-scoped MCP servers re-supplied on thread start and resume. */
 function buildCodexMcpServers(
   cwd: string,
   projectRoot: string,
   runId: string,
-  cartoSpec: (projectRoot: string) => StdioServerSpec | null
-): Record<string, unknown> {
+  cartoSpec: (projectRoot: string) => StdioServerSpec | null,
+  userServers: string[]
+): { config: Record<string, unknown>; disabled: string[] } {
   const carto = cartoSpec(projectRoot);
-  return {
-    mcp_servers: {
-      dispatch: toCodexMcp(dispatchMcpSpec(cwd, projectRoot, runId), {
-        tools: {
-          task_comment: { approval_mode: 'approve' },
-          record_evidence: { approval_mode: 'approve' },
-          record_mutation: { approval_mode: 'approve' },
-          ask_user: { approval_mode: 'approve' },
-        },
-      }),
-      ...(carto === null ? {} : { carto: toCodexMcp(carto) }),
-    },
+  const ours: Record<string, unknown> = {
+    dispatch: toCodexMcp(dispatchMcpSpec(cwd, projectRoot, runId), {
+      tools: {
+        task_comment: { approval_mode: 'approve' },
+        record_evidence: { approval_mode: 'approve' },
+        record_mutation: { approval_mode: 'approve' },
+        ask_user: { approval_mode: 'approve' },
+      },
+    }),
+    ...(carto === null ? {} : { carto: toCodexMcp(carto) }),
   };
+  // A person's own servers (a Stripe or PostHog connector, say) have no
+  // place in an autonomous run: cost, latency and reach nobody asked for.
+  // `enabled: false` merges into the user's table; a name Codex does not
+  // know would fail thread/start, which is why the list comes from the file.
+  const disabled = userServers.filter((name) => !(name in ours));
+  const mcpServers: Record<string, unknown> = { ...ours };
+  for (const name of disabled) mcpServers[name] = { enabled: false };
+  return { config: { mcp_servers: mcpServers }, disabled };
 }
 
 function textInput(text: string): object[] {
@@ -282,17 +311,21 @@ export const CODEX_EXECUTOR_PROFILE: ExecutorProfile = {
 export interface CodexExecutorOptions {
   /** Carto discovery, injectable so tests never depend on a local carto. */
   cartoSpec?: (projectRoot: string) => StdioServerSpec | null;
+  /** The user's own MCP server names, injectable so tests never read ~/.codex. */
+  userMcpServers?: () => string[];
 }
 
 export class CodexExecutor implements Executor {
   readonly profile = CODEX_EXECUTOR_PROFILE;
   private readonly cartoSpec: (projectRoot: string) => StdioServerSpec | null;
+  private readonly userMcpServers: () => string[];
 
   constructor(
     private readonly spawnProcess?: SpawnCodexAppServer,
     options: CodexExecutorOptions = {}
   ) {
     this.cartoSpec = options.cartoSpec ?? cartoMcpSpec;
+    this.userMcpServers = options.userMcpServers ?? codexUserMcpServerNames;
   }
 
   start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
@@ -493,12 +526,20 @@ export class CodexExecutor implements Executor {
         if (interrupted) return;
         server.notify('initialized');
 
-        const config = buildCodexMcpServers(
+        const { config, disabled } = buildCodexMcpServers(
           opts.cwd,
           opts.projectRoot ?? opts.cwd,
           opts.runId ?? '',
-          this.cartoSpec
+          this.cartoSpec,
+          this.userMcpServers()
         );
+        if (disabled.length > 0) {
+          events.onEntry({
+            ts: new Date().toISOString(),
+            kind: 'system',
+            text: `disabled ${String(disabled.length)} MCP server(s) from your Codex config for this run: ${disabled.join(', ')}`,
+          });
+        }
         const resumed = opts.resumeSessionId !== undefined;
         const response = await server.request<CodexThreadResponse>(
           resumed ? 'thread/resume' : 'thread/start',
