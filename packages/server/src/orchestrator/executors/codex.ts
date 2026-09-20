@@ -111,7 +111,7 @@ function tokenTotal(value: unknown): CodexTokenTotal | undefined {
   const total = objectValue(value);
   if (total === undefined) return undefined;
   const count = (key: string): number =>
-    typeof total[key] === 'number' ? (total[key]) : 0;
+    typeof total[key] === 'number' ? total[key] : 0;
   return {
     totalTokens: count('totalTokens'),
     inputTokens: count('inputTokens'),
@@ -122,7 +122,7 @@ function tokenTotal(value: unknown): CodexTokenTotal | undefined {
 
 // Codex reports tokens, never dollars; the project's configured per-million
 // rates turn them into a cost. Codex counts cached input inside inputTokens.
-export function codexCostUsd(
+function codexCostUsd(
   total: CodexTokenTotal,
   pricing: ExecutorPricing
 ): number {
