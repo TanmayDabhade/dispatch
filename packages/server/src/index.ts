@@ -148,9 +148,9 @@ export interface StartServerOptions {
   // assertRootNotServed). bin.ts sets it for `--replace` and `--init`.
   replaceRunningDaemon?: boolean;
   // Which backend this daemon's state lives in. Left unset it comes from
-  // `DISPATCH_STORE_BACKEND` (see `resolveStoreBackend`), which itself
-  // defaults to `files` — so production behaviour is unchanged until a
-  // project is deliberately moved. Tests pass it directly.
+  // `DISPATCH_STORE_BACKEND` (see `resolveStoreBackend`), which defaults to
+  // `sqlite` and imports any markdown board it finds on boot. Tests pass it
+  // directly.
   storeBackend?: TaskStoreBackend;
   // Overrides which executors get registered on the orchestrator, in place
   // of the production default (ClaudeExecutor as 'claude' only — Phase 7
@@ -244,24 +244,21 @@ const DEFAULT_WEB_DIST_DIR = join(moduleDir, '..', '..', 'web', 'dist');
  * without the variable would serve an empty `files` backend over a
  * database-backed project.
  *
- * `DISPATCH_STORE_BACKEND` remains, but only as the way to move a project
- * that has not recorded a choice yet; once it has, the marker is the answer.
- * No marker and no variable means `files`, which is still every project that
- * has not deliberately opted in: moving an existing board into the database
- * is a migration somebody asks for, not something a daemon does to a repo
- * because it booted there.
+ * `DISPATCH_STORE_BACKEND` remains, but only for a project that has not
+ * recorded a choice yet; once it has, the marker is the answer. No marker and
+ * no variable means `sqlite`: the database is the default, and a project that
+ * still has a markdown board is moved across by the one-time import in
+ * `@dispatch/core`'s migrate.ts, which `startServer` runs before it serves
+ * anything — the board is copied in one transaction, or the daemon refuses
+ * to come up, so a boot never leaves a repo with two half-states. The marker
+ * is written only after that import has committed.
  *
- * Setting the variable on a project that already has a markdown board is now
- * allowed, and is one of the two ways to opt in (the other is `dispatch
- * migrate`). It used to be refused, because a fresh database opened beside a
- * populated board left the project with two half-states — markdown nobody
- * read and an empty database everybody did. What removes that hazard is the
- * one-time import in `@dispatch/core`'s migrate.ts, which `startServer` runs
- * before it serves anything: the board is copied across in one transaction,
- * or the daemon refuses to come up.
+ * `DISPATCH_STORE_BACKEND=files` is the escape hatch for a project that must
+ * stay on markdown (a shared checkout whose other clones cannot read the
+ * database yet); it holds only until a marker is written.
  *
- * An unrecognized variable is a typo, not a third backend: log it and fall
- * back rather than failing boot over a misspelling.
+ * An unrecognized variable is a typo, not a third backend: log it and use
+ * the default rather than failing boot over a misspelling.
  *
  * Exported so bin.ts's `--init` creates the same backend this will open — a
  * daemon that scaffolded files and then opened a database would find an empty
@@ -271,13 +268,13 @@ export function resolveStoreBackend(rootDir: string): TaskStoreBackend {
   const recorded = readProjectBackend(rootDir);
   if (recorded !== null) return recorded;
   const raw = process.env.DISPATCH_STORE_BACKEND;
-  if (raw === undefined || raw === '') return 'files';
+  if (raw === undefined || raw === '') return 'sqlite';
   if (raw === 'files') return raw;
   if (raw === 'sqlite') return raw;
   console.error(
-    `dispatchd: unknown DISPATCH_STORE_BACKEND '${raw}', using 'files'`
+    `dispatchd: unknown DISPATCH_STORE_BACKEND '${raw}', using 'sqlite'`
   );
-  return 'files';
+  return 'sqlite';
 }
 
 // Rebuilds `cache` from `store`, and never lets a rebuild kill the daemon:

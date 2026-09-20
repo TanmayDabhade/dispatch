@@ -15,6 +15,13 @@ process.env.DISPATCH_HOME = fallbackHome;
 // Tests that exercise the watchdog itself pass their own threshold.
 process.env.DISPATCH_WATCHDOG_STALL_MS = '30000';
 
+// The daemon defaults to the database now, but most of this suite drives an
+// in-process daemon through the markdown files it writes into a fixture
+// board — the files backend, still supported as the explicit escape hatch.
+// Pinning it here keeps that coverage honest; the sqlite path has its own
+// tests, which pass `storeBackend` or manage this variable themselves.
+process.env.DISPATCH_STORE_BACKEND = 'files';
+
 // Redirecting alone would only hide the mistake: anything landing here is a
 // suite that forgot its own DISPATCH_HOME, so fail the test that wrote it.
 afterEach(() => {
