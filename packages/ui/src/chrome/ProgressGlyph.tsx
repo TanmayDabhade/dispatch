@@ -11,7 +11,7 @@ export function pieDashOffset(fraction: number): number {
   return PIE_DASH * (1 - fraction);
 }
 
-export interface ProgressGlyphProps {
+interface ProgressGlyphProps {
   /** How much of the pie is filled, 0..1. */
   fraction: number;
   className?: string;

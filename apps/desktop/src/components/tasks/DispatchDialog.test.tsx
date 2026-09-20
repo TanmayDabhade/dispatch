@@ -81,14 +81,55 @@ describe('DispatchDialog', () => {
     expect(description()?.getAttribute('data-over-ceiling')).toBeNull();
   });
 
-  test('a ceiling under the low estimate turns the sentence amber', () => {
+  test('a ceiling under the low estimate turns the sentence amber and says so', () => {
     const { spend, description } = mount();
     fireEvent.change(spend(), { target: { value: '50' } });
-    expect(description()?.textContent).toEndWith('ceiling $50');
+    expect(description()?.textContent).toEndWith(
+      'ceiling $50 — above the ceiling'
+    );
     expect(description()?.classList.contains('text-(--state-waiting-fg)')).toBe(
       true
     );
     expect(description()?.getAttribute('data-over-ceiling')).toBe('true');
+  });
+
+  test('a ceiling the daemon would reject blocks the confirm instead of lifting it', () => {
+    const { spend, runs, description, confirmButton } = mount();
+    for (const value of ['-5', '0']) {
+      fireEvent.change(spend(), { target: { value } });
+      expect(spend().getAttribute('aria-invalid')).toBe('true');
+      expect((confirmButton() as HTMLButtonElement).disabled).toBe(true);
+      // The sentence never claims "no ceiling" for a value that was not accepted.
+      expect(description()?.getAttribute('data-over-ceiling')).toBeNull();
+      expect(description()?.textContent).not.toContain('ceiling');
+    }
+    fireEvent.change(spend(), { target: { value: '55' } });
+    expect(spend().getAttribute('aria-invalid')).toBeNull();
+    expect((confirmButton() as HTMLButtonElement).disabled).toBe(false);
+
+    for (const value of ['0', '2.5', '-1']) {
+      fireEvent.change(runs(), { target: { value } });
+      expect(runs().getAttribute('aria-invalid')).toBe('true');
+      expect((confirmButton() as HTMLButtonElement).disabled).toBe(true);
+    }
+    fireEvent.change(runs(), { target: { value: '3' } });
+    expect(runs().getAttribute('aria-invalid')).toBeNull();
+    expect((confirmButton() as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  // A browser reports `''` for text typed into a number input and flags `badInput`;
+  // happy-dom only does the first half, so the flag is stubbed.
+  test('unparseable text is not mistaken for an empty ceiling', () => {
+    const { spend, confirmButton } = mount();
+    const field = spend();
+    Object.defineProperty(field, 'validity', {
+      configurable: true,
+      value: { badInput: true },
+    });
+    fireEvent.change(field, { target: { value: '' } });
+    expect(field.value).toBe('');
+    expect(field.getAttribute('aria-invalid')).toBe('true');
+    expect((confirmButton() as HTMLButtonElement).disabled).toBe(true);
   });
 
   test('tasks without declared writes get the one-at-a-time hint', () => {
@@ -179,12 +220,18 @@ describe('DispatchDialog', () => {
   });
 
   test('raise mode edits a paused session’s ceilings and hides the list', async () => {
-    const { confirmed, spend, runs, confirmButton } = mount({
+    const { confirmed, spend, runs, description, confirmButton } = mount({
       mode: 'raise',
       initial: { concurrency: 4, maxSpendUsd: 60, maxRuns: null },
     });
     expect(confirmButton().textContent).toContain('Raise ceiling');
     expect(screen.queryByRole('table')).toBeNull();
+    // Concurrency is not what a raise edits, so the picker goes too, and the sentence
+    // prices the session against its ceiling rather than counting starts.
+    expect(screen.queryByRole('combobox', { name: 'Concurrency' })).toBeNull();
+    expect(description()?.textContent).toBe(
+      '~$60–$180 at $5–15 per run · ceiling $60'
+    );
     expect(spend().value).toBe('60');
     expect(runs().value).toBe('');
     // Nothing changed yet, so there is nothing to raise.

@@ -32,10 +32,13 @@ export interface DispatchPreview {
   runningNow: number;
   /** One sentence stating the arithmetic, so the dialog never makes the user do it. */
   summary: string;
+  /** Just the estimate and ceiling clauses of `summary` — what a paused session's raise
+   * dialog prints, where "N start now" no longer applies. */
+  costSummary: string;
   /** The dollar range the runs about to start (now or queued) will settle at. */
   estimateUsd: { low: number; high: number };
-  /** Selected tasks that declare no `writes` — the fan-out serialises those, one at a
-   * time, because an undeclared write conflicts with every live claim. */
+  /** Tasks about to run (now or queued) that declare no `writes` — the fan-out serialises
+   * those, one at a time, because an undeclared write conflicts with every live claim. */
   undeclaredWrites: number;
   /** Whether even the low estimate clears the spend ceiling, so the session would pause
    * before every task has run. */
@@ -61,11 +64,25 @@ export interface BuildDispatchPreviewInput {
 // cost swings with how much the agent has to read before it can write.
 const ESTIMATE_LOW_FACTOR = 0.5;
 const ESTIMATE_HIGH_FACTOR = 1.5;
-const DEFAULT_RUN_COST_USD = 10;
+/** The per-run midpoint the estimate and the default spend ceiling are built around. */
+export const DEFAULT_RUN_COST_USD = 10;
 
 // `$5–15`: one dollar sign for the range, as a price tag would print it.
 function usdRange(low: number, high: number): string {
   return `${formatUsd(low)}–${formatUsd(high).slice(1)}`;
+}
+
+// `~$60–$180 at $5–15 per run · ceiling $120`: the clauses that price the plan.
+function costClauses(
+  estimate: { low: number; high: number },
+  perRun: { low: number; high: number },
+  ceilingUsd: number | null
+): string[] {
+  const parts = [
+    `~${formatUsd(estimate.low)}–${formatUsd(estimate.high)} at ${usdRange(perRun.low, perRun.high)} per run`,
+  ];
+  if (ceilingUsd !== null) parts.push(`ceiling ${formatUsd(ceilingUsd)}`);
+  return parts;
 }
 
 function sentence(
@@ -74,9 +91,7 @@ function sentence(
   notReady: number,
   runningNow: number,
   concurrency: number,
-  estimate: { low: number; high: number },
-  perRun: { low: number; high: number },
-  ceilingUsd: number | null
+  cost: string[]
 ): string {
   if (startsNow === 0 && queued === 0) {
     return notReady > 0
@@ -91,11 +106,7 @@ function sentence(
   if (notReady > 0) {
     parts.push(`${notReady} cannot start yet`);
   }
-  parts.push(
-    `~${formatUsd(estimate.low)}–${formatUsd(estimate.high)} at ${usdRange(perRun.low, perRun.high)} per run`
-  );
-  if (ceilingUsd !== null) parts.push(`ceiling ${formatUsd(ceilingUsd)}`);
-  return parts.join(' · ');
+  return [...parts, ...cost].join(' · ');
 }
 
 export function buildDispatchPreview(
@@ -137,9 +148,13 @@ export function buildDispatchPreview(
   };
   const runs = startsNow + queued;
   const estimateUsd = { low: runs * perRun.low, high: runs * perRun.high };
+  // Only the tasks that will run get serialised, so a blocked or landed task with no
+  // writes is not counted against the fan-out.
   const undeclaredWrites = tasks.filter(
-    (task) => task.meta.writes.length === 0
+    (task, i) =>
+      rows[i]?.disposition !== 'not-ready' && task.meta.writes.length === 0
   ).length;
+  const cost = costClauses(estimateUsd, perRun, ceilingUsd);
 
   return {
     rows,
@@ -147,16 +162,8 @@ export function buildDispatchPreview(
     queued,
     notReady,
     runningNow,
-    summary: sentence(
-      startsNow,
-      queued,
-      notReady,
-      runningNow,
-      limit,
-      estimateUsd,
-      perRun,
-      ceilingUsd
-    ),
+    summary: sentence(startsNow, queued, notReady, runningNow, limit, cost),
+    costSummary: cost.join(' · '),
     estimateUsd,
     undeclaredWrites,
     overCeiling: ceilingUsd !== null && estimateUsd.low > ceilingUsd,

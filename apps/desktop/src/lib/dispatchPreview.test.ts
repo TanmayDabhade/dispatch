@@ -218,20 +218,23 @@ describe('buildDispatchPreview', () => {
       ceilingUsd: 600,
     });
     expect(p.summary).toEndWith('~$650–$1,950 at $5–15 per run · ceiling $600');
+    expect(p.costSummary).toBe('~$650–$1,950 at $5–15 per run · ceiling $600');
     expect(p.overCeiling).toBe(true);
   });
 
-  test('tasks without declared writes are counted, ready or not', () => {
+  test('only tasks that will run count as undeclared writes', () => {
     const p = buildDispatchPreview({
       tasks: [
         task('t-1'),
         task('t-2', 'Loose', []),
         task('t-3', 'Loose 2', []),
+        task('t-4', 'Blocked and loose', []),
       ],
-      readyIds: new Set(['t-1', 't-2']),
+      readyIds: new Set(['t-1', 't-2', 't-3']),
       runningNow: 0,
-      concurrency: 4,
+      concurrency: 2,
     });
+    // t-2 starts now and t-3 queues; t-4 cannot start, so it is never serialised.
     expect(p.undeclaredWrites).toBe(2);
   });
 
