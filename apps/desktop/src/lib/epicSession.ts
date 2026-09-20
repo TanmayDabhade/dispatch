@@ -156,7 +156,10 @@ export function spendPillLabel(spend: EpicSpend): string {
 
 /** `warning` from 80 % of the ceiling, measured the way the gate measures
  * it — settled plus the in-flight estimate — so the pill turns amber before
- * the session pauses, not after. */
+ * the session pauses, not after. Decided here: the pill prints settled only
+ * (`spendPillLabel`), so the tone can flip while the printed number still
+ * looks low; every pill that carries this tone renders `spendTitle` as its
+ * hover text, which is where the in-flight half is spelled out. */
 export function spendTone(spend: EpicSpend): 'working' | 'warning' {
   if (spend.maxSpendUsd === null) return 'working';
   const committed = spend.settledUsd + spend.estimatedLiveUsd;

@@ -1,10 +1,13 @@
 import type {
   ConnectEventsOptions,
+  EpicProgress,
+  EpicSessionOptions,
   RunMeta,
   RunScopeRequest,
   ServerEvent,
 } from '@dispatch/client';
 import * as dispatchClient from '@dispatch/client';
+import type { TaskDoc } from '@dispatch/core/browser';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { expect, mock, test } from 'bun:test';
@@ -34,6 +37,13 @@ let runsFixture: RunMeta[] = [];
 let openScopeRequests = new Map<string, RunScopeRequest[]>();
 const scopeRequestListings: string[] = [];
 
+// The bulk epic-progress listing the daemon returns, how many times it was
+// asked for, and every `startEpic` body the hook sent — the fan-out tests
+// below read these.
+let epicProgressFixture: EpicProgress[] = [];
+let epicProgressFetches = 0;
+const epicStarts: [string, EpicSessionOptions | undefined][] = [];
+
 // Only `createApiClient` is replaced — the rest of the module (ApiError, which
 // useOverseerSession's 404 veto instanceof-checks) has to stay real.
 void mock.module('@dispatch/client', () => ({
@@ -45,6 +55,38 @@ void mock.module('@dispatch/client', () => ({
       scopeRequestListings.push(runId);
       return Promise.resolve(openScopeRequests.get(runId) ?? []);
     },
+    fetchAllEpicProgress: () => {
+      epicProgressFetches += 1;
+      return Promise.resolve(epicProgressFixture);
+    },
+    startEpic: (epicId: string, opts?: EpicSessionOptions) => {
+      epicStarts.push([epicId, opts]);
+      return Promise.resolve({
+        epicId,
+        concurrency: opts?.concurrency ?? 1,
+        executor: 'claude',
+        state: 'active',
+        maxSpendUsd: opts?.maxSpendUsd ?? null,
+        maxRuns: opts?.maxRuns ?? null,
+        startedAt: '2026-09-20T00:00:00Z',
+        updatedAt: '2026-09-20T00:00:00Z',
+        active: true,
+      });
+    },
+    startPlan: () => Promise.resolve({ planId: 'p-1' }),
+    fetchPlan: (planId: string) =>
+      Promise.resolve({
+        id: planId,
+        prompt: 'split the auth rewrite',
+        plannerName: 'fake',
+        role: 'plan',
+        state: 'ready',
+        messages: [],
+        questions: [],
+        createdAt: '2026-09-20T00:00:00Z',
+        updatedAt: '2026-09-20T00:00:00Z',
+      }),
+    confirmPlan: () => Promise.resolve({ epicId: 'e-1', taskIds: ['t-1'] }),
     connectEvents: (
       onChange: () => void,
       options: ConnectEventsOptions = {}
@@ -215,4 +257,153 @@ test("a live run's open scope request is surfaced from the listing, without a sc
 
   runsFixture = [];
   openScopeRequests = new Map();
+});
+
+function epicProgressFixtureFor(epicId: string): EpicProgress {
+  return {
+    epicId,
+    active: false,
+    session: null,
+    spend: {
+      settledUsd: 0,
+      liveCount: 0,
+      estimatedLiveUsd: 0,
+      runsStarted: 0,
+      maxSpendUsd: null,
+      maxRuns: null,
+    },
+    children: [],
+    waves: [],
+    liveRuns: [],
+  };
+}
+
+// Mounts the hook against `epics` worth of progress and waits for the bulk
+// listing to land, returning the query client and the hook's live result.
+async function mountWithEpics(epics: string[]) {
+  epicProgressFixture = epics.map(epicProgressFixtureFor);
+  epicProgressFetches = 0;
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const rendered = renderHook(
+    () => useDispatchProject('/repo', { selectedRunId: null }),
+    { wrapper: wrapper(queryClient) }
+  );
+  await waitFor(() => {
+    expect(rendered.result.current.epicProgressById.size).toBe(epics.length);
+  });
+  return { queryClient, result: rendered.result };
+}
+
+const epicProgressAllKey = ['dispatch-epic-progress', PORT, 'all'];
+
+// A fan-out of dozens of milestones used to be a burst of dozens of progress
+// GETs on every run change; the hook now asks once for all of them.
+test('three epics are filled from a single bulk progress fetch', async () => {
+  const { result } = await mountWithEpics(['e-1', 'e-2', 'e-3']);
+
+  expect(epicProgressFetches).toBe(1);
+  expect([...result.current.epicProgressById.keys()].sort()).toEqual([
+    'e-1',
+    'e-2',
+    'e-3',
+  ]);
+  expect(result.current.epicProgressById.get('e-2')?.epicId).toBe('e-2');
+  epicProgressFixture = [];
+});
+
+test('epic.changed invalidates the bulk progress key', async () => {
+  const { queryClient } = await mountWithEpics(['e-1']);
+  expect(queryClient.getQueryState(epicProgressAllKey)?.isInvalidated).toBe(
+    false
+  );
+
+  act(() => {
+    sink?.onEvent({ type: 'epic.changed', epicId: 'e-1' });
+  });
+
+  expect(queryClient.getQueryState(epicProgressAllKey)?.isInvalidated).toBe(
+    true
+  );
+  epicProgressFixture = [];
+});
+
+// The paused row is worded from the event's own numbers and the cached task
+// title, so it lands before (and regardless of) the progress refetch the same
+// frame triggers.
+test('epic.paused records a durable inbox row from the event alone', async () => {
+  const { queryClient, result } = await mountWithEpics(['e-1']);
+  queryClient.setQueryData(
+    ['dispatch-tasks-all', PORT],
+    [{ meta: { id: 'e-1', title: 'Auth rewrite', kind: 'epic' } } as TaskDoc]
+  );
+  expect(result.current.notificationInbox.entries).toEqual([]);
+
+  act(() => {
+    sink?.onEvent({
+      type: 'epic.paused',
+      epicId: 'e-1',
+      reason: 'budget',
+      settledUsd: 41.2,
+      estimatedLiveUsd: 30,
+      maxSpendUsd: 60,
+      runsStarted: 7,
+      maxRuns: 20,
+    });
+  });
+
+  const [row] = result.current.notificationInbox.entries;
+  expect(row?.title).toBe('Auth rewrite paused — spend ceiling');
+  expect(row?.body).toBe(
+    '$41.20 settled + ~$30.00 in flight of $60.00. Resume or raise the ceiling to continue.'
+  );
+  expect(row?.target).toEqual({ kind: 'task', taskId: 'e-1' });
+  expect(row?.read).toBe(false);
+  epicProgressFixture = [];
+});
+
+// Both the pre-fan-out number form and the options form reach `startEpic`;
+// the number is `{ concurrency }` with no ceilings, the options pass through.
+test('handleWorkEpic forwards a bare concurrency and a full options body', async () => {
+  const { result } = await mountWithEpics(['e-1']);
+  epicStarts.length = 0;
+
+  await act(async () => {
+    await result.current.handleWorkEpic('e-1', 3);
+  });
+  await act(async () => {
+    await result.current.handleWorkEpic('e-1', {
+      concurrency: 3,
+      maxSpendUsd: 60,
+    });
+  });
+
+  expect(epicStarts).toEqual([
+    ['e-1', { concurrency: 3, maxSpendUsd: undefined, maxRuns: undefined }],
+    ['e-1', { concurrency: 3, maxSpendUsd: 60, maxRuns: undefined }],
+  ]);
+  epicProgressFixture = [];
+});
+
+test('handleConfirmPlan returns the confirm result, and throws with no plan open', async () => {
+  const { result } = await mountWithEpics([]);
+  const proposal = { tasks: [] };
+
+  // Settled by hand: bun's `rejects` matcher is not awaitable under the
+  // repo's `await-thenable` rule.
+  const refused = await result.current.handleConfirmPlan(proposal).then(
+    () => 'resolved',
+    (err: unknown) => (err instanceof Error ? err.message : 'not an Error')
+  );
+  expect(refused).toBe('no plan open to confirm');
+
+  await act(async () => {
+    await result.current.handleSubmitPrompt('split the auth rewrite');
+  });
+  await waitFor(() => {
+    expect(result.current.planRecord?.id).toBe('p-1');
+  });
+  const confirmed = await result.current.handleConfirmPlan(proposal);
+  expect(confirmed).toEqual({ epicId: 'e-1', taskIds: ['t-1'] });
 });

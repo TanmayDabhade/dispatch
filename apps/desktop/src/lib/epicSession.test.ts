@@ -8,14 +8,14 @@ import { describe, expect, test } from 'bun:test';
 
 import type { EpicPausedEvent } from './epicSession';
 import {
-  PHASE_CHIP_ORDER,
-  PHASE_LABEL,
   defaultMaxRuns,
   defaultSpendCeiling,
   drillTargetFor,
   epicPausedNotice,
   formatUsd,
   pausedReasonLabel,
+  PHASE_CHIP_ORDER,
+  PHASE_LABEL,
   phaseCounts,
   phaseTint,
   rulingsWaiting,
@@ -97,9 +97,22 @@ describe('PHASE_LABEL', () => {
     for (const phase of ALL_PHASES) {
       expect(PHASE_LABEL[phase]).toMatch(/^[A-Z][a-z]+( [a-z]+)?$/);
     }
-    expect(PHASE_LABEL['needs-review']).toBe('Needs review');
-    expect(PHASE_LABEL.working).toBe('Working');
-    expect(PHASE_LABEL.capped).toBe('Capped');
+    expect(PHASE_LABEL).toEqual({
+      draft: 'Draft',
+      waiting: 'Waiting',
+      queued: 'Queued',
+      held: 'Held',
+      working: 'Working',
+      reviewing: 'Reviewing',
+      fixing: 'Fixing',
+      'needs-review': 'Needs review',
+      capped: 'Capped',
+      failed: 'Failed',
+      blocked: 'Blocked',
+      landing: 'Landing',
+      landed: 'Landed',
+      dropped: 'Dropped',
+    });
   });
 });
 
