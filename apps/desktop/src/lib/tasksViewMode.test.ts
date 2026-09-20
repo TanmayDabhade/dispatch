@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 
-import { parseViewMode, VIEW_MODE_STORAGE_KEY } from './tasksViewMode';
+import {
+  parseViewMode,
+  TASKS_VIEW_TABS,
+  VIEW_MODE_STORAGE_KEY,
+} from './tasksViewMode';
 
 describe('parseViewMode', () => {
   test('an unset preference opens on the board', () => {
@@ -31,5 +35,26 @@ describe('storage key', () => {
   // preference — so it must stay abandoned, not migrated from.
   test('is not the pre-lanes key, whose values cannot be trusted', () => {
     expect(VIEW_MODE_STORAGE_KEY).not.toBe('dispatch:tasks-view-mode');
+  });
+});
+
+describe('view tabs', () => {
+  test('the header offers Board, List and Milestones in that order', () => {
+    expect(TASKS_VIEW_TABS.map((t) => t.id)).toEqual([
+      'board',
+      'list',
+      'milestones',
+    ]);
+    expect(TASKS_VIEW_TABS.map((t) => t.label)).toEqual([
+      'Board',
+      'List',
+      'Milestones',
+    ]);
+  });
+
+  test('every tab id parses back to itself', () => {
+    for (const tab of TASKS_VIEW_TABS) {
+      expect(parseViewMode(tab.id)).toBe(tab.id);
+    }
   });
 });

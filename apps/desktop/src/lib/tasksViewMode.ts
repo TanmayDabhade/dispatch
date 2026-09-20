@@ -11,6 +11,15 @@ import { useCallback, useState } from 'react';
  */
 export type TasksViewMode = 'board' | 'list' | 'milestones';
 
+/** The page header's view tabs (`Board` `List` `Milestones`), in the order they render; the
+ * Display popover's segmented control lists the same three. */
+export const TASKS_VIEW_TABS: readonly { id: TasksViewMode; label: string }[] =
+  [
+    { id: 'board', label: 'Board' },
+    { id: 'list', label: 'List' },
+    { id: 'milestones', label: 'Milestones' },
+  ];
+
 /**
  * A NEW storage key, not the original `dispatch:tasks-view-mode`.
  *
@@ -32,20 +41,22 @@ export function parseViewMode(stored: string | null): TasksViewMode {
 }
 
 /**
- * The Tasks view mode as App-level state: read once from storage, written only on an
- * explicit change — never on mount, which is exactly the auto-save-the-default flaw that
- * poisoned the v1 key (see `VIEW_MODE_STORAGE_KEY`).
+ * The Tasks view mode as state: read once from storage (or from `initial`, which the page
+ * header's owner passes when a parent already resolved it), written only on an explicit
+ * change — never on mount, which is exactly the auto-save-the-default flaw that poisoned
+ * the v1 key (see `VIEW_MODE_STORAGE_KEY`).
  */
-export function useTasksViewMode(): [
-  TasksViewMode,
-  (mode: TasksViewMode) => void,
-] {
-  const [mode, setMode] = useState<TasksViewMode>(() =>
-    parseViewMode(
-      typeof window === 'undefined'
-        ? null
-        : window.localStorage.getItem(VIEW_MODE_STORAGE_KEY)
-    )
+export function useTasksViewMode(
+  initial?: TasksViewMode
+): [TasksViewMode, (mode: TasksViewMode) => void] {
+  const [mode, setMode] = useState<TasksViewMode>(
+    () =>
+      initial ??
+      parseViewMode(
+        typeof window === 'undefined'
+          ? null
+          : window.localStorage.getItem(VIEW_MODE_STORAGE_KEY)
+      )
   );
   const set = useCallback((next: TasksViewMode) => {
     setMode(next);

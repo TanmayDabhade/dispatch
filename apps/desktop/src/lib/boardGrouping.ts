@@ -127,37 +127,43 @@ export function laneKey(epicId: string | null): string {
   return epicId ?? '__no-epic__';
 }
 
-export interface LaneStatusCount {
-  /** Cards actually on screen in this status right now, across expanded lanes. */
-  visible: number;
-  /** Cards in this status that a collapsed lane is hiding — the "+N hidden" badge. */
-  hidden: number;
-}
-
 /**
- * Per-status visible/hidden totals for the board's shared column header row.
- *
- * Collapsing an epic drops its cards out of the columns, so a header that only counted what it
- * could see would silently shrink and read as "those tasks went away". Splitting the count keeps
- * the visible number honest while still saying how much is folded up behind it.
+ * Cards per status across every lane, for the board's shared column header row — the one
+ * count that never moves: a collapsed epic folds its cards out of sight, not out of the
+ * column, so the header keeps saying how much work is in each status.
  */
 export function countLaneStatuses(
   lanes: BoardLane[],
-  statuses: string[],
-  collapsedLaneKeys: ReadonlySet<string>
-): Map<string, LaneStatusCount> {
-  const counts = new Map<string, LaneStatusCount>();
-  for (const status of statuses) counts.set(status, { visible: 0, hidden: 0 });
+  statuses: string[]
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const status of statuses) counts.set(status, 0);
   for (const lane of lanes) {
-    const collapsed = collapsedLaneKeys.has(laneKey(lane.epicId));
     for (const column of lane.columns) {
-      const entry = counts.get(column.status);
-      if (entry === undefined) continue;
-      if (collapsed) entry.hidden += column.tasks.length;
-      else entry.visible += column.tasks.length;
+      const current = counts.get(column.status);
+      if (current === undefined) continue;
+      counts.set(column.status, current + column.tasks.length);
     }
   }
   return counts;
+}
+
+/**
+ * Which status columns the board renders: every configured status, minus the empty ones
+ * unless the Display popover's `Show empty groups` is on, minus any the user hid for the
+ * session from a column's `···` menu. Order is the config's, untouched.
+ */
+export function visibleBoardColumns(
+  statuses: readonly string[],
+  countByStatus: ReadonlyMap<string, number>,
+  showEmptyGroups: boolean,
+  hiddenColumns: ReadonlySet<string> = new Set()
+): string[] {
+  return statuses.filter(
+    (status) =>
+      !hiddenColumns.has(status) &&
+      (showEmptyGroups || (countByStatus.get(status) ?? 0) > 0)
+  );
 }
 
 /**

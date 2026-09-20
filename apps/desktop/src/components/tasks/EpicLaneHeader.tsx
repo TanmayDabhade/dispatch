@@ -2,22 +2,33 @@ import type { EpicProgress } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
 import {
   AlertCircle,
-  ChevronRight,
   GitMerge,
-  Layers,
+  Milestone,
   Play,
   Square,
   Waypoints,
 } from 'lucide-react';
 import { useState } from 'react';
 
-import { clampConcurrencyInput } from '../../lib/epicConcurrency';
-import { colorForEpic } from '../../lib/projectColor';
+import {
+  clampConcurrencyInput,
+  concurrencyChoices,
+  concurrencyLabel,
+} from '../../lib/epicConcurrency';
+import { rollupMilestoneStatus } from '../../lib/milestoneRollup';
 import { EpicDagModal } from './EpicDagModal';
+import { statusColor, StatusIcon } from './StatusIcon';
 import { cn } from '@/lib/utils';
+import { GroupHeader } from '@/ui/ai/group-header';
+import { IconButton } from '@/ui/ai/icon-button';
+import { LabelPill, PillButton, SelectPill } from '@/ui/ai/pill';
 import { Alert, AlertDescription } from '@/ui/alert';
-import { Button } from '@/ui/button';
-import { Input } from '@/ui/input';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
 interface EpicLaneHeaderProps {
@@ -32,11 +43,11 @@ interface EpicLaneHeaderProps {
   expanded: boolean;
   onToggle: () => void;
   /** `undefined` until this epic's progress fetch resolves — the controls still render, just
-   * without the done/total bar. */
+   * without the `◔ n/m` glyph. */
   progress: EpicProgress | undefined;
-  /** `orchestrator.epicConcurrency` from the project config, the stepper's starting value. */
+  /** `orchestrator.epicConcurrency` from the project config, the picker's starting value. */
   concurrencyDefault: number;
-  /** This epic's children — the only extra data the dependency-graph modal needs. */
+  /** This epic's children — the dependency-graph modal's input and the rolled-up status. */
   childTasks: TaskDoc[];
   /** Opens a task in the peek/detail dialog: the epic itself (its id chip) or one of its
    * children (from the graph modal). */
@@ -50,17 +61,43 @@ interface EpicLaneHeaderProps {
    * button only renders once every child is done/cancelled, replacing the then-useless Work
    * button. */
   onLand?: (epicId: string) => Promise<void>;
+  /** A `+` on the right that presets the epic in the task creator. */
+  onAdd?: () => void;
+}
+
+// The `◔ 3/7` progress glyph: an r=6 ring with a pie that fills as children land, at 12px.
+function ProgressGlyph({ fraction }: { fraction: number }) {
+  const circumference = 2 * Math.PI * 4;
+  return (
+    <svg
+      viewBox="0 0 14 14"
+      fill="none"
+      aria-hidden
+      className="size-3 shrink-0 text-(--text-secondary)"
+    >
+      <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.5" />
+      <circle
+        cx="7"
+        cy="7"
+        r="2"
+        stroke="currentColor"
+        strokeWidth="4"
+        strokeDasharray={`${circumference * fraction} ${circumference}`}
+        transform="rotate(-90 7 7)"
+      />
+    </svg>
+  );
 }
 
 /**
- * One epic's row on the unified board: the click target that folds the epic's status columns
- * away, plus the epic-level controls that used to live on an epic *card* — a done/total progress
- * bar, the dependency-graph button, and the concurrency stepper with Work/Stop.
+ * One epic's lane header on the board: a 36px `GroupHeader` tinted by the epic's rolled-up
+ * status (the same glyph vocabulary its cards use), the title as the collapse target, the
+ * card count, then the epic-level controls — `◔ done/total`, a `N running` pill, the id
+ * chip, the dependency-graph button, the concurrency picker and Work/Stop/Land as pills.
  *
- * Epics are containers here, not objects on the board: they are never dragged and never occupy a
- * status column, so the header is a real `<button>` (the whole title stretch, hairline included,
- * is clickable) rather than a card. The controls sit outside that button — nested buttons aren't
- * valid HTML — and each stops propagation so using them never also toggles the lane.
+ * Epics are containers here, not objects on the board: they are never dragged and never
+ * occupy a status column. Each control stops propagation so using it never also toggles
+ * the lane.
  */
 export function EpicLaneHeader({
   epic,
@@ -76,6 +113,7 @@ export function EpicLaneHeader({
   onRequestWork,
   onStop,
   onLand,
+  onAdd,
 }: EpicLaneHeaderProps) {
   const [concurrency, setConcurrency] = useState(concurrencyDefault);
   const [busy, setBusy] = useState(false);
@@ -101,9 +139,9 @@ export function EpicLaneHeader({
     ).length ?? 0;
   const totalCount = progress?.children.length ?? 0;
   const liveCount = progress?.liveRuns.length ?? 0;
-  // Same "finished" rule the server's land validation applies (every child
-  // done or cancelled) — the button still only *requests*; the server is the
-  // authority and 409s with its reason into the error alert below.
+  // Same "finished" rule the server's land validation applies (every child done or
+  // cancelled) — the button still only *requests*; the server is the authority and 409s
+  // with its reason into the error alert below.
   const landable =
     onLand !== undefined &&
     epic !== null &&
@@ -111,151 +149,126 @@ export function EpicLaneHeader({
     totalCount > 0 &&
     doneCount === totalCount &&
     epic.meta.status !== 'landed';
+  const rollup = epic !== null ? rollupMilestoneStatus(childTasks) : null;
 
   return (
     <>
-      <div className="group/lane mb-2 flex items-center gap-2 px-0.5">
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={expanded}
-          className="focus-visible:ring-ring/50 flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md py-0.5 text-left focus-visible:ring-2 focus-visible:outline-none"
-        >
-          <ChevronRight
-            aria-hidden
-            className={cn(
-              'text-muted-foreground size-3.5 shrink-0 transition-transform duration-150',
-              expanded && 'rotate-90'
-            )}
-          />
-          {/* A swatch in the epic's own color rather than the generic Layers glyph every lane
-              used to share — with one icon repeated down the page, nothing told the lanes
-              apart. The "no epic" lane has no id to hash, so it keeps the neutral glyph. */}
-          {epic !== null ? (
-            <span
-              aria-hidden
-              className="size-3 shrink-0 rounded-[4px]"
-              style={{ background: colorForEpic(epic.meta.id) }}
-            />
+      <GroupHeader
+        tint={rollup !== null ? statusColor(rollup) : undefined}
+        icon={
+          rollup !== null ? (
+            <StatusIcon status={rollup} />
           ) : (
-            <Layers className="text-muted-foreground size-3.5 shrink-0" />
-          )}
-          <span className="truncate text-[13px] font-semibold">{title}</span>
-          <span className="dense-meta">{total}</span>
-          <span
-            aria-hidden
-            className="h-px flex-1 bg-[linear-gradient(to_right,var(--border-default),transparent_70%)]"
-          />
-        </button>
-
-        {epic !== null && (
-          <>
-            {totalCount > 0 && (
-              <div className="flex shrink-0 items-center gap-1.5">
-                {/* The progress line the epic card carried, as an actual bar: a lane header is
-                    read at a glance down a column of other lanes, where a filled track compares
-                    far faster than two numbers. The numbers stay beside it all the same. */}
+            <Milestone className="text-muted-foreground" />
+          )
+        }
+        name={
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={expanded}
+            className="focus-visible:ring-ring inline-flex max-w-full cursor-pointer items-center rounded-[4px] text-left outline-none focus-visible:ring-2"
+          >
+            <span className="truncate">{title}</span>
+          </button>
+        }
+        count={total}
+        collapsed={!expanded}
+        onToggle={onToggle}
+        onAdd={onAdd}
+        addLabel={`New task in ${title}`}
+        className="mb-2"
+        actions={
+          epic !== null && (
+            <>
+              {totalCount > 0 && (
                 <span
-                  aria-hidden
-                  className="bg-border/70 h-1 w-14 overflow-hidden rounded-full"
+                  data-slot="epic-progress"
+                  className="flex shrink-0 items-center gap-1 text-[12px] font-medium text-(--text-secondary)"
                 >
-                  <span
-                    className="bg-primary/70 block h-full rounded-full transition-[width] duration-300"
-                    style={{
-                      width: `${Math.round((doneCount / totalCount) * 100)}%`,
-                    }}
-                  />
+                  <ProgressGlyph fraction={doneCount / totalCount} />
+                  {doneCount}/{totalCount}
                 </span>
-                <span className="text-muted-foreground flex items-center gap-1 font-mono text-[11px] whitespace-nowrap">
-                  {liveCount > 0 && (
-                    <span className="bg-primary size-1.5 shrink-0 animate-pulse rounded-full motion-reduce:animate-none" />
-                  )}
-                  {doneCount}/{totalCount} done
-                  {liveCount > 0 && ` · ${liveCount} running`}
-                </span>
-              </div>
-            )}
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    aria-label={`Open ${epic.meta.id}`}
-                    onClick={() => onOpenTask(epic.meta.id)}
-                    className="text-muted-foreground/70 hover:bg-accent hover:text-foreground h-6 shrink-0 rounded-md px-1 font-mono text-[11px]"
-                  />
-                }
-              >
-                {epic.meta.id}
-              </TooltipTrigger>
-              <TooltipContent>Open epic</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    aria-label={`View dependency graph for ${epic.meta.id}`}
-                    onClick={() => setShowGraph(true)}
-                    className="text-muted-foreground hover:bg-accent hover:text-foreground size-auto shrink-0 rounded-md p-1 has-[>svg]:px-1"
-                  />
-                }
-              >
-                <Waypoints className="size-3" />
-              </TooltipTrigger>
-              <TooltipContent>View dependency graph</TooltipContent>
-            </Tooltip>
-            {/* Dispatch controls stay hover/focus-revealed (and pinned open while a session is
-                active), the same way they behaved on the epic card — a board of ten lanes should
-                not read as ten permanent control rows. */}
-            <div
-              className={cn(
-                'flex shrink-0 items-center gap-1.5 opacity-0 transition-opacity duration-150',
-                'group-hover/lane:opacity-100 group-focus-within/lane:opacity-100 focus-within:opacity-100',
-                active && 'opacity-100'
               )}
-            >
-              {!landable && (
-                <Input
-                  type="number"
-                  min={1}
-                  value={concurrency}
-                  disabled={active || busy}
-                  onChange={(e) =>
-                    setConcurrency(clampConcurrencyInput(e.target.value))
+              {liveCount > 0 && (
+                <LabelPill color="var(--state-working-fg)">
+                  {liveCount} running
+                </LabelPill>
+              )}
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    // The epic id as a 24px pill that opens the epic — a `Pill`'s look on a
+                    // real button.
+                    <PillButton
+                      aria-label={`Open ${epic.meta.id}`}
+                      onClick={() => onOpenTask(epic.meta.id)}
+                      className="bg-surface-quaternary h-6 px-2"
+                    />
                   }
-                  aria-label={`Epic dispatch concurrency for ${epic.meta.id}`}
-                  className="h-6 w-11 rounded px-1.5 py-0 text-[11px]"
-                />
+                >
+                  {epic.meta.id}
+                </TooltipTrigger>
+                <TooltipContent>Open epic</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <IconButton
+                      label={`View dependency graph for ${epic.meta.id}`}
+                      onClick={() => setShowGraph(true)}
+                    />
+                  }
+                >
+                  <Waypoints aria-hidden />
+                </TooltipTrigger>
+                <TooltipContent>View dependency graph</TooltipContent>
+              </Tooltip>
+              {!landable && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    disabled={active || busy}
+                    render={
+                      <SelectPill
+                        aria-label={`Epic dispatch concurrency for ${epic.meta.id}`}
+                      />
+                    }
+                  >
+                    {concurrencyLabel(concurrency)}
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="min-w-[96px]">
+                    {concurrencyChoices(concurrencyDefault).map((choice) => (
+                      <DropdownMenuItem
+                        key={choice}
+                        data-selected={choice === concurrency || undefined}
+                        onClick={() =>
+                          setConcurrency(clampConcurrencyInput(String(choice)))
+                        }
+                      >
+                        {concurrencyLabel(choice)}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
               )}
               {active ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
+                <PillButton
                   disabled={busy}
                   onClick={() => void run(() => onStop(epic.meta.id))}
-                  className="hover:bg-destructive/10 hover:text-destructive h-6 gap-1 px-2 text-[11px]"
                 >
                   <Square className="size-3" />
                   Stop
-                </Button>
+                </PillButton>
               ) : landable ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
+                <PillButton
                   disabled={busy}
                   onClick={() => void run(() => onLand(epic.meta.id))}
-                  className="hover:bg-primary/10 hover:text-primary h-6 gap-1 px-2 text-[11px]"
                 >
                   <GitMerge className="size-3" />
                   Land
-                </Button>
+                </PillButton>
               ) : (
-                <Button
-                  variant="ghost"
-                  size="sm"
+                <PillButton
                   disabled={busy}
                   onClick={() => {
                     if (onRequestWork !== undefined) {
@@ -264,24 +277,25 @@ export function EpicLaneHeader({
                     }
                     void run(() => onWork(epic.meta.id, concurrency));
                   }}
-                  className="hover:bg-primary/10 hover:text-primary h-6 gap-1 px-2 text-[11px]"
                 >
                   <Play className="size-3" />
                   Work
-                </Button>
+                </PillButton>
               )}
-            </div>
-          </>
-        )}
-      </div>
+            </>
+          )
+        }
+      />
 
       {error !== null && (
         <Alert
           variant="destructive"
-          className="bg-destructive/10 mb-2 flex items-center gap-1.5 rounded-md border-0 px-2 py-1 text-[11px] has-[>svg]:gap-x-1.5 [&>svg]:translate-y-0"
+          className={cn(
+            'bg-destructive/10 mb-2 flex items-center gap-1.5 rounded-control border-0 px-2 py-1 text-[12px] has-[>svg]:gap-x-1.5 [&>svg]:translate-y-0'
+          )}
         >
           <AlertCircle className="size-3 shrink-0" />
-          <AlertDescription className="truncate text-[11px]">
+          <AlertDescription className="truncate text-[12px]">
             {error}
           </AlertDescription>
         </Alert>
