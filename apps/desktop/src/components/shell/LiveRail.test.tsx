@@ -379,8 +379,14 @@ test('a milestone with no epic doc is named by its id', () => {
 });
 
 test('a paused session reads as held rather than working', () => {
-  const paused = session('e-1', ['t-1']);
-  paused.session = { ...paused.session!, state: 'paused', active: false };
+  const active = session('e-1', ['t-1']);
+  const paused: EpicProgress = {
+    ...active,
+    session:
+      active.session === null
+        ? null
+        : { ...active.session, state: 'paused', active: false },
+  };
   const { container } = render(
     <LiveRail
       {...railProps({

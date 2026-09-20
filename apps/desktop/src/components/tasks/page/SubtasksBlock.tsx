@@ -10,43 +10,17 @@ import { RunStatePill } from '../../runs/RunStatePill';
 import { useShellActions } from '../../shell/ShellActionsContext';
 import { AssigneeAvatar } from '../AssigneeAvatar';
 import { PriorityIcon } from '../PriorityIcon';
-import { pieDashOffset, StatusIcon } from '../StatusIcon';
+import { StatusIcon } from '../StatusIcon';
 import { cn } from '@/lib/utils';
 import { IconButton } from '@/ui/ai/icon-button';
 import { ListRow } from '@/ui/ai/list-row';
 import { LabelPill } from '@/ui/ai/pill';
+import { ProgressGlyph } from '@/ui/chrome';
 
 /** Whether a sub-task counts as done for the `◔ n/m` glyph: landed, or dropped (it needs
  * nothing more from anyone). */
 function isFinished(doc: TaskDoc): boolean {
   return doc.meta.status === 'landed' || doc.meta.status === 'dropped';
-}
-
-// Linear's tiny progress pie beside the sub-issues count: a 14px ring whose interior fills
-// as children land, on the same geometry as `StatusIcon`'s pie.
-function ProgressGlyph({ done, total }: { done: number; total: number }) {
-  const fraction = total === 0 ? 0 : done / total;
-  return (
-    <svg
-      viewBox="0 0 14 14"
-      fill="none"
-      className="text-muted-foreground size-3.5 shrink-0"
-      role="img"
-      aria-label={`${done} of ${total} done`}
-    >
-      <circle cx={7} cy={7} r={6} stroke="currentColor" strokeWidth={1.5} />
-      <circle
-        cx={7}
-        cy={7}
-        r={2}
-        stroke="currentColor"
-        strokeWidth={4}
-        strokeDasharray="12.189379495928398 24.378758991856795"
-        strokeDashoffset={pieDashOffset(fraction)}
-        transform="rotate(-90 7 7)"
-      />
-    </svg>
-  );
 }
 
 // The `▾ Sub-tasks ◔ 1/3` block under the description: a 12px/500 header with a collapse
@@ -90,8 +64,14 @@ export function SubtasksBlock({
             )}
           />
           {title}
-          <ProgressGlyph done={done} total={tasks.length} />
-          <span className="font-book tabular-nums">
+          <ProgressGlyph
+            fraction={tasks.length === 0 ? 0 : done / tasks.length}
+            className="text-muted-foreground size-3.5"
+          />
+          <span
+            className="font-book tabular-nums"
+            aria-label={`${done} of ${tasks.length} done`}
+          >
             {done}/{tasks.length}
           </span>
         </button>

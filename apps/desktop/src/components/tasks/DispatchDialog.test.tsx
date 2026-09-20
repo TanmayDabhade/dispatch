@@ -42,8 +42,8 @@ function mount(
     confirmed,
     cancelled: () => cancelled,
     description: () => document.querySelector('[data-slot=dialog-description]'),
-    spend: () => screen.getByLabelText('Spend ceiling') as HTMLInputElement,
-    runs: () => screen.getByLabelText('Max runs') as HTMLInputElement,
+    spend: () => screen.getByLabelText<HTMLInputElement>('Spend ceiling'),
+    runs: () => screen.getByLabelText<HTMLInputElement>('Max runs'),
     confirmButton: () =>
       screen.getByRole('button', {
         name: overrides.confirmLabel ?? /Send \d+ agents|Raise ceiling/,

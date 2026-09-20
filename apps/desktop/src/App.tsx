@@ -1131,9 +1131,13 @@ function App() {
                               data={data}
                               mode={tasksViewMode}
                               focusEpic={focusEpic}
-                              onSelectTask={(taskId) =>
-                                dispatchNav({ type: 'openPeek', taskId })
-                              }
+                              onSelectTask={(taskId, tab, runId) => {
+                                // A phase drill from the milestones layout names its
+                                // tab; a plain row click keeps the peek.
+                                if (tab !== undefined)
+                                  openTaskView(taskId, tab, runId);
+                                else dispatchNav({ type: 'openPeek', taskId });
+                              }}
                               onNewTask={(status) =>
                                 openCreateTask(
                                   status !== undefined ? { status } : undefined

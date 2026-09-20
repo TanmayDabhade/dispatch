@@ -45,6 +45,7 @@ function task(
       labels: [],
       assignee: 'none',
       blockedBy: [],
+      writes: [],
       created: '2026-08-10T12:00:00.000Z',
       updated: '2026-09-13T12:00:00.000Z',
       ...overrides,
@@ -160,7 +161,7 @@ function bulkDispatch(titles: string[]) {
     screen.getByRole('button', { name: `Dispatch ${titles.length}` })
   );
   const dialog = within(screen.getByRole('dialog'));
-  fireEvent.click(dialog.getByRole('button', { name: /^Dispatch \d+$/ }));
+  fireEvent.click(dialog.getByRole('button', { name: /^Send \d+ agents$/ }));
 }
 
 // The failure this covers: the bulk bar loops handleDispatch, so a naive implementation fires

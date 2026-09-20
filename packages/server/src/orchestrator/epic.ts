@@ -29,14 +29,7 @@ import {
   TERMINAL_RUN_STATES,
 } from './types.js';
 
-export type {
-  EpicChildPhase,
-  EpicProgressChild,
-  EpicSpend,
-  EpicWave,
-} from './epicPhase.js';
-
-export type EpicSessionState = 'active' | 'paused' | 'stopped' | 'complete';
+type EpicSessionState = 'active' | 'paused' | 'stopped' | 'complete';
 export type EpicPauseReason = 'human' | 'budget' | 'runs' | 'fill-failed';
 
 // One epic's dispatch session. Persisted write-through to

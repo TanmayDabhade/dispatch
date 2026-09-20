@@ -18,7 +18,7 @@ import { runKind, TERMINAL_RUN_STATES } from './types.js';
 
 /** Where a child stands inside its epic's fan-out, first match wins in
  *  `deriveChildPhase`'s order. Server-derived so the CLI and desktop agree. */
-export type EpicChildPhase =
+type EpicChildPhase =
   | 'draft'
   | 'waiting'
   | 'queued'

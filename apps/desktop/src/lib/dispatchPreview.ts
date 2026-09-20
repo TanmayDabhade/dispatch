@@ -6,7 +6,7 @@ import { formatUsd } from './epicSession';
  * What a bulk dispatch is actually about to do.
  *
  * The mockup framed this as "5 of 8 slots are busy, so 3 start now" — a fixed global cap. There
- * isn't one: dispatch concurrency is chosen per call (see `handleWorkEpic(epicId, concurrency)`
+ * isn't one: dispatch concurrency is chosen per call (see `handleWorkEpic(epicId, { concurrency, … })`
  * and the stepper in EpicLaneHeader), not configured once for the project. So the honest preview
  * is computed against the concurrency the user is about to pick, not an imaginary ceiling.
  *

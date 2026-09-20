@@ -9,6 +9,7 @@ import { FilterMenu } from '../components/tasks/FilterMenu';
 import { TaskBoard } from '../components/tasks/TaskBoard';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { isTypingTarget } from '../hooks/useGlobalKeyboard';
+import type { TaskTab } from '../lib/appNav';
 import {
   boardGroupingFor,
   type BoardLane,
@@ -77,7 +78,9 @@ interface BoardViewProps {
    * rail): switches to the milestones layout, which expands and scrolls to the epic and
    * opens the fan-out dialog when asked. */
   focusEpic?: FocusEpicRequest | null;
-  onSelectTask: (taskId: string) => void;
+  /** Bare `taskId` is a row click (the peek); the milestones layout's phase drill also
+   * names the tab (and the run) a child's phase points at, which needs the full view. */
+  onSelectTask: (taskId: string, tab?: TaskTab, runId?: string) => void;
   /** Opens `CreateTaskModal`, optionally pre-set to a status — the empty state's `New task`. */
   onNewTask: (status?: string) => void;
   onPlanWork: () => void;
