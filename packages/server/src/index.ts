@@ -50,6 +50,9 @@ import type { FindingStorePort } from './findings.js';
 import { floorCheckForToolInput } from './floor.js';
 import { GitRepo } from './git/commands.js';
 import { InboxStore } from './inbox.js';
+import type { InboxClusterer } from './inboxClusterer.js';
+import { createJudgmentClient } from './judgments/client.js';
+import type { JudgmentClient } from './judgments/client.js';
 import { LedgerStore } from './ledger.js';
 import type { LedgerStorePort } from './ledger.js';
 import type { LinearClient } from './linear/client.js';
@@ -189,6 +192,12 @@ export interface StartServerOptions {
   // Replaces credential lookup with a ready-made Linear client, so no sync test
   // ever reaches the network.
   linearClient?: LinearClient;
+  // Replaces TypeSafe key lookup with a ready-made judgment client (or null
+  // to disable judgments outright), so no test ever reaches the API.
+  judgments?: JudgmentClient | null;
+  // Replaces the inbox clusterer with one built on a stub query function, so
+  // a route test can see which items reach the model without a real session.
+  inboxClusterer?: InboxClusterer;
   // Fixed tokens instead of freshly minted ones, so a test can present a known
   // value. Production never passes this.
   tokens?: DaemonTokens;
@@ -1192,9 +1201,18 @@ async function bootServer(
   });
   const stopPolicyEngine = policyEngine.start();
 
+  // Resolved once at boot: a key added later needs a restart, same as the
+  // executors. Tests pass `judgments` explicitly (null disables).
+  const judgments =
+    opts.judgments === undefined
+      ? createJudgmentClient(rootDir)
+      : opts.judgments;
+
   const apiCtx: ApiContext = {
     rootDir,
     store,
+    judgments,
+    inboxClusterer: opts.inboxClusterer,
     cache,
     events,
     orchestrator,

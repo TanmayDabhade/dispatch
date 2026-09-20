@@ -88,6 +88,12 @@ import {
   InboxClusterer,
   InboxClusterSnapshotStore,
 } from './inboxClusterer.js';
+import type { JudgmentClient } from './judgments/client.js';
+import {
+  InboxTriageSnapshotStore,
+  triageInbox,
+  untriagedForClustering,
+} from './judgments/inboxTriage.js';
 import { buildLandingSnapshot } from './landing.js';
 import type { LedgerStorePort } from './ledger.js';
 import { HttpLinearClient } from './linear/client.js';
@@ -183,6 +189,9 @@ export interface ApiContext {
   // same way (see index.ts's wiring for its invalidation signal).
   trackedFilesCache: TrackedFilesCache;
   inboxClusterer?: InboxClusterer;
+  // The TypeSafe judgment client, or null when no key is configured — every
+  // consumer falls back to its pre-judgment behaviour on null.
+  judgments: JudgmentClient | null;
   reviewComments: ReviewCommentStore;
   conversations: ConversationStore;
   questions: QuestionRegistry;
@@ -3703,7 +3712,18 @@ async function clusterInbox(ctx: ApiContext): Promise<Response> {
     // private capture text from ever reaching the local UI or a future model call over it.
     const localOpen = ctx.inboxStore.list().filter((i) => !i.done);
     const localIds = new Set(localOpen.map((i) => i.id));
-    const groups = await clusterer.cluster(ctx.inboxStore.listAll());
+    const all = ctx.inboxStore.listAll();
+    // Triage first: an item with a confident epic has its home and never
+    // reaches the clusterer, so the model call below only sees the rest.
+    const triageStore = new InboxTriageSnapshotStore(ctx.rootDir);
+    const triage = await triageInbox(
+      ctx.judgments,
+      all,
+      ctx.cache.query(),
+      triageStore.load()
+    );
+    if (triage !== null) triageStore.save(triage);
+    const groups = await clusterer.cluster(untriagedForClustering(all, triage));
     const localGroups = filterGroupsToLocalItems(groups, localIds);
     // Persisted so a page load renders this pass instead of billing a new one;
     // a failed pass below deliberately leaves the previous snapshot standing.
@@ -3722,6 +3742,12 @@ async function clusterInbox(ctx: ApiContext): Promise<Response> {
 // or null when none has ever run (or the cache was corrupt).
 function getInboxClusters(ctx: ApiContext): Response {
   return jsonResponse(new InboxClusterSnapshotStore(ctx.rootDir).load());
+}
+
+// GET /api/inbox/triage — the last triage pass (kind, epic, duplicates per
+// item), or null when none has run or no judgment client is configured.
+function getInboxTriage(ctx: ApiContext): Response {
+  return jsonResponse(new InboxTriageSnapshotStore(ctx.rootDir).load());
 }
 
 /**
@@ -4998,6 +5024,13 @@ export async function handleApi(
         method === 'GET'
       ) {
         return getInboxClusters(ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'triage' &&
+        method === 'GET'
+      ) {
+        return getInboxTriage(ctx);
       }
       if (segments.length === 2 && method === 'PATCH') {
         return await updateInbox(req, ctx, segments[1]);

@@ -1202,6 +1202,27 @@ export interface InboxClusterSnapshot {
   updatedAt: string;
 }
 
+/** What the triage judged one capture to be — mirrors InboxTriage in
+ * packages/server/src/judgments/inboxTriage.ts. */
+export interface InboxTriage {
+  itemId: string;
+  hash: string;
+  /** The judged kind; `noise` means it is not about the project at all. */
+  kind: InboxKind | 'noise';
+  kindConfidence: number;
+  /** The open epic this belongs to, or null when none won with confidence. */
+  epicId: string | null;
+  epicConfidence: number;
+  /** Tasks or other captures this looks like a duplicate of, strongest first. */
+  duplicates: { id: string; probability: number }[];
+}
+
+/** The persisted last triage pass, keyed by item id. */
+export interface InboxTriageSnapshot {
+  items: Record<string, InboxTriage>;
+  updatedAt: string;
+}
+
 export interface InboxConvertResponse {
   results: InboxConvertResult[];
   converted: number;
@@ -1947,6 +1968,9 @@ export interface ApiClient {
   /** The persisted result of the last clustering pass, or null when none has
    * ever run — what a page load renders instead of billing a fresh call. */
   fetchInboxClusters(): Promise<InboxClusterSnapshot | null>;
+  /** The persisted result of the last triage pass (run as part of
+   * `clusterInbox`), or null when none has run or judgments are off. */
+  fetchInboxTriage(): Promise<InboxTriageSnapshot | null>;
 
   /** One side of a file in a run's worktree. `sha` is the precondition for applyRunEdit. */
   fetchRunFile(
@@ -2544,6 +2568,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     clusterInbox: () =>
       request(target, '/api/inbox/cluster', { method: 'POST' }),
     fetchInboxClusters: () => request(target, '/api/inbox/clusters'),
+    fetchInboxTriage: () => request(target, '/api/inbox/triage'),
     fetchRunFile: (runId, path, side) =>
       request(
         target,

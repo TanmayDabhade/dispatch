@@ -58,6 +58,8 @@ export type {
   InboxConvertResponse,
   InboxConvertResult,
   InboxItem,
+  InboxTriage,
+  InboxTriageSnapshot,
   InboxKind,
   CreateNoteInput,
   LandedRow,
