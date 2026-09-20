@@ -1,5 +1,6 @@
 import type {
   ApiClient,
+  ExecutorsResponse,
   LinearIssueLink,
   LinearSyncSummary,
   PlanRecord,
@@ -97,6 +98,8 @@ export interface TaskDetailPanelProps {
    * resolveExecuteModel). Absent, the picker falls back to the device default,
    * which ignores the project config. */
   defaultModel?: string;
+  /** What the daemon can dispatch on. Absent (or a single real executor) hides the picker. */
+  executors?: ExecutorsResponse;
   statuses: string[];
   ready: boolean;
   run: RunMeta | undefined;
@@ -116,11 +119,7 @@ export interface TaskDetailPanelProps {
    * as dragging its card, rather than waiting on a round-trip like every other field here
    * (`onUpdate`) does. */
   onMoveStatus: (id: string, status: string) => Promise<void>;
-  onDispatch: (
-    id: string,
-    executor?: 'fake' | 'claude',
-    model?: string
-  ) => Promise<void>;
+  onDispatch: (id: string, executor?: string, model?: string) => Promise<void>;
   /** Jumps to a run's session/log — the "View run"/"Review run" button and every Sessions
    * row call this with the run's id. */
   onOpenSession: (runId: string) => void;
@@ -224,6 +223,7 @@ export function TaskPage({
   onClose,
   doc,
   defaultModel,
+  executors,
   statuses,
   ready,
   run,
@@ -265,6 +265,14 @@ export function TaskPage({
   // The model this dispatch will use — seeded from the project's resolved default (config
   // models.execute layered under the device override), overridable per-dispatch.
   const [model, setModel] = useState(() => defaultModel ?? readDefaultModel());
+  // The executor this dispatch will use; undefined means "the daemon's default", which is
+  // sent as no executor at all so a resumable run is never refused for naming one.
+  const [executor, setExecutor] = useState<string | undefined>(undefined);
+  const executorChoices = useMemo(
+    () => (executors?.executors ?? []).filter((e) => e.name !== 'fake'),
+    [executors]
+  );
+  const effectiveExecutor = executor ?? executors?.default ?? 'claude';
   // The epic's dependency-graph dialog — only ever meaningful when `doc.meta.kind ===
   // 'epic'`; not lifted to nav state since nothing outside this page needs to know.
   const [showGraph, setShowGraph] = useState(false);
@@ -427,13 +435,16 @@ export function TaskPage({
   }
 
   const dispatch = useCallback(
-    async (executor?: 'fake' | 'claude') => {
+    async (explicit?: string) => {
       setDispatching(true);
       try {
+        const chosen = explicit ?? executor;
+        const runsOn = chosen ?? executors?.default ?? 'claude';
+        // The model picker lists Claude ids; any other executor picks its own.
         await onDispatch(
           doc.meta.id,
-          executor,
-          executor === 'fake' ? undefined : model
+          chosen,
+          runsOn === 'claude' ? model : undefined
         );
       } catch (err) {
         fail('Dispatch failed', err);
@@ -441,7 +452,7 @@ export function TaskPage({
         setDispatching(false);
       }
     },
-    [doc.meta.id, model, onDispatch, fail]
+    [doc.meta.id, executor, executors, model, onDispatch, fail]
   );
 
   const patch = useCallback(
@@ -609,19 +620,47 @@ export function TaskPage({
             <Button disabled={dispatching} onClick={() => void dispatch()}>
               Dispatch
             </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger render={<SelectPill aria-label="Model" />}>
-                {modelLabel(model)}
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start">
-                {MODELS.map((m) => (
-                  <DropdownMenuItem key={m.id} onClick={() => setModel(m.id)}>
-                    <span className="flex-1">{m.label}</span>
-                    {m.id === model && <Check className="ml-auto size-3" />}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {executorChoices.length > 1 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={<SelectPill aria-label="Executor" />}
+                >
+                  {effectiveExecutor}
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  {executorChoices.map((e) => (
+                    <DropdownMenuItem
+                      key={e.name}
+                      onClick={() =>
+                        setExecutor(
+                          e.name === executors?.default ? undefined : e.name
+                        )
+                      }
+                    >
+                      <span className="flex-1">{e.name}</span>
+                      {e.name === effectiveExecutor && (
+                        <Check className="ml-auto size-3" />
+                      )}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+            {effectiveExecutor === 'claude' && (
+              <DropdownMenu>
+                <DropdownMenuTrigger render={<SelectPill aria-label="Model" />}>
+                  {modelLabel(model)}
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  {MODELS.map((m) => (
+                    <DropdownMenuItem key={m.id} onClick={() => setModel(m.id)}>
+                      <span className="flex-1">{m.label}</span>
+                      {m.id === model && <Check className="ml-auto size-3" />}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
           </>
         )}
         {ready && isFakeExecutorDevToolEnabled() && (
