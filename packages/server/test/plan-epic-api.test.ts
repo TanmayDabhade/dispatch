@@ -616,6 +616,14 @@ describe('POST /api/plan/:id/confirm', () => {
     );
     expect(epic.meta.kind).toBe('epic');
     expect(epic.meta.status).toBe('ready');
+
+    // The record remembers its epic so a list row can link to the milestone.
+    const plan = await json(await fetch(`${baseUrl}/api/plan/${planId}`));
+    expect(plan.epicId).toBe(result.epicId);
+    const rows = await json(await fetch(`${baseUrl}/api/plans`));
+    expect(rows.find((r: { id: string }) => r.id === planId).epicId).toBe(
+      result.epicId
+    );
   });
 
   it('404s confirming an unknown plan', async () => {
@@ -879,6 +887,207 @@ describe('POST /api/epics/:id/dispatch, /stop, GET /progress', () => {
       method: 'POST',
     });
     expect(res.status).toBe(409);
+  });
+
+  it('accepts the ceilings on dispatch and returns the full session', async () => {
+    await startWithPlanner(
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    const { epicId } = await createEpicWithChildren(3);
+
+    const res = await fetch(`${baseUrl}/api/epics/${epicId}/dispatch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        concurrency: 2,
+        executor: 'fake',
+        maxRuns: 3,
+        maxSpendUsd: null,
+      }),
+    });
+    expect(res.status).toBe(201);
+    const session = await json(res);
+    expect(session).toMatchObject({
+      epicId,
+      concurrency: 2,
+      executor: 'fake',
+      state: 'active',
+      active: true,
+      maxRuns: 3,
+      maxSpendUsd: null,
+    });
+    expect(typeof session.startedAt).toBe('string');
+    expect(typeof session.updatedAt).toBe('string');
+  });
+
+  it('400s a ceiling that is neither a number nor null', async () => {
+    await startWithPlanner(
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    const { epicId } = await createEpicWithChildren(1);
+
+    for (const body of [{ maxRuns: '3' }, { maxSpendUsd: 'lots' }]) {
+      const res = await fetch(`${baseUrl}/api/epics/${epicId}/dispatch`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ executor: 'fake', ...body }),
+      });
+      expect(res.status).toBe(400);
+      expect((await json(res)).error).toContain('expected a number or null');
+    }
+    // Nothing was left behind: a clean dispatch still 201s.
+    const ok = await fetch(`${baseUrl}/api/epics/${epicId}/dispatch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ executor: 'fake' }),
+    });
+    expect(ok.status).toBe(201);
+  });
+
+  it('pauses an active session, 409s a second pause, and resumes with a new ceiling', async () => {
+    await startWithPlanner(
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    const { epicId } = await createEpicWithChildren(2);
+    await fetch(`${baseUrl}/api/epics/${epicId}/dispatch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ concurrency: 1, executor: 'fake' }),
+    });
+
+    const pauseRes = await fetch(`${baseUrl}/api/epics/${epicId}/pause`, {
+      method: 'POST',
+    });
+    expect(pauseRes.status).toBe(200);
+    const paused = await json(pauseRes);
+    expect(paused.state).toBe('paused');
+    expect(paused.pausedReason).toBe('human');
+    expect(paused.active).toBe(false);
+
+    const again = await fetch(`${baseUrl}/api/epics/${epicId}/pause`, {
+      method: 'POST',
+    });
+    expect(again.status).toBe(409);
+
+    // A paused session refuses a second dispatch — resume or stop it first.
+    const restart = await fetch(`${baseUrl}/api/epics/${epicId}/dispatch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ executor: 'fake' }),
+    });
+    expect(restart.status).toBe(409);
+    expect((await json(restart)).error).toContain('paused');
+
+    const resumeRes = await fetch(`${baseUrl}/api/epics/${epicId}/resume`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ maxSpendUsd: 100 }),
+    });
+    expect(resumeRes.status).toBe(200);
+    const resumed = await json(resumeRes);
+    expect(resumed.state).toBe('active');
+    expect(resumed.active).toBe(true);
+    expect(resumed.maxSpendUsd).toBe(100);
+    expect(resumed.pausedReason).toBeUndefined();
+
+    // Resume needs a paused session, as pause needs an active one.
+    const resumeAgain = await fetch(`${baseUrl}/api/epics/${epicId}/resume`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(resumeAgain.status).toBe(409);
+  });
+
+  it('409s pausing an epic with no session and 400s a bad resume body', async () => {
+    await startWithPlanner(
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    const { epicId } = await createEpicWithChildren(1);
+    const pauseRes = await fetch(`${baseUrl}/api/epics/${epicId}/pause`, {
+      method: 'POST',
+    });
+    expect(pauseRes.status).toBe(409);
+
+    await fetch(`${baseUrl}/api/epics/${epicId}/dispatch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ executor: 'fake' }),
+    });
+    await fetch(`${baseUrl}/api/epics/${epicId}/pause`, { method: 'POST' });
+    const badResume = await fetch(`${baseUrl}/api/epics/${epicId}/resume`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ maxRuns: 'many' }),
+    });
+    expect(badResume.status).toBe(400);
+    // The bad body did not resume it.
+    const stopRes = await fetch(`${baseUrl}/api/epics/${epicId}/stop`, {
+      method: 'POST',
+    });
+    expect(stopRes.status).toBe(200);
+    expect((await json(stopRes)).state).toBe('stopped');
+  });
+
+  it('GET /api/epics/progress lists every epic with session: null where never started', async () => {
+    await startWithPlanner(
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    const started = await createEpicWithChildren(2);
+    const idle = await createEpicWithChildren(1);
+    await fetch(`${baseUrl}/api/epics/${started.epicId}/dispatch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ concurrency: 1, executor: 'fake', maxRuns: 5 }),
+    });
+    await waitFor(async () => {
+      const progress = await json(
+        await fetch(`${baseUrl}/api/epics/${started.epicId}/progress`)
+      );
+      return progress.liveRuns.length === 1;
+    });
+
+    const res = await fetch(`${baseUrl}/api/epics/progress`);
+    expect(res.status).toBe(200);
+    const rows = (await json(res)) as Array<Record<string, unknown>>;
+    const byId = (a: unknown, b: unknown): number =>
+      String(a).localeCompare(String(b));
+    expect(rows.map((r) => r.epicId).sort(byId)).toEqual(
+      [started.epicId, idle.epicId].sort(byId)
+    );
+
+    const active = rows.find((r) => r.epicId === started.epicId)!;
+    expect(active.active).toBe(true);
+    expect((active.session as { state: string }).state).toBe('active');
+    expect(active.spend).toMatchObject({
+      liveCount: 1,
+      runsStarted: 1,
+      maxRuns: 5,
+      maxSpendUsd: null,
+    });
+    const children = active.children as Array<Record<string, unknown>>;
+    expect(children).toHaveLength(2);
+    for (const child of children) {
+      expect(typeof child.phase).toBe('string');
+      expect(child.wave).toBe(1);
+      expect(typeof child.openFindings).toBe('number');
+    }
+    expect(children.map((c) => c.phase).sort(byId)).toEqual([
+      'queued',
+      'working',
+    ]);
+    expect(active.waves).toEqual([
+      { index: 1, total: 2, byPhase: { queued: 1, working: 1 } },
+    ]);
+
+    const never = rows.find((r) => r.epicId === idle.epicId)!;
+    expect(never.session).toBeNull();
+    expect(never.active).toBe(false);
+    expect(never.spend).toMatchObject({
+      settledUsd: 0,
+      liveCount: 0,
+      runsStarted: 0,
+    });
+    expect((never.children as unknown[]).length).toBe(1);
   });
 });
 

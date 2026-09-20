@@ -2,7 +2,7 @@ import type { SyncStatus } from '@dispatch/client';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
-import { FrameStatusStrip } from './FrameStatusStrip';
+import { FrameStatusStrip, liveCeilingsLabel } from './FrameStatusStrip';
 import { TooltipProvider } from '@/ui/tooltip';
 
 function status(overrides: Partial<SyncStatus> = {}): SyncStatus {
@@ -37,7 +37,9 @@ const props = {
 };
 
 // The strip's tooltips need the provider the app's `SidebarProvider` supplies.
-function mount(overrides: Partial<typeof props> = {}) {
+function mount(
+  overrides: Partial<Parameters<typeof FrameStatusStrip>[0]> = {}
+) {
   return render(
     <TooltipProvider>
       <FrameStatusStrip {...props} {...overrides} />
@@ -117,6 +119,13 @@ test('spend shows only once there is spend', () => {
     </TooltipProvider>
   );
   expect(screen.getByText('$4.50 today')).toBeTruthy();
+  // Whole dollars drop the cents, the same rule as the ceilings readout beside it.
+  rerender(
+    <TooltipProvider>
+      <FrameStatusStrip {...props} spendToday={12} />
+    </TooltipProvider>
+  );
+  expect(screen.getByText('$12 today')).toBeTruthy();
 });
 
 test('the Overseer link opens the overseer', () => {
@@ -128,4 +137,64 @@ test('the Overseer link opens the overseer', () => {
   });
   fireEvent.click(screen.getByRole('button', { name: 'Overseer' }));
   expect(opened).toBe(1);
+});
+
+test("live milestones read beside today's spend, against their ceilings", () => {
+  const { container } = mount({
+    spendToday: 4.5,
+    ceilings: { live: 2, settledUsd: 41.2, ceilingUsd: 120 },
+  });
+  expect(screen.getByText('$4.50 today')).toBeTruthy();
+  expect(
+    screen.getByText('2 milestones live · $41.20 of $120 ceilings')
+  ).toBeTruthy();
+  // The separator sits between the two readouts, and only then.
+  expect(container.textContent).toContain(
+    '$4.50 today·2 milestones live · $41.20 of $120 ceilings'
+  );
+});
+
+test('the ceilings readout stands alone when today has no spend yet', () => {
+  const { container } = mount({
+    spendToday: 0,
+    ceilings: { live: 1, settledUsd: 0, ceilingUsd: 30 },
+  });
+  expect(
+    screen.getByText('1 milestone live · $0 of $30 ceilings')
+  ).toBeTruthy();
+  expect(container.textContent).not.toContain('·1 milestone');
+});
+
+test('no ceiling on any live session prints the spend alone', () => {
+  mount({ ceilings: { live: 1, settledUsd: 12.345, ceilingUsd: null } });
+  expect(screen.getByText('1 milestone live · $12.35 spent')).toBeTruthy();
+});
+
+test('nothing live, null or absent shows no ceilings readout', () => {
+  const { container, rerender } = mount({
+    ceilings: { live: 0, settledUsd: 41.2, ceilingUsd: 120 },
+  });
+  expect(container.querySelector('[data-slot="live-ceilings"]')).toBeNull();
+  rerender(
+    <TooltipProvider>
+      <FrameStatusStrip {...props} ceilings={null} />
+    </TooltipProvider>
+  );
+  expect(container.querySelector('[data-slot="live-ceilings"]')).toBeNull();
+  rerender(
+    <TooltipProvider>
+      <FrameStatusStrip {...props} spendToday={4.5} />
+    </TooltipProvider>
+  );
+  expect(container.querySelector('[data-slot="live-ceilings"]')).toBeNull();
+  expect(container.textContent).not.toContain('·');
+});
+
+test('liveCeilingsLabel pluralises and drops cents on whole dollars', () => {
+  expect(liveCeilingsLabel({ live: 3, settledUsd: 100, ceilingUsd: 250 })).toBe(
+    '3 milestones live · $100 of $250 ceilings'
+  );
+  expect(
+    liveCeilingsLabel({ live: 1, settledUsd: 0.5, ceilingUsd: null })
+  ).toBe('1 milestone live · $0.50 spent');
 });

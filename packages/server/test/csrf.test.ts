@@ -39,6 +39,7 @@ const BODYLESS_POST_ROUTES = [
   '/api/inbox/cluster',
   '/api/merge-queue/ready',
   '/api/merge-queue/recheck',
+  '/api/epics/t-1/pause',
   '/api/epics/t-1/stop',
   '/api/linear/disconnect',
   '/api/linear/import',

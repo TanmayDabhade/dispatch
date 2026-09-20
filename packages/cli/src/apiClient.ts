@@ -172,25 +172,111 @@ interface ConfirmResult {
   taskIds: string[];
 }
 
-interface EpicSession {
+// Mirrors EpicSessionState / EpicPauseReason in
+// packages/server/src/orchestrator/epic.ts.
+type EpicSessionState = 'active' | 'paused' | 'stopped' | 'complete';
+type EpicPauseReason = 'human' | 'budget' | 'runs' | 'fill-failed';
+
+// Mirrors EpicSession in packages/server/src/orchestrator/epic.ts — the body
+// of `POST /api/epics/:id/dispatch`, `/pause`, `/resume` and `/stop`.
+export interface EpicSession {
   epicId: string;
   concurrency: number;
-  active: boolean;
+  executor: string;
+  state: EpicSessionState;
+  // Set while paused, cleared on resume.
+  pausedReason?: EpicPauseReason;
+  // The message behind a `fill-failed` pause.
+  pausedDetail?: string;
+  // `null` = no ceiling.
+  maxSpendUsd: number | null;
+  maxRuns: number | null;
+  startedAt: string;
+  updatedAt: string;
   completedAt?: string;
+  // `state === 'active'` — what `formatEpicProgress` and `--watch` key on.
+  active: boolean;
 }
 
-interface EpicProgressChild {
+// Mirrors EpicSpend in packages/server/src/orchestrator/epicPhase.ts: what
+// one session has spent and started, against its ceilings.
+export interface EpicSpend {
+  // Σ `RunMeta.costUsd` over the session's runs (stamped at finish).
+  settledUsd: number;
+  // Non-terminal session runs, any kind.
+  liveCount: number;
+  // `liveCount × orchestrator.runCostEstimateUsd`.
+  estimatedLiveUsd: number;
+  // Session runs of every kind — what `maxRuns` bounds.
+  runsStarted: number;
+  maxSpendUsd: number | null;
+  maxRuns: number | null;
+}
+
+// Mirrors EpicChildPhase in packages/server/src/orchestrator/epicPhase.ts:
+// where a child stands inside its epic's fan-out, derived server-side so the
+// CLI and desktop agree.
+type EpicChildPhase =
+  | 'draft'
+  | 'waiting'
+  | 'queued'
+  | 'held'
+  | 'working'
+  | 'reviewing'
+  | 'fixing'
+  | 'needs-review'
+  | 'capped'
+  | 'failed'
+  | 'blocked'
+  | 'landing'
+  | 'landed'
+  | 'dropped';
+
+// Mirrors EpicProgressChild in packages/server/src/orchestrator/epicPhase.ts.
+export interface EpicProgressChild {
   id: string;
   title: string;
   status: string;
+  phase: EpicChildPhase;
+  // Depth along `blockedBy` edges inside the epic, 1-based.
+  wave: number;
+  reason?: string;
+  // The live run, else the latest one.
+  runId?: string;
+  // The latest run's cost.
+  costUsd?: number;
+  openFindings: number;
 }
 
+// Mirrors EpicWave in packages/server/src/orchestrator/epicPhase.ts.
+interface EpicWave {
+  index: number;
+  total: number;
+  byPhase: Partial<Record<EpicChildPhase, number>>;
+}
+
+// Mirrors EpicProgress in packages/server/src/orchestrator/epic.ts — the
+// body of `GET /api/epics/:id/progress`.
 export interface EpicProgress {
   epicId: string;
   active: boolean;
   concurrency?: number;
+  // `null` until the epic's first `startEpic`.
+  session: EpicSession | null;
+  // For the session's runs, or for every child run when there is none.
+  spend: EpicSpend;
   children: EpicProgressChild[];
+  waves: EpicWave[];
   liveRuns: RunMeta[];
+}
+
+// The optional body `startEpic` and `resumeEpic` take. `null` lifts a
+// ceiling; the server ranges every value and 400s out of range.
+interface EpicSessionOptions {
+  concurrency?: number;
+  executor?: string;
+  maxSpendUsd?: number | null;
+  maxRuns?: number | null;
 }
 
 // The subset of packages/server/src/events.ts's ServerEvent union that
@@ -206,7 +292,9 @@ export type ServerEvent =
       requestId: string;
       toolName: string;
     }
-  | { type: 'plan.changed'; planId: string };
+  | { type: 'plan.changed'; planId: string }
+  | { type: 'epic.changed'; epicId: string }
+  | { type: 'epic.paused'; epicId: string; reason: EpicPauseReason };
 
 // Mirrors RunScopeRequest in packages/server/src/orchestrator/scopeRequests.ts:
 // an out-of-fence edit an agent asked for, blocked until someone decides it.
@@ -443,9 +531,14 @@ export interface ApiClient {
   getPlan(planId: string): Promise<PlanRecord>;
   sendPlanMessage(planId: string, text: string): Promise<PlanRecord>;
   confirmPlan(planId: string, proposal: PlanProposal): Promise<ConfirmResult>;
-  startEpic(
+  startEpic(epicId: string, opts?: EpicSessionOptions): Promise<EpicSession>;
+  // Holds new dispatches; live runs finish on their own.
+  pauseEpic(epicId: string): Promise<EpicSession>;
+  // Lifts a pause, optionally setting new ceilings on the way back.
+  // `executor` is fixed for a session's life, so resume never takes one.
+  resumeEpic(
     epicId: string,
-    opts?: { concurrency?: number; executor?: string }
+    opts?: Omit<EpicSessionOptions, 'executor'>
   ): Promise<EpicSession>;
   /** `GET /api/executors`: what the daemon can dispatch on and its default. */
   fetchExecutors(): Promise<ExecutorsResponse>;
@@ -509,6 +602,10 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
       }),
     startEpic: (epicId, opts = {}) =>
       request(target, `/api/epics/${epicId}/dispatch`, { ...jsonBody(opts) }),
+    pauseEpic: (epicId) =>
+      request(target, `/api/epics/${epicId}/pause`, { method: 'POST' }),
+    resumeEpic: (epicId, opts = {}) =>
+      request(target, `/api/epics/${epicId}/resume`, { ...jsonBody(opts) }),
     fetchExecutors: () => request(target, '/api/executors'),
     stopEpic: (epicId) =>
       request(target, `/api/epics/${epicId}/stop`, { ...jsonBody({}) }),

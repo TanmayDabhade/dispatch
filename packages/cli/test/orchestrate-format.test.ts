@@ -3,6 +3,9 @@ import { describe, expect, it } from 'bun:test';
 import type {
   DiffFile,
   EpicProgress,
+  EpicProgressChild,
+  EpicSession,
+  EpicSpend,
   NormalizedEntry,
   PlanProposal,
   PlanRecord,
@@ -285,42 +288,196 @@ describe('formatProposal', () => {
 });
 
 describe('formatEpicProgress', () => {
-  it('renders active state, concurrency, children, and live runs', () => {
-    const run: RunMeta = {
-      id: 'r-1',
-      taskId: 't-1',
-      taskTitle: 'Child',
+  const run: RunMeta = {
+    id: 'r-1',
+    taskId: 't-1',
+    taskTitle: 'Child',
+    executor: 'fake',
+    state: 'running',
+    branch: 'b',
+    baseBranch: 'main',
+    worktreePath: '/tmp/wt',
+    createdAt: '2026-07-20T00:00:00Z',
+    updatedAt: '2026-07-20T00:00:00Z',
+  };
+
+  function session(overrides: Partial<EpicSession> = {}): EpicSession {
+    return {
+      epicId: 'e-1',
+      concurrency: 4,
       executor: 'fake',
-      state: 'running',
-      branch: 'b',
-      baseBranch: 'main',
-      worktreePath: '/tmp/wt',
-      createdAt: '2026-07-20T00:00:00Z',
+      state: 'active',
+      maxSpendUsd: 60,
+      maxRuns: 20,
+      startedAt: '2026-07-20T00:00:00Z',
       updatedAt: '2026-07-20T00:00:00Z',
+      active: true,
+      ...overrides,
     };
-    const progress: EpicProgress = {
+  }
+
+  function spend(overrides: Partial<EpicSpend> = {}): EpicSpend {
+    return {
+      settledUsd: 41.2,
+      liveCount: 3,
+      estimatedLiveUsd: 30,
+      runsStarted: 7,
+      maxSpendUsd: 60,
+      maxRuns: 20,
+      ...overrides,
+    };
+  }
+
+  function child(
+    overrides: Partial<EpicProgressChild> = {}
+  ): EpicProgressChild {
+    return {
+      id: 't-1',
+      title: 'Child',
+      status: 'in-progress',
+      phase: 'working',
+      wave: 1,
+      openFindings: 0,
+      ...overrides,
+    };
+  }
+
+  function progress(overrides: Partial<EpicProgress> = {}): EpicProgress {
+    return {
       epicId: 'e-1',
       active: true,
-      concurrency: 2,
-      children: [{ id: 't-1', title: 'Child', status: 'in-progress' }],
+      concurrency: 4,
+      session: session(),
+      spend: spend(),
+      children: [child()],
+      waves: [{ index: 1, total: 1, byPhase: { working: 1 } }],
       liveRuns: [run],
+      ...overrides,
     };
-    const text = formatEpicProgress(progress);
-    expect(text).toContain('epic e-1: active');
-    expect(text).toContain('concurrency 2');
+  }
+
+  it('renders the session state, concurrency, children, and live runs', () => {
+    const text = formatEpicProgress(progress());
+    expect(text).toContain('epic e-1: active (concurrency 4)');
     expect(text).toContain('t-1');
     expect(text).toContain('live runs:');
     expect(text).toContain('r-1');
   });
 
-  it('omits the live-runs section when nothing is live', () => {
-    const progress: EpicProgress = {
-      epicId: 'e-1',
-      active: false,
-      children: [],
-      liveRuns: [],
-    };
-    expect(formatEpicProgress(progress)).not.toContain('live runs:');
+  it('renders the spend line with both ceilings', () => {
+    const text = formatEpicProgress(progress());
+    expect(text).toContain(
+      'spend $41.20 settled + ~$30.00 in flight of $60.00 · 7/20 runs'
+    );
+  });
+
+  it('drops the ceiling halves of the spend line when neither is set', () => {
+    const text = formatEpicProgress(
+      progress({
+        session: session({ maxSpendUsd: null, maxRuns: null }),
+        spend: spend({ maxSpendUsd: null, maxRuns: null }),
+      })
+    );
+    expect(text).toContain('spend $41.20 settled + ~$30.00 in flight · 7 runs');
+    expect(text).not.toContain(' of $');
+  });
+
+  it('prints wave and phase per child', () => {
+    const text = formatEpicProgress(
+      progress({
+        children: [
+          child(),
+          child({ id: 't-2', title: 'Later', phase: 'waiting', wave: 2 }),
+        ],
+      })
+    );
+    const lines = text.split('\n');
+    const header = lines.find((l) => l.startsWith('ID'));
+    expect(header).toMatch(/ID\s+WAVE\s+PHASE\s+STATUS\s+TITLE$/);
+    expect(lines.find((l) => l.startsWith('t-1'))).toMatch(
+      /t-1\s+1\s+working\s+in-progress\s+Child/
+    );
+    expect(lines.find((l) => l.startsWith('t-2'))).toMatch(
+      /t-2\s+2\s+waiting\s+in-progress\s+Later/
+    );
+  });
+
+  it('adds a REASON column only when some child carries one', () => {
+    const text = formatEpicProgress(
+      progress({
+        children: [
+          child(),
+          child({
+            id: 't-2',
+            phase: 'blocked',
+            reason: 'blocked by t-9 (failed)',
+          }),
+        ],
+      })
+    );
+    const lines = text.split('\n');
+    expect(lines.find((l) => l.startsWith('ID'))).toMatch(/REASON$/);
+    expect(lines.find((l) => l.startsWith('t-2'))).toContain(
+      'blocked by t-9 (failed)'
+    );
+    expect(formatEpicProgress(progress())).not.toContain('REASON');
+  });
+
+  it('prints the paused reason under the header', () => {
+    const text = formatEpicProgress(
+      progress({
+        active: false,
+        session: session({
+          state: 'paused',
+          pausedReason: 'budget',
+          active: false,
+        }),
+      })
+    );
+    expect(text).toContain('epic e-1: paused (concurrency 4)');
+    expect(text).toContain('paused — spend ceiling reached');
+  });
+
+  it('carries the fill failure detail into the paused line', () => {
+    const text = formatEpicProgress(
+      progress({
+        active: false,
+        session: session({
+          state: 'paused',
+          pausedReason: 'fill-failed',
+          pausedDetail: 'worktree add failed',
+          active: false,
+        }),
+      })
+    );
+    expect(text).toContain(
+      'paused — auto-dispatch failed: worktree add failed'
+    );
+  });
+
+  it('falls back to active/inactive for an epic that was never dispatched', () => {
+    const text = formatEpicProgress(
+      progress({
+        active: false,
+        concurrency: undefined,
+        session: null,
+        spend: spend({
+          settledUsd: 0,
+          liveCount: 0,
+          estimatedLiveUsd: 0,
+          runsStarted: 0,
+          maxSpendUsd: null,
+          maxRuns: null,
+        }),
+        children: [],
+        waves: [],
+        liveRuns: [],
+      })
+    );
+    expect(text).toContain('epic e-1: inactive');
+    expect(text).not.toContain('concurrency');
+    expect(text).not.toContain('paused');
+    expect(text).not.toContain('live runs:');
   });
 });
 

@@ -649,7 +649,7 @@ export function TasksListView({
           runningNow={data.liveRunStateByTaskId.size}
           defaultConcurrency={data.config?.orchestrator.epicConcurrency ?? 3}
           onCancel={() => setDispatchOpen(false)}
-          onConfirm={async (concurrency) => {
+          onConfirm={async ({ concurrency }) => {
             // Dispatched one at a time up to the chosen concurrency, matching what the preview
             // promised — the per-task endpoint is the only one that takes an arbitrary set.
             const starting = selectedReady.slice(0, concurrency);

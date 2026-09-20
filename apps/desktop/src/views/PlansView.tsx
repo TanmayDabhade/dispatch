@@ -1,4 +1,5 @@
 import type {
+  ConfirmResult,
   PlannedTask,
   PlannerQuestion,
   PlanState,
@@ -15,6 +16,7 @@ import {
   Rows3,
   Trash2,
   Waypoints,
+  Zap,
 } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -42,8 +44,9 @@ import {
 } from '../lib/planThread';
 import { priorityLabel } from '../lib/taskDisplay';
 import { cn } from '@/lib/utils';
+import { ListRow } from '@/ui/ai/list-row';
 import { PageHeader } from '@/ui/ai/page-header';
-import { Pill } from '@/ui/ai/pill';
+import { Pill, PillButton } from '@/ui/ai/pill';
 import { PromptBar } from '@/ui/ai/prompt-bar';
 import { Button } from '@/ui/button';
 import { EmptyState, SectionLabel } from '@/ui/chrome';
@@ -410,8 +413,12 @@ interface PlansViewProps {
   data: DispatchProjectData;
   /** The active project's display name — the header's `Project › Plans` crumb. */
   projectName?: string;
-  /** Navigates to the board — the confirm toast's "View board" action. */
+  /** Navigates to the board — a flat plan's confirm toast's "View board" action. */
   onGoToBoard: () => void;
+  /** Opens the Tasks page's milestones layout on the epic a plan created — the confirm
+   * toast's "Open milestone", a history row's `→ milestone`, and with `dispatch` the
+   * fan-out dialog there ("Create & send agents…"). */
+  onOpenMilestone: (epicId: string, opts?: { dispatch?: boolean }) => void;
   /**
    * Text to open the composer with, when the user arrived here from somewhere that already had
    * the words — "hand it to the planner" in Brain dump, or "plan it" on a single inbox item.
@@ -433,6 +440,7 @@ export function PlansView({
   data,
   projectName,
   onGoToBoard,
+  onOpenMilestone,
   initialPrompt,
 }: PlansViewProps) {
   const toasts = useToasts();
@@ -516,19 +524,42 @@ export function PlansView({
     await data.handleSendPlanMessage(text);
   }
 
-  async function submitConfirm() {
+  // Writes the proposal. A plan with an epic lands on its milestone: the toast links there,
+  // and `sendAgents` goes straight on to the fan-out dialog. A flat plan links to the board.
+  // App's action-feedback wrapper resolves a failed confirm to `undefined` after toasting
+  // the error itself, so that case leaves the review list up without a second toast.
+  async function submitConfirm(sendAgents = false) {
     if (draft === null) return;
     setConfirming(true);
     setConfirmError(null);
     try {
       const count = draft.proposal.tasks.length;
-      await data.handleConfirmPlan(draft.proposal);
-      toasts.push({
-        tone: 'success',
-        title: `${count} ${count === 1 ? 'task' : 'tasks'} created`,
-        action: { label: 'View board', onClick: onGoToBoard },
-      });
+      const tasks = `${count} ${count === 1 ? 'task' : 'tasks'}`;
+      const result: ConfirmResult | undefined = await data.handleConfirmPlan(
+        draft.proposal
+      );
+      if (result === undefined) return;
+      const epicId = result.epicId;
+      if (epicId !== undefined) {
+        toasts.push({
+          tone: 'success',
+          title: `Milestone created · ${tasks}`,
+          action: {
+            label: 'Open milestone',
+            onClick: () => onOpenMilestone(epicId),
+          },
+        });
+      } else {
+        toasts.push({
+          tone: 'success',
+          title: `${tasks} created`,
+          action: { label: 'View board', onClick: onGoToBoard },
+        });
+      }
       closePlan();
+      if (sendAgents && epicId !== undefined) {
+        onOpenMilestone(epicId, { dispatch: true });
+      }
     } catch (err) {
       setConfirmError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -591,6 +622,9 @@ export function PlansView({
   // leaves the previous turn's proposal in place (so the review list rightly stays up), but
   // dispatchd refuses to confirm any plan that isn't `ready`, so the button would 409.
   const canConfirm = data.planRecord?.state === 'ready' && !planConfirmed;
+  // Both confirm buttons follow the one rule.
+  const confirmDisabled =
+    confirming || !canConfirm || (draft?.proposal.tasks.length ?? 0) === 0;
   // Why the review list may not be confirmable right now — the review list is the last
   // proposal the planner sent either way, so it stays on screen and this line says what
   // changed underneath it.
@@ -786,12 +820,18 @@ export function PlansView({
                 >
                   Cancel
                 </Button>
+                {/* Only a plan with an epic has a milestone to send agents at. */}
+                {draft.proposal.epic !== undefined && (
+                  <Button
+                    variant="ghost"
+                    disabled={confirmDisabled}
+                    onClick={() => void submitConfirm(true)}
+                  >
+                    <Zap className="size-3.5" /> Create & send agents…
+                  </Button>
+                )}
                 <Button
-                  disabled={
-                    confirming ||
-                    !canConfirm ||
-                    draft.proposal.tasks.length === 0
-                  }
+                  disabled={confirmDisabled}
                   onClick={() => void submitConfirm()}
                 >
                   {confirming ? (
@@ -804,8 +844,7 @@ export function PlansView({
                     </>
                   ) : (
                     <>
-                      <Check className="size-3.5" /> Confirm{' '}
-                      {draft.proposal.tasks.length} tasks
+                      <Check className="size-3.5" /> Create tasks
                     </>
                   )}
                 </Button>
@@ -818,34 +857,51 @@ export function PlansView({
             {data.plans.length === 0 ? (
               <EmptyState icon={History} heading="No plans yet" />
             ) : (
-              <div className="bg-surface-quaternary rounded-card shadow-card [&>*+*]:shadow-hairline-top flex flex-col overflow-hidden">
-                {data.plans.map((entry) => (
-                  <button
-                    key={entry.id}
-                    type="button"
-                    aria-current={entry.id === data.planId ? 'true' : undefined}
-                    onClick={() => openHistoryEntry(entry.id)}
-                    className={cn(
-                      'flex h-9 w-full items-center gap-2 px-3 text-left text-[13px] font-medium transition-colors duration-100 outline-none',
-                      entry.id === data.planId
-                        ? 'bg-surface-selected text-foreground'
-                        : 'text-(--text-secondary) hover:bg-surface-hover hover:text-foreground'
-                    )}
-                  >
-                    <PlanStateDot state={entry.state} />
-                    <span className="min-w-0 flex-1 truncate">
-                      {entry.subject ?? firstPromptLine(entry.prompt)}
-                    </span>
-                    <span className="text-muted-foreground font-book shrink-0 text-[12px] capitalize">
-                      {entry.confirmedAt !== undefined
-                        ? 'confirmed'
-                        : entry.state}
-                    </span>
-                    <span className="text-muted-foreground font-book shrink-0 text-[12px] tabular-nums">
-                      {formatRelativeTimeFromIso(entry.updatedAt)}
-                    </span>
-                  </button>
-                ))}
+              <div
+                role="list"
+                aria-label="Plans"
+                className="bg-surface-quaternary rounded-card shadow-card [&>*+*]:shadow-hairline-top flex flex-col overflow-hidden"
+              >
+                {data.plans.map((entry) => {
+                  const epicId = entry.epicId;
+                  return (
+                    // The shared 36px row (a list item, not a grid row): the `→ milestone`
+                    // pill is a real button that never opens the entry.
+                    <ListRow
+                      key={entry.id}
+                      role="listitem"
+                      aria-current={
+                        entry.id === data.planId ? 'true' : undefined
+                      }
+                      selected={entry.id === data.planId}
+                      onClick={() => openHistoryEntry(entry.id)}
+                      leading={<PlanStateDot state={entry.state} />}
+                      title={entry.subject ?? firstPromptLine(entry.prompt)}
+                      trailing={
+                        <>
+                          {epicId !== undefined && (
+                            <PillButton
+                              className="h-6 px-2"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onOpenMilestone(epicId);
+                              }}
+                            >
+                              → milestone
+                            </PillButton>
+                          )}
+                          <span className="text-muted-foreground font-book shrink-0 text-[12px] capitalize">
+                            {entry.confirmedAt !== undefined
+                              ? 'confirmed'
+                              : entry.state}
+                          </span>
+                        </>
+                      }
+                      date={formatRelativeTimeFromIso(entry.updatedAt)}
+                      className="rounded-none"
+                    />
+                  );
+                })}
               </div>
             )}
           </div>

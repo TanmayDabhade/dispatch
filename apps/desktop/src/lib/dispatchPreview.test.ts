@@ -3,8 +3,12 @@ import { describe, expect, test } from 'bun:test';
 
 import { buildDispatchPreview } from './dispatchPreview';
 
-function task(id: string, title = `Task ${id}`): TaskDoc {
-  return { meta: { id, title } } as TaskDoc;
+function task(
+  id: string,
+  title = `Task ${id}`,
+  writes: string[] = [`src/${id}.ts`]
+): TaskDoc {
+  return { meta: { id, title, writes } } as TaskDoc;
 }
 
 const four = [task('t-1'), task('t-2'), task('t-3'), task('t-4')];
@@ -144,5 +148,107 @@ describe('buildDispatchPreview', () => {
     expect(p.summary).toContain('1 already running');
     expect(p.summary).toContain('2 start');
     expect(p.summary).toContain('2 queue');
+  });
+
+  test('the estimate is $5–15 per run about to start, queued runs included', () => {
+    const p = buildDispatchPreview({
+      tasks: four,
+      readyIds: allReady,
+      runningNow: 1,
+      concurrency: 3,
+    });
+    expect(p.estimateUsd).toEqual({ low: 20, high: 60 });
+    expect(p.summary).toEndWith('~$20–$60 at $5–15 per run');
+  });
+
+  // Not-ready tasks never run, so they cost nothing; a different midpoint scales the range.
+  test('the estimate skips not-ready tasks and follows the per-run midpoint', () => {
+    const p = buildDispatchPreview({
+      tasks: four,
+      readyIds: new Set(['t-1', 't-2']),
+      runningNow: 0,
+      concurrency: 10,
+      runCostEstimateUsd: 20,
+    });
+    expect(p.estimateUsd).toEqual({ low: 20, high: 60 });
+    expect(p.summary).toContain('at $10–30 per run');
+  });
+
+  test('a ceiling is spelled out and compared against the low estimate', () => {
+    const under = buildDispatchPreview({
+      tasks: four,
+      readyIds: allReady,
+      runningNow: 0,
+      concurrency: 4,
+      ceilingUsd: 20,
+    });
+    expect(under.summary).toEndWith('~$20–$60 at $5–15 per run · ceiling $20');
+    expect(under.overCeiling).toBe(false);
+
+    const over = buildDispatchPreview({
+      tasks: four,
+      readyIds: allReady,
+      runningNow: 0,
+      concurrency: 4,
+      ceilingUsd: 19.5,
+    });
+    expect(over.summary).toEndWith('ceiling $19.50');
+    expect(over.overCeiling).toBe(true);
+  });
+
+  test('a null ceiling means none: no ceiling clause, never over it', () => {
+    const p = buildDispatchPreview({
+      tasks: four,
+      readyIds: allReady,
+      runningNow: 0,
+      concurrency: 4,
+      ceilingUsd: null,
+    });
+    expect(p.summary).not.toContain('ceiling');
+    expect(p.overCeiling).toBe(false);
+  });
+
+  test('large estimates print with thousands separators', () => {
+    const many = Array.from({ length: 130 }, (_, i) => task(`t-${i}`));
+    const p = buildDispatchPreview({
+      tasks: many,
+      readyIds: new Set(many.map((t) => t.meta.id)),
+      runningNow: 0,
+      concurrency: 8,
+      ceilingUsd: 600,
+    });
+    expect(p.summary).toEndWith('~$650–$1,950 at $5–15 per run · ceiling $600');
+    expect(p.costSummary).toBe('~$650–$1,950 at $5–15 per run · ceiling $600');
+    expect(p.overCeiling).toBe(true);
+  });
+
+  test('only tasks that will run count as undeclared writes', () => {
+    const p = buildDispatchPreview({
+      tasks: [
+        task('t-1'),
+        task('t-2', 'Loose', []),
+        task('t-3', 'Loose 2', []),
+        task('t-4', 'Blocked and loose', []),
+      ],
+      readyIds: new Set(['t-1', 't-2', 't-3']),
+      runningNow: 0,
+      concurrency: 2,
+    });
+    // t-2 starts now and t-3 queues; t-4 cannot start, so it is never serialised.
+    expect(p.undeclaredWrites).toBe(2);
+  });
+
+  test('an empty selection carries a zero estimate and no undeclared writes', () => {
+    const p = buildDispatchPreview({
+      tasks: [],
+      readyIds: allReady,
+      runningNow: 0,
+      concurrency: 4,
+      ceilingUsd: 50,
+    });
+    expect(p.estimateUsd).toEqual({ low: 0, high: 0 });
+    expect(p.undeclaredWrites).toBe(0);
+    expect(p.overCeiling).toBe(false);
+    expect(p.summary).toBe('Nothing selected.');
   });
 });

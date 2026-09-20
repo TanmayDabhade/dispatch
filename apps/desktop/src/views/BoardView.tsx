@@ -9,6 +9,7 @@ import { FilterMenu } from '../components/tasks/FilterMenu';
 import { TaskBoard } from '../components/tasks/TaskBoard';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { isTypingTarget } from '../hooks/useGlobalKeyboard';
+import type { TaskTab } from '../lib/appNav';
 import {
   boardGroupingFor,
   type BoardLane,
@@ -23,6 +24,7 @@ import {
   toggleCollapsedGroup,
   writeCollapsedGroups,
 } from '../lib/collapsedEpics';
+import type { WorkEpicOptions } from '../lib/epicSession';
 import { resolveListKeyCommand } from '../lib/keyboard';
 import { sortTasks } from '../lib/listGrouping';
 import { countMergeReady } from '../lib/mergeReady';
@@ -48,7 +50,7 @@ import {
   type TasksViewMode,
   useTasksViewMode,
 } from '../lib/tasksViewMode';
-import { MilestonesView } from './MilestonesView';
+import { type FocusEpicRequest, MilestonesView } from './MilestonesView';
 import { TasksListView } from './TasksListView';
 import {
   HeaderIconTriad,
@@ -72,7 +74,13 @@ interface BoardViewProps {
   mode?: TasksViewMode;
   /** The active project's display name, the first crumb segment. */
   projectName?: string | null;
-  onSelectTask: (taskId: string) => void;
+  /** A one-shot "go to this milestone" from another surface (Plans' confirm, the live
+   * rail): switches to the milestones layout, which expands and scrolls to the epic and
+   * opens the fan-out dialog when asked. */
+  focusEpic?: FocusEpicRequest | null;
+  /** Bare `taskId` is a row click (the peek); the milestones layout's phase drill also
+   * names the tab (and the run) a child's phase points at, which needs the full view. */
+  onSelectTask: (taskId: string, tab?: TaskTab, runId?: string) => void;
   /** Opens `CreateTaskModal`, optionally pre-set to a status — the empty state's `New task`. */
   onNewTask: (status?: string) => void;
   onPlanWork: () => void;
@@ -150,11 +158,18 @@ export function BoardView({
   data,
   mode: initialMode,
   projectName,
+  focusEpic = null,
   onSelectTask,
   onNewTask,
   onPlanWork,
 }: BoardViewProps) {
   const [mode, setMode] = useTasksViewMode(initialMode);
+  // The focus request the tabs have since left behind: the milestones layout serves a
+  // request on mount, so one that is still held when the user comes back would replay
+  // its expand/scroll/dialog without this.
+  const [retiredFocusNonce, setRetiredFocusNonce] = useState<number | null>(
+    null
+  );
   const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
   // Which epic lanes are folded up. Session-scoped (see `collapsedEpics.ts`) and lifted to the
   // view rather than kept inside `TaskBoard` because the j/k cursor below has to skip the cards a
@@ -168,8 +183,12 @@ export function BoardView({
   const [hiddenColumns, setHiddenColumns] = useState<ReadonlySet<string>>(() =>
     readSessionSet(HIDDEN_COLUMNS_STORAGE_KEY)
   );
-  // Which epic's dispatch is awaiting confirmation, or null when the dialog is closed.
-  const [dispatchEpicId, setDispatchEpicId] = useState<string | null>(null);
+  // The fan-out dialog, open for one epic: `start` sends a fresh session from a lane
+  // header's Send agents…, `raise` edits a paused one's ceilings.
+  const [dispatchEpic, setDispatchEpic] = useState<{
+    epicId: string;
+    mode: 'start' | 'raise';
+  } | null>(null);
   // The filter clauses and the display model, persisted across restarts — see
   // `taskFilters.ts` / `tasksPrefs.ts` for the parse/defaults and the v1 filter migration.
   const [filters, setFilters] = useState<TaskFilterSet>(() =>
@@ -214,16 +233,31 @@ export function BoardView({
   }, [hiddenColumns]);
 
   // The layout switch keeps `prefs.layout` in step so a reader of the display model alone
-  // agrees with the tabs.
+  // agrees with the tabs. Leaving the milestones layout retires the focus request it was
+  // showing.
   const changeMode = useCallback(
     (next: TasksViewMode) => {
       setMode(next);
       setPrefs((prev) =>
         prev.layout === next ? prev : { ...prev, layout: next }
       );
+      if (next !== 'milestones' && focusEpic !== null) {
+        setRetiredFocusNonce(focusEpic.nonce);
+      }
     },
-    [setMode]
+    [setMode, focusEpic]
   );
+
+  // A new focus request lands on the milestones layout whichever tab is showing.
+  useEffect(() => {
+    if (focusEpic !== null && focusEpic.nonce !== retiredFocusNonce) {
+      changeMode('milestones');
+    }
+  }, [focusEpic, retiredFocusNonce, changeMode]);
+  const milestoneFocus =
+    focusEpic !== null && focusEpic.nonce !== retiredFocusNonce
+      ? focusEpic
+      : null;
 
   // Board lanes follow Display › Grouping: `epic` groups the columns into one lane per epic;
   // the board's only other layout is the flat status kanban (see `boardGroupingFor` — the
@@ -433,6 +467,11 @@ export function BoardView({
   }
 
   const loading = data.tasksLoading || data.config === null;
+  // Only a raise pre-fills from the session; a fresh fan-out starts from the defaults.
+  const dialogSession =
+    dispatchEpic?.mode === 'raise'
+      ? (data.epicProgressById.get(dispatchEpic.epicId)?.session ?? null)
+      : null;
   const crumb = [
     ...(projectName !== undefined && projectName !== null ? [projectName] : []),
     'Tasks',
@@ -522,6 +561,7 @@ export function BoardView({
           <MilestonesView
             data={data}
             onOpenTask={onSelectTask}
+            focusEpic={milestoneFocus}
             display={prefs}
             onRequestFilter={() => setFilterOpen(true)}
             onRequestDisplay={() => setDisplayOpen(true)}
@@ -550,7 +590,9 @@ export function BoardView({
             }
             hiddenColumnCount={hiddenColumns.size}
             onShowHiddenColumns={() => setHiddenColumns(new Set())}
-            onRequestWorkEpic={setDispatchEpicId}
+            onRequestWorkEpic={(epicId) =>
+              setDispatchEpic({ epicId, mode: 'start' })
+            }
             tasks={orderedBoardTasks}
             archivedTaskIds={archivedTaskIds}
             statuses={visibleStatuses}
@@ -570,6 +612,11 @@ export function BoardView({
             onSelect={onSelectTask}
             onDispatch={data.handleDispatch}
             onWorkEpic={data.handleWorkEpic}
+            onPauseEpic={data.handlePauseEpic}
+            onResumeEpic={data.handleResumeEpic}
+            onRaiseCeilingEpic={(epicId) =>
+              setDispatchEpic({ epicId, mode: 'raise' })
+            }
             onStopEpic={data.handleStopEpic}
             onLandEpic={data.handleLandEpic}
             onMoveStatus={data.moveTaskStatus}
@@ -591,20 +638,41 @@ export function BoardView({
         </div>
       )}
 
-      {dispatchEpicId !== null && (
-        <DispatchDialog
-          title="Send agents at this epic"
-          tasks={data.tasks.filter((t) => t.meta.parent === dispatchEpicId)}
-          readyIds={data.readyIds}
-          runningNow={data.liveRunStateByTaskId.size}
-          defaultConcurrency={data.config?.orchestrator.epicConcurrency ?? 3}
-          onCancel={() => setDispatchEpicId(null)}
-          onConfirm={async (concurrency) => {
-            await data.handleWorkEpic(dispatchEpicId, concurrency);
-            setDispatchEpicId(null);
-          }}
-        />
-      )}
+      {/* The milestones layout owns the dialog while it is serving a focus request. */}
+      {dispatchEpic !== null &&
+        !(mode === 'milestones' && milestoneFocus !== null) && (
+          <DispatchDialog
+            title={`${dispatchEpic.mode === 'raise' ? 'Raise ceiling' : 'Send agents'} · ${epicTitleById.get(dispatchEpic.epicId) ?? dispatchEpic.epicId}`}
+            tasks={data.tasks.filter(
+              (t) => t.meta.parent === dispatchEpic.epicId
+            )}
+            readyIds={data.readyIds}
+            runningNow={data.liveRunStateByTaskId.size}
+            defaultConcurrency={data.config?.orchestrator.epicConcurrency ?? 3}
+            maxConcurrency={data.config?.orchestrator.maxConcurrency}
+            runCostEstimateUsd={data.config?.orchestrator.runCostEstimateUsd}
+            fixLoopAuto={data.config?.fixLoop.auto}
+            mode={dispatchEpic.mode}
+            initial={
+              dialogSession !== null
+                ? {
+                    concurrency: dialogSession.concurrency,
+                    maxSpendUsd: dialogSession.maxSpendUsd,
+                    maxRuns: dialogSession.maxRuns,
+                  }
+                : undefined
+            }
+            onCancel={() => setDispatchEpic(null)}
+            onConfirm={async (opts: WorkEpicOptions) => {
+              if (dispatchEpic.mode === 'raise') {
+                await data.handleResumeEpic(dispatchEpic.epicId, opts);
+              } else {
+                await data.handleWorkEpic(dispatchEpic.epicId, opts);
+              }
+              setDispatchEpic(null);
+            }}
+          />
+        )}
     </div>
   );
 }

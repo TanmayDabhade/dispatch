@@ -3,10 +3,14 @@
 // way back. Both helpers stay pure so the rounding rule is unit-testable like the rest of
 // lib/.
 
-/** The concurrency choices the picker offers: 1 up to the larger of 4 and the project's
- * configured default, so a config that asks for 6 agents is still selectable. */
-export function concurrencyChoices(defaultValue: number): number[] {
-  const top = Math.max(4, clampConcurrencyInput(String(defaultValue)));
+/** The concurrency choices the picker offers: 1 up to the larger of `max` (the lane
+ * header's 4, or the fan-out dialog's configured cap) and the project's configured
+ * default, so a config that asks for 6 agents is still selectable. */
+export function concurrencyChoices(defaultValue: number, max = 4): number[] {
+  const top = Math.max(
+    clampConcurrencyInput(String(max)),
+    clampConcurrencyInput(String(defaultValue))
+  );
   return Array.from({ length: top }, (_, i) => i + 1);
 }
 

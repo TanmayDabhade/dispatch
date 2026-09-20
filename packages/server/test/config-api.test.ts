@@ -168,6 +168,39 @@ describe('PATCH /api/config — orchestrator caps', () => {
   });
 });
 
+// The fan-out ceilings: the hard concurrency cap and the per-run cost
+// estimate the epic engine's spend gate reads.
+describe('PATCH /api/config — fan-out ceilings', () => {
+  it('accepts maxConcurrency and runCostEstimateUsd and they round-trip through GET', async () => {
+    const res = await patchConfig({
+      maxConcurrency: 24,
+      runCostEstimateUsd: 7.5,
+    });
+    expect(res.status).toBe(200);
+    const patched = await json<{
+      orchestrator: { maxConcurrency: number; runCostEstimateUsd: number };
+    }>(res);
+    expect(patched.orchestrator.maxConcurrency).toBe(24);
+    expect(patched.orchestrator.runCostEstimateUsd).toBe(7.5);
+
+    const config = await json<{
+      orchestrator: { maxConcurrency: number; runCostEstimateUsd: number };
+    }>(await fetch(`${baseUrl}/api/config`));
+    expect(config.orchestrator.maxConcurrency).toBe(24);
+    expect(config.orchestrator.runCostEstimateUsd).toBe(7.5);
+  });
+
+  it('rejects a non-number for either key with 400', async () => {
+    expect((await patchConfig({ maxConcurrency: '24' })).status).toBe(400);
+    expect((await patchConfig({ runCostEstimateUsd: null })).status).toBe(400);
+  });
+
+  it('rejects a value core would reject (above the hard cap) with 400, unvalidated here', async () => {
+    const res = await patchConfig({ maxConcurrency: 33 });
+    expect(res.status).toBe(400);
+  });
+});
+
 describe('PATCH /api/config — policy', () => {
   it('writes the rung and gate pins and they round-trip through GET', async () => {
     const res = await patchConfig({

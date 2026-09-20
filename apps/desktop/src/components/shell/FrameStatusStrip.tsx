@@ -1,6 +1,7 @@
 import type { SyncStatus } from '@dispatch/client';
 import { CircleHelp, History } from 'lucide-react';
 
+import { formatUsd } from '../../lib/epicSession';
 import { syncSummary, type SyncTone } from './SyncChip';
 import { cn } from '@/lib/utils';
 import { IconButton } from '@/ui/ai/icon-button';
@@ -23,25 +24,50 @@ interface FrameStatusStripProps {
   onDisableAutoCommit: () => void;
   /** Settled spend across today's runs, or `null` to show nothing. */
   spendToday: number | null;
+  /** The live milestone fan-outs summed (App sums `data.liveEpicSessions`): how many
+   * sessions are active or paused, their settled spend, and their ceilings added up —
+   * `null` when none carries one. Absent or `live: 0` shows nothing. */
+  ceilings?: LiveCeilings | null;
   onOpenShortcuts: () => void;
   onOpenOverseer: () => void;
   className?: string;
 }
 
+export interface LiveCeilings {
+  live: number;
+  settledUsd: number;
+  ceilingUsd: number | null;
+}
+
+/** `2 milestones live · $41.20 of $120 ceilings`, or `… · $41.20 spent` when no live
+ * session set a ceiling. */
+export function liveCeilingsLabel(ceilings: LiveCeilings): string {
+  const live = `${ceilings.live} milestone${ceilings.live === 1 ? '' : 's'} live`;
+  const settled = formatUsd(ceilings.settledUsd);
+  return ceilings.ceilingUsd === null
+    ? `${live} · ${settled} spent`
+    : `${live} · ${settled} of ${formatUsd(ceilings.ceilingUsd)} ceilings`;
+}
+
 /**
  * The 36px strip under the inset panel (Linear §1): `?` and the sync pill bottom-left of
- * the frame, today's spend and an Overseer link bottom-right. Everything here is
- * glanceable context, which is why it sits on the frame rather than inside any view.
+ * the frame, today's spend, the live milestones' spend against their ceilings, and an
+ * Overseer link bottom-right. Everything here is glanceable context, which is why it
+ * sits on the frame rather than inside any view.
  */
 export function FrameStatusStrip({
   syncStatus,
   onDisableAutoCommit,
   spendToday,
+  ceilings,
   onOpenShortcuts,
   onOpenOverseer,
   className,
 }: FrameStatusStripProps) {
   const sync = syncStatus !== null ? syncSummary(syncStatus) : null;
+  const showToday = spendToday !== null && spendToday > 0;
+  const showCeilings =
+    ceilings !== undefined && ceilings !== null && ceilings.live > 0;
   return (
     <div
       data-slot="frame-status-strip"
@@ -109,10 +135,27 @@ export function FrameStatusStrip({
 
       {/* Hidden entirely at zero rather than showing "$0.00": a running cost meter is only
           worth the pixels once there is a cost. */}
-      {spendToday !== null && spendToday > 0 && (
+      {showToday && (
         <span className="text-muted-foreground font-book tabular-nums">
-          ${spendToday.toFixed(2)} today
+          {formatUsd(spendToday)} today
         </span>
+      )}
+      {/* Only while a fan-out is live: the strip is the one place the whole fleet's
+          ceilings read at once, and an idle project has nothing to meter. */}
+      {showCeilings && (
+        <>
+          {showToday && (
+            <span aria-hidden className="text-muted-foreground font-book">
+              ·
+            </span>
+          )}
+          <span
+            data-slot="live-ceilings"
+            className="text-muted-foreground font-book tabular-nums"
+          >
+            {liveCeilingsLabel(ceilings)}
+          </span>
+        </>
       )}
       <button
         type="button"

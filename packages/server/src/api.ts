@@ -749,7 +749,12 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     }
     patch.autoCommit = body.autoCommit;
   }
-  for (const key of ['epicConcurrency', 'verifyTimeoutSec'] as const) {
+  for (const key of [
+    'epicConcurrency',
+    'verifyTimeoutSec',
+    'maxConcurrency',
+    'runCostEstimateUsd',
+  ] as const) {
     if (!(key in body)) continue;
     if (typeof body[key] !== 'number') {
       return errorResponse(400, `${key} must be a number`);
@@ -3345,6 +3350,61 @@ async function decideOverseerApproval(
   return jsonResponse(record);
 }
 
+// The optional session body POST /api/epics/:id/dispatch and /resume share.
+// Only the shapes are checked here; the engine ranges the values (400 via
+// OrchestratorClientError) so the CLI and desktop see one wording.
+type EpicSessionBody = {
+  concurrency?: number;
+  executor?: string;
+  maxSpendUsd?: number | null;
+  maxRuns?: number | null;
+};
+
+function parseEpicSessionBody(
+  value: unknown
+): { ok: true; body: EpicSessionBody } | { ok: false; response: Response } {
+  const raw = value as {
+    concurrency?: unknown;
+    executor?: unknown;
+    maxSpendUsd?: unknown;
+    maxRuns?: unknown;
+  };
+  if (raw.concurrency !== undefined && typeof raw.concurrency !== 'number') {
+    return {
+      ok: false,
+      response: errorResponse(400, 'invalid concurrency: expected a number'),
+    };
+  }
+  if (raw.executor !== undefined && typeof raw.executor !== 'string') {
+    return {
+      ok: false,
+      response: errorResponse(400, 'invalid executor: expected a string'),
+    };
+  }
+  // `null` lifts a ceiling, so these accept it alongside a number.
+  for (const key of ['maxSpendUsd', 'maxRuns'] as const) {
+    const v = raw[key];
+    if (v !== undefined && v !== null && typeof v !== 'number') {
+      return {
+        ok: false,
+        response: errorResponse(
+          400,
+          `invalid ${key}: expected a number or null`
+        ),
+      };
+    }
+  }
+  return {
+    ok: true,
+    body: {
+      concurrency: raw.concurrency,
+      executor: raw.executor,
+      maxSpendUsd: raw.maxSpendUsd as number | null | undefined,
+      maxRuns: raw.maxRuns as number | null | undefined,
+    },
+  };
+}
+
 async function startEpic(
   req: Request,
   ctx: ApiContext,
@@ -3352,18 +3412,37 @@ async function startEpic(
 ): Promise<Response> {
   const parsed = await readJsonBodyOptional(req);
   if (!parsed.ok) return parsed.response;
-  const body = parsed.value as { concurrency?: unknown; executor?: unknown };
-  if (body.concurrency !== undefined && typeof body.concurrency !== 'number') {
-    return errorResponse(400, 'invalid concurrency: expected a number');
-  }
-  if (body.executor !== undefined && typeof body.executor !== 'string') {
-    return errorResponse(400, 'invalid executor: expected a string');
-  }
-  const session = await ctx.epicEngine.start(epicId, {
-    concurrency: body.concurrency,
-    executor: body.executor,
-  });
+  const checked = parseEpicSessionBody(parsed.value);
+  if (!checked.ok) return checked.response;
+  const session = await ctx.epicEngine.start(epicId, checked.body);
   return jsonResponse(session, 201);
+}
+
+// POST /api/epics/:id/pause — bodyless; live runs keep going, no new ones
+// start until /resume.
+function pauseEpic(ctx: ApiContext, epicId: string): Response {
+  return jsonResponse(ctx.epicEngine.pause(epicId));
+}
+
+// POST /api/epics/:id/resume — optionally re-ceilings the session on the way
+// back to `active`; `executor` is fixed for the session's life so it is
+// dropped here even when sent.
+async function resumeEpic(
+  req: Request,
+  ctx: ApiContext,
+  epicId: string
+): Promise<Response> {
+  const parsed = await readJsonBodyOptional(req);
+  if (!parsed.ok) return parsed.response;
+  const checked = parseEpicSessionBody(parsed.value);
+  if (!checked.ok) return checked.response;
+  const { concurrency, maxSpendUsd, maxRuns } = checked.body;
+  const session = await ctx.epicEngine.resume(epicId, {
+    concurrency,
+    maxSpendUsd,
+    maxRuns,
+  });
+  return jsonResponse(session);
 }
 
 // POST /api/epics/:id/land — the one action that takes a finished epic
@@ -5260,12 +5339,35 @@ export async function handleApi(
     }
 
     if (segments[0] === 'epics') {
+      // Bulk progress sits at /api/epics/progress, so it must be matched
+      // before the /:id/... branches would read `progress` as an epic id.
+      if (
+        segments.length === 2 &&
+        segments[1] === 'progress' &&
+        method === 'GET'
+      ) {
+        return jsonResponse(ctx.epicEngine.progressAll());
+      }
       if (
         segments.length === 3 &&
         segments[2] === 'dispatch' &&
         method === 'POST'
       ) {
         return await startEpic(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'pause' &&
+        method === 'POST'
+      ) {
+        return pauseEpic(ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'resume' &&
+        method === 'POST'
+      ) {
+        return await resumeEpic(req, ctx, segments[1]);
       }
       if (
         segments.length === 3 &&

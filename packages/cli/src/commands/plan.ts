@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import type {
   ApiClient,
   EpicProgress,
+  EpicSession,
   PlanProposal,
   PlanRecord,
 } from '../apiClient.js';
@@ -112,7 +113,12 @@ export function createEpicWatcher(
     baseUrl,
     (event) => {
       if (settled) return;
-      if (event.type === 'task.changed' || event.type === 'run.changed') {
+      if (
+        event.type === 'task.changed' ||
+        event.type === 'run.changed' ||
+        event.type === 'epic.changed' ||
+        event.type === 'epic.paused'
+      ) {
         triggerRefetch();
       }
     },
@@ -127,6 +133,53 @@ export function createEpicWatcher(
     waitForExit: () => exitPromise,
     dispose,
   };
+}
+
+// The raw `--concurrency` / `--max-spend` / `--max-runs` strings `epic start`
+// and `epic resume` share; commander hands every option through as a string.
+interface SessionCeilingOptions {
+  concurrency?: string;
+  maxSpend?: string;
+  maxRuns?: string;
+}
+
+// One numeric option, or a CliError naming it. The server ranges the value
+// (400 on out of range); this only rejects what `Number` cannot read.
+function numberOption(
+  flag: string,
+  raw: string | undefined
+): number | undefined {
+  if (raw === undefined) return undefined;
+  const value = Number(raw);
+  if (!Number.isFinite(value)) {
+    throw new CliError(`invalid ${flag}: ${raw} (expected a number)`);
+  }
+  return value;
+}
+
+function parseSessionCeilings(opts: SessionCeilingOptions): {
+  concurrency?: number;
+  maxSpendUsd?: number;
+  maxRuns?: number;
+} {
+  return {
+    concurrency: numberOption('--concurrency', opts.concurrency),
+    maxSpendUsd: numberOption('--max-spend', opts.maxSpend),
+    maxRuns: numberOption('--max-runs', opts.maxRuns),
+  };
+}
+
+// `concurrency 4, ceiling $60.00, max 20 runs` — the ceilings only when the
+// session has them, so a plain start reads as it always did.
+function describeSession(session: EpicSession): string {
+  const parts = [`concurrency ${String(session.concurrency)}`];
+  if (session.maxSpendUsd !== null) {
+    parts.push(`ceiling $${session.maxSpendUsd.toFixed(2)}`);
+  }
+  if (session.maxRuns !== null) {
+    parts.push(`max ${String(session.maxRuns)} runs`);
+  }
+  return parts.join(', ');
 }
 
 export function registerPlanCommands(program: Command, ctx: CliContext): void {
@@ -335,6 +388,11 @@ export function registerPlanCommands(program: Command, ctx: CliContext): void {
   epic
     .command('start <epicId>')
     .option('--concurrency <n>', 'max concurrent child runs')
+    .option('--max-spend <usd>', 'pause once the session has spent this much')
+    .option(
+      '--max-runs <n>',
+      'pause once the session has started this many runs'
+    )
     .option(
       '--executor <name>',
       "an executor the daemon registered; defaults to the project's"
@@ -343,20 +401,59 @@ export function registerPlanCommands(program: Command, ctx: CliContext): void {
     .action(
       async (
         epicId: string,
-        opts: { concurrency?: string; executor?: string; json?: boolean }
+        opts: SessionCeilingOptions & { executor?: string; json?: boolean }
       ) => {
         const { client } = await daemonFor(ctx);
         const session = await client.startEpic(epicId, {
-          concurrency:
-            opts.concurrency !== undefined
-              ? Number(opts.concurrency)
-              : undefined,
+          ...parseSessionCeilings(opts),
           executor: opts.executor,
         });
         ctx.log(
           opts.json === true
             ? JSON.stringify(session, null, 2)
-            : `epic ${session.epicId} dispatch started (concurrency ${session.concurrency})`
+            : `epic ${session.epicId} dispatch started (${describeSession(session)})`
+        );
+      }
+    );
+
+  epic
+    .command('pause <epicId>')
+    .description('hold new dispatches; live runs finish on their own')
+    .option('--json')
+    .action(async (epicId: string, opts: { json?: boolean }) => {
+      const { client } = await daemonFor(ctx);
+      const session = await client.pauseEpic(epicId);
+      ctx.log(
+        opts.json === true
+          ? JSON.stringify(session, null, 2)
+          : `epic ${session.epicId} dispatch paused`
+      );
+    });
+
+  epic
+    .command('resume <epicId>')
+    .description('lift a pause, optionally with new ceilings')
+    .option('--concurrency <n>', 'max concurrent child runs')
+    .option('--max-spend <usd>', 'pause once the session has spent this much')
+    .option(
+      '--max-runs <n>',
+      'pause once the session has started this many runs'
+    )
+    .option('--json')
+    .action(
+      async (
+        epicId: string,
+        opts: SessionCeilingOptions & { json?: boolean }
+      ) => {
+        const { client } = await daemonFor(ctx);
+        const session = await client.resumeEpic(
+          epicId,
+          parseSessionCeilings(opts)
+        );
+        ctx.log(
+          opts.json === true
+            ? JSON.stringify(session, null, 2)
+            : `epic ${session.epicId} dispatch resumed (${describeSession(session)})`
         );
       }
     );

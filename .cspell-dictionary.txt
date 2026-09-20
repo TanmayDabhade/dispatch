@@ -565,3 +565,5 @@ Yegge's
 ypes
 zombied
 zwitch
+serialised
+unconfident

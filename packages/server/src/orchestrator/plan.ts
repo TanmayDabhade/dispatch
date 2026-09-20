@@ -88,6 +88,9 @@ export interface PlanRecord {
   // — the one-way marker double-confirm's 409 check reads (mirrors RunMeta's
   // own reviewedAt marker in orchestrator/types.ts).
   confirmedAt?: string;
+  // The epic confirm() minted for this plan, when the proposal carried one,
+  // so a list row can link straight to its milestone. Absent on a flat plan.
+  epicId?: string;
   // Set when this plan was started from a note (POST /api/notes/:id/enrich)
   // rather than a free-form prompt: the note whose one-liner the planner was
   // asked to expand into a real task. PlanManager itself never reads it —
@@ -200,6 +203,7 @@ export interface PlanSummary {
   createdAt: string;
   updatedAt: string;
   confirmedAt?: string;
+  epicId?: string;
 }
 
 // Builds the markdown body TaskStore.create's `description` param receives
@@ -293,6 +297,7 @@ export class PlanManager {
         createdAt: r.createdAt,
         updatedAt: r.updatedAt,
         confirmedAt: r.confirmedAt,
+        epicId: r.epicId,
       }));
   }
 
@@ -688,7 +693,10 @@ export class PlanManager {
       );
     }
 
-    this.updateRecord(planId, { confirmedAt: now });
+    this.updateRecord(planId, {
+      confirmedAt: now,
+      ...(epicId !== undefined ? { epicId } : {}),
+    });
     this.ctx.cache.rebuild(this.ctx.store);
     this.ctx.events.broadcast({ type: 'task.changed' });
 

@@ -1,4 +1,5 @@
 import { cn } from '@/lib/utils';
+import { PIE_DASH, pieDashOffset } from '@/ui/chrome';
 
 // Linear's status glyph, geometry read from its SVG DOM: a 14×14 viewBox, an outer ring at
 // r=6 (stroke 1.5) and an inner "pie" drawn as an r=2 circle with a 4-wide stroke whose
@@ -15,10 +16,10 @@ const RING_DASH = '3.14 0';
 const RING_DASH_OFFSET = -0.7;
 const BACKLOG_RING_DASH = '1.4 1.74';
 const BACKLOG_RING_DASH_OFFSET = 0.65;
-// The pie's dash length is the visible arc at 100%; the offset hides `1 - fraction` of it.
+// The pie's dash length (`PIE_DASH`, shared with the milestone `ProgressGlyph`) is the
+// visible arc at 100%; the offset hides `1 - fraction` of it.
 const PIE_RADIUS = 2;
 const PIE_STROKE = 4;
-const PIE_DASH = 12.189379495928398;
 const PIE_DASHARRAY = `${PIE_DASH} ${PIE_DASH * 2}`;
 // The done/cancelled disk: an r=3 circle with a 6-wide stroke covers the whole ring interior.
 const DISK_RADIUS = 3;
@@ -117,11 +118,9 @@ export function statusColor(status: string): string {
   return resolveStatusVisual(status).color;
 }
 
-/** The dashoffset that leaves `fraction` of the pie visible — 0 hides everything, 1 shows
- * the full arc. Exported for the test that pins the per-status geometry. */
-export function pieDashOffset(fraction: number): number {
-  return PIE_DASH * (1 - fraction);
-}
+/** The dashoffset that leaves `fraction` of the pie visible — the shared glyph's, re-exported
+ * so the milestone view and the geometry tests keep importing it from here. */
+export { pieDashOffset };
 
 export interface StatusIconProps {
   status: string;

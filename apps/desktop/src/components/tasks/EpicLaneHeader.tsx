@@ -1,13 +1,6 @@
 import type { EpicProgress } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
-import {
-  AlertCircle,
-  GitMerge,
-  Milestone,
-  Play,
-  Square,
-  Waypoints,
-} from 'lucide-react';
+import { Milestone, Waypoints } from 'lucide-react';
 import { useState } from 'react';
 
 import {
@@ -15,13 +8,14 @@ import {
   concurrencyChoices,
   concurrencyLabel,
 } from '../../lib/epicConcurrency';
+import type { WorkEpicOptions } from '../../lib/epicSession';
 import { rollupMilestoneStatus } from '../../lib/milestoneRollup';
+import { FanoutControls, sessionIdle } from '../milestones/FanoutControls';
 import { EpicDagModal } from './EpicDagModal';
-import { pieDashOffset, statusColor, StatusIcon } from './StatusIcon';
+import { statusColor, StatusIcon } from './StatusIcon';
 import { GroupHeader } from '@/ui/ai/group-header';
 import { IconButton } from '@/ui/ai/icon-button';
 import { LabelPill, PillButton, SelectPill } from '@/ui/ai/pill';
-import { Alert, AlertDescription } from '@/ui/alert';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -52,59 +46,34 @@ interface EpicLaneHeaderProps {
   /** Opens a task in the peek/detail dialog: the epic itself (its id chip) or one of its
    * children (from the graph modal). */
   onOpenTask: (taskId: string) => void;
-  onWork: (epicId: string, concurrency: number) => Promise<void>;
-  /** When given, Work asks for a confirmation preview instead of dispatching straight away. */
+  /** The direct path: starts a session at the picker's concurrency with no ceilings. */
+  onWork: (epicId: string, opts: WorkEpicOptions) => Promise<void>;
+  /** When given, Send agents… opens the fan-out dialog instead of dispatching straight away. */
   onRequestWork?: (epicId: string) => void;
+  onPause?: (epicId: string) => Promise<void>;
+  onResume?: (epicId: string) => Promise<void>;
+  /** Reopens the dialog pre-filled from the paused session. */
+  onRaiseCeiling?: (epicId: string) => void;
   onStop: (epicId: string) => Promise<void>;
   /** Lands the finished epic branch on the default base (one PR or one local merge, decided
    * server-side). Optional so a header rendered without land wiring stays valid; the Land
-   * button only renders once every child is done/cancelled, replacing the then-useless Work
-   * button. */
+   * button only renders once every child is done/cancelled, replacing the then-useless
+   * Send agents… button. */
   onLand?: (epicId: string) => Promise<void>;
   /** A `+` on the right that presets the epic in the task creator. */
   onAdd?: () => void;
 }
 
-// The pie's full arc is `StatusIcon`'s (Linear's) dash length — `pieDashOffset(0)` hides all
-// of it, so it is that length; reading it back keeps the two glyphs on one recipe.
-const PIE_DASH = pieDashOffset(0);
-const PIE_DASHARRAY = `${PIE_DASH} ${PIE_DASH * 2}`;
-
-// The `◔ 3/7` progress glyph at 12px: `StatusIcon`'s r=6 ring and r=2 pie, the pie filled
-// to `fraction` by the same dashoffset the status icons use.
-function ProgressGlyph({ fraction }: { fraction: number }) {
-  return (
-    <svg
-      viewBox="0 0 14 14"
-      fill="none"
-      aria-hidden
-      data-slot="epic-progress-glyph"
-      className="size-3 shrink-0 text-(--text-secondary)"
-    >
-      <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.5" />
-      <circle
-        cx="7"
-        cy="7"
-        r="2"
-        stroke="currentColor"
-        strokeWidth="4"
-        strokeDasharray={PIE_DASHARRAY}
-        strokeDashoffset={pieDashOffset(fraction)}
-        transform="rotate(-90 7 7)"
-      />
-    </svg>
-  );
-}
-
 /**
  * One epic's lane header on the board: a 36px `GroupHeader` tinted by the epic's rolled-up
  * status (the same glyph vocabulary its cards use), the title as the collapse target, the
- * card count, then the epic-level controls — `◔ done/total`, a `N running` pill, the id
- * chip, the dependency-graph button, the concurrency picker and Work/Stop/Land as pills.
+ * card count, then `FanoutControls` — the same `◔ done/total`, phase chips, spend pill and
+ * verbs the milestones page shows — with the id chip, the dependency-graph button and the
+ * concurrency picker slotted in.
  *
  * Epics are containers here, not objects on the board: they are never dragged and never
- * occupy a status column. Each control stops propagation so using it never also toggles
- * the lane.
+ * occupy a status column. Only the chevron and the title toggle the lane; the controls in
+ * the actions slot never do.
  */
 export function EpicLaneHeader({
   epic,
@@ -118,27 +87,18 @@ export function EpicLaneHeader({
   onOpenTask,
   onWork,
   onRequestWork,
+  onPause,
+  onResume,
+  onRaiseCeiling,
   onStop,
   onLand,
   onAdd,
 }: EpicLaneHeaderProps) {
   const [concurrency, setConcurrency] = useState(concurrencyDefault);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [showGraph, setShowGraph] = useState(false);
+  const session = progress?.session ?? null;
   const active = progress?.active ?? false;
-
-  async function run(action: () => Promise<void>) {
-    setBusy(true);
-    setError(null);
-    try {
-      await action();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
+  const paused = session?.state === 'paused';
 
   const doneCount =
     progress?.children.filter(
@@ -148,11 +108,12 @@ export function EpicLaneHeader({
   const liveCount = progress?.liveRuns.length ?? 0;
   // Same "finished" rule the server's land validation applies (every child done or
   // cancelled) — the button still only *requests*; the server is the authority and 409s
-  // with its reason into the error alert below.
+  // with its reason into the error pill.
   const landable =
     onLand !== undefined &&
     epic !== null &&
     !active &&
+    !paused &&
     totalCount > 0 &&
     doneCount === totalCount &&
     epic.meta.status !== 'landed';
@@ -187,17 +148,61 @@ export function EpicLaneHeader({
         className="mb-2"
         actions={
           epic !== null && (
-            <>
-              {totalCount > 0 && (
-                <span
-                  data-slot="epic-progress"
-                  className="flex shrink-0 items-center gap-1 text-[12px] font-medium text-(--text-secondary)"
-                >
-                  <ProgressGlyph fraction={doneCount / totalCount} />
-                  {doneCount}/{totalCount}
-                </span>
-              )}
-              {liveCount > 0 && (
+            <FanoutControls
+              epic={epic}
+              progress={progress}
+              count={
+                progress === undefined
+                  ? undefined
+                  : { done: doneCount, total: totalCount }
+              }
+              landable={landable}
+              concurrencyPicker={
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <SelectPill
+                        aria-label={`Epic dispatch concurrency for ${epic.meta.id}`}
+                      />
+                    }
+                  >
+                    {concurrencyLabel(concurrency)}
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="min-w-[96px]">
+                    <DropdownMenuRadioGroup
+                      value={String(concurrency)}
+                      onValueChange={(value) =>
+                        setConcurrency(clampConcurrencyInput(String(value)))
+                      }
+                    >
+                      {concurrencyChoices(concurrencyDefault).map((choice) => (
+                        <DropdownMenuRadioItem
+                          key={choice}
+                          value={String(choice)}
+                        >
+                          {concurrencyLabel(choice)}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              }
+              onSendAgents={(epicId) =>
+                onRequestWork !== undefined
+                  ? onRequestWork(epicId)
+                  : onWork(epicId, { concurrency })
+              }
+              onPause={onPause}
+              onResume={onResume}
+              onRaiseCeiling={onRaiseCeiling}
+              onStop={onStop}
+              onLand={onLand}
+              onOpenEpic={onOpenTask}
+              showOpen={false}
+            >
+              {/* Outside a session the live count is the only thing to say; inside one the
+                  phase chips carry it. */}
+              {sessionIdle(session) && liveCount > 0 && (
                 <LabelPill color="var(--state-working-fg)">
                   {liveCount} running
                 </LabelPill>
@@ -231,84 +236,10 @@ export function EpicLaneHeader({
                 </TooltipTrigger>
                 <TooltipContent>View dependency graph</TooltipContent>
               </Tooltip>
-              {!landable && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    disabled={active || busy}
-                    render={
-                      <SelectPill
-                        aria-label={`Epic dispatch concurrency for ${epic.meta.id}`}
-                      />
-                    }
-                  >
-                    {concurrencyLabel(concurrency)}
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="min-w-[96px]">
-                    <DropdownMenuRadioGroup
-                      value={String(concurrency)}
-                      onValueChange={(value) =>
-                        setConcurrency(clampConcurrencyInput(String(value)))
-                      }
-                    >
-                      {concurrencyChoices(concurrencyDefault).map((choice) => (
-                        <DropdownMenuRadioItem
-                          key={choice}
-                          value={String(choice)}
-                        >
-                          {concurrencyLabel(choice)}
-                        </DropdownMenuRadioItem>
-                      ))}
-                    </DropdownMenuRadioGroup>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
-              {active ? (
-                <PillButton
-                  disabled={busy}
-                  onClick={() => void run(() => onStop(epic.meta.id))}
-                >
-                  <Square className="size-3" />
-                  Stop
-                </PillButton>
-              ) : landable ? (
-                <PillButton
-                  disabled={busy}
-                  onClick={() => void run(() => onLand(epic.meta.id))}
-                >
-                  <GitMerge className="size-3" />
-                  Land
-                </PillButton>
-              ) : (
-                <PillButton
-                  disabled={busy}
-                  onClick={() => {
-                    if (onRequestWork !== undefined) {
-                      onRequestWork(epic.meta.id);
-                      return;
-                    }
-                    void run(() => onWork(epic.meta.id, concurrency));
-                  }}
-                >
-                  <Play className="size-3" />
-                  Work
-                </PillButton>
-              )}
-            </>
+            </FanoutControls>
           )
         }
       />
-
-      {error !== null && (
-        <Alert
-          variant="destructive"
-          className="bg-destructive/10 rounded-control mb-2 flex items-center gap-1.5 border-0 px-2 py-1 text-[12px] has-[>svg]:gap-x-1.5 [&>svg]:translate-y-0"
-        >
-          <AlertCircle className="size-3 shrink-0" />
-          <AlertDescription className="truncate text-[12px]">
-            {error}
-          </AlertDescription>
-        </Alert>
-      )}
 
       {epic !== null && (
         <EpicDagModal

@@ -17,9 +17,19 @@ export interface OrchestratorConfig {
   maxBudgetUsd?: number;
   permissionMode: string;
   epicConcurrency: number;
+  /** Hard ceiling on concurrent runs any one epic session may hold, capped at
+   *  `MAX_CONCURRENCY_HARD_CAP`. `epicConcurrency` must not exceed it. */
+  maxConcurrency: number;
+  /** What the spend gate charges for a run still in flight, before its real
+   *  cost is known. */
+  runCostEstimateUsd: number;
   /** The executor a dispatch runs on when the caller names none. */
   executor: string;
 }
+
+/** The largest `maxConcurrency` the loader accepts. Browser-safe so the
+ *  dispatch dialog can clamp its own input against it. */
+export const MAX_CONCURRENCY_HARD_CAP = 32;
 
 export interface RepoDigestConfig {
   /** False stops all generation; the cache still serves what is on disk. */
@@ -403,6 +413,8 @@ export interface ConfigPatch {
   autoCommit?: boolean;
   epicConcurrency?: number;
   verifyTimeoutSec?: number;
+  maxConcurrency?: number;
+  runCostEstimateUsd?: number;
   /** `null` clears the key, restoring "no cap" — both are optional in OrchestratorConfig. */
   maxTurns?: number | null;
   maxBudgetUsd?: number | null;

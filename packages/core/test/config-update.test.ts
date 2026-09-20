@@ -129,6 +129,65 @@ describe('updateConfig', () => {
     expect(cfg.orchestrator.verifyTimeoutSec).toBe(120);
   });
 
+  test('writes maxConcurrency and runCostEstimateUsd under orchestrator', () => {
+    const dir = root();
+    updateConfig(dir, { maxConcurrency: 24, runCostEstimateUsd: 12.5 });
+    const cfg = loadConfig(dir);
+    expect(cfg.orchestrator.maxConcurrency).toBe(24);
+    expect(cfg.orchestrator.runCostEstimateUsd).toBe(12.5);
+  });
+
+  test.each([0, -1, 1.5])(
+    'rejects a nonsensical maxConcurrency: %s',
+    (value) => {
+      expect(() => updateConfig(root(), { maxConcurrency: value })).toThrow(
+        /invalid maxConcurrency: must be a positive integer/
+      );
+    }
+  );
+
+  test('rejects a maxConcurrency over the hard cap before writing', () => {
+    const dir = root('autoCommit: true\n');
+    const before = read(dir);
+    expect(() => updateConfig(dir, { maxConcurrency: 33 })).toThrow(
+      /invalid maxConcurrency: must be an integer between 1 and 32/
+    );
+    expect(read(dir)).toBe(before);
+  });
+
+  test('rejects an epicConcurrency above the effective maxConcurrency', () => {
+    const dir = root();
+    expect(() => updateConfig(dir, { epicConcurrency: 20 })).toThrow(
+      /invalid epicConcurrency: 20 exceeds maxConcurrency \(16\)/
+    );
+    updateConfig(dir, { maxConcurrency: 20 });
+    expect(
+      updateConfig(dir, { epicConcurrency: 20 }).orchestrator.epicConcurrency
+    ).toBe(20);
+    expect(() => updateConfig(dir, { maxConcurrency: 8 })).toThrow(
+      /invalid epicConcurrency: 20 exceeds maxConcurrency \(8\)/
+    );
+  });
+
+  test.each([0, -1, Number.NaN])(
+    'rejects a nonsensical runCostEstimateUsd: %s',
+    (value) => {
+      expect(() => updateConfig(root(), { runCostEstimateUsd: value })).toThrow(
+        /invalid runCostEstimateUsd: must be a positive number/
+      );
+    }
+  );
+
+  test('rejects a null runCostEstimateUsd: the estimate has no "off" state', () => {
+    const dir = root();
+    expect(() =>
+      updateConfig(dir, { runCostEstimateUsd: null as unknown as number })
+    ).toThrow(/invalid runCostEstimateUsd: must be a positive number/);
+    expect(() =>
+      updateConfig(dir, { maxConcurrency: null as unknown as number })
+    ).toThrow(/invalid maxConcurrency: must be a positive integer/);
+  });
+
   test('writes a turn cap and a budget cap under orchestrator', () => {
     const dir = root();
     updateConfig(dir, { maxTurns: 40, maxBudgetUsd: 12.5 });

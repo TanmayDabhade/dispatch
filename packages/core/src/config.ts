@@ -36,6 +36,7 @@ import {
   FIX_MODEL_TIERS,
   FIX_STRATEGIES,
   LINEAR_DIRECTIONS,
+  MAX_CONCURRENCY_HARD_CAP,
   MODEL_ROLES,
   NOTIFICATION_KINDS,
 } from './configTypes.js';
@@ -87,6 +88,8 @@ const DEFAULT_ORCHESTRATOR: OrchestratorConfig = {
   executor: DEFAULT_EXECUTOR_NAME,
   // 10 minutes: above a real install+build+test verify, still bounded.
   verifyTimeoutSec: 600,
+  maxConcurrency: 16,
+  runCostEstimateUsd: 10,
 };
 
 // `escalation` holds objects, so a shallow spread would share rows between the
@@ -279,6 +282,43 @@ function parseOrchestratorConfig(raw: unknown): OrchestratorConfig {
     );
   }
 
+  const { maxConcurrency } = obj;
+  if (
+    maxConcurrency !== undefined &&
+    (typeof maxConcurrency !== 'number' ||
+      !Number.isInteger(maxConcurrency) ||
+      maxConcurrency < 1 ||
+      maxConcurrency > MAX_CONCURRENCY_HARD_CAP)
+  ) {
+    throw new ConfigError(
+      `invalid .dispatch/config.yml: orchestrator.maxConcurrency must be an integer between 1 and ${MAX_CONCURRENCY_HARD_CAP}`
+    );
+  }
+
+  const { runCostEstimateUsd } = obj;
+  if (
+    runCostEstimateUsd !== undefined &&
+    (typeof runCostEstimateUsd !== 'number' ||
+      !Number.isFinite(runCostEstimateUsd) ||
+      runCostEstimateUsd <= 0)
+  ) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: orchestrator.runCostEstimateUsd must be a positive number'
+    );
+  }
+
+  // Checked on the resolved values so a raised epicConcurrency alone cannot
+  // slip past the default cap.
+  const resolvedEpicConcurrency =
+    epicConcurrency ?? DEFAULT_ORCHESTRATOR.epicConcurrency;
+  const resolvedMaxConcurrency =
+    maxConcurrency ?? DEFAULT_ORCHESTRATOR.maxConcurrency;
+  if (resolvedEpicConcurrency > resolvedMaxConcurrency) {
+    throw new ConfigError(
+      `invalid .dispatch/config.yml: orchestrator.epicConcurrency (${resolvedEpicConcurrency}) must not exceed orchestrator.maxConcurrency (${resolvedMaxConcurrency})`
+    );
+  }
+
   const { executor } = obj;
   if (
     executor !== undefined &&
@@ -293,8 +333,11 @@ function parseOrchestratorConfig(raw: unknown): OrchestratorConfig {
     maxTurns: maxTurns ?? DEFAULT_ORCHESTRATOR.maxTurns,
     maxBudgetUsd,
     permissionMode: permissionMode ?? DEFAULT_ORCHESTRATOR.permissionMode,
-    epicConcurrency: epicConcurrency ?? DEFAULT_ORCHESTRATOR.epicConcurrency,
+    epicConcurrency: resolvedEpicConcurrency,
     verifyTimeoutSec: verifyTimeoutSec ?? DEFAULT_ORCHESTRATOR.verifyTimeoutSec,
+    maxConcurrency: resolvedMaxConcurrency,
+    runCostEstimateUsd:
+      runCostEstimateUsd ?? DEFAULT_ORCHESTRATOR.runCostEstimateUsd,
     executor: executor?.trim() ?? DEFAULT_ORCHESTRATOR.executor,
   };
 }
@@ -1120,13 +1163,51 @@ export function updateConfig(
   }
   if (patch.autoCommit !== undefined) doc.set('autoCommit', patch.autoCommit);
 
-  for (const key of ['epicConcurrency', 'verifyTimeoutSec'] as const) {
+  for (const key of [
+    'epicConcurrency',
+    'verifyTimeoutSec',
+    'maxConcurrency',
+  ] as const) {
     const value = patch[key];
     if (value === undefined) continue;
     if (!Number.isInteger(value) || value < 1) {
       throw new ConfigError(`invalid ${key}: must be a positive integer`);
     }
     doc.setIn(['orchestrator', key], value);
+  }
+
+  // Checked before the write, like permissionMode: a cap over the hard limit
+  // or below epicConcurrency on disk would make every later loadConfig throw.
+  if (
+    patch.maxConcurrency !== undefined ||
+    patch.epicConcurrency !== undefined
+  ) {
+    const effective = (key: 'epicConcurrency' | 'maxConcurrency'): number => {
+      const onDisk = doc.getIn(['orchestrator', key]);
+      return typeof onDisk === 'number' ? onDisk : DEFAULT_ORCHESTRATOR[key];
+    };
+    const maxConcurrency = effective('maxConcurrency');
+    if (maxConcurrency > MAX_CONCURRENCY_HARD_CAP) {
+      throw new ConfigError(
+        `invalid maxConcurrency: must be an integer between 1 and ${MAX_CONCURRENCY_HARD_CAP}`
+      );
+    }
+    const epicConcurrency = effective('epicConcurrency');
+    if (epicConcurrency > maxConcurrency) {
+      throw new ConfigError(
+        `invalid epicConcurrency: ${epicConcurrency} exceeds maxConcurrency (${maxConcurrency})`
+      );
+    }
+  }
+
+  if (patch.runCostEstimateUsd !== undefined) {
+    const value = patch.runCostEstimateUsd;
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+      throw new ConfigError(
+        'invalid runCostEstimateUsd: must be a positive number'
+      );
+    }
+    doc.setIn(['orchestrator', 'runCostEstimateUsd'], value);
   }
 
   // Positive *numbers*, not integers: a budget is money and a turn cap is

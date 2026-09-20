@@ -38,6 +38,17 @@ describe('concurrencyChoices', () => {
     expect(concurrencyChoices(6)).toEqual([1, 2, 3, 4, 5, 6]);
   });
 
+  it('offers up to a caller-supplied max', () => {
+    expect(concurrencyChoices(3, 16)).toHaveLength(16);
+    expect(concurrencyChoices(3, 16).at(-1)).toBe(16);
+    expect(concurrencyChoices(3, 2)).toEqual([1, 2, 3]);
+  });
+
+  it('a nonsensical max still offers at least the default', () => {
+    expect(concurrencyChoices(3, 0)).toEqual([1, 2, 3]);
+    expect(concurrencyChoices(2, Number.NaN)).toEqual([1, 2]);
+  });
+
   it('labels a choice as N×', () => {
     expect(concurrencyLabel(2)).toBe('2×');
   });

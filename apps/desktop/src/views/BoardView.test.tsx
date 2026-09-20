@@ -1,3 +1,4 @@
+import type { EpicProgress, EpicSession } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, expect, test } from 'bun:test';
@@ -9,6 +10,7 @@ import {
   ShellActionsProvider,
 } from '../components/shell/ShellActionsContext';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import type { WorkEpicOptions } from '../lib/epicSession';
 import { TASK_FILTERS_V2_STORAGE_KEY } from '../lib/taskFilters';
 import {
   TASK_FILTERS_STORAGE_KEY,
@@ -19,6 +21,7 @@ import {
   VIEW_MODE_STORAGE_KEY,
 } from '../lib/tasksViewMode';
 import { BoardView } from './BoardView';
+import type { FocusEpicRequest } from './MilestonesView';
 import { TooltipProvider } from '@/ui/tooltip';
 
 function task(
@@ -41,6 +44,7 @@ function task(
       labels: [],
       assignee: 'none',
       blockedBy: [],
+      writes: [],
       created: '2026-08-10T00:00:00.000Z',
       updated: '2026-08-10T00:00:00.000Z',
     },
@@ -61,8 +65,23 @@ const TASKS = [
   task('t-loose', 'Unparented card', 'todo'),
 ];
 
+/** What the fan-out handlers were asked, in order. */
+interface EpicCalls {
+  work: [string, number | WorkEpicOptions][];
+  pause: string[];
+  resume: [string, Partial<WorkEpicOptions> | undefined][];
+}
+
+function epicCalls(): EpicCalls {
+  return { work: [], pause: [], resume: [] };
+}
+
 /** A `DispatchProjectData` stub carrying only what BoardView and its layouts read. */
-function boardData(tasks: TaskDoc[] = TASKS): DispatchProjectData {
+function boardData(
+  tasks: TaskDoc[] = TASKS,
+  extras: { progress?: EpicProgress[]; calls?: EpicCalls } = {}
+): DispatchProjectData {
+  const calls = extras.calls ?? epicCalls();
   return {
     config: testConfig,
     client: {},
@@ -75,21 +94,83 @@ function boardData(tasks: TaskDoc[] = TASKS): DispatchProjectData {
     showArchived: false,
     setShowArchived: () => {},
     epics: EPICS,
-    epicProgressById: new Map(),
-    readyIds: new Set<string>(),
+    epicProgressById: new Map(
+      (extras.progress ?? []).map((p) => [p.epicId, p])
+    ),
+    readyIds: new Set<string>(['t-1']),
     blockedIds: new Set<string>(),
     runs: [],
     latestRunByTaskId: new Map(),
     liveRunStateByTaskId: new Map(),
     attentionByTaskId: new Map(),
+    fixLoops: new Map(),
     mergeQueue: null,
     handleMergeAllReady: async () => {},
     moveTaskStatus: async () => {},
     handleUpdate: async () => {},
     handleDispatch: async () => {},
-    handleWorkEpic: async () => {},
+    handleWorkEpic: (id: string, opts: number | WorkEpicOptions) => {
+      calls.work.push([id, opts]);
+      return Promise.resolve();
+    },
+    handlePauseEpic: (id: string) => {
+      calls.pause.push(id);
+      return Promise.resolve();
+    },
+    handleResumeEpic: (id: string, opts?: Partial<WorkEpicOptions>) => {
+      calls.resume.push([id, opts]);
+      return Promise.resolve();
+    },
     handleStopEpic: async () => {},
+    handleLandEpic: async () => {},
   } as unknown as DispatchProjectData;
+}
+
+function session(
+  state: EpicSession['state'],
+  overrides: Partial<EpicSession> = {}
+): EpicSession {
+  return {
+    epicId: 'e-1',
+    concurrency: 3,
+    executor: 'claude',
+    state,
+    maxSpendUsd: 60,
+    maxRuns: 20,
+    startedAt: '2026-09-20T00:00:00.000Z',
+    updatedAt: '2026-09-20T00:00:00.000Z',
+    active: state === 'active',
+    ...overrides,
+  };
+}
+
+/** Progress for `e-1` with one queued child under `session`, or no session at all. */
+function progress(sessionState: EpicSession['state'] | null): EpicProgress {
+  return {
+    epicId: 'e-1',
+    active: sessionState === 'active',
+    session: sessionState === null ? null : session(sessionState),
+    spend: {
+      settledUsd: 12,
+      liveCount: 0,
+      estimatedLiveUsd: 0,
+      runsStarted: 2,
+      maxSpendUsd: 60,
+      maxRuns: 20,
+    },
+    children: [
+      {
+        id: 't-1',
+        title: 'Card one',
+        status: 'todo',
+        phase: 'queued',
+        wave: 1,
+        openFindings: 0,
+      },
+    ],
+    waves: [],
+    liveRuns: [],
+  };
 }
 
 const noop = () => {};
@@ -121,6 +202,7 @@ function view(
   mode: TasksViewMode = 'board',
   options: {
     data?: DispatchProjectData;
+    focusEpic?: FocusEpicRequest | null;
     onSelectTask?: (taskId: string) => void;
     onNewTask?: () => void;
   } = {}
@@ -131,6 +213,7 @@ function view(
         data={options.data ?? boardData()}
         mode={mode}
         projectName="Dispatch"
+        focusEpic={options.focusEpic}
         onSelectTask={options.onSelectTask ?? noop}
         onNewTask={options.onNewTask ?? noop}
         onPlanWork={noop}
@@ -150,6 +233,21 @@ async function settle(work: () => void) {
     work();
     await Promise.resolve();
   });
+}
+
+// A header verb clears its busy flag after its handler settles, and the dialog's confirm
+// closes it a tick later; drain the queue before asserting on either.
+async function settleTick(work: () => void) {
+  await act(async () => {
+    work();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
+function dialogTitle(): string | null {
+  return (
+    document.querySelector('[data-slot=dialog-title]')?.textContent ?? null
+  );
 }
 
 /** A card's own root element — the keydown target a real keypress has. */
@@ -565,4 +663,98 @@ test('an empty project shows the Linear empty state with New task and Plan work'
   fireEvent.click(newTask);
   expect(created).toBe(1);
   expect(screen.getAllByRole('button', { name: 'Plan work…' })).toHaveLength(2);
+});
+
+test('a focusEpic request switches to the milestones layout and hands it the request', () => {
+  render(
+    view('board', {
+      focusEpic: { epicId: 'e-1', dispatch: true, nonce: 1 },
+    })
+  );
+  // The open dialog hides the page from the accessibility tree, so read the tab directly.
+  expect(el('[role=tab][data-active=true]').textContent).toBe('Milestones');
+  // The milestones layout served it: the fan-out dialog is open for that epic, once.
+  expect(dialogTitle()).toBe('Send agents · Payments epic');
+  expect(document.querySelectorAll('[data-slot=dialog-title]')).toHaveLength(1);
+});
+
+test('leaving the milestones layout retires the request so returning does not replay it', () => {
+  render(
+    view('board', {
+      focusEpic: { epicId: 'e-1', dispatch: true, nonce: 1 },
+    })
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(dialogTitle()).toBeNull();
+  fireEvent.click(screen.getByRole('tab', { name: 'Board' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Milestones' }));
+  expect(dialogTitle()).toBeNull();
+});
+
+test('a lane header’s Send agents… confirms through the options-shaped handleWorkEpic', async () => {
+  enableEpicLanes();
+  const calls = epicCalls();
+  render(view('board', { data: boardData(TASKS, { calls }) }));
+  // One per epic lane; the Payments lane comes first.
+  fireEvent.click(screen.getAllByRole('button', { name: 'Send agents…' })[0]);
+  expect(dialogTitle()).toBe('Send agents · Payments epic');
+  await settleTick(() => {
+    fireEvent.click(screen.getByRole('button', { name: /Send \d+ agents?/ }));
+  });
+  // The config's concurrency, and the dialog's defaults: $10 × 2 tasks, one run each.
+  expect(calls.work).toEqual([
+    ['e-1', { concurrency: 3, maxSpendUsd: 20, maxRuns: 2 }],
+  ]);
+  expect(dialogTitle()).toBeNull();
+});
+
+test('Pause and Resume on a lane pass straight through to the hook', async () => {
+  enableEpicLanes();
+  const calls = epicCalls();
+  const { rerender } = render(
+    view('board', {
+      data: boardData(TASKS, { calls, progress: [progress('active')] }),
+    })
+  );
+  await settleTick(() => {
+    fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+  });
+  expect(calls.pause).toEqual(['e-1']);
+
+  rerender(
+    view('board', {
+      data: boardData(TASKS, { calls, progress: [progress('paused')] }),
+    })
+  );
+  await settleTick(() => {
+    fireEvent.click(screen.getByRole('button', { name: 'Resume' }));
+  });
+  expect(calls.resume).toEqual([['e-1', undefined]]);
+});
+
+test('Raise ceiling… opens the dialog in raise mode, pre-filled, and confirms through handleResumeEpic', async () => {
+  enableEpicLanes();
+  const calls = epicCalls();
+  render(
+    view('board', {
+      data: boardData(TASKS, { calls, progress: [progress('paused')] }),
+    })
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Raise ceiling…' }));
+  expect(dialogTitle()).toBe('Raise ceiling · Payments epic');
+  expect(screen.getByLabelText('Spend ceiling').getAttribute('value')).toBe(
+    '60'
+  );
+  expect(screen.getByLabelText('Max runs').getAttribute('value')).toBe('20');
+  fireEvent.change(screen.getByLabelText('Spend ceiling'), {
+    target: { value: '120' },
+  });
+  await settleTick(() => {
+    fireEvent.click(screen.getByRole('button', { name: 'Raise ceiling' }));
+  });
+  expect(calls.resume).toEqual([
+    ['e-1', { concurrency: 3, maxSpendUsd: 120, maxRuns: 20 }],
+  ]);
+  expect(calls.work).toHaveLength(0);
+  expect(dialogTitle()).toBeNull();
 });
