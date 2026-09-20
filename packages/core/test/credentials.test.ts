@@ -9,6 +9,7 @@ import {
   credentialsPath,
   readCredentials,
   resolveLinearApiKey,
+  resolveTypesafeApiKey,
   writeCredential,
   writeProjectCredential,
 } from '../src/credentials.js';
@@ -16,11 +17,13 @@ import {
 let fakeHome: string;
 const originalHome = process.env.DISPATCH_HOME;
 const originalKey = process.env.LINEAR_API_KEY;
+const originalTypesafeKey = process.env.TYPESAFE_API_KEY;
 
 beforeEach(() => {
   fakeHome = mkdtempSync(join(tmpdir(), 'dispatch-credentials-'));
   process.env.DISPATCH_HOME = fakeHome;
   delete process.env.LINEAR_API_KEY;
+  delete process.env.TYPESAFE_API_KEY;
 });
 
 afterEach(() => {
@@ -28,6 +31,8 @@ afterEach(() => {
   else process.env.DISPATCH_HOME = originalHome;
   if (originalKey === undefined) delete process.env.LINEAR_API_KEY;
   else process.env.LINEAR_API_KEY = originalKey;
+  if (originalTypesafeKey === undefined) delete process.env.TYPESAFE_API_KEY;
+  else process.env.TYPESAFE_API_KEY = originalTypesafeKey;
 });
 
 describe('credentials file', () => {
@@ -182,5 +187,53 @@ describe('resolveLinearApiKey', () => {
       apiKey: null,
       source: null,
     });
+  });
+});
+
+describe('resolveTypesafeApiKey', () => {
+  const project = '/tmp/dispatch-project-a';
+
+  it('reports no key when nothing is configured', () => {
+    expect(resolveTypesafeApiKey(project)).toEqual({
+      apiKey: null,
+      source: null,
+    });
+  });
+
+  // Unlike Linear, the env var wins: a TypeSafe key is not project-specific,
+  // so a shell export is the deliberate choice, not a stale leftover.
+  it('prefers the env var over the project slot and the global slot', () => {
+    writeCredential('typesafe', { apiKey: 'from-global' });
+    writeProjectCredential(project, 'typesafe', { apiKey: 'from-project' });
+    process.env.TYPESAFE_API_KEY = 'from-env';
+    expect(resolveTypesafeApiKey(project)).toEqual({
+      apiKey: 'from-env',
+      source: 'env',
+    });
+
+    delete process.env.TYPESAFE_API_KEY;
+    expect(resolveTypesafeApiKey(project)).toEqual({
+      apiKey: 'from-project',
+      source: 'project',
+    });
+
+    clearProjectCredential(project, 'typesafe');
+    expect(resolveTypesafeApiKey(project)).toEqual({
+      apiKey: 'from-global',
+      source: 'global',
+    });
+  });
+
+  it('treats a blank env var as unset', () => {
+    process.env.TYPESAFE_API_KEY = '   ';
+    writeProjectCredential(project, 'typesafe', { apiKey: 'from-project' });
+    expect(resolveTypesafeApiKey(project).source).toBe('project');
+  });
+
+  it('leaves the linear slot alone', () => {
+    writeProjectCredential(project, 'linear', { apiKey: 'linear-key' });
+    writeProjectCredential(project, 'typesafe', { apiKey: 'ts-key' });
+    expect(resolveLinearApiKey(project).apiKey).toBe('linear-key');
+    expect(resolveTypesafeApiKey(project).apiKey).toBe('ts-key');
   });
 });

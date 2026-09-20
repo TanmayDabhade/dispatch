@@ -84,6 +84,9 @@ catalogs:
     '@types/react-dom':
       specifier: 19.2.3
       version: 19.2.3
+    '@typesafe-ai/sdk':
+      specifier: 0.5.7
+      version: 0.5.7
     '@typescript/native-preview':
       specifier: 7.0.0-dev.20260128.1
       version: 7.0.0-dev.20260128.1
@@ -498,6 +501,9 @@ importers:
       '@dispatch/mcp':
         specifier: workspace:*
         version: link:../mcp
+      '@typesafe-ai/sdk':
+        specifier: 'catalog:'
+        version: 0.5.7
       yaml:
         specifier: 'catalog:'
         version: 2.9.0
@@ -2760,6 +2766,10 @@ packages:
 
   '@types/ws@8.18.1':
     resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
+
+  '@typesafe-ai/sdk@0.5.7':
+    resolution: {integrity: sha512-OrbhDXyxDoX9l45/Mcts+TsNuvubCuZQzINQv0BMbi32ztcapzgrCnMmaW9gK5+JkgQAZcnJH1f47lAur+i1hw==}
+    engines: {node: '>=20'}
 
   '@typescript/native-preview-darwin-arm64@7.0.0-dev.20260128.1':
     resolution: {integrity: sha512-rPyH+d+M8NnYA9FOOB9xPtllB2jtDiB7vnLDGYVjE7y8j3XNMEHFYlwoZ5HLS2yLCgwmmcmEUgurJX94V9Iqeg==}
@@ -7113,6 +7123,8 @@ snapshots:
   '@types/ws@8.18.1':
     dependencies:
       '@types/node': 24.13.2
+
+  '@typesafe-ai/sdk@0.5.7': {}
 
   '@typescript/native-preview-darwin-arm64@7.0.0-dev.20260128.1':
     optional: true

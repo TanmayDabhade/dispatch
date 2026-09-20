@@ -241,6 +241,7 @@ export {
   credentialsPath,
   readCredentials,
   resolveLinearApiKey,
+  resolveTypesafeApiKey,
   writeCredential,
   writeProjectCredential,
 } from './credentials.js';

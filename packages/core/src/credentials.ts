@@ -14,12 +14,15 @@ import { normalizeProjectPath } from './projectPath.js';
 /** One project's secrets, one key per integration. */
 export interface ProjectCredentials {
   linear?: { apiKey: string };
+  typesafe?: { apiKey: string };
 }
 
 /** User-level secrets. Never written to a project's `.dispatch/`. */
 export interface CredentialsFile {
   /** Machine-wide default, kept as a read-only fallback. Nothing writes it any more. */
   linear?: { apiKey: string };
+  /** Machine-wide TypeSafe key. Read as the last fallback; nothing writes it. */
+  typesafe?: { apiKey: string };
   /** Per-project secrets, keyed by `normalizeProjectPath` of the project root. */
   projects?: Record<string, ProjectCredentials>;
 }
@@ -161,6 +164,28 @@ export function resolveLinearApiKey(rootDir: string): {
   if (fromEnv !== null) return { apiKey: fromEnv, source: 'env' };
 
   const fromGlobal = nonEmpty(file.linear?.apiKey);
+  if (fromGlobal !== null) return { apiKey: fromGlobal, source: 'global' };
+
+  return { apiKey: null, source: null };
+}
+
+// The env var wins here, the reverse of Linear's order: a TypeSafe key is not
+// project-specific, so a shell export is a deliberate choice rather than a
+// stale leftover that could hijack a connected project.
+export function resolveTypesafeApiKey(rootDir: string): {
+  apiKey: string | null;
+  source: CredentialSource;
+} {
+  const fromEnv = nonEmpty(process.env.TYPESAFE_API_KEY);
+  if (fromEnv !== null) return { apiKey: fromEnv, source: 'env' };
+
+  const file = readCredentials();
+  const fromProject = nonEmpty(
+    file.projects?.[normalizeProjectPath(rootDir)]?.typesafe?.apiKey
+  );
+  if (fromProject !== null) return { apiKey: fromProject, source: 'project' };
+
+  const fromGlobal = nonEmpty(file.typesafe?.apiKey);
   if (fromGlobal !== null) return { apiKey: fromGlobal, source: 'global' };
 
   return { apiKey: null, source: null };

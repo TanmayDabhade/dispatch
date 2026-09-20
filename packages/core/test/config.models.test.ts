@@ -39,6 +39,7 @@ describe('models config', () => {
     expect(cfg.models.enrich).toBe(DEFAULT_MODELS.enrich);
     expect(cfg.models.cluster).toBe(DEFAULT_MODELS.cluster);
     expect(cfg.models.summarize).toBe(DEFAULT_MODELS.summarize);
+    expect(cfg.models.judge).toBe('jev-latest');
   });
 
   it('throws a ConfigError on an unknown role key', () => {

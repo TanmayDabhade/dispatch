@@ -57,7 +57,15 @@ const ROLE_INFO: Record<keyof ModelConfig, { label: string; hint: string }> = {
     label: 'Summaries',
     hint: 'Short mechanical text: titles, summaries, commit messages.',
   },
+  judge: {
+    label: 'Judgments',
+    hint: 'TypeSafe System One judgments: triage, readiness, checklist, model tier.',
+  },
 };
+
+// `judge` names a TypeSafe model, which the Claude picker below cannot offer;
+// it is set in config.yml until a TypeSafe model list exists.
+const PICKABLE_ROLES = MODEL_ROLES.filter((role) => role !== 'judge');
 
 // Four of the six modes config.ts accepts; `plan` and `bypassPermissions`
 // fall through to the escape-hatch line below instead of a radio.
@@ -118,7 +126,7 @@ export function AgentsSection({ config, onSave }: AgentsSectionProps) {
     <Panel>
       <PanelHeader>How agents run</PanelHeader>
 
-      {MODEL_ROLES.map((role) => {
+      {PICKABLE_ROLES.map((role) => {
         const info = ROLE_INFO[role];
         return (
           <PanelRow key={role}>

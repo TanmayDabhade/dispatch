@@ -440,6 +440,7 @@ describe('reviewModelForRisk', () => {
     enrich: 'haiku',
     cluster: 'haiku',
     summarize: 'haiku',
+    judge: 'jev',
   };
 
   it('reviews routine work on the planning tier and the rest on the coding tier', () => {

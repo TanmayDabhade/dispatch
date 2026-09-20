@@ -312,6 +312,9 @@ export interface ModelConfig {
   cluster: string;
   /** Short mechanical text: titles, summaries, commit messages. */
   summarize: string;
+  /** TypeSafe System One judgments — inbox triage, readiness, the landing
+   *  checklist, run model tier. A Jev model id, not a Claude one. */
+  judge: string;
 }
 
 export const DEFAULT_MODELS: ModelConfig = {
@@ -322,6 +325,7 @@ export const DEFAULT_MODELS: ModelConfig = {
   enrich: 'claude-haiku-4-5-20251001',
   cluster: 'claude-haiku-4-5-20251001',
   summarize: 'claude-haiku-4-5-20251001',
+  judge: 'jev-latest',
 };
 
 /** Every valid key of `ModelConfig`, in the order the Settings UI renders them. */
@@ -333,6 +337,7 @@ export const MODEL_ROLES: readonly (keyof ModelConfig)[] = [
   'enrich',
   'cluster',
   'summarize',
+  'judge',
 ];
 
 /** The subset of config the Settings screen can change. Everything else — statuses chief
