@@ -7,6 +7,11 @@ description: >-
 runs:
   using: composite
   steps:
+    # Every key below carries runner.arch as well as runner.os: the release
+    # workflow builds on arm64 and Intel macOS runners, both `macOS`, and a
+    # key without the arch handed the Intel job the arm64 job's cached node
+    # ("Bad CPU type in executable", v0.32.1). The proto toolchain, the pnpm
+    # store (native optional deps) and moon's outputs all hold binaries.
     # Restored BEFORE setup-toolchain runs, so the install below is a no-op on
     # a hit. restore-keys matters: without it, editing .prototools — a version
     # bump, exactly when a warm cache is most valuable — is a total miss and
@@ -16,9 +21,11 @@ runs:
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.proto
-        key: ${{ runner.os }}-proto-${{ hashFiles('.prototools') }}
+        key:
+          ${{ runner.os }}-${{ runner.arch }}-proto-${{ hashFiles('.prototools')
+          }}
         restore-keys: |
-          ${{ runner.os }}-proto-
+          ${{ runner.os }}-${{ runner.arch }}-proto-
 
     - name: Cache moon hashes and outputs
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -26,9 +33,9 @@ runs:
         path: |
           .moon/cache/hashes
           .moon/cache/outputs
-        key: ${{ runner.os }}-moon-${{ github.sha }}
+        key: ${{ runner.os }}-${{ runner.arch }}-moon-${{ github.sha }}
         restore-keys: |
-          ${{ runner.os }}-moon-
+          ${{ runner.os }}-${{ runner.arch }}-moon-
 
     # Installs proto, then provisions every .prototools pin (bun, pnpm, node,
     # moon, gh). Its internal actions/cache layer is off: ~/.proto is cached
@@ -55,9 +62,11 @@ runs:
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.pnpm-store.outputs.path }}
-        key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+        key:
+          ${{ runner.os }}-${{ runner.arch }}-pnpm-${{
+          hashFiles('pnpm-lock.yaml') }}
         restore-keys: |
-          ${{ runner.os }}-pnpm-
+          ${{ runner.os }}-${{ runner.arch }}-pnpm-
 
     - name: Install dependencies
       shell: bash
