@@ -183,3 +183,58 @@ test('Enter opens the card; a nested control keeps its own keys', () => {
   });
   expect(opened).toBe(1);
 });
+
+// A popover positions itself a microtask after mount (floating-ui), so a click that opens
+// one runs inside an async `act` that lets that settle.
+async function settle(work: () => void) {
+  await act(async () => {
+    work();
+    await Promise.resolve();
+  });
+}
+
+test('clicking a label pill opens the labels picker over the catalogue, not the task', async () => {
+  let opened = 0;
+  const patches: unknown[] = [];
+  renderCard({
+    onClick: () => (opened += 1),
+    onEditTask: (patch) => patches.push(patch),
+    labelCatalogue: ['docs', 'ui'],
+  });
+  const trigger = screen.getByRole('button', { name: 'Change labels' });
+  expect(slot('pills').contains(trigger)).toBe(true);
+  // The pills are the trigger's face; the `+1` overflow stays outside it.
+  expect(
+    Array.from(trigger.querySelectorAll('[data-slot=label-pill]')).map(
+      (p) => p.textContent
+    )
+  ).toEqual(['ui', 'api']);
+  expect(trigger.textContent).not.toContain('+1');
+  await settle(() => {
+    fireEvent.click(trigger);
+  });
+  expect(opened).toBe(0);
+  const options = screen.getAllByRole('option').map((o) => ({
+    label: o.textContent,
+    checked: o.querySelector('svg.lucide-check') !== null,
+  }));
+  expect(options).toEqual([
+    { label: 'api', checked: true },
+    { label: 'docs', checked: false },
+    { label: 'infra', checked: true },
+    { label: 'ui', checked: true },
+  ]);
+  await settle(() => {
+    const option = screen.getByRole('option', { name: /^docs$/ });
+    fireEvent.pointerDown(option);
+    fireEvent.click(option);
+  });
+  expect(patches).toEqual([{ labels: ['ui', 'api', 'infra', 'docs'] }]);
+  expect(opened).toBe(0);
+});
+
+test('a card without labels grows no picker', () => {
+  renderCard({ labelCatalogue: ['ui'] }, task({ labels: [] }));
+  expect(screen.queryByRole('button', { name: 'Change labels' })).toBeNull();
+  expect(slot('pills').querySelector('[data-slot=label-pill]')).toBeNull();
+});
