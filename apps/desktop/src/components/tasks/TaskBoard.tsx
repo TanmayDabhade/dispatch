@@ -27,7 +27,7 @@ import {
   Play,
   Plus,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   type BoardLane,
@@ -144,6 +144,28 @@ const NO_IDS: ReadonlySet<string> = new Set();
 const COLUMN_CLASS = 'w-[348px] shrink-0 px-3';
 // A collapsed column folds to a 44px strip carrying the glyph, a rotated name and the count.
 const COLLAPSED_COLUMN_CLASS = 'w-11 shrink-0 px-1';
+// A lane header pins to the scroll container's left edge and is sized to its visible width
+// (see `useBoardViewportWidth`), so the title on the left and the actions on the right both
+// stay on-screen however far the column strip below scrolls sideways.
+const LANE_HEADER_CLASS = 'sticky left-0 px-3';
+
+// The board's visible width — the scroll container's `clientWidth`, which excludes its own
+// scrollbar — kept current by one `ResizeObserver`. `null` until the observer's first
+// callback (browsers fire one on `observe`), so a render that never measures (tests, SSR)
+// sets no inline width and the header simply spans its lane.
+function useBoardViewportWidth(ref: React.RefObject<HTMLDivElement | null>) {
+  const [viewportWidth, setViewportWidth] = useState<number | null>(null);
+  useEffect(() => {
+    const board = ref.current;
+    if (board === null) return;
+    const observer = new ResizeObserver(() => {
+      setViewportWidth(board.clientWidth);
+    });
+    observer.observe(board);
+    return () => observer.disconnect();
+  }, [ref]);
+  return viewportWidth;
+}
 
 // A card's draggable id doubles as its task id — plain `useDraggable`, not `useSortable`,
 // since the board never persists intra-column order, only which column (status) a card sits
@@ -340,6 +362,8 @@ export function TaskBoard({
 }: TaskBoardProps) {
   const shell = useShellActions();
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const boardRef = useRef<HTMLDivElement>(null);
+  const viewportWidth = useBoardViewportWidth(boardRef);
 
   // The same lanes `BoardView` derives for its j/k order, from the same pure function and the
   // same (pre-sorted) input — deliberately recomputed here rather than passed down, so the two
@@ -430,6 +454,8 @@ export function TaskBoard({
     activeTaskId !== null ? taskById.get(activeTaskId) : undefined;
   const columnClass = (status: string) =>
     collapsedColumns.has(status) ? COLLAPSED_COLUMN_CLASS : COLUMN_CLASS;
+  const laneHeaderStyle =
+    viewportWidth !== null ? { width: viewportWidth } : undefined;
 
   return (
     <DndContext
@@ -440,6 +466,7 @@ export function TaskBoard({
       onDragCancel={() => setActiveTaskId(null)}
     >
       <div
+        ref={boardRef}
         data-slot="task-board"
         className="flex h-full min-h-0 flex-col overflow-auto pb-2"
       >
@@ -492,7 +519,11 @@ export function TaskBoard({
             return (
               <section key={key} data-lane-key={key}>
                 {lane.kind === 'epic' && (
-                  <div className="px-3">
+                  <div
+                    data-slot="board-lane-header"
+                    className={LANE_HEADER_CLASS}
+                    style={laneHeaderStyle}
+                  >
                     <EpicLaneHeader
                       epic={epic}
                       title={lane.title}
@@ -527,7 +558,11 @@ export function TaskBoard({
                   </div>
                 )}
                 {(lane.kind === 'assignee' || lane.kind === 'priority') && (
-                  <div className="px-3">
+                  <div
+                    data-slot="board-lane-header"
+                    className={LANE_HEADER_CLASS}
+                    style={laneHeaderStyle}
+                  >
                     <LaneHeader
                       lane={lane}
                       expanded={expanded}

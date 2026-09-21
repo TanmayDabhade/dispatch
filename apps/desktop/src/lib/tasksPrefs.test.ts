@@ -119,6 +119,17 @@ describe('parseTasksDisplay', () => {
     expect(parseTasksDisplay('not json')).toEqual(DEFAULT_TASKS_DISPLAY);
   });
 
+  // The layout field mirrors the header's view tabs, so every tab id must survive storage.
+  it('round-trips the branches layout', () => {
+    const prefs = { ...DEFAULT_TASKS_DISPLAY, layout: 'branches' as const };
+    expect(parseTasksDisplay(serializeTasksDisplay(prefs)).layout).toBe(
+      'branches'
+    );
+    expect(tasksDisplayFromValue({ layout: 'branches' })?.layout).toBe(
+      'branches'
+    );
+  });
+
   it('round-trips a priority sub-grouping', () => {
     const prefs = {
       ...DEFAULT_TASKS_DISPLAY,

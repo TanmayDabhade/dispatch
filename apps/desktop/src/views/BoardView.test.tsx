@@ -382,7 +382,7 @@ test('the header is two rows: Project › Tasks with ghost actions, then view ta
   // New task left the header — it lives on the sidebar pencil and `c`.
   expect(screen.queryByRole('button', { name: 'New task' })).toBeNull();
   // No saved views yet: the three layout tabs and nothing else.
-  expect(tabNames()).toEqual(['Board', 'List', 'Milestones']);
+  expect(tabNames()).toEqual(['Board', 'List', 'Milestones', 'Branches']);
   expect(screen.getByRole('tab', { name: 'Board' }).dataset['active']).toBe(
     'true'
   );
@@ -403,13 +403,19 @@ test('without the saved-views provider there is no star and no view tab', () => 
   seedView();
   render(view('board', { savedViews: false }));
   expect(screen.queryByLabelText(/Favorite/)).toBeNull();
-  expect(tabNames()).toEqual(['Board', 'List', 'Milestones']);
+  expect(tabNames()).toEqual(['Board', 'List', 'Milestones', 'Branches']);
 });
 
 test('a saved view is a fourth tab that applies its filters and display when picked', () => {
   seedView();
   mount();
-  expect(tabNames()).toEqual(['Board', 'List', 'Milestones', 'Blocked urgent']);
+  expect(tabNames()).toEqual([
+    'Board',
+    'List',
+    'Milestones',
+    'Branches',
+    'Blocked urgent',
+  ]);
   const tab = screen.getByRole('tab', { name: 'Blocked urgent' });
   expect(tab.querySelector('svg')).not.toBeNull();
   expect(tab.dataset['active']).toBeUndefined();
@@ -460,7 +466,13 @@ test('Save view… snapshots the active filters into storage and selects the vie
     join: 'and',
     clauses: [{ facet: 'status', op: 'is', values: ['done'] }],
   });
-  expect(tabNames()).toEqual(['Board', 'List', 'Milestones', 'Done only']);
+  expect(tabNames()).toEqual([
+    'Board',
+    'List',
+    'Milestones',
+    'Branches',
+    'Done only',
+  ]);
   expect(screen.getByRole('tab', { name: 'Done only' }).dataset['active']).toBe(
     'true'
   );
@@ -586,7 +598,7 @@ test('the view menu renames and deletes the active view', async () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Delete view' }));
   });
   expect(storedViews()).toEqual([]);
-  expect(tabNames()).toEqual(['Board', 'List', 'Milestones']);
+  expect(tabNames()).toEqual(['Board', 'List', 'Milestones', 'Branches']);
 });
 
 test('the view tabs switch the layout and remember it; the mode prop is only the opening one', () => {
@@ -609,6 +621,36 @@ test('the view tabs switch the layout and remember it; the mode prop is only the
   // The triad is still present.
   expect(screen.getByLabelText('Filter')).not.toBeNull();
   expect(screen.getByLabelText('Display')).not.toBeNull();
+
+  // Branches: one git-log graph per milestone, persisted like the other tabs; it too has
+  // only the milestone grouping, so the lane toggle stays greyed out.
+  fireEvent.click(screen.getByRole('tab', { name: 'Branches' }));
+  expect(screen.getByRole('grid', { name: 'Branches' })).not.toBeNull();
+  expect(screen.queryByRole('grid', { name: 'Milestones' })).toBeNull();
+  expect(document.querySelector('[data-slot=branch-gutter]')).not.toBeNull();
+  // Unfiltered, every task has a line — the baseline the filter test below narrows from.
+  expect(
+    Array.from(document.querySelectorAll('[data-slot=branch-line-title]')).map(
+      (r) => r.textContent
+    )
+  ).toEqual(expect.arrayContaining(['Card one', 'Card two', 'Card three']));
+  expect(window.localStorage.getItem(VIEW_MODE_STORAGE_KEY)).toBe('branches');
+  expect(storedDisplay()['layout']).toBe('branches');
+  expect(screen.getByLabelText('Group by epic').hasAttribute('disabled')).toBe(
+    true
+  );
+  expect(screen.getByLabelText('Filter')).not.toBeNull();
+  expect(screen.getByLabelText('Display')).not.toBeNull();
+});
+
+test('a remembered branches layout opens on the branch graph', () => {
+  window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, 'branches');
+  render(view('board'));
+  expect(screen.getByRole('grid', { name: 'Branches' })).not.toBeNull();
+  expect(document.querySelector('[data-slot=task-card]')).toBeNull();
+  expect(screen.getByRole('tab', { name: 'Branches' }).dataset['active']).toBe(
+    'true'
+  );
 });
 
 // The regression this guards: the cursor's order was built from the unsorted task list while
@@ -738,6 +780,42 @@ test('the Display popover writes the display prefs and the board follows', async
   expect(
     document.querySelector('[data-slot=task-card-meta]')?.textContent
   ).not.toContain('t-1');
+});
+
+// The segmented control mirrors the header tabs, so Branches is a fourth cell with the
+// branch icon; on that layout Grouping is greyed out exactly as on Milestones.
+test('the Display popover switches to Branches and greys out Grouping there', async () => {
+  mount();
+  await settle(() => {
+    fireEvent.click(screen.getByLabelText('Display'));
+  });
+  const popover = el('[data-slot=display-popover]');
+  const layout = within(popover).getByRole('radiogroup', { name: 'Layout' });
+  const cells = within(layout).getAllByRole('radio');
+  expect(cells.map((cell) => cell.textContent)).toEqual([
+    'Board',
+    'List',
+    'Milestones',
+    'Branches',
+  ]);
+  const branches = within(layout).getByRole('radio', { name: 'Branches' });
+  expect(branches.querySelector('svg.lucide-git-branch')).not.toBeNull();
+  expect(
+    within(popover)
+      .getByRole('button', { name: 'Grouping' })
+      .hasAttribute('disabled')
+  ).toBe(false);
+  await settle(() => {
+    fireEvent.click(branches);
+  });
+  expect(branches.getAttribute('aria-checked')).toBe('true');
+  expect(screen.getByRole('grid', { name: 'Branches' })).not.toBeNull();
+  expect(window.localStorage.getItem(VIEW_MODE_STORAGE_KEY)).toBe('branches');
+  expect(storedDisplay()['layout']).toBe('branches');
+  // Greyed out and pinned to the grouping the layout draws, not the list's remembered one.
+  const grouping = within(popover).getByRole('button', { name: 'Grouping' });
+  expect(grouping.hasAttribute('disabled')).toBe(true);
+  expect(grouping.textContent).toContain('Milestone');
 });
 
 test('the Filter menu lists facets and applies a Status chip under the header', async () => {
@@ -873,6 +951,28 @@ test('the filter applies to the list too', () => {
   ).map((r) => r.textContent);
   expect(rows.some((r) => r?.includes('Card two'))).toBe(true);
   expect(rows.some((r) => r?.includes('Card one'))).toBe(false);
+});
+
+// The branch graph lays out only the tasks that pass the clauses, so a filtered-out task
+// loses its line (and its edges) rather than the whole milestone vanishing. (A `todo`
+// filter, not `done`: a milestone left with only done children counts as finished and
+// starts folded, which would hide the lines for a different reason.)
+test('the filter narrows the branch graph the same way', () => {
+  window.localStorage.setItem(
+    TASK_FILTERS_V2_STORAGE_KEY,
+    JSON.stringify({
+      join: 'and',
+      clauses: [{ facet: 'status', op: 'is', values: ['todo'] }],
+    })
+  );
+  render(view('branches'));
+  expect(screen.getByRole('grid', { name: 'Branches' })).not.toBeNull();
+  const titles = Array.from(
+    document.querySelectorAll('[data-slot=branch-line-title]')
+  ).map((r) => r.textContent);
+  expect(titles).toContain('Card one');
+  expect(titles).toContain('Card three');
+  expect(titles).not.toContain('Card two');
 });
 
 // The AI row hands the sentence to the daemon; a facet it invents is dropped on the way in.

@@ -1,11 +1,13 @@
 import type { TaskDoc } from '@dispatch/core/browser';
 
+import { TASKS_VIEW_TABS, type TasksViewMode } from './tasksViewMode';
+
 /**
  * The Tasks page's persisted preferences: the status/priority filter chips and the one
- * display model the list, board and milestones layouts share (Linear's Display popover —
- * grouping, ordering, sub-task handling, which properties a row shows). Everything is parsed
- * defensively from localStorage — a bad or stale payload falls back to defaults rather than
- * throwing during render.
+ * display model the list, board, milestones and branches layouts share (Linear's Display
+ * popover — grouping, ordering, sub-task handling, which properties a row shows). Everything
+ * is parsed defensively from localStorage — a bad or stale payload falls back to defaults
+ * rather than throwing during render.
  */
 
 export interface TaskFilters {
@@ -15,7 +17,9 @@ export interface TaskFilters {
   priorities: string[];
 }
 
-type TasksLayout = 'list' | 'board' | 'milestones';
+/** The header's view tabs are the layouts: `BoardView` writes the view mode straight into
+ * `layout`, and a saved view feeds `layout` back as the mode, so the two stay one type. */
+type TasksLayout = TasksViewMode;
 export type TasksGrouping =
   | 'status'
   | 'epic'
@@ -74,7 +78,7 @@ const TASKS_DISPLAY_VERSION = 2;
 
 export const EMPTY_TASK_FILTERS: TaskFilters = { statuses: [], priorities: [] };
 
-const LAYOUTS: readonly TasksLayout[] = ['list', 'board', 'milestones'];
+const LAYOUTS: readonly TasksLayout[] = TASKS_VIEW_TABS.map((t) => t.id);
 const GROUPINGS: readonly TasksGrouping[] = [
   'status',
   'epic',

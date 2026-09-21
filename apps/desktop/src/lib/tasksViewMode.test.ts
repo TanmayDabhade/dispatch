@@ -11,7 +11,7 @@ describe('parseViewMode', () => {
     expect(parseViewMode(null)).toBe('board');
   });
 
-  test.each(['board', 'list', 'milestones'] as const)(
+  test.each(['board', 'list', 'milestones', 'branches'] as const)(
     'a stored %s is honoured',
     (mode) => {
       expect(parseViewMode(mode)).toBe(mode);
@@ -39,16 +39,18 @@ describe('storage key', () => {
 });
 
 describe('view tabs', () => {
-  test('the header offers Board, List and Milestones in that order', () => {
+  test('the header offers Board, List, Milestones and Branches in that order', () => {
     expect(TASKS_VIEW_TABS.map((t) => t.id)).toEqual([
       'board',
       'list',
       'milestones',
+      'branches',
     ]);
     expect(TASKS_VIEW_TABS.map((t) => t.label)).toEqual([
       'Board',
       'List',
       'Milestones',
+      'Branches',
     ]);
   });
 
