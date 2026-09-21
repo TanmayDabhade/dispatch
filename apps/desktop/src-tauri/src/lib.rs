@@ -40,6 +40,11 @@ pub fn run() {
     // restart into the freshly downloaded version, gated by `process:default`.
     .plugin(tauri_plugin_process::init())
     .plugin(tauri_plugin_updater::Builder::new().build())
+    // `dispatch://` links (see `plugins.deep-link` in tauri.conf.json for the
+    // scheme) — the frontend calls the plugin's JS `getCurrent()`/`onOpenUrl()`
+    // directly (see `hooks/useDeepLinks.ts`), gated by the `deep-link:default`
+    // capability permission.
+    .plugin(tauri_plugin_deep_link::init())
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
