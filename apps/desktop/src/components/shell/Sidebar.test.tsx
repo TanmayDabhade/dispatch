@@ -27,13 +27,19 @@ const props = {
   onOpenDraft: () => {},
   onDismissDraft: () => {},
   onSetProjectView: (_view: ProjectView): void => {},
-  onSetGlobalView: (_view: GlobalView): void => {},
+  onSetGlobalView: (
+    _view: GlobalView,
+    _options?: { page?: 'integrations' }
+  ): void => {},
   liveRail: <div>live-rail-body</div>,
   onQuickCapture: () => {},
 };
 
 // The rail reads its hidden state from `SidebarProvider`, so every case mounts through one.
-function mount(open: boolean, overrides: Partial<typeof props> = {}) {
+function mount(
+  open: boolean,
+  overrides: Partial<React.ComponentProps<typeof Sidebar>> = {}
+) {
   return render(
     <SidebarProvider open={open} onOpenChange={() => {}}>
       <Sidebar {...props} {...overrides} />
@@ -203,20 +209,121 @@ test('using a Try row does its job and folds the block for next time', () => {
 
 test('project rows and Connect Linear route to the right view', () => {
   const project: string[] = [];
-  const global: string[] = [];
+  const global: [string, unknown][] = [];
   mount(true, {
     onSetProjectView: (v) => {
       project.push(v);
     },
-    onSetGlobalView: (v) => {
-      global.push(v);
+    onSetGlobalView: (v, options) => {
+      global.push([v, options]);
     },
   });
   fireEvent.click(screen.getByRole('button', { name: 'Git' }));
   fireEvent.click(screen.getByRole('button', { name: 'Sessions' }));
   fireEvent.click(screen.getByRole('button', { name: 'Connect Linear' }));
   expect(project).toEqual(['branches']);
-  expect(global).toEqual(['sessions', 'settings']);
+  // Connect Linear lands on Settings › Integrations, not Settings' first page.
+  expect(global).toEqual([
+    ['sessions', undefined],
+    ['settings', { page: 'integrations' }],
+  ]);
+});
+
+const SAVED_VIEWS = [
+  { id: 'v-1', name: 'Blocked urgent' },
+  { id: 'v-2', name: 'Mine' },
+];
+
+test('saved views nest under Tasks as indented rows and select through onSelectSavedView', () => {
+  const selected: string[] = [];
+  const project: string[] = [];
+  mount(true, {
+    savedViews: SAVED_VIEWS,
+    onSelectSavedView: (id) => {
+      selected.push(id);
+    },
+    onSetProjectView: (v) => {
+      project.push(v);
+    },
+  });
+  const rows = navRows();
+  expect(rows.slice(rows.indexOf('board'), rows.indexOf('board') + 4)).toEqual([
+    'board',
+    'view-v-1',
+    'view-v-2',
+    'impact',
+  ]);
+  const row = screen.getByRole('button', { name: 'Blocked urgent' });
+  expect(row.className).toContain('pl-6');
+  fireEvent.click(row);
+  expect(selected).toEqual(['v-1']);
+  // A view row never falls through to the project-view setter.
+  expect(project).toEqual([]);
+});
+
+test('the active saved view lights its own row, and only on the Tasks page', () => {
+  const first = mount(true, {
+    savedViews: SAVED_VIEWS,
+    activeSavedViewId: 'v-2',
+    projectView: 'board',
+  });
+  expect(
+    screen.getByRole('button', { name: 'Mine' }).getAttribute('aria-current')
+  ).toBe('page');
+  expect(
+    screen.getByRole('button', { name: 'Tasks' }).getAttribute('aria-current')
+  ).toBeNull();
+  first.unmount();
+
+  mount(true, {
+    savedViews: SAVED_VIEWS,
+    activeSavedViewId: 'v-2',
+    projectView: 'plans',
+  });
+  expect(
+    screen.getByRole('button', { name: 'Mine' }).getAttribute('aria-current')
+  ).toBeNull();
+  expect(
+    screen.getByRole('button', { name: 'Plans' }).getAttribute('aria-current')
+  ).toBe('page');
+});
+
+test('the Favorites section is absent when nothing is starred', () => {
+  mount(true, { savedViews: SAVED_VIEWS });
+  expect(screen.queryByRole('button', { name: 'Favorites' })).toBeNull();
+  expect(navRows().filter((id) => id.startsWith('fav-'))).toEqual([]);
+});
+
+test('Favorites lists starred views and tasks above Workspace and opens them', () => {
+  const opened: { kind: string; id: string }[] = [];
+  mount(true, {
+    favorites: [
+      { kind: 'view', id: 'v-1', label: 'Blocked urgent' },
+      { kind: 'task', id: 't-9', label: 'Cache the index' },
+    ],
+    onOpenFavorite: (ref) => {
+      opened.push(ref);
+    },
+  });
+  const rows = navRows();
+  expect(rows.slice(0, 6)).toEqual([
+    'inbox',
+    'drafts',
+    'overseer',
+    'fav-view-v-1',
+    'fav-task-t-9',
+    'overview',
+  ]);
+  const heading = screen.getByRole('button', { name: 'Favorites' });
+  expect(heading.getAttribute('aria-expanded')).toBe('true');
+  fireEvent.click(screen.getByRole('button', { name: 'Blocked urgent' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Cache the index' }));
+  expect(opened).toEqual([
+    { kind: 'view', id: 'v-1' },
+    { kind: 'task', id: 't-9' },
+  ]);
+  fireEvent.click(heading);
+  expect(screen.queryByRole('button', { name: 'Cache the index' })).toBeNull();
 });
 
 test('the Drafts row counts live drafts and opens the tray', () => {

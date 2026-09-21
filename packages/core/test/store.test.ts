@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -9,7 +10,11 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { TaskStore } from '../src/store.js';
+import {
+  attachmentsDir,
+  ensureProjectGitignore,
+  TaskStore,
+} from '../src/store.js';
 import { getSection } from '../src/taskfile.js';
 
 let root: string;
@@ -179,6 +184,38 @@ describe('update', () => {
     expect(store.remove('t-nope00')).toBe(false);
   });
 
+  it('removes the attachments directory with the task', () => {
+    const store = TaskStore.init(root);
+    const doc = store.create({ title: 'Fix login' });
+    const dir = attachmentsDir(root, doc.meta.id);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'spec.png'), 'png');
+
+    expect(store.remove(doc.meta.id)).toBe(true);
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  it('normalizes an emptied attachments list to an absent key', () => {
+    const store = TaskStore.init(root);
+    const doc = store.create({ title: 'Fix login' });
+    const attachments = [
+      {
+        name: 'spec.png',
+        path: `.dispatch/attachments/${doc.meta.id}/spec.png`,
+        size: 3,
+        addedAt: '2026-09-20T10:00:00Z',
+      },
+    ];
+    expect(store.update(doc.meta.id, { attachments }).meta.attachments).toEqual(
+      attachments
+    );
+    const file = store.taskFilePath(doc.meta.id)!;
+    expect(readFileSync(file, 'utf8')).toContain('attachments:');
+    const emptied = store.update(doc.meta.id, { attachments: [] });
+    expect('attachments' in emptied.meta).toBe(false);
+    expect(readFileSync(file, 'utf8')).not.toContain('attachments');
+  });
+
   it('edits the Description and Acceptance Criteria body sections in place', () => {
     const store = TaskStore.init(root);
     const doc = store.create(
@@ -317,5 +354,13 @@ describe('amend', () => {
     expect(() =>
       store.amend('t-nope00', { overrides: 'x', reason: 'y', source: null })
     ).toThrow(/task not found/);
+  });
+});
+
+describe('ensureProjectGitignore', () => {
+  it('keeps uploaded attachments out of git on every backend', () => {
+    ensureProjectGitignore(root, 'files');
+    const ignored = readFileSync(join(root, '.dispatch', '.gitignore'), 'utf8');
+    expect(ignored).toContain('attachments/');
   });
 });

@@ -52,6 +52,11 @@
     }
   },
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["dispatch"]
+      }
+    },
     "updater": {
       "endpoints": [
         "https://github.com/wsoule/dispatch/releases/latest/download/latest.json"

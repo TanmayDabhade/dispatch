@@ -26,7 +26,15 @@ import type { ActorContext, TaskDoc, TaskStorePort } from '@dispatch/core';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
+import type { AiTaskFilterPort } from './aiTaskFilter.js';
+import { aiFilterTasks } from './api/aiFilter.js';
 import { amendTask } from './api/amendments.js';
+import {
+  downloadTaskAttachment,
+  listTaskAttachments,
+  removeTaskAttachment,
+  uploadTaskAttachments,
+} from './api/attachments.js';
 import {
   createFinding,
   createLedgerEntry,
@@ -196,6 +204,9 @@ export interface ApiContext {
   // same way (see index.ts's wiring for its invalidation signal).
   trackedFilesCache: TrackedFilesCache;
   inboxClusterer?: InboxClusterer;
+  // The sentence-to-filter-clauses port behind POST /api/tasks/filter/ai;
+  // absent means the Claude-backed one is built per request.
+  aiTaskFilter?: AiTaskFilterPort;
   // The TypeSafe judgment client, or null when no key is configured — every
   // consumer falls back to its pre-judgment behaviour on null.
   judgments: JudgmentClient | null;
@@ -407,6 +418,11 @@ function validateTaskFields(
   // request can make true of a task a client is asking it to write.
   if (value.derivedFrom !== undefined) {
     return 'invalid derivedFrom: only the server sets it, when it synthesizes a task';
+  }
+  // Likewise `attachments`: the list names files under .dispatch/attachments,
+  // and only the upload/delete routes that write those files may change it.
+  if (value.attachments !== undefined) {
+    return 'invalid attachments: only the attachment routes set it';
   }
   return null;
 }
@@ -4319,6 +4335,15 @@ export async function handleApi(
       ) {
         return await draftTask(req, ctx);
       }
+      // Before any `:id` lookup so "filter" is never read as a task id.
+      if (
+        segments.length === 3 &&
+        segments[1] === 'filter' &&
+        segments[2] === 'ai' &&
+        method === 'POST'
+      ) {
+        return await aiFilterTasks(req, ctx);
+      }
       // Checked before the generic `:id` GET branch below, so "drafts"
       // isn't treated as a task id.
       if (
@@ -4437,6 +4462,20 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await amendTask(req, ctx, segments[1]);
+      }
+      if (segments.length === 3 && segments[2] === 'attachments') {
+        if (method === 'GET') return listTaskAttachments(ctx, segments[1]);
+        if (method === 'POST') {
+          return await uploadTaskAttachments(req, ctx, segments[1]);
+        }
+      }
+      if (segments.length === 4 && segments[2] === 'attachments') {
+        if (method === 'GET' || method === 'HEAD') {
+          return downloadTaskAttachment(ctx, segments[1], segments[3], method);
+        }
+        if (method === 'DELETE') {
+          return removeTaskAttachment(ctx, segments[1], segments[3]);
+        }
       }
       if (
         segments.length === 4 &&

@@ -19,6 +19,8 @@ export type {
   AdvanceFixLoopInput,
   AgentSessionKind,
   AgentSessionMeta,
+  AiTaskFilterClause,
+  AiTaskFilterResult,
   AmendTaskInput,
   ApiClient,
   BranchEntry,

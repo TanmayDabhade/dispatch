@@ -95,6 +95,43 @@ describe('buildPaletteEntries', () => {
     ).toBe(false);
   });
 
+  test('saved views become Open view rows under Views that run openSavedView', () => {
+    const { ctx, calls } = context({
+      savedViews: [{ id: 'v-1', name: 'Blocked urgent' }],
+    });
+    ctx.actions.openSavedView = (id) => calls.push(`view:${id}`);
+    const rows = buildPaletteEntries(ctx).filter((e) => e.section === 'views');
+    expect(rows.map((e) => [e.id, e.label, e.kind])).toEqual([
+      ['view-v-1', 'Open view Blocked urgent', 'view'],
+    ]);
+    rows[0]?.run();
+    expect(calls).toEqual(['view:v-1']);
+    // Without the action (or without a project) there is nothing to open.
+    const { ctx: noAction } = context({
+      savedViews: [{ id: 'v-1', name: 'Blocked urgent' }],
+    });
+    expect(
+      buildPaletteEntries(noAction).some((e) => e.section === 'views')
+    ).toBe(false);
+  });
+
+  test('Copy link appears only with a current task and the copy action', () => {
+    const has = (ctx: PaletteEntriesContext) =>
+      buildPaletteEntries(ctx).some((e) => e.id === 'action-copy-link');
+    const { ctx, calls } = context({ currentTaskId: 't-1' });
+    ctx.actions.copyTaskLink = (id) => calls.push(`link:${id}`);
+    expect(has(ctx)).toBe(true);
+    const row = buildPaletteEntries(ctx).find(
+      (e) => e.id === 'action-copy-link'
+    );
+    expect(row?.section).toBe('actions');
+    expect(row?.label).toBe('Copy link');
+    row?.run();
+    expect(calls).toEqual(['link:t-1']);
+    expect(has({ ...ctx, currentTaskId: null })).toBe(false);
+    expect(has(context({ currentTaskId: 't-1' }).ctx)).toBe(false);
+  });
+
   test('a tenth rail view has no ⌘N hint', () => {
     const views = Array.from({ length: 10 }, (_, i) => ({
       id: 'board' as const,

@@ -7,6 +7,7 @@ import {
   CircleDot,
   Copy,
   Eye,
+  Link2,
   Milestone,
   Play,
   SearchX,
@@ -19,6 +20,7 @@ import {
 import type { KeyboardEvent, ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { useDeepLinkActions } from '../components/shell/DeepLinkContext';
 import { useShellActions } from '../components/shell/ShellActionsContext';
 import { AssigneeAvatar } from '../components/tasks/AssigneeAvatar';
 import { DispatchDialog } from '../components/tasks/DispatchDialog';
@@ -84,6 +86,12 @@ interface TasksListViewProps {
 const PRIORITIES = Object.keys(PRIORITY_ORDER) as Priority[];
 const ASSIGNEES: Assignee[] = ['agent', 'human', 'none'];
 
+/** The DOM id `aria-activedescendant` points at for one row; the view prefix keeps ids
+ * unique across view switches. */
+function rowDomId(id: string): string {
+  return `task-row-${id}`;
+}
+
 /**
  * Linear's list layout for Tasks: rows straight on the panel (no card, no column header, no
  * dividers), grouped under status-tinted 36px `GroupHeader`s with a `+` each, every row a
@@ -105,6 +113,8 @@ export function TasksListView({
   onRequestDisplay,
 }: TasksListViewProps) {
   const shell = useShellActions();
+  // `null` outside App's provider (the harness, view tests): no `Copy link` row then.
+  const deepLink = useDeepLinkActions();
   const prefs = display ?? DEFAULT_TASKS_DISPLAY;
 
   const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
@@ -332,6 +342,9 @@ export function TasksListView({
                 tabIndex={0}
                 role="grid"
                 aria-label="Tasks"
+                aria-activedescendant={
+                  focusedTaskId !== null ? rowDomId(focusedTaskId) : undefined
+                }
                 onKeyDown={handleListKeyDown}
                 className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 outline-none"
               />
@@ -398,6 +411,7 @@ export function TasksListView({
                             setFocusedTaskId(id);
                           }}
                           onSelectToggle={() => toggleSelected(id)}
+                          rowProps={{ domId: rowDomId(id) }}
                         />
                       );
                     })}
@@ -587,6 +601,14 @@ export function TasksListView({
                 Copy id
                 <ContextMenuShortcut>⌘C</ContextMenuShortcut>
               </ContextMenuItem>
+              {deepLink !== null && (
+                <ContextMenuItem
+                  onClick={() => deepLink.copyTaskLink(menuDoc.meta.id)}
+                >
+                  <Link2 />
+                  Copy link
+                </ContextMenuItem>
+              )}
               {menuEditable && (
                 <>
                   <ContextMenuSeparator />

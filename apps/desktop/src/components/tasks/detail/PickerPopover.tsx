@@ -26,7 +26,11 @@ interface PickerItem {
 // a 12px-radius popover holding a Command list with a search input on top. Where a property
 // accepts new values, typing a name nobody has used yet offers to create it, so assigning a
 // task to a milestone reuses a name with one keystroke or coins a new one. Controlled
-// `open` lets the page's `l`/`m` keys open it.
+// `open` lets the page's `l`/`m` keys open it. A multi-select (labels) passes
+// `closeOnSelect={false}`: a pick then keeps the popover open and only clears the query, so
+// several values toggle in one visit. Clicks and pointer-downs on the trigger and clicks in
+// the portaled popup are stopped from propagating, as in `PropertyDropdown`, so opening or
+// using the picker never also activates the card or row it sits on.
 export function PickerPopover({
   triggerLabel,
   triggerClassName,
@@ -36,6 +40,7 @@ export function PickerPopover({
   onSelect,
   onCreate,
   emptyLabel = 'No matches.',
+  closeOnSelect = true,
   open,
   onOpenChange,
 }: {
@@ -50,6 +55,8 @@ export function PickerPopover({
   /** Offered as `Create "<query>"` when the typed text matches no item. */
   onCreate?: (query: string) => void;
   emptyLabel?: string;
+  /** `false` keeps the popover open after a pick or a create (default `true`). */
+  closeOnSelect?: boolean;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
@@ -60,6 +67,11 @@ export function PickerPopover({
     if (!next) setQuery('');
     setLocalOpen(next);
     onOpenChange?.(next);
+  }
+  // What a pick does afterwards: dismiss, or stay and reset the search for the next pick.
+  function afterPick() {
+    if (closeOnSelect) setOpen(false);
+    else setQuery('');
   }
   const trimmed = query.trim();
   const canCreate =
@@ -76,12 +88,18 @@ export function PickerPopover({
             aria-label={triggerLabel}
             data-slot="picker-trigger"
             className={triggerClassName}
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
           />
         }
       >
         {children}
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-64 p-0">
+      <PopoverContent
+        align="start"
+        className="w-64 p-0"
+        onClick={(e) => e.stopPropagation()}
+      >
         <Command>
           <CommandInput
             placeholder={placeholder}
@@ -97,7 +115,7 @@ export function PickerPopover({
                   value={`${item.label} ${item.hint ?? ''}`}
                   onSelect={() => {
                     onSelect(item.value);
-                    setOpen(false);
+                    afterPick();
                   }}
                   className="h-8"
                 >
@@ -118,7 +136,7 @@ export function PickerPopover({
                   value={`create ${trimmed}`}
                   onSelect={() => {
                     onCreate(trimmed);
-                    setOpen(false);
+                    afterPick();
                   }}
                   className="h-8"
                 >

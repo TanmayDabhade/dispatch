@@ -36,6 +36,9 @@ export type ListRowProps = {
   onSelectToggle?: (selected: boolean) => void;
   /** Accessible name for the checkbox; defaults to "Select". */
   selectLabel?: string;
+  /** The DOM `id` — `id` is the issue-id slot — so a grid's `aria-activedescendant`
+   * can point at the row. */
+  domId?: string;
   className?: string;
 } & Omit<
   ComponentPropsWithRef<'div'>,
@@ -48,8 +51,10 @@ export type ListRowProps = {
  * activate a clickable row; the checkbox is its own control and never opens the row.
  *
  * The default `role="row"` needs a `role="grid"` (or `rowgroup` inside one) ancestor
- * or it is an orphan ARIA row; a list that is not a grid should pass `role="button"`
- * (clickable) or `role={undefined}`. A nested row (`indent={1}`) dims its id. */
+ * or it is an orphan ARIA row; under it every slot is a `gridcell`, and `domId` gives
+ * the row a DOM id for the grid's `aria-activedescendant`. A list that is not a grid
+ * should pass `role="listitem"` or `role="button"` (clickable), and its slots then
+ * carry no role. A nested row (`indent={1}`) dims its id. */
 export function ListRow({
   leading,
   id,
@@ -65,6 +70,7 @@ export function ListRow({
   onContextMenu,
   onSelectToggle,
   selectLabel = 'Select',
+  domId,
   className,
   role = 'row',
   tabIndex,
@@ -72,6 +78,8 @@ export function ListRow({
   ...rest
 }: ListRowProps) {
   const interactive = onClick !== undefined;
+  // Slots are cells only when the row is an ARIA row; any other role has no cells.
+  const cellRole = role === 'row' ? 'gridcell' : undefined;
 
   const activate = (event: KeyboardEvent<HTMLDivElement>) => {
     onKeyDown?.(event);
@@ -85,6 +93,7 @@ export function ListRow({
 
   return (
     <div
+      id={domId}
       role={role}
       tabIndex={tabIndex ?? (interactive ? 0 : undefined)}
       data-slot="list-row"
@@ -113,6 +122,7 @@ export function ListRow({
       )}
       {onSelectToggle !== undefined && (
         <span
+          role={cellRole}
           data-slot="list-row-select"
           className={cn(
             'flex size-4 shrink-0 items-center justify-center opacity-0 transition-opacity duration-100 group-hover/row:opacity-100 focus-within:opacity-100',
@@ -130,6 +140,7 @@ export function ListRow({
       )}
       {leading !== undefined && (
         <span
+          role={cellRole}
           data-slot="list-row-leading"
           className="text-muted-foreground flex size-3.5 shrink-0 items-center justify-center [&_svg]:size-3.5"
         >
@@ -138,6 +149,7 @@ export function ListRow({
       )}
       {id !== undefined && (
         <span
+          role={cellRole}
           data-slot="list-row-id"
           className={cn(
             'font-book text-muted-foreground shrink-0 tracking-(--id-tracking) tabular-nums',
@@ -149,6 +161,7 @@ export function ListRow({
       )}
       {status !== undefined && (
         <span
+          role={cellRole}
           data-slot="list-row-status"
           className="flex size-3.5 shrink-0 items-center justify-center [&_svg]:size-3.5"
         >
@@ -156,6 +169,7 @@ export function ListRow({
         </span>
       )}
       <span
+        role={cellRole}
         data-slot="list-row-title"
         className="text-foreground min-w-0 flex-1 truncate font-medium"
       >
@@ -171,6 +185,7 @@ export function ListRow({
       </span>
       {trailing !== undefined && (
         <span
+          role={cellRole}
           data-slot="list-row-trailing"
           className="flex shrink-0 items-center gap-1.5"
         >
@@ -179,6 +194,7 @@ export function ListRow({
       )}
       {date !== undefined && (
         <span
+          role={cellRole}
           data-slot="list-row-date"
           className="font-book text-muted-foreground shrink-0 text-[12px] tabular-nums"
         >

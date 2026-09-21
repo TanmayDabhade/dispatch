@@ -1,22 +1,23 @@
 import type { LinearIssueLink, RunMeta } from '@dispatch/client';
 import type { TaskDoc, UpdatePatch } from '@dispatch/core/browser';
-import { ArrowUpRight, Layers, Link2 } from 'lucide-react';
+import { ArrowUpRight, Layers, Link2, X } from 'lucide-react';
 
+import { colorForLabel } from '../../../lib/labelColor';
 import { kindLabel } from '../../../lib/taskDisplay';
 import { MergeLadderPill } from '../../runs/MergeLadderDot';
 import { BlockedByEditor } from '../detail/BlockedByEditor';
-import { LabelEditor } from '../detail/LabelEditor';
 import { MilestoneRow } from '../detail/MilestoneRow';
 import { railRowClass, RailSection } from '../detail/RailSection';
 import { SelfReviewRow } from '../detail/SelfReviewRow';
 import {
   AssigneeControl,
   EpicControl,
+  LabelsControl,
   PriorityControl,
   StatusControl,
 } from '../PropertyControls';
 import { StackRail } from '../StackRail';
-import { Pill } from '@/ui/ai/pill';
+import { LabelPill, Pill } from '@/ui/ai/pill';
 import { Button } from '@/ui/button';
 
 /** Which rail picker the page's `s`/`p`/`a`/`l`/`e`/`m` keys have opened. */
@@ -140,13 +141,39 @@ export function PropertiesRail({
         />
       </RailSection>
 
+      {/* The task's labels as colour-dotted pills, each with a remove `×`, then the
+          `Add label` row that opens the shared multi-select over the project's vocabulary. */}
       <RailSection title="Labels">
-        <LabelEditor
-          labels={doc.meta.labels}
-          candidates={labelVocabulary}
-          onChange={(labels) => onPatch({ labels })}
-          {...pickerProps('labels')}
-        />
+        <div data-slot="label-editor" className="flex flex-col gap-1">
+          {doc.meta.labels.length > 0 && (
+            <div className="flex flex-wrap gap-1 px-2 py-1">
+              {doc.meta.labels.map((label) => (
+                <LabelPill key={label} color={colorForLabel(label)}>
+                  {label}
+                  <button
+                    type="button"
+                    aria-label={`Remove label ${label}`}
+                    className="text-muted-foreground hover:text-foreground rounded-pill focus-visible:ring-ring -mr-1 flex size-4 items-center justify-center outline-none focus-visible:ring-2"
+                    onClick={() =>
+                      onPatch({
+                        labels: doc.meta.labels.filter((l) => l !== label),
+                      })
+                    }
+                  >
+                    <X className="size-3" />
+                  </button>
+                </LabelPill>
+              ))}
+            </div>
+          )}
+          <LabelsControl
+            variant="row"
+            value={doc.meta.labels}
+            candidates={labelVocabulary}
+            onChange={(labels) => onPatch({ labels })}
+            {...pickerProps('labels')}
+          />
+        </div>
       </RailSection>
 
       <RailSection title="Blocked by">

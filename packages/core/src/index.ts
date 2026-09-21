@@ -1,6 +1,12 @@
 export const CORE_VERSION = '0.24.0';
 export * from './status.js';
 export * from './types.js';
+export {
+  ATTACHMENT_MAX_BYTES,
+  ATTACHMENTS_DIR,
+  attachmentRelativePath,
+  sanitizeAttachmentName,
+} from './attachments.js';
 export * from './subagents.js';
 export {
   generateDraftId,
@@ -67,6 +73,7 @@ export {
 export type { Amendment } from './taskfile.js';
 export {
   applyUpdatePatch,
+  attachmentsDir,
   DISPATCH_DIR,
   ensureProjectConfig,
   ensureProjectGitignore,

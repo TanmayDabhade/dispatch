@@ -1,3 +1,5 @@
+import { rmSync } from 'node:fs';
+
 import { generateTaskId, isTaskId } from './ids.js';
 import { slugify } from './slug.js';
 import {
@@ -9,7 +11,7 @@ import {
   SqliteRowError,
 } from './sqliteDb.js';
 import type { SqliteDatabase, SqlValue } from './sqliteDb.js';
-import { applyUpdatePatch, newTaskDoc } from './store.js';
+import { applyUpdatePatch, attachmentsDir, newTaskDoc } from './store.js';
 import type {
   CreateInput,
   ListFilter,
@@ -23,6 +25,7 @@ import type { Amendment } from './taskfile.js';
 import { KINDS, PRIORITIES, TASK_RISKS } from './types.js';
 import type {
   Priority,
+  TaskAttachment,
   TaskDoc,
   TaskKind,
   TaskMeta,
@@ -68,8 +71,51 @@ interface TaskRow {
   archived_at: string | null;
   exercised: number;
   derived_from: string | null;
+  attachments: string | null;
   slug: string;
   body: string;
+}
+
+// Reads the `attachments` JSON column back into the list of TaskAttachments
+// serializeTaskFile expects, throwing a SqliteRowError when the text is not
+// what rowValuesFromDoc wrote.
+function parseAttachments(value: string, rowId: string): TaskAttachment[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new SqliteRowError(
+      'tasks',
+      rowId,
+      'attachments',
+      `is not valid JSON: ${value.slice(0, 80)}`
+    );
+  }
+  const wellFormed =
+    Array.isArray(parsed) &&
+    parsed.every(
+      (a) =>
+        typeof a === 'object' &&
+        a !== null &&
+        typeof a.name === 'string' &&
+        typeof a.path === 'string' &&
+        typeof a.size === 'number' &&
+        typeof a.addedAt === 'string'
+    );
+  if (!wellFormed) {
+    throw new SqliteRowError(
+      'tasks',
+      rowId,
+      'attachments',
+      'is not an array of attachments'
+    );
+  }
+  return (parsed as TaskAttachment[]).map((a) => ({
+    name: a.name,
+    path: a.path,
+    size: a.size,
+    addedAt: a.addedAt,
+  }));
 }
 
 // Rebuilds a TaskMeta from a row, throwing a SqliteRowError if the row cannot
@@ -111,6 +157,9 @@ function metaFromRow(row: TaskRow): TaskMeta {
     exercised: row.exercised !== 0,
     ...(row.archived_at === null ? {} : { archivedAt: row.archived_at }),
     ...(row.derived_from === null ? {} : { derivedFrom: row.derived_from }),
+    ...(row.attachments === null
+      ? {}
+      : { attachments: parseAttachments(row.attachments, id) }),
   };
 }
 
@@ -145,6 +194,9 @@ function rowValuesFromDoc(doc: TaskDoc, slug: string): SqlValue[] {
     meta.archivedAt ?? null,
     meta.exercised ? 1 : 0,
     meta.derivedFrom ?? null,
+    meta.attachments === undefined || meta.attachments.length === 0
+      ? null
+      : JSON.stringify(meta.attachments),
     slug,
     doc.body,
   ];
@@ -153,10 +205,10 @@ function rowValuesFromDoc(doc: TaskDoc, slug: string): SqlValue[] {
 const TASK_COLUMNS = `
   id, title, status, kind, parent, milestone, blocked_by, labels, priority,
   assignee, created, updated, external, self_review, fix_loop, writes, risk,
-  model, archived_at, exercised, derived_from, slug, body
+  model, archived_at, exercised, derived_from, attachments, slug, body
 `;
 const TASK_PLACEHOLDERS =
-  '?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?';
+  '?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?';
 
 // Claims an id or reports that someone else already holds it, in one
 // statement. A `SELECT` followed by an `INSERT` leaves a window in between —
@@ -192,6 +244,7 @@ ON CONFLICT (id) DO UPDATE SET
   archived_at = excluded.archived_at,
   exercised = excluded.exercised,
   derived_from = excluded.derived_from,
+  attachments = excluded.attachments,
   slug = excluded.slug,
   body = excluded.body
 `;
@@ -310,9 +363,17 @@ export class SqliteTaskStore implements TaskStorePort {
 
   remove(id: string): boolean {
     if (this.handle === null) return false;
-    return (
-      this.handle.prepare('DELETE FROM tasks WHERE id = ?').run(id).changes > 0
-    );
+    const removed =
+      this.handle.prepare('DELETE FROM tasks WHERE id = ?').run(id).changes > 0;
+    // The id is re-checked before it becomes a path: a row another writer left
+    // with an unsafe id must not turn the cleanup into an rm outside the tree.
+    if (removed && isTaskId(id)) {
+      rmSync(attachmentsDir(this.rootDir, id), {
+        recursive: true,
+        force: true,
+      });
+    }
+    return removed;
   }
 
   /**

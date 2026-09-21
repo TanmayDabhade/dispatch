@@ -1,13 +1,16 @@
 import type { Assignee, Priority, TaskDoc } from '@dispatch/core/browser';
-import { Check, Milestone } from 'lucide-react';
+import { Check, Milestone, Plus, Tag } from 'lucide-react';
 import { type ReactNode, useId } from 'react';
 
+import { colorForLabel } from '../../lib/labelColor';
 import {
   assigneeLabel,
   priorityLabel,
   statusLabel,
 } from '../../lib/taskDisplay';
 import { AssigneeAvatar } from './AssigneeAvatar';
+import { PickerPopover } from './detail/PickerPopover';
+import { railRowClass } from './detail/RailSection';
 import { PriorityIcon } from './PriorityIcon';
 import { StatusIcon } from './StatusIcon';
 import { cn } from '@/lib/utils';
@@ -21,7 +24,7 @@ import {
 } from '@/ui/dropdown-menu';
 import { Kbd } from '@/ui/kbd';
 
-// Shared inline editors for a task's properties, so status/priority/assignee/epic edit
+// Shared inline editors for a task's properties, so status/priority/assignee/epic/labels edit
 // identically everywhere they appear — a bare 14px glyph you click on a board card or list
 // row (`variant: 'inline'`), or Linear's 32px ghost row in the properties rail
 // (`variant: 'row'`). Every surface that shows a property should edit it through one of
@@ -36,9 +39,8 @@ const NO_EPIC = '__none__';
 
 export type ControlVariant = 'inline' | 'row';
 
-/** Open state a list row or the task page can drive from the `s`/`p`/`a`/`e` keys (the
- * label picker is `LabelEditor`, not one of these). Leave both out and the picker manages
- * itself. */
+/** Open state a list row or the task page can drive from the `s`/`p`/`a`/`e`/`l` keys.
+ * Leave both out and the picker manages itself. */
 export interface ControlledOpen {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -293,5 +295,96 @@ export function EpicControl({
       open={open}
       onOpenChange={onOpenChange}
     />
+  );
+}
+
+// Case-insensitive membership: `UI` and `ui` are one label, so neither a pick nor a create
+// can add the second spelling.
+function hasLabel(labels: readonly string[], label: string): boolean {
+  const folded = label.toLowerCase();
+  return labels.some((l) => l.toLowerCase() === folded);
+}
+
+/** The labels multi-select: one searchable picker over the project's vocabulary plus the
+ * task's own labels, each with its colour dot and a check when applied. A pick toggles
+ * membership and leaves the popover open (several labels in one visit); typing a name nobody
+ * uses yet offers `Create "…"`. Every `onChange` carries the whole deduped list. Faces: the
+ * rail's `Add label` ghost row, or inline a 20px `Tag` glyph — a card hands in its label
+ * pills as `children` so clicking a pill opens the picker. */
+export function LabelsControl({
+  value,
+  candidates,
+  onChange,
+  variant = 'row',
+  children,
+  open,
+  onOpenChange,
+}: {
+  value: string[];
+  /** Every label used anywhere in the project. */
+  candidates: readonly string[];
+  onChange: (next: string[]) => void;
+  variant?: ControlVariant;
+  /** Inline face override — a card passes its label pills. */
+  children?: ReactNode;
+} & ControlledOpen) {
+  const items = [...new Set([...candidates, ...value])].sort().map((label) => ({
+    value: label,
+    label,
+    glyph: (
+      <span
+        aria-hidden
+        data-slot="label-dot"
+        className="size-2 shrink-0 rounded-full"
+        style={{ backgroundColor: colorForLabel(label) }}
+      />
+    ),
+    selected: value.includes(label),
+  }));
+  const current = [...new Set(value)];
+  function toggle(label: string) {
+    onChange(
+      current.includes(label)
+        ? current.filter((l) => l !== label)
+        : [...current, label]
+    );
+  }
+  function create(text: string) {
+    const label = text.trim();
+    if (label === '' || hasLabel(current, label)) return;
+    onChange([...current, label]);
+  }
+  const inline = variant === 'inline';
+  return (
+    <PickerPopover
+      triggerLabel={inline ? 'Change labels' : 'Add label'}
+      triggerClassName={
+        inline
+          ? cn(
+              'rounded-control transition-colors duration-100 outline-none focus-visible:ring-2 focus-visible:ring-ring',
+              children === undefined
+                ? 'inline-flex size-5 shrink-0 items-center justify-center hover:bg-surface-hover data-popup-open:bg-surface-hover'
+                : 'inline-flex min-w-0 flex-wrap items-center gap-1.5'
+            )
+          : railRowClass({ unset: true })
+      }
+      placeholder="Label…"
+      items={items}
+      onSelect={toggle}
+      onCreate={create}
+      emptyLabel="Type a new label."
+      closeOnSelect={false}
+      open={open}
+      onOpenChange={onOpenChange}
+    >
+      {inline ? (
+        (children ?? <Tag className="text-muted-foreground size-3.5" />)
+      ) : (
+        <>
+          <Plus />
+          <span className="truncate">Add label</span>
+        </>
+      )}
+    </PickerPopover>
   );
 }

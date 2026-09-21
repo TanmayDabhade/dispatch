@@ -10,6 +10,7 @@ import {
   parseTasksDisplay,
   serializeTasksDisplay,
   TASKS_DISPLAY_STORAGE_KEY,
+  tasksDisplayFromValue,
   toggleDisplayProperty,
   toggleFilterValue,
 } from './tasksPrefs';
@@ -116,6 +117,98 @@ describe('parseTasksDisplay', () => {
       DEFAULT_TASKS_DISPLAY
     );
     expect(parseTasksDisplay('not json')).toEqual(DEFAULT_TASKS_DISPLAY);
+  });
+
+  it('round-trips a priority sub-grouping', () => {
+    const prefs = {
+      ...DEFAULT_TASKS_DISPLAY,
+      subGrouping: 'priority' as const,
+    };
+    expect(parseTasksDisplay(serializeTasksDisplay(prefs)).subGrouping).toBe(
+      'priority'
+    );
+  });
+
+  // Board lanes moved from `grouping` to `subGrouping`; a board stored before the move
+  // keeps its epic lanes, while `grouping` stays as stored for the list.
+  it('migrates a board grouped by epic to an epic sub-grouping', () => {
+    const migrated = parseTasksDisplay(
+      '{"layout": "board", "grouping": "epic"}'
+    );
+    expect(migrated.subGrouping).toBe('epic');
+    expect(migrated.grouping).toBe('epic');
+    expect(
+      parseTasksDisplay(
+        '{"layout": "board", "grouping": "epic", "subGrouping": "none"}'
+      ).subGrouping
+    ).toBe('epic');
+    expect(
+      parseTasksDisplay(
+        '{"layout": "board", "grouping": "epic", "subGrouping": "assignee"}'
+      ).subGrouping
+    ).toBe('assignee');
+  });
+
+  // The migration is one-shot: once a build that stamps the payload writes it back, a
+  // board with `grouping: 'epic'` and lanes turned off must stay ungrouped across launches.
+  it('does not re-migrate a stamped payload', () => {
+    expect(
+      parseTasksDisplay(
+        '{"layout": "board", "grouping": "epic", "subGrouping": "none", "version": 2}'
+      ).subGrouping
+    ).toBe('none');
+    expect(
+      parseTasksDisplay(
+        '{"layout": "board", "grouping": "epic", "subGrouping": "none", "version": 1}'
+      ).subGrouping
+    ).toBe('epic');
+    const ungrouped = {
+      ...DEFAULT_TASKS_DISPLAY,
+      grouping: 'epic' as const,
+      subGrouping: 'none' as const,
+    };
+    const stored = serializeTasksDisplay(ungrouped);
+    expect(JSON.parse(stored).version).toBe(2);
+    expect(parseTasksDisplay(stored)).toEqual(ungrouped);
+  });
+
+  it('leaves a list layout grouped by epic untouched', () => {
+    const list = parseTasksDisplay('{"layout": "list", "grouping": "epic"}');
+    expect(list.grouping).toBe('epic');
+    expect(list.subGrouping).toBe('none');
+    expect(
+      parseTasksDisplay('{"layout": "board", "grouping": "status"}').subGrouping
+    ).toBe('none');
+  });
+
+  it('tasksDisplayFromValue walks an object and rejects anything else', () => {
+    expect(tasksDisplayFromValue({ layout: 'list' })).toEqual({
+      ...DEFAULT_TASKS_DISPLAY,
+      layout: 'list',
+    });
+    expect(tasksDisplayFromValue(null)).toBeNull();
+    expect(tasksDisplayFromValue(['id'])).toBeNull();
+    expect(tasksDisplayFromValue('list')).toBeNull();
+  });
+
+  it('serializeTasksDisplay writes a fixed field order', () => {
+    const d = DEFAULT_TASKS_DISPLAY;
+    const shuffled = {
+      dateField: d.dateField,
+      properties: new Set(['updated', 'id'] as const),
+      showEmptyGroups: d.showEmptyGroups,
+      nestedSubtasks: d.nestedSubtasks,
+      showSubtasks: d.showSubtasks,
+      completedByRecency: d.completedByRecency,
+      orderDir: d.orderDir,
+      ordering: d.ordering,
+      subGrouping: d.subGrouping,
+      grouping: d.grouping,
+      layout: d.layout,
+    };
+    expect(serializeTasksDisplay(shuffled)).toBe(
+      serializeTasksDisplay({ ...d, properties: new Set(['id', 'updated']) })
+    );
   });
 });
 

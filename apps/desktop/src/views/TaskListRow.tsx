@@ -9,6 +9,7 @@ import { PriorityIcon } from '../components/tasks/PriorityIcon';
 import {
   AssigneeControl,
   EpicControl,
+  LabelsControl,
   PriorityControl,
   StatusControl,
 } from '../components/tasks/PropertyControls';
@@ -30,7 +31,7 @@ import { colorForLabel } from '../lib/labelColor';
 import { formatShortDate } from '../lib/taskDates';
 import type { TaskProperty, TasksDisplayPrefs } from '../lib/tasksPrefs';
 import { cn } from '@/lib/utils';
-import { ListRow } from '@/ui/ai/list-row';
+import { ListRow, type ListRowProps } from '@/ui/ai/list-row';
 import { LabelPill, Pill } from '@/ui/ai/pill';
 import { MetaText } from '@/ui/chrome';
 import { CountChip } from '@/ui/chrome/CountChip';
@@ -38,13 +39,39 @@ import { CountChip } from '@/ui/chrome/CountChip';
 // The task row and the single-key model the Tasks list and the Milestones page share, so a
 // task reads and edits identically under a status header and under a milestone header.
 
-/** Which picker the `s`/`p`/`a`/`e` keys have opened, and on which row. */
-export type PickerKind = 'status' | 'priority' | 'assignee' | 'epic';
+/** Which picker the `s`/`p`/`a`/`l`/`e` keys have opened, and on which row. */
+export type PickerKind = 'status' | 'priority' | 'assignee' | 'labels' | 'epic';
 
 export interface OpenPicker {
   taskId: string;
   kind: PickerKind;
 }
+
+/** The row's escape hatch for consumer-owned DOM attributes (`data-*`, `aria-*`, a DOM id):
+ * every `ListRow` prop the task row sets itself is carved out so a passthrough can never
+ * override the row's own wiring. */
+export type ListRowPassthrough = Omit<
+  ListRowProps,
+  | 'leading'
+  | 'id'
+  | 'status'
+  | 'title'
+  | 'crumb'
+  | 'trailing'
+  | 'date'
+  | 'indent'
+  | 'selected'
+  | 'focused'
+  | 'onClick'
+  | 'onContextMenu'
+  | 'onSelectToggle'
+  | 'selectLabel'
+  | 'className'
+  | 'role'
+  | 'tabIndex'
+  | 'onKeyDown'
+  | 'onFocus'
+>;
 
 export interface TaskListRowProps {
   doc: TaskDoc;
@@ -71,6 +98,8 @@ export interface TaskListRowProps {
   onFocus: () => void;
   onContextMenu?: () => void;
   onSelectToggle?: () => void;
+  /** Spread last onto the `ListRow` — see `ListRowPassthrough`. */
+  rowProps?: ListRowPassthrough;
 }
 
 // A capped child reads its fix loop's own line (`Stopped at 3/3: rounds exhausted`) when
@@ -106,6 +135,7 @@ export function TaskListRow({
   onFocus,
   onContextMenu,
   onSelectToggle,
+  rowProps,
 }: TaskListRowProps) {
   const id = doc.meta.id;
   const run = data.latestRunByTaskId.get(id);
@@ -127,6 +157,20 @@ export function TaskListRow({
             {label}
           </LabelPill>
         ))}
+      {/* The label picker only mounts while the `l` key has it open — the pills above are
+          the row's resting face. The vocabulary is gathered here, once per open picker,
+          never on every row render. */}
+      {picker?.taskId === id && picker.kind === 'labels' && (
+        <LabelsControl
+          variant="inline"
+          value={doc.meta.labels}
+          candidates={[
+            ...new Set(data.tasks.flatMap((t) => t.meta.labels)),
+          ].sort()}
+          onChange={(labels) => void data.handleUpdate(id, { labels })}
+          {...pickerProps('labels')}
+        />
+      )}
       {has('epic') && showEpicChip && epic !== undefined && (
         <Pill title={epic.meta.title}>
           <Milestone className="text-muted-foreground" />
@@ -243,6 +287,7 @@ export function TaskListRow({
       onSelectToggle={editable ? onSelectToggle : undefined}
       selectLabel={`Select ${doc.meta.title}`}
       className={cn(archived && 'opacity-55')}
+      {...rowProps}
     />
   );
 }
@@ -267,12 +312,11 @@ export interface TaskListKeyHandlers {
 }
 
 /** The keydown handler for a list container: `j/k`/arrows move the cursor, Enter/`o` open,
- * Space peeks, `x` selects, `s p a e m` open the focused row's picker, `d` dispatches, `⌘C`
- * copies the id, `f` and `⇧V` ask the page for its filter/display menus, Escape clears.
- * `l` (labels) has no picker yet and falls through untouched. A keystroke that landed on a
- * real control inside a row (a picker trigger, the checkbox) belongs to that control, and
- * one from a portaled popup (an open picker menu, a dialog) — which React still bubbles
- * here — belongs to that popup. */
+ * Space peeks, `x` selects, `s p a l e m` open the focused row's picker, `d` dispatches,
+ * `⌘C` copies the id, `f` and `⇧V` ask the page for its filter/display menus, Escape
+ * clears. A keystroke that landed on a real control inside a row (a picker trigger, the
+ * checkbox) belongs to that control, and one from a portaled popup (an open picker menu or
+ * its search input, a dialog) — which React still bubbles here — belongs to that popup. */
 export function handleTaskListKeyDown(
   e: KeyboardEvent<HTMLDivElement>,
   h: TaskListKeyHandlers
@@ -305,7 +349,7 @@ export function handleTaskListKeyDown(
     { key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey },
     { isTyping: false }
   );
-  if (command === null || command === 'list-set-labels') return;
+  if (command === null) return;
   if (command === 'list-escape') {
     if (h.onEscape()) e.preventDefault();
     return;
@@ -353,6 +397,9 @@ export function handleTaskListKeyDown(
       return;
     case 'list-set-assignee':
       h.setPicker({ taskId: id, kind: 'assignee' });
+      return;
+    case 'list-set-labels':
+      h.setPicker({ taskId: id, kind: 'labels' });
       return;
     case 'list-set-epic':
     case 'list-set-milestone':

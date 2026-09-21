@@ -6,10 +6,15 @@ import type { ReactNode } from 'react';
 
 import { testConfig } from '../components/settings/fixtures.test-helper';
 import {
+  SavedViewsProvider,
+  useSavedViewsContext,
+} from '../components/shell/SavedViewsContext';
+import {
   type ShellActions,
   ShellActionsProvider,
 } from '../components/shell/ShellActionsContext';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import { type SavedViewsApi, useSavedViews } from '../hooks/useSavedViews';
 import type { WorkEpicOptions } from '../lib/epicSession';
 import { TASK_FILTERS_V2_STORAGE_KEY } from '../lib/taskFilters';
 import {
@@ -79,12 +84,16 @@ function epicCalls(): EpicCalls {
 /** A `DispatchProjectData` stub carrying only what BoardView and its layouts read. */
 function boardData(
   tasks: TaskDoc[] = TASKS,
-  extras: { progress?: EpicProgress[]; calls?: EpicCalls } = {}
+  extras: {
+    progress?: EpicProgress[];
+    calls?: EpicCalls;
+    client?: Record<string, unknown>;
+  } = {}
 ): DispatchProjectData {
   const calls = extras.calls ?? epicCalls();
   return {
     config: testConfig,
-    client: {},
+    client: extras.client ?? {},
     portLoading: false,
     portError: false,
     tasksLoading: false,
@@ -190,10 +199,29 @@ const shellActions = {
   copyTaskId: noop,
 } satisfies ShellActions;
 
-function Shell({ children }: { children: ReactNode }) {
+/** The project root the saved views and favorites persist under. */
+const ROOT = '/proj';
+const SAVED_VIEWS_KEY = `dispatch:saved-views:${ROOT}`;
+const FAVORITES_KEY = `dispatch:favorites:${ROOT}`;
+
+// App's saved-views instance, so the header's tabs, star and dialog work against real
+// storage.
+function SavedViewsHost({ children }: { children: ReactNode }) {
+  const api = useSavedViews(ROOT);
+  return <SavedViewsProvider value={api}>{children}</SavedViewsProvider>;
+}
+
+function Providers({
+  savedViews = true,
+  children,
+}: {
+  savedViews?: boolean;
+  children: ReactNode;
+}) {
+  const inner = <TooltipProvider>{children}</TooltipProvider>;
   return (
     <ShellActionsProvider value={shellActions}>
-      <TooltipProvider>{children}</TooltipProvider>
+      {savedViews ? <SavedViewsHost>{inner}</SavedViewsHost> : inner}
     </ShellActionsProvider>
   );
 }
@@ -205,10 +233,12 @@ function view(
     focusEpic?: FocusEpicRequest | null;
     onSelectTask?: (taskId: string) => void;
     onNewTask?: () => void;
+    /** `false` mounts without App's saved-views provider, as the dev harness does. */
+    savedViews?: boolean;
   } = {}
 ) {
   return (
-    <Shell>
+    <Providers savedViews={options.savedViews}>
       <BoardView
         data={options.data ?? boardData()}
         mode={mode}
@@ -218,7 +248,7 @@ function view(
         onNewTask={options.onNewTask ?? noop}
         onPlanWork={noop}
       />
-    </Shell>
+    </Providers>
   );
 }
 
@@ -295,13 +325,44 @@ beforeEach(() => {
   window.localStorage.clear();
 });
 
-// The lane-behavior tests below exercise the epic-grouped board; the default is the flat
+// The lane-behavior tests below exercise the board with epic lanes; the default is the flat
 // kanban, so they seed the display pref the Display popover would write.
 function enableEpicLanes() {
   window.localStorage.setItem(
     TASKS_DISPLAY_STORAGE_KEY,
-    JSON.stringify({ grouping: 'epic' })
+    JSON.stringify({ subGrouping: 'epic' })
   );
+}
+
+/** A stored view: done tasks, on the list layout. */
+const BLOCKED_URGENT = {
+  id: 'v-1',
+  name: 'Blocked urgent',
+  filters: {
+    join: 'and',
+    clauses: [{ facet: 'status', op: 'is', values: ['done'] }],
+  },
+  display: { layout: 'list' },
+  createdAt: '2026-09-20T00:00:00.000Z',
+};
+
+function seedView() {
+  window.localStorage.setItem(
+    SAVED_VIEWS_KEY,
+    JSON.stringify([BLOCKED_URGENT])
+  );
+}
+
+function storedViews(): { id: string; name: string; filters: unknown }[] {
+  return JSON.parse(window.localStorage.getItem(SAVED_VIEWS_KEY) ?? '[]') as {
+    id: string;
+    name: string;
+    filters: unknown;
+  }[];
+}
+
+function tabNames(): string[] {
+  return screen.getAllByRole('tab').map((t) => t.textContent ?? '');
 }
 
 test('the header is two rows: Project › Tasks with ghost actions, then view tabs and the triad', () => {
@@ -320,15 +381,212 @@ test('the header is two rows: Project › Tasks with ghost actions, then view ta
   ).toBe('ghost');
   // New task left the header — it lives on the sidebar pencil and `c`.
   expect(screen.queryByRole('button', { name: 'New task' })).toBeNull();
-  const tabs = screen.getAllByRole('tab').map((t) => t.textContent);
-  expect(tabs).toEqual(['Board', 'List', 'Milestones']);
+  // No saved views yet: the three layout tabs and nothing else.
+  expect(tabNames()).toEqual(['Board', 'List', 'Milestones']);
   expect(screen.getByRole('tab', { name: 'Board' }).dataset['active']).toBe(
     'true'
   );
+  // The star sits between the crumb and the actions; with no view up it offers to save one.
+  const row1 = header().querySelector('[data-slot=page-header-row]');
+  const star = within(row1 as HTMLElement).getByLabelText('Favorite this view');
+  expect(star.previousElementSibling?.getAttribute('data-slot')).toBe(
+    'page-header-crumb'
+  );
+  expect(screen.queryByRole('button', { name: 'Save view…' })).toBeNull();
   const triad = el('[data-slot=header-icon-triad]');
   expect(within(triad).getByLabelText('Filter')).not.toBeNull();
   expect(within(triad).getByLabelText('Display')).not.toBeNull();
   expect(within(triad).getByLabelText('Group by epic')).not.toBeNull();
+});
+
+test('without the saved-views provider there is no star and no view tab', () => {
+  seedView();
+  render(view('board', { savedViews: false }));
+  expect(screen.queryByLabelText(/Favorite/)).toBeNull();
+  expect(tabNames()).toEqual(['Board', 'List', 'Milestones']);
+});
+
+test('a saved view is a fourth tab that applies its filters and display when picked', () => {
+  seedView();
+  mount();
+  expect(tabNames()).toEqual(['Board', 'List', 'Milestones', 'Blocked urgent']);
+  const tab = screen.getByRole('tab', { name: 'Blocked urgent' });
+  expect(tab.querySelector('svg')).not.toBeNull();
+  expect(tab.dataset['active']).toBeUndefined();
+  fireEvent.click(tab);
+  expect(tab.dataset['active']).toBe('true');
+  expect(
+    screen.getByRole('tab', { name: 'List' }).dataset['active']
+  ).toBeUndefined();
+  // Its filter and its list layout are on, and persisted like any other change.
+  expect(
+    document.querySelector('[data-slot=filter-chip]')?.textContent
+  ).toContain('Done');
+  expect(document.querySelector('[data-slot=list-row]')).not.toBeNull();
+  expect(storedDisplay()['layout']).toBe('list');
+  expect(screen.queryByRole('button', { name: 'Update view' })).toBeNull();
+  // Drifting from the view offers Update view, which rewrites the stored snapshot.
+  fireEvent.click(screen.getByRole('button', { name: 'Remove Status filter' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Update view' }));
+  expect(storedViews()[0]?.filters).toEqual({ join: 'and', clauses: [] });
+  expect(screen.queryByRole('button', { name: 'Update view' })).toBeNull();
+  // A layout tab leaves the view.
+  fireEvent.click(screen.getByRole('tab', { name: 'Board' }));
+  expect(tab.dataset['active']).toBeUndefined();
+  expect(screen.getByRole('tab', { name: 'Board' }).dataset['active']).toBe(
+    'true'
+  );
+});
+
+test('Save view… snapshots the active filters into storage and selects the view', async () => {
+  window.localStorage.setItem(
+    TASK_FILTERS_V2_STORAGE_KEY,
+    JSON.stringify({
+      join: 'and',
+      clauses: [{ facet: 'status', op: 'is', values: ['done'] }],
+    })
+  );
+  mount();
+  fireEvent.click(screen.getByRole('button', { name: 'Save view…' }));
+  fireEvent.change(screen.getByLabelText('View name'), {
+    target: { value: 'Done only' },
+  });
+  await settle(() => {
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  });
+  const [saved] = storedViews();
+  expect(saved?.name).toBe('Done only');
+  expect(saved?.filters).toEqual({
+    join: 'and',
+    clauses: [{ facet: 'status', op: 'is', values: ['done'] }],
+  });
+  expect(tabNames()).toEqual(['Board', 'List', 'Milestones', 'Done only']);
+  expect(screen.getByRole('tab', { name: 'Done only' }).dataset['active']).toBe(
+    'true'
+  );
+  // Now that a view is up, the header offers the view menu instead of Save view….
+  expect(screen.queryByRole('button', { name: 'Save view…' })).toBeNull();
+  expect(screen.getByLabelText('View options')).not.toBeNull();
+});
+
+// App keeps the provider up and unmounts the page for a task's full view; `page(false)` is
+// that trip away, `api` the rail/palette's handle on the store while it is away.
+function pageGate() {
+  let api: SavedViewsApi | null = null;
+  function Capture() {
+    api = useSavedViewsContext();
+    return null;
+  }
+  const page = (show: boolean) => (
+    <Providers>
+      <Capture />
+      {show ? (
+        <BoardView
+          data={boardData()}
+          mode="board"
+          projectName="Dispatch"
+          onSelectTask={noop}
+          onNewTask={noop}
+          onPlanWork={noop}
+        />
+      ) : null}
+    </Providers>
+  );
+  return { page, api: () => api };
+}
+
+test('coming back to the board keeps the edits made on top of the active view', () => {
+  seedView();
+  const { page } = pageGate();
+  const { rerender } = render(page(true));
+  fireEvent.click(screen.getByRole('tab', { name: 'Blocked urgent' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Remove Status filter' }));
+  expect(screen.getByRole('button', { name: 'Update view' })).not.toBeNull();
+  rerender(page(false));
+  rerender(page(true));
+  // Still on the view, still drifted from it — the remount did not reset the filter.
+  expect(
+    screen.getByRole('tab', { name: 'Blocked urgent' }).dataset['active']
+  ).toBe('true');
+  expect(
+    document.querySelector('[data-slot=filter-chip]')?.textContent ?? null
+  ).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Update view' })).not.toBeNull();
+  // Leaving the view and picking it again from the tabs is a fresh apply.
+  fireEvent.click(screen.getByRole('tab', { name: 'Board' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Blocked urgent' }));
+  expect(
+    document.querySelector('[data-slot=filter-chip]')?.textContent
+  ).toContain('Done');
+});
+
+test('a view picked while the board is away applies when it mounts', () => {
+  seedView();
+  const { page, api } = pageGate();
+  const { rerender } = render(page(false));
+  act(() => {
+    api()?.selectView('v-1');
+  });
+  rerender(page(true));
+  expect(
+    screen.getByRole('tab', { name: 'Blocked urgent' }).dataset['active']
+  ).toBe('true');
+  expect(
+    document.querySelector('[data-slot=filter-chip]')?.textContent
+  ).toContain('Done');
+  expect(document.querySelector('[data-slot=list-row]')).not.toBeNull();
+  expect(storedDisplay()['layout']).toBe('list');
+});
+
+test('the star favorites the active view', () => {
+  seedView();
+  mount();
+  fireEvent.click(screen.getByRole('tab', { name: 'Blocked urgent' }));
+  const star = screen.getByLabelText('Favorite view');
+  expect(star.dataset['active']).toBeUndefined();
+  fireEvent.click(star);
+  expect(
+    JSON.parse(window.localStorage.getItem(FAVORITES_KEY) ?? '[]')
+  ).toEqual([{ kind: 'view', id: 'v-1' }]);
+  const lit = screen.getByLabelText('Unfavorite view');
+  expect(lit.dataset['active']).toBe('true');
+  fireEvent.click(lit);
+  expect(
+    JSON.parse(window.localStorage.getItem(FAVORITES_KEY) ?? '[]')
+  ).toEqual([]);
+});
+
+test('the view menu renames and deletes the active view', async () => {
+  seedView();
+  mount();
+  fireEvent.click(screen.getByRole('tab', { name: 'Blocked urgent' }));
+  await settle(() => {
+    fireEvent.click(screen.getByLabelText('View options'));
+  });
+  expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual([
+    'Rename…',
+    'Favorite',
+    'Delete view',
+  ]);
+  await settle(() => {
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename…' }));
+  });
+  const name = screen.getByLabelText<HTMLInputElement>('View name');
+  expect(name.value).toBe('Blocked urgent');
+  fireEvent.change(name, { target: { value: 'Shipped' } });
+  await settle(() => {
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  });
+  expect(storedViews()[0]?.name).toBe('Shipped');
+  expect(tabNames()).toContain('Shipped');
+  await settle(() => {
+    fireEvent.click(screen.getByLabelText('View options'));
+  });
+  await settle(() => {
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete view' }));
+  });
+  expect(storedViews()).toEqual([]);
+  expect(tabNames()).toEqual(['Board', 'List', 'Milestones']);
 });
 
 test('the view tabs switch the layout and remember it; the mode prop is only the opening one', () => {
@@ -425,6 +683,38 @@ test('the Display popover writes the display prefs and the board follows', async
   expect(
     within(popover).getByRole('button', { name: 'Grouping' }).textContent
   ).toContain('Status');
+  // The board's columns are always status: the Grouping menu lists the rest greyed out.
+  await settle(() => {
+    fireEvent.click(within(popover).getByRole('button', { name: 'Grouping' }));
+  });
+  const groupings = screen.getAllByRole('menuitemradio');
+  expect(groupings.map((item) => item.textContent)).toEqual([
+    'Status',
+    'Epic',
+    'Milestone',
+    'Assignee',
+    'Priority',
+    'No grouping',
+  ]);
+  expect(
+    groupings.map((item) => item.getAttribute('aria-disabled') === 'true')
+  ).toEqual([false, true, true, true, true, true]);
+  await settle(() => {
+    fireEvent.keyDown(groupings[0], { key: 'Escape' });
+  });
+  await settle(() => {
+    fireEvent.click(
+      within(popover).getByRole('button', { name: 'Sub-grouping' })
+    );
+  });
+  expect(
+    screen.getAllByRole('menuitemradio').map((item) => item.textContent)
+  ).toEqual(['No grouping', 'Epic', 'Assignee', 'Priority']);
+  await settle(() => {
+    fireEvent.keyDown(screen.getAllByRole('menuitemradio')[0], {
+      key: 'Escape',
+    });
+  });
   await settle(() => {
     fireEvent.click(
       within(popover).getByRole('switch', {
@@ -467,6 +757,7 @@ test('the Filter menu lists facets and applies a Status chip under the header', 
     .getAllByRole('menuitem')
     .map((el) => el.textContent);
   expect(facets).toEqual([
+    'AI filter',
     'Status',
     'Priority',
     'Assignee',
@@ -584,6 +875,55 @@ test('the filter applies to the list too', () => {
   expect(rows.some((r) => r?.includes('Card one'))).toBe(false);
 });
 
+// The AI row hands the sentence to the daemon; a facet it invents is dropped on the way in.
+test('the AI filter turns a sentence into clauses, keeping only the valid ones', async () => {
+  const asked: string[] = [];
+  render(
+    view('board', {
+      data: boardData(TASKS, {
+        client: {
+          aiFilterTasks: (sentence: string) => {
+            asked.push(sentence);
+            return Promise.resolve({
+              join: 'and',
+              clauses: [
+                { facet: 'status', op: 'is', values: ['done'] },
+                { facet: 'bogus', op: 'is', values: ['x'] },
+              ],
+            });
+          },
+        },
+      }),
+    })
+  );
+  await settle(() => {
+    fireEvent.click(screen.getByLabelText('Filter'));
+  });
+  const menu = el('[data-slot=filter-menu]');
+  await settle(() => {
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'AI filter' }));
+  });
+  fireEvent.change(within(menu).getByLabelText('AI filter'), {
+    target: { value: 'urgent tasks nobody is on' },
+  });
+  await settleTick(() => {
+    fireEvent.keyDown(within(menu).getByLabelText('AI filter'), {
+      key: 'Enter',
+    });
+  });
+  expect(asked).toEqual(['urgent tasks nobody is on']);
+  const chips = document.querySelectorAll('[data-slot=filter-chip]');
+  expect(chips).toHaveLength(1);
+  expect(chips[0]?.textContent).toContain('Done');
+  expect(screen.queryByText('Card one')).toBeNull();
+  expect(
+    JSON.parse(window.localStorage.getItem(TASK_FILTERS_V2_STORAGE_KEY) ?? '')
+  ).toEqual({
+    join: 'and',
+    clauses: [{ facet: 'status', op: 'is', values: ['done'] }],
+  });
+});
+
 test('the side-panel toggle groups the board into epic lanes', () => {
   mount();
   expect(document.querySelector('[data-slot=group-header]')).toBeNull();
@@ -593,8 +933,51 @@ test('the side-panel toggle groups the board into epic lanes', () => {
       (el) => el.textContent
     )
   ).toEqual(['Payments epic', 'Search epic', 'No epic']);
-  expect(storedDisplay()['grouping']).toBe('epic');
+  expect(storedDisplay()['subGrouping']).toBe('epic');
+  expect(storedDisplay()['grouping']).toBe('status');
   expect(screen.getByLabelText('Ungroup epics').dataset['active']).toBe('true');
+  fireEvent.click(screen.getByLabelText('Ungroup epics'));
+  expect(storedDisplay()['subGrouping']).toBe('none');
+  expect(document.querySelector('[data-slot=group-header]')).toBeNull();
+});
+
+// Display › Sub-grouping › Priority: one lane per priority, and the cursor walks a lane's
+// columns before moving to the next lane — not one status column across every lane.
+test('priority sub-grouping draws lane headers that j/k walk lane by lane', () => {
+  window.localStorage.setItem(
+    TASKS_DISPLAY_STORAGE_KEY,
+    JSON.stringify({ subGrouping: 'priority' })
+  );
+  const tasks = [
+    task('t-u1', 'Urgent todo', 'todo', null, 'task', 'urgent'),
+    task('t-u2', 'Urgent done', 'done', null, 'task', 'urgent'),
+    task('t-l', 'Low todo', 'todo', null, 'task', 'low'),
+  ];
+  render(view('board', { data: boardData(tasks) }));
+  expect(
+    Array.from(document.querySelectorAll('[data-slot=group-header-name]')).map(
+      (el) => el.textContent
+    )
+  ).toEqual(['Urgent', 'Low']);
+  expect(
+    Array.from(document.querySelectorAll('[data-lane-key]')).map((s) =>
+      s.getAttribute('data-lane-key')
+    )
+  ).toEqual(['priority:urgent', 'priority:low']);
+  const anchor = cardRoot('Urgent todo');
+  pressNav('j', anchor);
+  expect(focusedCardText()).toContain('Urgent todo');
+  pressNav('j', anchor);
+  expect(focusedCardText()).toContain('Urgent done');
+  pressNav('j', anchor);
+  expect(focusedCardText()).toContain('Low todo');
+  pressNav('k', anchor);
+  expect(focusedCardText()).toContain('Urgent done');
+  // Folding a lane takes its cards out of the walk.
+  fireEvent.click(screen.getByRole('button', { name: 'Urgent' }));
+  const low = cardRoot('Low todo');
+  pressNav('k', low);
+  expect(focusedCardText()).toContain('Low todo');
 });
 
 test('j walks the cards lane by lane, and Enter opens the one it stopped on', () => {

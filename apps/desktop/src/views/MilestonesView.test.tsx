@@ -401,7 +401,13 @@ test('j/k and Enter walk and open the rows; + presets the milestone', () => {
   // The grid takes focus on mount so the keys work without a click first.
   expect(document.activeElement).toBe(grid);
 
+  // The first row is the cursor on mount; the grid names it for assistive tech.
+  expect(grid.getAttribute('aria-activedescendant')).toBe('milestone-row-t-1');
   fireEvent.keyDown(grid, { key: 'j' });
+  expect(grid.getAttribute('aria-activedescendant')).toBe('milestone-row-t-2');
+  expect(
+    document.getElementById('milestone-row-t-2')?.getAttribute('data-row-id')
+  ).toBe('t-2');
   fireEvent.keyDown(grid, { key: 'Enter' });
   expect(opened).toEqual(['t-2']);
 

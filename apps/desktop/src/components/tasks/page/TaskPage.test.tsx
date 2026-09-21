@@ -1,10 +1,18 @@
-import type { RunMeta } from '@dispatch/client';
-import type { TaskDoc, UpdatePatch } from '@dispatch/core/browser';
+import type { ApiClient, RunMeta } from '@dispatch/client';
+import type {
+  TaskAttachment,
+  TaskDoc,
+  UpdatePatch,
+} from '@dispatch/core/browser';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
 import type { ReactNode } from 'react';
 
+import type { SavedViewsApi } from '../../../hooks/useSavedViews';
+import type { FavoriteRef } from '../../../lib/savedViews';
+import { DeepLinkProvider } from '../../shell/DeepLinkContext';
+import { SavedViewsProvider } from '../../shell/SavedViewsContext';
 import {
   type ShellActions,
   ShellActionsProvider,
@@ -70,6 +78,10 @@ interface Log {
   dispatches: string[];
   copied: string[];
   presets: unknown[];
+  /** Task ids handed to `DeepLinkProvider`'s `copyTaskLink`. */
+  links: string[];
+  /** Refs handed to `SavedViewsProvider`'s `toggleFavorite`. */
+  favorites: FavoriteRef[];
 }
 
 // A full `TaskDetailPanelProps` literal, so every key the interface declares is exercised
@@ -147,20 +159,94 @@ function shellWith(log: Log): ShellActions {
   };
 }
 
-function Providers({ log, children }: { log: Log; children: ReactNode }) {
+// Only the two members the page reads; the rest throw so a test that reaches
+// them fails loudly rather than passing on a stub.
+function savedViewsWith(log: Log, favorite: boolean): SavedViewsApi {
+  const unused = () => {
+    throw new Error('not exercised by TaskPage');
+  };
+  return {
+    views: [],
+    favorites: [],
+    activeViewId: null,
+    activeView: null,
+    selectView: unused,
+    clearActiveView: unused,
+    saveView: unused,
+    updateView: unused,
+    renameView: unused,
+    deleteView: unused,
+    toggleFavorite: (ref) => log.favorites.push(ref),
+    isFavorite: () => favorite,
+  };
+}
+
+function Providers({
+  log,
+  children,
+  deepLinks = true,
+  savedViews = true,
+  favorite = false,
+}: {
+  log: Log;
+  children: ReactNode;
+  /** False leaves the page outside `DeepLinkProvider`, the pre-P7 and harness state. */
+  deepLinks?: boolean;
+  savedViews?: boolean;
+  favorite?: boolean;
+}) {
   return (
     <QueryClientProvider client={new QueryClient()}>
       <ToastProvider>
         <ShellActionsProvider value={shellWith(log)}>
-          {children}
+          <DeepLinkProvider
+            value={
+              deepLinks ? { copyTaskLink: (id) => log.links.push(id) } : null
+            }
+          >
+            <SavedViewsProvider
+              value={savedViews ? savedViewsWith(log, favorite) : null}
+            >
+              {children}
+            </SavedViewsProvider>
+          </DeepLinkProvider>
         </ShellActionsProvider>
       </ToastProvider>
     </QueryClientProvider>
   );
 }
 
+// A client that records attachment uploads and leaves every other fetch the
+// page makes (findings, verification, ledger, impact) pending, so those
+// sections render their loading state and nothing resolves against a stub.
+function clientRecordingUploads(
+  uploads: { id: string; names: string[] }[]
+): ApiClient {
+  const pending = () => new Promise<never>(() => {});
+  return new Proxy({} as ApiClient, {
+    get(_target, key) {
+      if (key === 'uploadTaskAttachments') {
+        return (id: string, files: File[]) => {
+          uploads.push({ id, names: files.map((f) => f.name) });
+          return Promise.resolve({} as never);
+        };
+      }
+      if (typeof key === 'symbol' || key === 'then') return undefined;
+      return pending;
+    },
+  });
+}
+
 function newLog(): Log {
-  return { updates: [], moves: [], dispatches: [], copied: [], presets: [] };
+  return {
+    updates: [],
+    moves: [],
+    dispatches: [],
+    copied: [],
+    presets: [],
+    links: [],
+    favorites: [],
+  };
 }
 
 function mountPage(
@@ -296,6 +382,110 @@ describe('TaskPage', () => {
     const log = mountPage();
     fireEvent.click(screen.getByRole('button', { name: 'Copy task id' }));
     expect(log.copied).toEqual(['t-8f2a']);
+  });
+
+  test('Copy link follows Copy task id and goes through the deep-link provider', () => {
+    const log = mountPage();
+    const buttons = screen
+      .getAllByRole('button')
+      .map((b) => b.getAttribute('aria-label'));
+    expect(buttons.indexOf('Copy link')).toBe(
+      buttons.indexOf('Copy task id') + 1
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Copy link' }));
+    expect(log.links).toEqual(['t-8f2a']);
+  });
+
+  test('no Copy link and no star outside their providers', () => {
+    const log = newLog();
+    render(
+      <Providers log={log} deepLinks={false} savedViews={false}>
+        <TaskPage
+          mode="page"
+          projectName="Dispatch"
+          {...panelProps(task('t-8f2a', 'Apply', {}, BODY), log)}
+        />
+      </Providers>
+    );
+    expect(screen.queryByRole('button', { name: 'Copy link' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Favorite' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Unfavorite' })).toBeNull();
+  });
+
+  test('the star after the crumb toggles the task favorite and carries data-active', () => {
+    const log = newLog();
+    render(
+      <Providers log={log} favorite>
+        <TaskPage
+          mode="page"
+          projectName="Dispatch"
+          {...panelProps(task('t-8f2a', 'Apply', {}, BODY), log)}
+        />
+      </Providers>
+    );
+    const star = screen.getByRole('button', { name: 'Unfavorite' });
+    expect(star.getAttribute('data-active')).toBe('true');
+    expect(
+      document
+        .querySelector('[data-slot="page-header-crumb"]')
+        ?.compareDocumentPosition(star)
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    fireEvent.click(star);
+    expect(log.favorites).toEqual([{ kind: 'task', id: 't-8f2a' }]);
+  });
+
+  test("the attachments row under the description lists the doc's files", () => {
+    const attachments: TaskAttachment[] = [
+      {
+        name: 'spec.png',
+        path: '.dispatch/attachments/t-8f2a/spec.png',
+        size: 48 * 1024,
+        addedAt: '2026-09-20T10:00:00Z',
+      },
+    ];
+    mountPage(task('t-8f2a', 'Apply', { attachments }, BODY));
+    const row = document.querySelector('[data-slot="attachments-row"]');
+    expect(row?.textContent).toContain('spec.png · 48 KB');
+    // Right after the description (its Acceptance criteria section closes it).
+    const acceptance = Array.from(
+      document.querySelectorAll('[data-slot="main-section"]')
+    ).find((s) => s.textContent?.includes('Acceptance criteria'));
+    expect(acceptance?.nextElementSibling).toBe(row);
+  });
+
+  // The content column is the drop target, so a drop that bubbles up from any
+  // field on the page goes through the same upload as the row's picker.
+  test('dropping a file on the page uploads it through the client', async () => {
+    const uploads: { id: string; names: string[] }[] = [];
+    mountPage(task('t-8f2a', 'Apply', {}, BODY), {
+      client: clientRecordingUploads(uploads),
+      port: 4100,
+    });
+    const png = new File(['png-bytes'], 'spec.png', { type: 'image/png' });
+    await settle(() => {
+      fireEvent.drop(screen.getByLabelText('Task title'), {
+        dataTransfer: { files: [png], items: [] },
+      });
+    });
+    expect(uploads).toEqual([{ id: 't-8f2a', names: ['spec.png'] }]);
+  });
+
+  // A text paste carries no files and must reach whichever field has focus
+  // untouched.
+  test('a text-only paste is left to the field and never reaches the client', () => {
+    const uploads: { id: string; names: string[] }[] = [];
+    mountPage(task('t-8f2a', 'Apply', {}, BODY), {
+      client: clientRecordingUploads(uploads),
+      port: 4100,
+    });
+    const title = screen.getByLabelText('Task title');
+    const event = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'clipboardData', {
+      value: { files: [], items: [], getData: () => 'plain text' },
+    });
+    title.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(uploads).toEqual([]);
   });
 
   test('the title is a 24px in-place textarea and the description is rendered prose', () => {

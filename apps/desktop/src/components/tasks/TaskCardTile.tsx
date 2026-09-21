@@ -16,6 +16,7 @@ import { MergeLadderPill } from '../runs/MergeLadderDot';
 import { RunStatePill } from '../runs/RunStatePill';
 import {
   AssigneeControl,
+  LabelsControl,
   PriorityControl,
   StatusControl,
 } from './PropertyControls';
@@ -50,7 +51,7 @@ interface TaskCardTileProps {
   statuses: string[];
   /** Changes this task's status inline from the card (optimistic, same path as drag-and-drop). */
   onStatusChange: (status: string) => void;
-  /** Edits this task's priority/assignee inline from the card. */
+  /** Edits this task's priority/assignee/labels inline from the card. */
   onEditTask: (patch: UpdatePatch) => void;
   onClick: () => void;
   /** Dispatches this task directly from the card. Omitted (no action rendered) for cards that
@@ -76,6 +77,8 @@ interface TaskCardTileProps {
   /** The daemon's readiness reading for this task, when judged — a thin spec
    * or a likely split shows as a pill beside the labels. */
   readiness?: ReadinessReading;
+  /** Every label the project uses — the vocabulary the label pills' picker offers. */
+  labelCatalogue?: readonly string[];
 }
 
 // Only shows the first few label pills before collapsing the rest into a "+N" — Linear's own
@@ -111,6 +114,7 @@ export function TaskCardTile({
   needsAttention = false,
   properties = ALL_PROPERTIES,
   readiness,
+  labelCatalogue = [],
 }: TaskCardTileProps) {
   const [dispatching, setDispatching] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -247,11 +251,29 @@ export function TaskCardTile({
         {needsAttention && !archived && (
           <LabelPill color="var(--state-waiting-fg)">Needs you</LabelPill>
         )}
-        {visibleLabels.map((label) => (
-          <LabelPill key={label} color={colorForLabel(label)}>
-            {label}
-          </LabelPill>
-        ))}
+        {/* The label pills are the face of the labels picker (click a pill to change the
+            labels); the `+N` overflow stays outside it. An archived card shows plain pills. */}
+        {visibleLabels.length > 0 &&
+          (archived ? (
+            visibleLabels.map((label) => (
+              <LabelPill key={label} color={colorForLabel(label)}>
+                {label}
+              </LabelPill>
+            ))
+          ) : (
+            <LabelsControl
+              variant="inline"
+              value={doc.meta.labels}
+              candidates={labelCatalogue}
+              onChange={(labels) => onEditTask({ labels })}
+            >
+              {visibleLabels.map((label) => (
+                <LabelPill key={label} color={colorForLabel(label)}>
+                  {label}
+                </LabelPill>
+              ))}
+            </LabelsControl>
+          ))}
         {hiddenLabelCount > 0 && (
           <Pill className="text-muted-foreground">+{hiddenLabelCount}</Pill>
         )}

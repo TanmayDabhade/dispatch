@@ -15,6 +15,7 @@ import {
   setDateFilter,
   setFilterJoin,
   type TaskFilterSet,
+  taskFilterSetFromValue,
   toggleClauseNegation,
   toggleFilterValue,
 } from './taskFilters';
@@ -246,6 +247,51 @@ describe('storage', () => {
         })
       )
     ).toEqual(EMPTY_TASK_FILTER_SET);
+  });
+
+  test('taskFilterSetFromValue walks an object and rejects anything else', () => {
+    expect(
+      taskFilterSetFromValue({
+        clauses: [
+          { facet: 'status', op: 'is', values: ['ready'] },
+          { facet: 'labels', values: ['ui'] },
+        ],
+        join: 'or',
+      })
+    ).toEqual({
+      clauses: [
+        { facet: 'status', op: 'is', values: ['ready'] },
+        { facet: 'labels', op: 'includes', values: ['ui'] },
+      ],
+      join: 'or',
+    });
+    expect(taskFilterSetFromValue(null)).toBeNull();
+    expect(taskFilterSetFromValue('{}')).toBeNull();
+    expect(taskFilterSetFromValue([])).toBeNull();
+    // An unknown facet drops its clause; the rest of the set survives.
+    expect(
+      taskFilterSetFromValue({
+        clauses: [
+          { facet: 'sprint', op: 'is', values: ['3'] },
+          { facet: 'priority', op: 'is not', values: ['none'] },
+        ],
+      })
+    ).toEqual({
+      clauses: [{ facet: 'priority', op: 'is not', values: ['none'] }],
+      join: 'and',
+    });
+  });
+
+  test('serializeTaskFilterSet writes a fixed field order', () => {
+    const shuffled = {
+      join: 'and',
+      clauses: [{ values: ['ready'], op: 'is', facet: 'status' }],
+    } satisfies TaskFilterSet;
+    expect(serializeTaskFilterSet(shuffled)).toBe(
+      serializeTaskFilterSet(
+        set([{ facet: 'status', op: 'is', values: ['ready'] }])
+      )
+    );
   });
 });
 

@@ -16,7 +16,9 @@ import type {
 // for the browser-dev fallback below: opening the Vite URL with
 // `?root=<abs path>&port=<dispatchd port>` lets the whole dispatch UI run and be
 // inspected in an ordinary browser (devtools, automation) against an already
-// running daemon — Tauri IPC (`invoke`) is simply unavailable there.
+// running daemon — Tauri IPC (`invoke`) is simply unavailable there. An
+// optional `&task=<id>` opens that task on load, the browser form of the
+// `dispatch://` deep link (see lib/deepLink.ts).
 export function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
@@ -73,6 +75,13 @@ export function getSessionDetail(
 
 export function openInEditor(path: string): Promise<void> {
   return invoke('open_in_editor', { path });
+}
+
+/** Opens a file on disk in its default app — `open_url` shells to `open <arg>`, which
+ * takes a path as readily as a URL. Tauri only; the browser harness opens attachments
+ * through a blob URL instead. */
+export function openPath(path: string): Promise<void> {
+  return invoke('open_url', { url: path });
 }
 
 export function getDashboardStats(): Promise<DashboardStats> {

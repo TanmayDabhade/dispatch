@@ -1,17 +1,8 @@
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { Priority, TaskDoc } from '@dispatch/core/browser';
+import { PRIORITY_ORDER } from '@dispatch/core/browser';
 
-import type { TasksGrouping } from './tasksPrefs';
-
-/** The two layouts the board has: status columns, or those columns under one lane per epic. */
-export type BoardGrouping = 'status' | 'epic';
-
-/** The board layout a Display › Grouping choice lands on. The list groups six ways; the board
- * only lanes by epic, so every other grouping (a list-only choice, kept in the shared prefs)
- * renders the flat status kanban — and the Display popover disables those options on the
- * board rather than let the pill claim a layout the board never draws. */
-export function boardGroupingFor(grouping: TasksGrouping): BoardGrouping {
-  return grouping === 'epic' ? 'epic' : 'status';
-}
+import { assigneeLabel, assigneeRef, priorityLabel } from './taskDisplay';
+import type { TasksSubGrouping } from './tasksPrefs';
 
 export interface BoardColumnGroup {
   status: string;
@@ -41,7 +32,18 @@ export function groupTasksByStatus(
 }
 
 export interface BoardLane {
-  /** `null` for the catch-all lane of tasks with no epic, always rendered last. */
+  /** What the lane is tracked by in the collapsed set — namespaced by kind (`e-…` /
+   * `__no-epic__` for epic lanes, `assignee:…`, `priority:…`, `all` for the flat board) so a
+   * fold on one sub-grouping never hides a lane of another. */
+  key: string;
+  /** Which Display › Sub-grouping produced the lane; `none` is the flat board's single lane. */
+  kind: TasksSubGrouping;
+  /** The raw bucket value the lane groups on — the epic id, the `meta.assignee` string or
+   * the priority — so a header can render it without parsing `key`; `null` for the no-epic
+   * and flat lanes. */
+  value: string | null;
+  /** The epic an `epic` lane belongs to, `null` for its catch-all "No epic" lane — and for
+   * every lane of another kind. */
   epicId: string | null;
   title: string;
   columns: BoardColumnGroup[];
@@ -101,6 +103,9 @@ export function groupTasksByEpicLane(
     seen.add(epic.meta.id);
     const columns = groupTasksByStatus(bucket, statuses);
     lanes.push({
+      key: laneKey(epic.meta.id),
+      kind: 'epic',
+      value: epic.meta.id,
       epicId: epic.meta.id,
       title: epic.meta.title,
       columns,
@@ -113,6 +118,9 @@ export function groupTasksByEpicLane(
     if (seen.has(parentId) || bucket.length === 0) continue;
     const columns = groupTasksByStatus(bucket, statuses);
     lanes.push({
+      key: laneKey(parentId),
+      kind: 'epic',
+      value: parentId,
       epicId: parentId,
       title: parentId,
       columns,
@@ -122,6 +130,9 @@ export function groupTasksByEpicLane(
   if (noEpic.length > 0) {
     const columns = groupTasksByStatus(noEpic, statuses);
     lanes.push({
+      key: laneKey(null),
+      kind: 'epic',
+      value: null,
       epicId: null,
       title: 'No epic',
       columns,
@@ -138,6 +149,118 @@ export function groupTasksByEpicLane(
  * cannot collide with a real epic id — dispatch ids are `e-<hex>`. */
 export function laneKey(epicId: string | null): string {
   return epicId ?? '__no-epic__';
+}
+
+// A lane of one kind over one bucket of cards; the columns are the bucket by status.
+function laneOf(
+  key: string,
+  kind: TasksSubGrouping,
+  value: string | null,
+  title: string,
+  bucket: TaskDoc[],
+  statuses: string[]
+): BoardLane {
+  const columns = groupTasksByStatus(bucket, statuses);
+  return {
+    key,
+    kind,
+    value,
+    epicId: null,
+    title,
+    columns,
+    total: countPlaced(columns),
+  };
+}
+
+// One lane per assignee value — agents first, then people by handle, `Unassigned` last (the
+// list's assignee-group rank, re-derived here since `listGrouping`'s bucket helpers are private).
+function groupTasksByAssigneeLane(
+  tasks: TaskDoc[],
+  statuses: string[]
+): BoardLane[] {
+  const buckets = new Map<string, TaskDoc[]>();
+  for (const task of tasks) {
+    const bucket = buckets.get(task.meta.assignee);
+    if (bucket === undefined) buckets.set(task.meta.assignee, [task]);
+    else bucket.push(task);
+  }
+  const rank = (assignee: string) => {
+    const ref = assigneeRef(assignee);
+    if (ref === null) return 2;
+    return ref.kind === 'agent' ? 0 : 1;
+  };
+  const values = [...buckets.keys()].sort((a, b) => {
+    const ra = rank(a);
+    const rb = rank(b);
+    return ra !== rb
+      ? ra - rb
+      : assigneeLabel(a).localeCompare(assigneeLabel(b));
+  });
+  return values.map((value) =>
+    laneOf(
+      `assignee:${value}`,
+      'assignee',
+      value,
+      assigneeLabel(value),
+      buckets.get(value) ?? [],
+      statuses
+    )
+  );
+}
+
+// One lane per priority in `PRIORITY_ORDER` (urgent first, none last); empty ones dropped.
+function groupTasksByPriorityLane(
+  tasks: TaskDoc[],
+  statuses: string[]
+): BoardLane[] {
+  const buckets = new Map<Priority, TaskDoc[]>();
+  for (const task of tasks) {
+    const bucket = buckets.get(task.meta.priority);
+    if (bucket === undefined) buckets.set(task.meta.priority, [task]);
+    else bucket.push(task);
+  }
+  return (Object.keys(PRIORITY_ORDER) as Priority[]).flatMap((priority) => {
+    const bucket = buckets.get(priority);
+    return bucket === undefined
+      ? []
+      : [
+          laneOf(
+            `priority:${priority}`,
+            'priority',
+            priority,
+            priorityLabel(priority),
+            bucket,
+            statuses
+          ),
+        ];
+  });
+}
+
+/**
+ * The board's swim lanes for a Display › Sub-grouping: `epic` is `groupTasksByEpicLane`,
+ * `assignee` and `priority` bucket on the task's own field, `none` is the one headerless lane
+ * of the flat board. Whatever the kind, epics never become cards (they head epic lanes and
+ * have no place in any other), every lane is the full status column set over its bucket, and
+ * a lane the status filter emptied is dropped rather than drawn as a bare header.
+ */
+export function groupTasksByLane(
+  tasks: TaskDoc[],
+  statuses: string[],
+  epics: TaskDoc[],
+  subGrouping: TasksSubGrouping
+): BoardLane[] {
+  if (subGrouping === 'epic') {
+    return groupTasksByEpicLane(tasks, statuses, epics);
+  }
+  const cards = tasks.filter((t) => t.meta.kind !== 'epic');
+  if (subGrouping === 'none') {
+    return [laneOf('all', 'none', null, '', cards, statuses)];
+  }
+  const lanes =
+    subGrouping === 'assignee'
+      ? groupTasksByAssigneeLane(cards, statuses)
+      : groupTasksByPriorityLane(cards, statuses);
+  return lanes.filter((lane) => lane.total > 0);
 }
 
 /**
@@ -191,7 +314,7 @@ export function visibleLaneTaskIds(
 ): string[] {
   const ids: string[] = [];
   for (const lane of lanes) {
-    if (collapsedLaneKeys.has(laneKey(lane.epicId))) continue;
+    if (collapsedLaneKeys.has(lane.key)) continue;
     for (const column of lane.columns) {
       for (const task of column.tasks) ids.push(task.meta.id);
     }

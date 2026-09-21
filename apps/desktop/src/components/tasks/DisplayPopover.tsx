@@ -8,7 +8,6 @@ import {
 import type { ReactNode } from 'react';
 
 import { showArchiveToggle } from '../../lib/archiveToggle';
-import { boardGroupingFor } from '../../lib/boardGrouping';
 import {
   TASK_PROPERTIES,
   type TaskProperty,
@@ -47,6 +46,7 @@ const SUB_GROUPINGS: { id: TasksSubGrouping; label: string }[] = [
   { id: 'none', label: 'No grouping' },
   { id: 'epic', label: 'Epic' },
   { id: 'assignee', label: 'Assignee' },
+  { id: 'priority', label: 'Priority' },
 ];
 
 const ORDERINGS: { id: TasksOrdering; label: string }[] = [
@@ -203,14 +203,13 @@ export function DisplayPopover({
     value: TasksDisplayPrefs[K]
   ) => onPrefsChange({ ...prefs, [key]: value });
   const ascending = prefs.orderDir === 'asc';
-  // The board only lanes by epic (see `boardGroupingFor`): its pill shows the layout it is
-  // actually drawing and the list-only groupings are greyed out, so a `Milestone` chosen on
-  // the list never reads as a lane layout the board does not have.
-  const grouping =
-    mode === 'board' ? boardGroupingFor(prefs.grouping) : prefs.grouping;
+  // The board's columns are always status and its lanes follow Sub-grouping, so on the board
+  // the Grouping pill is pinned to `Status` with every other option greyed out — a `Milestone`
+  // chosen on the list never reads as a column layout the board does not draw.
+  const grouping = mode === 'board' ? 'status' : prefs.grouping;
   const groupings = GROUPINGS.map((option) => ({
     ...option,
-    disabled: mode === 'board' && boardGroupingFor(option.id) !== option.id,
+    disabled: mode === 'board' && option.id !== 'status',
   }));
 
   return (

@@ -120,3 +120,60 @@ test('a nested row dims its id', () => {
   const id = container.querySelector('[data-slot="list-row-id"]');
   expect(id?.className).toContain('text-muted-foreground/70');
 });
+
+// `id` is the issue-id slot, so the DOM id a grid's `aria-activedescendant` points
+// at needs its own prop.
+test('domId lands as the DOM id, apart from the issue-id slot', () => {
+  const { container } = render(
+    <ListRow title="Row" id="DIS-5" domId="task-row-t-5" />
+  );
+  const row = container.firstElementChild as HTMLElement;
+  expect(row.id).toBe('task-row-t-5');
+  expect(
+    container.querySelector('[data-slot="list-row-id"]')?.textContent
+  ).toBe('DIS-5');
+});
+
+const everySlot = {
+  leading: <span>P</span>,
+  id: 'DIS-5',
+  status: <span>S</span>,
+  title: 'Row',
+  crumb: 'Search',
+  trailing: <span>pill</span>,
+  date: 'Sep 13',
+  onSelectToggle: () => {},
+};
+
+// Under the default `row` every slot is a `gridcell`; the crumb nests inside the
+// title cell rather than being a cell of its own.
+test('every slot is a gridcell under the default row role', () => {
+  const { container } = render(<ListRow {...everySlot} />);
+  const cells = [...container.querySelectorAll('[role="gridcell"]')].map((el) =>
+    el.getAttribute('data-slot')
+  );
+  expect(cells).toEqual([
+    'list-row-select',
+    'list-row-leading',
+    'list-row-id',
+    'list-row-status',
+    'list-row-title',
+    'list-row-trailing',
+    'list-row-date',
+  ]);
+  const crumb = container.querySelector('[data-slot="list-row-crumb"]');
+  expect(crumb?.getAttribute('role')).toBeNull();
+  expect(crumb?.closest('[role="gridcell"]')?.getAttribute('data-slot')).toBe(
+    'list-row-title'
+  );
+});
+
+test('with another role no slot carries a role', () => {
+  const { container } = render(<ListRow {...everySlot} role="listitem" />);
+  expect(container.querySelectorAll('[role="gridcell"]')).toHaveLength(0);
+  const slots = container.querySelectorAll('[data-slot^="list-row-"]');
+  expect(slots.length).toBeGreaterThan(0);
+  for (const slot of slots) {
+    expect(slot.getAttribute('role')).toBeNull();
+  }
+});

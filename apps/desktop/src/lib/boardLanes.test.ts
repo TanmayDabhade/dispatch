@@ -5,6 +5,7 @@ import {
   countLaneStatuses,
   dropZoneId,
   groupTasksByEpicLane,
+  groupTasksByLane,
   laneKey,
   statusFromDropZoneId,
   visibleBoardColumns,
@@ -15,9 +16,20 @@ function task(
   id: string,
   status: string,
   parent: string | null = null,
-  kind = 'task'
+  kind = 'task',
+  extra: { assignee?: string; priority?: string } = {}
 ): TaskDoc {
-  return { meta: { id, title: id, status, parent, kind } } as TaskDoc;
+  return {
+    meta: {
+      id,
+      title: id,
+      status,
+      parent,
+      kind,
+      assignee: extra.assignee ?? 'none',
+      priority: extra.priority ?? 'none',
+    },
+  } as TaskDoc;
 }
 
 const STATUSES = ['todo', 'in-progress', 'done'];
@@ -157,11 +169,103 @@ const TWO_EPIC_LANES = groupTasksByEpicLane(
 describe('laneKey', () => {
   test('an epic lane is keyed by its epic id', () => {
     expect(laneKey('e-1')).toBe('e-1');
+    expect(TWO_EPIC_LANES.map((lane) => lane.key)).toEqual([
+      'e-1',
+      'e-2',
+      laneKey(null),
+    ]);
   });
 
   test('the no-epic lane gets a sentinel no epic id can collide with', () => {
     expect(laneKey(null)).not.toBe('');
     expect(laneKey(null)).not.toMatch(/^e-/);
+  });
+});
+
+describe('groupTasksByLane: assignee', () => {
+  const lanes = groupTasksByLane(
+    [
+      task('t-1', 'todo', null, 'task', { assignee: 'human:wyat' }),
+      task('t-2', 'done', null, 'task'),
+      task('t-3', 'todo', null, 'task', { assignee: 'agent:claude' }),
+      task('t-4', 'todo', null, 'task', { assignee: 'human:alice' }),
+      task('e-1', 'todo', null, 'epic', { assignee: 'agent:claude' }),
+    ],
+    STATUSES,
+    [task('e-1', 'todo', null, 'epic')],
+    'assignee'
+  );
+
+  // The list's rank: agents first, people by handle, then the unassigned catch-all.
+  test('agents lead, people follow by handle, Unassigned is last', () => {
+    expect(lanes.map((l) => l.title)).toEqual([
+      'claude',
+      'alice',
+      'wyat',
+      'Unassigned',
+    ]);
+  });
+
+  test('keys are namespaced by the raw assignee value, which the lane also carries', () => {
+    expect(lanes.map((l) => l.key)).toEqual([
+      'assignee:agent:claude',
+      'assignee:human:alice',
+      'assignee:human:wyat',
+      'assignee:none',
+    ]);
+    expect(lanes.map((l) => l.value)).toEqual([
+      'agent:claude',
+      'human:alice',
+      'human:wyat',
+      'none',
+    ]);
+    expect(lanes.every((l) => l.kind === 'assignee' && l.epicId === null)).toBe(
+      true
+    );
+  });
+
+  test('every lane carries the full status column set', () => {
+    for (const lane of lanes) {
+      expect(lane.columns.map((c) => c.status)).toEqual(STATUSES);
+    }
+  });
+
+  // An epic heads its own lane on the epic board and belongs on no other.
+  test('epics never become cards', () => {
+    expect(lanes.find((l) => l.key === 'assignee:agent:claude')?.total).toBe(1);
+    expect(visibleLaneTaskIds(lanes, new Set())).not.toContain('e-1');
+  });
+});
+
+describe('groupTasksByLane: priority', () => {
+  const lanes = groupTasksByLane(
+    [
+      task('t-1', 'todo', null, 'task', { priority: 'low' }),
+      task('t-2', 'done', null, 'task', { priority: 'urgent' }),
+      task('t-3', 'todo', null, 'task', { priority: 'urgent' }),
+      task('t-4', 'todo', null, 'task'),
+    ],
+    STATUSES,
+    [],
+    'priority'
+  );
+
+  test('lanes follow PRIORITY_ORDER with the empty priorities dropped', () => {
+    expect(lanes.map((l) => [l.key, l.value, l.title, l.total])).toEqual([
+      ['priority:urgent', 'urgent', 'Urgent', 2],
+      ['priority:low', 'low', 'Low', 1],
+      ['priority:none', 'none', 'No priority', 1],
+    ]);
+  });
+
+  test('a lane the status filter empties is dropped', () => {
+    const filtered = groupTasksByLane(
+      [task('t-1', 'nonsense', null, 'task', { priority: 'high' })],
+      STATUSES,
+      [],
+      'priority'
+    );
+    expect(filtered).toEqual([]);
   });
 });
 
@@ -230,8 +334,24 @@ describe('visibleLaneTaskIds', () => {
   });
 
   test('everything collapsed leaves nothing to traverse', () => {
-    const all = new Set(TWO_EPIC_LANES.map((lane) => laneKey(lane.epicId)));
+    const all = new Set(TWO_EPIC_LANES.map((lane) => lane.key));
     expect(visibleLaneTaskIds(TWO_EPIC_LANES, all)).toEqual([]);
+  });
+
+  // Lanes of every kind fold by `lane.key`, so a priority lane's fold hides its cards too.
+  test('a collapsed priority lane is skipped by its own key', () => {
+    const lanes = groupTasksByLane(
+      [
+        task('t-1', 'todo', null, 'task', { priority: 'urgent' }),
+        task('t-2', 'todo', null, 'task', { priority: 'low' }),
+      ],
+      STATUSES,
+      [],
+      'priority'
+    );
+    expect(visibleLaneTaskIds(lanes, new Set(['priority:urgent']))).toEqual([
+      't-2',
+    ]);
   });
 });
 

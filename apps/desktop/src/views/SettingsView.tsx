@@ -1,5 +1,5 @@
 import { FolderSearch, SearchIcon } from 'lucide-react';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { AgentsSection } from '../components/settings/AgentsSection';
 import { DaemonSection } from '../components/settings/DaemonSection';
@@ -9,6 +9,7 @@ import { IntegrationsSection } from '../components/settings/IntegrationsSection'
 import { NotificationsSection } from '../components/settings/NotificationsSection';
 import { PolicySection } from '../components/settings/PolicySection';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import type { SettingsPage } from '../lib/appNav';
 import { cn } from '@/lib/utils';
 import { PageHeader } from '@/ui/ai/page-header';
 import {
@@ -27,6 +28,9 @@ interface SettingsViewProps {
   /** Opens a task's full view — the Autonomy page's receipts link through to
    *  the task ledger that holds each auto-decision. */
   onOpenTask?: (taskId: string) => void;
+  /** The page to open on — `navState.settingsPage`, which the rail's Connect Linear and
+   *  the strip's gear set to Integrations. A new value while mounted switches the page. */
+  initialPage?: SettingsPage;
 }
 
 type SaveState =
@@ -34,15 +38,6 @@ type SaveState =
   | { kind: 'saving' }
   | { kind: 'saved' }
   | { kind: 'error'; message: string };
-
-type SettingsPage =
-  | 'general'
-  | 'autonomy'
-  | 'agents'
-  | 'integrations'
-  | 'notifications'
-  | 'daemon'
-  | 'diffs';
 
 /** The settings nav, in order: one `Project` group of pages. The label doubles as the
  * page's H1. */
@@ -64,10 +59,17 @@ export function SettingsView({
   activeProject,
   data,
   onOpenTask,
+  initialPage,
 }: SettingsViewProps) {
   const [saveState, setSaveState] = useState<SaveState>({ kind: 'idle' });
-  const [page, setPage] = useState<SettingsPage>('general');
+  const [page, setPage] = useState<SettingsPage>(initialPage ?? 'general');
   const [query, setQuery] = useState('');
+
+  // A request that arrives while Settings is already mounted (the gear pressed from the
+  // General page) still lands; the nav rows keep working in between.
+  useEffect(() => {
+    if (initialPage !== undefined) setPage(initialPage);
+  }, [initialPage]);
 
   // The one save path every config-backed section's onSave goes through, so
   // one indicator covers those pages instead of each section reporting on its own.

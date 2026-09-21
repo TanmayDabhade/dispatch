@@ -273,6 +273,53 @@ describe('serializeTaskFile / parseTaskFile', () => {
   });
 });
 
+describe('attachments frontmatter', () => {
+  const attached: TaskDoc = {
+    ...doc,
+    meta: {
+      ...doc.meta,
+      attachments: [
+        {
+          name: 'spec.png',
+          path: '.dispatch/attachments/t-3fa9c2/spec.png',
+          size: 49152,
+          addedAt: '2026-09-20T10:00:00Z',
+        },
+      ],
+    },
+  };
+
+  it('round-trips an attachment list with kebab-case keys', () => {
+    const text = serializeTaskFile(attached);
+    expect(text).toContain('attachments:');
+    expect(text).toContain('added-at: 2026-09-20T10:00:00Z');
+    expect(parseTaskFile(text)).toEqual(attached);
+    expect(serializeTaskFile(parseTaskFile(text))).toBe(text);
+  });
+
+  it('omits the key when there are no attachments', () => {
+    expect(serializeTaskFile(doc)).not.toContain('attachments');
+    const emptied: TaskDoc = { ...doc, meta: { ...doc.meta, attachments: [] } };
+    expect(serializeTaskFile(emptied)).not.toContain('attachments');
+    expect(
+      'attachments' in parseTaskFile(serializeTaskFile(emptied)).meta
+    ).toBe(false);
+  });
+
+  it('throws on a malformed entry', () => {
+    const bad = serializeTaskFile(doc).replace(
+      '---\nid:',
+      '---\nattachments:\n  - name: spec.png\n    size: big\nid:'
+    );
+    expect(() => parseTaskFile(bad)).toThrow(/invalid attachments/);
+    const notList = serializeTaskFile(doc).replace(
+      '---\nid:',
+      '---\nattachments: spec.png\nid:'
+    );
+    expect(() => parseTaskFile(notList)).toThrow(/invalid attachments/);
+  });
+});
+
 describe('selfReview / self-review frontmatter', () => {
   it('treats an absent self-review key as on', () => {
     expect(

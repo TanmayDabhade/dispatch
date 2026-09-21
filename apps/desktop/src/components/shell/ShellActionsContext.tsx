@@ -1,6 +1,11 @@
 import { createContext, useContext } from 'react';
 
-import type { GlobalView, ProjectView, TaskTab } from '../../lib/appNav';
+import type {
+  GlobalView,
+  ProjectView,
+  SettingsPage,
+  TaskTab,
+} from '../../lib/appNav';
 
 /** What a "+" on a status group, an epic's "add task", or a milestone row pre-fills into the
  * task creator. Every field is optional; the creator defaults the rest. */
@@ -33,7 +38,9 @@ export interface ShellActions {
   /** The Overseer page; `prompt` pre-fills its composer. */
   openOverseer: (prompt?: string) => void;
   setProjectView: (view: ProjectView) => void;
-  setGlobalView: (view: GlobalView) => void;
+  /** `page` lands Settings on one of its pages (`Connect Linear` → Integrations); it is
+   * ignored for every other global view. */
+  setGlobalView: (view: GlobalView, options?: { page?: SettingsPage }) => void;
   /** The `?` keyboard-shortcuts reference. */
   openShortcuts: () => void;
   /** Copies the task id to the clipboard and toasts. */

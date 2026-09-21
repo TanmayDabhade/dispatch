@@ -1,6 +1,12 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -240,6 +246,24 @@ for (const { name, make } of BACKENDS) {
       expect(store.get(derived.meta.id)!.meta.derivedFrom).toBe('github-pr:41');
     });
 
+    it('round-trips the optional attachments key', () => {
+      const store = make();
+      const plain = store.create({ title: 'Plain' });
+      expect('attachments' in store.get(plain.meta.id)!.meta).toBe(false);
+      const attachments = [
+        {
+          name: 'spec.png',
+          path: `.dispatch/attachments/${plain.meta.id}/spec.png`,
+          size: 49152,
+          addedAt: '2026-09-20T10:00:00Z',
+        },
+      ];
+      store.update(plain.meta.id, { attachments });
+      expect(store.get(plain.meta.id)!.meta.attachments).toEqual(attachments);
+      store.update(plain.meta.id, { attachments: [] });
+      expect('attachments' in store.get(plain.meta.id)!.meta).toBe(false);
+    });
+
     it('appends an amendment and bumps updated', () => {
       const store = make();
       const doc = store.create({ title: 'Fix login' }, '2026-07-13T00:00:00Z');
@@ -465,6 +489,57 @@ describe('SqliteTaskStore persistence', () => {
     expect(dbVersion(db)).toBe(DISPATCH_DB_VERSION);
   });
 
+  // The first migration: a version-1 file predates the attachments column and
+  // gains it through ALTER TABLE rather than the DDL, which CREATE IF NOT
+  // EXISTS would skip over.
+  it('migrates a version-1 database by adding the attachments column', () => {
+    const dbPath = dispatchDbPath(root);
+    mkdirSync(join(root, '.dispatch'), { recursive: true });
+    const v1 = new Database(dbPath);
+    v1.exec(`
+CREATE TABLE tasks (
+  id           TEXT PRIMARY KEY,
+  title        TEXT NOT NULL,
+  status       TEXT NOT NULL,
+  kind         TEXT NOT NULL,
+  parent       TEXT,
+  milestone    TEXT,
+  blocked_by   TEXT NOT NULL,
+  labels       TEXT NOT NULL,
+  priority     TEXT NOT NULL,
+  assignee     TEXT NOT NULL,
+  created      TEXT NOT NULL,
+  updated      TEXT NOT NULL,
+  external     TEXT,
+  self_review  INTEGER NOT NULL,
+  fix_loop     INTEGER,
+  writes       TEXT NOT NULL,
+  risk         TEXT NOT NULL,
+  model        TEXT,
+  archived_at  TEXT,
+  exercised    INTEGER NOT NULL,
+  derived_from TEXT,
+  slug         TEXT NOT NULL,
+  body         TEXT NOT NULL
+);
+PRAGMA user_version = 1;
+`);
+    v1.close();
+
+    const db = openDispatchDb(dbPath);
+    openDbs.push(db);
+    const columns = db
+      .prepare('PRAGMA table_info(tasks)')
+      .all()
+      .map((row) => (row as { name: string }).name);
+    expect(columns).toContain('attachments');
+    expect(dbVersion(db)).toBe(DISPATCH_DB_VERSION);
+    // And the migrated file is a working store.
+    const store = new SqliteTaskStore(root, db);
+    const doc = store.create({ title: 'After the move' });
+    expect(store.get(doc.meta.id)).toEqual(doc);
+  });
+
   // A database a newer Dispatch wrote can hold columns this build's DDL has no
   // idea about. Opening it anyway would apply the older schema over it and
   // stamp the version back down, so the file would then look current to every
@@ -608,7 +683,7 @@ describe('SqliteTaskStore rejects rows it cannot trust', () => {
   // read as [] would erase its declared write scope. The file backend throws a
   // TaskParseError here, so the database backend raises too.
   it('throws rather than defaulting a damaged JSON column', () => {
-    for (const column of ['blocked_by', 'labels', 'writes']) {
+    for (const column of ['blocked_by', 'labels', 'writes', 'attachments']) {
       const db = openDispatchDb(':memory:');
       openDbs.push(db);
       const store = storeWith(db);
@@ -616,6 +691,16 @@ describe('SqliteTaskStore rejects rows it cannot trust', () => {
         title: 'Blocked',
         blockedBy: ['t-aaaaaa'],
         writes: ['src/**'],
+      });
+      store.update(doc.meta.id, {
+        attachments: [
+          {
+            name: 'spec.png',
+            path: `.dispatch/attachments/${doc.meta.id}/spec.png`,
+            size: 1,
+            addedAt: '2026-09-20T10:00:00.000Z',
+          },
+        ],
       });
       db.prepare(`UPDATE tasks SET ${column} = ? WHERE id = ?`).run(
         'not json',
@@ -625,6 +710,23 @@ describe('SqliteTaskStore rejects rows it cannot trust', () => {
       expect(() => store.get(doc.meta.id)).toThrow(column);
       expect(() => store.list()).toThrow(SqliteRowError);
     }
+  });
+
+  // Valid JSON of the wrong shape is as damaged as no JSON: an entry without
+  // a path or size could not be opened or labelled.
+  it('throws on an attachments value that is not a list of attachments', () => {
+    const db = openDispatchDb(':memory:');
+    openDbs.push(db);
+    const store = storeWith(db);
+    const doc = store.create({ title: 'Carries' });
+    db.prepare('UPDATE tasks SET attachments = ? WHERE id = ?').run(
+      '[{"name":1}]',
+      doc.meta.id
+    );
+    expect(() => store.get(doc.meta.id)).toThrow(SqliteRowError);
+    expect(() => store.get(doc.meta.id)).toThrow(
+      'is not an array of attachments'
+    );
   });
 
   it('throws on an enum column outside its set', () => {

@@ -61,6 +61,18 @@ export type GlobalView =
   | 'settings'
   | 'gallery';
 
+/** The pages of the Settings view, in its nav order. Lives here rather than in
+ * `SettingsView` so a `setGlobalView('settings', { page })` can name one — the rail's
+ * `Connect Linear` and the status strip's gear both land on Integrations. */
+export type SettingsPage =
+  | 'general'
+  | 'autonomy'
+  | 'agents'
+  | 'integrations'
+  | 'notifications'
+  | 'daemon'
+  | 'diffs';
+
 export interface NavState {
   /** Which side of the sidebar's split is active — a project's own work, or one of the
    * global views. Kept separate from `activeProjectId` so switching to a global view
@@ -71,6 +83,10 @@ export interface NavState {
   activeProjectId: string | null;
   projectView: ProjectView;
   globalView: GlobalView;
+  /** The Settings page the last `setGlobalView('settings', { page })` asked for, or `null`
+   * when none has — Settings then opens on General. Kept across other views so a return
+   * to Settings lands where it was asked to. */
+  settingsPage: SettingsPage | null;
   /** Task id shown in the side peek panel, or `null` when it's closed. */
   peekTaskId: string | null;
   /** Run id the task view's Chat/Diff tabs are pinned to, or `null` when none is selected. */
@@ -131,6 +147,7 @@ export const initialNavState: NavState = {
   activeProjectId: null,
   projectView: 'overview',
   globalView: 'sessions',
+  settingsPage: null,
   peekTaskId: null,
   activeRunId: null,
   activeDraftId: null,
@@ -185,7 +202,9 @@ function pushHistory(state: NavState, next: NavEntry): NavState {
 export type NavAction =
   | { type: 'selectProject'; projectId: string }
   | { type: 'setProjectView'; view: ProjectView }
-  | { type: 'setGlobalView'; view: GlobalView }
+  /** `page` lands Settings on one of its pages; without it Settings keeps the last page
+   * asked for. Ignored for every other global view. */
+  | { type: 'setGlobalView'; view: GlobalView; page?: SettingsPage }
   | { type: 'openPeek'; taskId: string }
   | { type: 'closePeek' }
   | { type: 'openRun'; runId: string }
@@ -283,6 +302,10 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         ...state,
         section: 'global',
         globalView: action.view,
+        settingsPage:
+          action.view === 'settings'
+            ? (action.page ?? state.settingsPage)
+            : state.settingsPage,
         peekTaskId: null,
       };
     case 'openPeek':

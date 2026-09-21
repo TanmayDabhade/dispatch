@@ -33,9 +33,7 @@ import {
   type BoardLane,
   countLaneStatuses,
   dropZoneId,
-  groupTasksByEpicLane,
-  groupTasksByStatus,
-  laneKey,
+  groupTasksByLane,
   statusFromDropZoneId,
 } from '../../lib/boardGrouping';
 import type { WorkEpicOptions } from '../../lib/epicSession';
@@ -47,6 +45,7 @@ import {
 } from '../../lib/tasksPrefs';
 import { useShellActions } from '../shell/ShellActionsContext';
 import { EpicLaneHeader } from './EpicLaneHeader';
+import { LaneHeader } from './LaneHeader';
 import { StatusIcon } from './StatusIcon';
 import { TaskCardTile } from './TaskCardTile';
 import { cn } from '@/lib/utils';
@@ -84,13 +83,11 @@ interface TaskBoardProps {
   epicConcurrencyDefault: number;
   /** Every epic in the project — one lane per epic that has children, in this order. */
   epics: TaskDoc[];
-  /** One lane per epic (Display › Grouping: Epic) vs one flat set of status columns with
-   * an epic crumb on each card (the default). */
-  groupByEpic?: boolean;
-  /** The Display popover's model — the card properties. Defaults to `DEFAULT_TASKS_DISPLAY`;
-   * the ordering is applied by the caller (see `tasks`). */
+  /** The Display popover's model — the card properties, and `subGrouping` for the swim
+   * lanes (`none` is the flat board with an epic crumb on each card). Defaults to
+   * `DEFAULT_TASKS_DISPLAY`; the ordering is applied by the caller (see `tasks`). */
   display?: TasksDisplayPrefs;
-  /** Lane keys (see `laneKey`) whose epic is folded up right now. */
+  /** Lane keys (`BoardLane.key`) folded up right now. */
   collapsedLaneKeys: ReadonlySet<string>;
   /** Flips one lane between expanded and collapsed — owned by `BoardView`, which also needs the
    * collapsed set to keep j/k off hidden cards. */
@@ -294,10 +291,11 @@ function ColumnHeader({
 
 /**
  * The board (§5): status columns 348px wide sitting directly on the panel, a shared 44px
- * header row that sticks to the top, and — when grouped by epic — one `EpicLaneHeader`
- * per epic over its own set of columns. Columns come from the project's own
- * `.dispatch/config.yml` order, never a hardcoded status list (grouping itself is
- * `lib/boardGrouping.ts`'s pure, unit-tested `groupTasksByEpicLane`).
+ * header row that sticks to the top, and — under Display › Sub-grouping — one swim lane
+ * per epic (`EpicLaneHeader`), assignee or priority (`LaneHeader`) over its own set of
+ * columns. Columns come from the project's own `.dispatch/config.yml` order, never a
+ * hardcoded status list (the lane split itself is `lib/boardGrouping.ts`'s pure, unit-tested
+ * `groupTasksByLane`).
  *
  * Epics are containers rather than cards — they head a lane instead of sitting in a status
  * column, so only plain tasks are ever dragged. A `PointerSensor` with a 6px activation
@@ -317,7 +315,6 @@ export function TaskBoard({
   readinessById,
   epicConcurrencyDefault,
   epics,
-  groupByEpic = false,
   display = DEFAULT_TASKS_DISPLAY,
   collapsedLaneKeys,
   onToggleLane,
@@ -347,23 +344,10 @@ export function TaskBoard({
   // The same lanes `BoardView` derives for its j/k order, from the same pure function and the
   // same (pre-sorted) input — deliberately recomputed here rather than passed down, so the two
   // never have to be kept in sync as a pair of props that could disagree.
-  const lanes = useMemo<BoardLane[]>(() => {
-    if (groupByEpic) return groupTasksByEpicLane(tasks, statuses, epics);
-    // Flat board: one headerless lane holding every task (epics are lane headings in the
-    // grouped board, so they have no card to show here either).
-    const columns = groupTasksByStatus(
-      tasks.filter((t) => t.meta.kind !== 'epic'),
-      statuses
-    );
-    return [
-      {
-        epicId: null,
-        title: '',
-        columns,
-        total: columns.reduce((n, c) => n + c.tasks.length, 0),
-      },
-    ];
-  }, [tasks, statuses, epics, groupByEpic]);
+  const lanes = useMemo<BoardLane[]>(
+    () => groupTasksByLane(tasks, statuses, epics, display.subGrouping),
+    [tasks, statuses, epics, display.subGrouping]
+  );
   const statusCounts = useMemo(
     () => countLaneStatuses(lanes, statuses),
     [lanes, statuses]
@@ -396,6 +380,12 @@ export function TaskBoard({
     for (const doc of tasks) map.set(doc.meta.id, doc);
     return map;
   }, [tasks]);
+
+  // Every label the board's tasks use — the vocabulary a card's label picker offers.
+  const labelCatalogue = useMemo(
+    () => [...new Set(tasks.flatMap((t) => t.meta.labels))].sort(),
+    [tasks]
+  );
 
   // Every epic's children, bucketed in one pass — feeds `EpicLaneHeader`'s rolled-up status
   // and dependency-graph modal, which need the epic's own children, not the whole project.
@@ -493,14 +483,15 @@ export function TaskBoard({
 
         <div className="flex w-max flex-col gap-4">
           {lanes.map((lane, laneIndex) => {
-            const key = laneKey(lane.epicId);
+            const key = lane.key;
             // The flat board's single lane has no header to collapse from — always open.
-            const expanded = !groupByEpic || !collapsedLaneKeys.has(key);
+            const expanded =
+              lane.kind === 'none' || !collapsedLaneKeys.has(key);
             const epic =
               lane.epicId !== null ? (epicById.get(lane.epicId) ?? null) : null;
             return (
               <section key={key} data-lane-key={key}>
-                {groupByEpic && (
+                {lane.kind === 'epic' && (
                   <div className="px-3">
                     <EpicLaneHeader
                       epic={epic}
@@ -535,6 +526,15 @@ export function TaskBoard({
                     />
                   </div>
                 )}
+                {(lane.kind === 'assignee' || lane.kind === 'priority') && (
+                  <div className="px-3">
+                    <LaneHeader
+                      lane={lane}
+                      expanded={expanded}
+                      onToggle={() => onToggleLane(key)}
+                    />
+                  </div>
+                )}
                 {expanded && (
                   <div className="flex items-start">
                     {lane.columns.map(({ status, tasks: laneTasks }) => (
@@ -562,17 +562,19 @@ export function TaskBoard({
                                     )}
                                     run={latestRunByTaskId.get(doc.meta.id)}
                                     readiness={readinessById?.get(doc.meta.id)}
-                                    // Grouped board: the lane heading already names the
-                                    // epic, so the card skips the crumb. Flat board: the
-                                    // crumb is how a card keeps its epic.
+                                    // Epic lanes: the lane heading already names the
+                                    // epic, so the card skips the crumb. Every other
+                                    // board: the crumb is how a card keeps its epic.
                                     epicTitle={
-                                      groupByEpic || doc.meta.parent === null
+                                      lane.kind === 'epic' ||
+                                      doc.meta.parent === null
                                         ? undefined
                                         : (epicById.get(doc.meta.parent)?.meta
                                             .title ?? doc.meta.parent)
                                     }
                                     statuses={statuses}
                                     properties={display.properties}
+                                    labelCatalogue={labelCatalogue}
                                     onStatusChange={(next) =>
                                       void onMoveStatus?.(doc.meta.id, next)
                                     }

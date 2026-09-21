@@ -6,6 +6,7 @@ import { type ReactElement, useState } from 'react';
 import {
   AssigneeControl,
   EpicControl,
+  LabelsControl,
   PriorityControl,
   StatusControl,
 } from './PropertyControls';
@@ -29,6 +30,24 @@ function renderOpen(ui: ReactElement) {
 
 function epic(id: string, title: string): TaskDoc {
   return { meta: { id, title, kind: 'epic' }, body: '' } as unknown as TaskDoc;
+}
+
+/** The label picker's rows, in order, with whether each carries the check. */
+function labelOptions(): { label: string; checked: boolean; dot: boolean }[] {
+  return screen.getAllByRole('option').map((o) => ({
+    label: o.textContent ?? '',
+    checked: o.querySelector('svg.lucide-check') !== null,
+    dot: o.querySelector('[data-slot=label-dot]') !== null,
+  }));
+}
+
+/** cmdk selects an item on click after a pointer-down. */
+function pick(name: RegExp) {
+  return settle(() => {
+    const option = screen.getByRole('option', { name });
+    fireEvent.pointerDown(option);
+    fireEvent.click(option);
+  });
 }
 
 describe('PropertyControls', () => {
@@ -220,5 +239,131 @@ describe('PropertyControls', () => {
       'Search',
     ]);
     expect(items[2]?.dataset['selected']).toBe('true');
+  });
+
+  test('the labels row face is the Add label ghost row', () => {
+    render(
+      <LabelsControl
+        value={['ui']}
+        candidates={['ui', 'api']}
+        onChange={() => {}}
+      />
+    );
+    const trigger = screen.getByRole('button', { name: 'Add label' });
+    expect(trigger.className).toContain('h-8');
+    expect(trigger.className).toContain('rounded-control');
+    expect(trigger.textContent).toBe('Add label');
+    expect(screen.queryByRole('option')).toBeNull();
+  });
+
+  test('an inline labels control is a 20px Tag glyph unless given a face', () => {
+    render(
+      <>
+        <LabelsControl
+          value={[]}
+          candidates={[]}
+          onChange={() => {}}
+          variant="inline"
+        />
+        <LabelsControl
+          value={['ui']}
+          candidates={[]}
+          onChange={() => {}}
+          variant="inline"
+        >
+          <span data-slot="face">ui</span>
+        </LabelsControl>
+      </>
+    );
+    const [glyph, faced] = screen.getAllByRole('button', {
+      name: 'Change labels',
+    });
+    expect(glyph?.className).toContain('size-5');
+    expect(glyph?.querySelector('svg.lucide-tag')).not.toBeNull();
+    expect(faced?.querySelector('[data-slot=face]')?.textContent).toBe('ui');
+    expect(faced?.querySelector('svg.lucide-tag')).toBeNull();
+  });
+
+  test('a controlled open lists every label with its dot and a check on the applied ones', async () => {
+    await renderOpen(
+      <LabelsControl
+        value={['ui', 'local-only']}
+        candidates={['ui', 'api', 'infra']}
+        onChange={() => {}}
+        open
+        onOpenChange={() => {}}
+      />
+    );
+    expect(screen.getByPlaceholderText('Label…')).not.toBeNull();
+    // The sorted union of the vocabulary and the task's own labels.
+    expect(labelOptions()).toEqual([
+      { label: 'api', checked: false, dot: true },
+      { label: 'infra', checked: false, dot: true },
+      { label: 'local-only', checked: true, dot: true },
+      { label: 'ui', checked: true, dot: true },
+    ]);
+  });
+
+  test('picking toggles membership, reports the whole list and keeps the popover open', async () => {
+    const changes: string[][] = [];
+    const opens: boolean[] = [];
+    await renderOpen(
+      <LabelsControl
+        value={['ui', 'ui']}
+        candidates={['ui', 'api']}
+        onChange={(next) => changes.push(next)}
+        open
+        onOpenChange={(o) => opens.push(o)}
+      />
+    );
+    await pick(/^api$/);
+    await pick(/^ui$/);
+    expect(changes).toEqual([['ui', 'api'], []]);
+    expect(opens).toEqual([]);
+    expect(screen.getByPlaceholderText('Label…')).not.toBeNull();
+  });
+
+  test('typing an unknown name offers Create and appends it', async () => {
+    const changes: string[][] = [];
+    await renderOpen(
+      <LabelsControl
+        value={['ui']}
+        candidates={['ui', 'api']}
+        onChange={(next) => changes.push(next)}
+        open
+        onOpenChange={() => {}}
+      />
+    );
+    await settle(() => {
+      fireEvent.change(screen.getByPlaceholderText('Label…'), {
+        target: { value: 'docs' },
+      });
+    });
+    expect(screen.queryByText('Type a new label.')).toBeNull();
+    await pick(/Create “docs”/);
+    expect(changes).toEqual([['ui', 'docs']]);
+    // The search resets for the next pick instead of the popover closing.
+    expect(screen.getByPlaceholderText<HTMLInputElement>('Label…').value).toBe(
+      ''
+    );
+  });
+
+  test('a case-variant of an existing label is not offered for creation', async () => {
+    await renderOpen(
+      <LabelsControl
+        value={[]}
+        candidates={['ui']}
+        onChange={() => {}}
+        open
+        onOpenChange={() => {}}
+      />
+    );
+    await settle(() => {
+      fireEvent.change(screen.getByPlaceholderText('Label…'), {
+        target: { value: 'UI' },
+      });
+    });
+    expect(screen.queryByRole('option', { name: /Create/ })).toBeNull();
+    expect(labelOptions().map((o) => o.label)).toEqual(['ui']);
   });
 });

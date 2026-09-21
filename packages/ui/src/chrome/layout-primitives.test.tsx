@@ -46,8 +46,8 @@ test('an empty state renders heading, description and both pills', () => {
   expect(secondary).toBe(1);
 });
 
-// SectionLabel is pre-existing; this only pins the behaviour Plan 2 relies on
-// when it migrates the 16 dense-label sites onto it.
+// SectionLabel is pre-existing; this only pins the count-and-rule behaviour
+// its section-heading consumers rely on.
 test('a section label renders its count and rule', () => {
   const { container } = render(
     <SectionLabel count={5} rule>

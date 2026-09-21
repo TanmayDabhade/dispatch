@@ -23,7 +23,7 @@ export type TasksGrouping =
   | 'assignee'
   | 'priority'
   | 'none';
-export type TasksSubGrouping = 'none' | 'epic' | 'assignee';
+export type TasksSubGrouping = 'none' | 'epic' | 'assignee' | 'priority';
 export type TasksOrdering =
   | 'priority'
   | 'updated'
@@ -68,6 +68,9 @@ export interface TasksDisplayPrefs {
 
 export const TASK_FILTERS_STORAGE_KEY = 'dispatch:tasks-filters-v1';
 export const TASKS_DISPLAY_STORAGE_KEY = 'dispatch:tasks-display-v1';
+/** Stamped into every serialised display model. Payloads without it (or below it) were
+ * written before board lanes moved to `subGrouping` and go through that migration once. */
+const TASKS_DISPLAY_VERSION = 2;
 
 export const EMPTY_TASK_FILTERS: TaskFilters = { statuses: [], priorities: [] };
 
@@ -80,7 +83,12 @@ const GROUPINGS: readonly TasksGrouping[] = [
   'priority',
   'none',
 ];
-const SUB_GROUPINGS: readonly TasksSubGrouping[] = ['none', 'epic', 'assignee'];
+const SUB_GROUPINGS: readonly TasksSubGrouping[] = [
+  'none',
+  'epic',
+  'assignee',
+  'priority',
+];
 const ORDERINGS: readonly TasksOrdering[] = [
   'priority',
   'updated',
@@ -168,53 +176,88 @@ export function parseTaskFilters(stored: string | null): TaskFilters {
   }
 }
 
-/** Reads the display model back. Field by field, so a payload written by an older build
- * (or the retired `dispatch:board-columns-v1` / `dispatch:list-hidden-columns-v1` shapes, which
- * share none of these keys) lands on the defaults for whatever it does not carry. */
+/** The field-by-field walk behind `parseTasksDisplay`, exposed so a display model nested
+ * inside another payload (a saved view) parses the same way. A payload written by an older
+ * build (or the retired `dispatch:board-columns-v1` / `dispatch:list-hidden-columns-v1`
+ * shapes, which share none of these keys) lands on the defaults for whatever it does not
+ * carry. `null` for anything that is not a plain object. */
+export function tasksDisplayFromValue(
+  value: unknown
+): TasksDisplayPrefs | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const d = DEFAULT_TASKS_DISPLAY;
+  const properties = Array.isArray(record.properties)
+    ? new Set(
+        record.properties.filter((p): p is TaskProperty =>
+          (TASK_PROPERTIES as readonly unknown[]).includes(p)
+        )
+      )
+    : d.properties;
+  const layout = oneOf(record.layout, LAYOUTS, d.layout);
+  const grouping = oneOf(record.grouping, GROUPINGS, d.grouping);
+  let subGrouping = oneOf(record.subGrouping, SUB_GROUPINGS, d.subGrouping);
+  // Board lanes moved from `grouping` to `subGrouping`: a board stored as grouped by epic
+  // with no sub-grouping of its own keeps its epic lanes. `grouping` stays as stored — the
+  // list still groups by it. Only unstamped payloads migrate; a stamped one wrote
+  // `subGrouping: 'none'` deliberately (the board's Ungroup) and must stay that way.
+  const stamped =
+    typeof record.version === 'number' &&
+    record.version >= TASKS_DISPLAY_VERSION;
+  if (
+    !stamped &&
+    layout === 'board' &&
+    grouping === 'epic' &&
+    subGrouping === 'none'
+  ) {
+    subGrouping = 'epic';
+  }
+  return {
+    layout,
+    grouping,
+    subGrouping,
+    ordering: oneOf(record.ordering, ORDERINGS, d.ordering),
+    orderDir: oneOf(record.orderDir, ORDER_DIRS, d.orderDir),
+    completedByRecency: bool(record.completedByRecency, d.completedByRecency),
+    showSubtasks: bool(record.showSubtasks, d.showSubtasks),
+    nestedSubtasks: bool(record.nestedSubtasks, d.nestedSubtasks),
+    showEmptyGroups: bool(record.showEmptyGroups, d.showEmptyGroups),
+    properties,
+    dateField: oneOf(record.dateField, DATE_FIELDS, d.dateField),
+  };
+}
+
+/** Reads the display model back from storage; bad JSON or a non-object payload is the
+ * defaults. */
 export function parseTasksDisplay(stored: string | null): TasksDisplayPrefs {
   if (stored === null) return DEFAULT_TASKS_DISPLAY;
   try {
-    const parsed: unknown = JSON.parse(stored);
-    if (
-      typeof parsed !== 'object' ||
-      parsed === null ||
-      Array.isArray(parsed)
-    ) {
-      return DEFAULT_TASKS_DISPLAY;
-    }
-    const record = parsed as Record<string, unknown>;
-    const d = DEFAULT_TASKS_DISPLAY;
-    const properties = Array.isArray(record.properties)
-      ? new Set(
-          record.properties.filter((p): p is TaskProperty =>
-            (TASK_PROPERTIES as readonly unknown[]).includes(p)
-          )
-        )
-      : d.properties;
-    return {
-      layout: oneOf(record.layout, LAYOUTS, d.layout),
-      grouping: oneOf(record.grouping, GROUPINGS, d.grouping),
-      subGrouping: oneOf(record.subGrouping, SUB_GROUPINGS, d.subGrouping),
-      ordering: oneOf(record.ordering, ORDERINGS, d.ordering),
-      orderDir: oneOf(record.orderDir, ORDER_DIRS, d.orderDir),
-      completedByRecency: bool(record.completedByRecency, d.completedByRecency),
-      showSubtasks: bool(record.showSubtasks, d.showSubtasks),
-      nestedSubtasks: bool(record.nestedSubtasks, d.nestedSubtasks),
-      showEmptyGroups: bool(record.showEmptyGroups, d.showEmptyGroups),
-      properties,
-      dateField: oneOf(record.dateField, DATE_FIELDS, d.dateField),
-    };
+    return tasksDisplayFromValue(JSON.parse(stored)) ?? DEFAULT_TASKS_DISPLAY;
   } catch {
     return DEFAULT_TASKS_DISPLAY;
   }
 }
 
-/** The storage payload; `properties` is written as a sorted array so a given set always
- * serialises the same way. */
+/** The storage payload. Field order is fixed here and `properties` is written as a sorted
+ * array, so two equal models always serialize to the same string whatever order their
+ * fields were assigned in — `savedViews.ts` compares these strings. The `version` stamp
+ * marks the payload as post-migration (see `tasksDisplayFromValue`). */
 export function serializeTasksDisplay(prefs: TasksDisplayPrefs): string {
   return JSON.stringify({
-    ...prefs,
+    version: TASKS_DISPLAY_VERSION,
+    layout: prefs.layout,
+    grouping: prefs.grouping,
+    subGrouping: prefs.subGrouping,
+    ordering: prefs.ordering,
+    orderDir: prefs.orderDir,
+    completedByRecency: prefs.completedByRecency,
+    showSubtasks: prefs.showSubtasks,
+    nestedSubtasks: prefs.nestedSubtasks,
+    showEmptyGroups: prefs.showEmptyGroups,
     properties: [...prefs.properties].sort(),
+    dateField: prefs.dateField,
   });
 }
 

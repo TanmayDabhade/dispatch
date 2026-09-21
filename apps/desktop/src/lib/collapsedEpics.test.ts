@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 
 import {
-  COLLAPSED_EPICS_STORAGE_KEY,
   COLLAPSED_GROUPS_STORAGE_KEY,
+  COLLAPSED_LANES_STORAGE_KEY,
   parseCollapsedGroups,
   readCollapsedGroups,
   serializeCollapsedGroups,
@@ -69,7 +69,7 @@ describe('storage key', () => {
   // Session-scoped by design — see the module comment. The key living in its own namespace keeps
   // it from colliding with the view-mode preference, which is deliberately long-lived.
   test('is namespaced to dispatch', () => {
-    expect(COLLAPSED_EPICS_STORAGE_KEY).toStartWith('dispatch:');
+    expect(COLLAPSED_LANES_STORAGE_KEY).toStartWith('dispatch:');
     expect(COLLAPSED_GROUPS_STORAGE_KEY).toBe('dispatch:list-collapsed-groups');
     // The Milestones page stores "flipped from default", so it must not share the list's key.
     expect(TOGGLED_MILESTONES_STORAGE_KEY).not.toBe(

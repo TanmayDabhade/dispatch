@@ -9,6 +9,7 @@ import {
 import { existsSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
+import { FakeAiTaskFilter } from './aiTaskFilter.js';
 import { mintDaemonTokens } from './api.js';
 import { makeFakeGhRunner } from './fakeGh.js';
 import {
@@ -455,6 +456,9 @@ const handle = await startServer({
         );
       }
     : undefined,
+  // The keyword-table filter, so an e2e or dev daemon's AI filter never
+  // reaches a model.
+  aiTaskFilter: enableFakes ? new FakeAiTaskFilter() : undefined,
   registerOverseers: enableFakes
     ? (overseerManager) => {
         overseerManager.registerBackend('claude', new ClaudeOverseer(rootDir));
@@ -483,7 +487,7 @@ console.log(
 
 if (enableFakes) {
   console.log(
-    'dispatchd: DISPATCH_ENABLE_FAKES=1 — fake executor/planner/overseer registered (test/e2e only)'
+    'dispatchd: DISPATCH_ENABLE_FAKES=1 — fake executor/planner/overseer/AI filter registered (test/e2e only)'
   );
 }
 

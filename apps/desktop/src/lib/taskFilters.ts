@@ -122,6 +122,25 @@ function parseClause(value: unknown): FilterClause | null {
   };
 }
 
+/** The object walk behind `parseTaskFilterSet`, exposed so a filter set nested inside another
+ * payload (a saved view) parses the same way: unknown facets and empty clauses drop, a bad
+ * `join` reads as `and`. `null` for anything that is not a plain object. */
+export function taskFilterSetFromValue(value: unknown): TaskFilterSet | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const clauses = Array.isArray(record.clauses)
+    ? record.clauses
+        .map(parseClause)
+        .filter((c): c is FilterClause => c !== null)
+    : [];
+  return {
+    clauses,
+    join: record.join === 'or' ? 'or' : 'and',
+  };
+}
+
 /** Reads the v2 payload, falling back to a migration of the v1 chip shape (`statuses`,
  * `priorities`) when no v2 value has been written yet. Anything malformed lands on the
  * empty set — a bad preference must never break the Tasks page. */
@@ -131,19 +150,8 @@ export function parseTaskFilterSet(
 ): TaskFilterSet {
   if (storedV2 !== null) {
     try {
-      const parsed: unknown = JSON.parse(storedV2);
-      if (typeof parsed === 'object' && parsed !== null) {
-        const record = parsed as Record<string, unknown>;
-        const clauses = Array.isArray(record.clauses)
-          ? record.clauses
-              .map(parseClause)
-              .filter((c): c is FilterClause => c !== null)
-          : [];
-        return {
-          clauses,
-          join: record.join === 'or' ? 'or' : 'and',
-        };
-      }
+      const filters = taskFilterSetFromValue(JSON.parse(storedV2));
+      if (filters !== null) return filters;
     } catch {
       // Fall through to the legacy shape, then the empty set.
     }
@@ -168,8 +176,17 @@ export function migrateLegacyFilters(legacyV1: string | null): TaskFilterSet {
     : { clauses, join: 'and' };
 }
 
+/** The storage payload, in a fixed field order so two equal sets always serialize to the
+ * same string — `savedViews.ts` compares these strings. */
 export function serializeTaskFilterSet(filters: TaskFilterSet): string {
-  return JSON.stringify(filters);
+  return JSON.stringify({
+    clauses: filters.clauses.map((c) => ({
+      facet: c.facet,
+      op: c.op,
+      values: c.values,
+    })),
+    join: filters.join,
+  });
 }
 
 export function hasActiveTaskFilters(filters: TaskFilterSet): boolean {

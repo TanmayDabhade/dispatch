@@ -133,9 +133,6 @@
   --color-status-green: var(--status-green);
   --color-priority-urgent: var(--priority-urgent);
 
-  /* The dense-row type treatments are `.dense-label` / `.dense-meta` in global.css, not
-     utilities here. */
-
   /* Hairline edges as shadow utilities: `shadow-hairline`, `shadow-hairline-bottom`, … */
   --shadow-hairline: var(--hairline);
   --shadow-hairline-strong: var(--hairline-strong);

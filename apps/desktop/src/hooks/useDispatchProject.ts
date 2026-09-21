@@ -214,6 +214,10 @@ export interface DispatchProjectData {
 
   tasks: TaskDoc[];
   tasksLoading: boolean;
+  /** True once both task lists (plain and archived-inclusive) have been fetched for this
+   * connection — readiness, not an in-flight flag, since `isLoading` is false for a query
+   * that is merely disabled (no daemon client yet). The deep-link router waits on this. */
+  tasksReady: boolean;
   // Task 8 fix: the same task list as `tasks`, but including archived tasks
   // (`fetchTasks({ archived: true })`) — feed this, not `tasks`, to
   // countMergeReady, or an archived done own-task/blocker will be missing
@@ -477,7 +481,11 @@ export interface DispatchProjectData {
 
   handleUpdate: (id: string, patch: UpdatePatch) => Promise<void>;
   moveTaskStatus: (id: string, status: string) => Promise<void>;
-  handleCreate: (input: CreateInput) => Promise<void>;
+  /** Resolves with the created doc (the create dialog attaches pending files to its id);
+   * `null` without a client. */
+  handleCreate: (input: CreateInput) => Promise<TaskDoc | null>;
+  /** Multipart upload against a task; `task.changed` then refreshes the list. */
+  handleUploadAttachments: (taskId: string, files: File[]) => Promise<void>;
   /** Every task draft currently held in memory, newest first — feeds the app-wide drafts
    * tray. Running and ready drafts survive navigation and a tray reopen; see `drafts`. */
   drafts: DraftRecord[];
@@ -803,14 +811,15 @@ export function useDispatchProject(
     },
     enabled: client !== null,
   });
-  const { data: allTasksIncludingArchived } = useQuery({
-    queryKey: allTasksQueryKey,
-    queryFn: () => {
-      if (client === null) throw new Error('dispatchd client not ready');
-      return client.fetchTasks({ archived: true });
-    },
-    enabled: client !== null,
-  });
+  const { data: allTasksIncludingArchived, isFetched: allTasksFetched } =
+    useQuery({
+      queryKey: allTasksQueryKey,
+      queryFn: () => {
+        if (client === null) throw new Error('dispatchd client not ready');
+        return client.fetchTasks({ archived: true });
+      },
+      enabled: client !== null,
+    });
   const { data: config } = useQuery({
     queryKey: configQueryKey,
     queryFn: () => {
@@ -1797,13 +1806,26 @@ export function useDispatchProject(
   );
 
   const handleCreate = useCallback(
-    async (input: CreateInput): Promise<void> => {
-      if (client === null) return;
-      await client.createTask(input);
+    async (input: CreateInput): Promise<TaskDoc | null> => {
+      if (client === null) return null;
+      const created = await client.createTask(input);
       void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
       void queryClient.invalidateQueries({ queryKey: readyQueryKey });
+      return created;
     },
     [client, queryClient, tasksQueryKey, readyQueryKey]
+  );
+
+  // The create dialog's post-create upload; the `handle` prefix puts it under
+  // withActionFeedback's error toasts. The task page's row talks to the client
+  // itself and toasts per file.
+  const handleUploadAttachments = useCallback(
+    async (taskId: string, files: File[]): Promise<void> => {
+      if (client === null) return;
+      await client.uploadTaskAttachments(taskId, files);
+      void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+    },
+    [client, queryClient, tasksQueryKey]
   );
 
   // Seeds the drafts query with the 202's `running` record immediately, so the tray shows it
@@ -2676,6 +2698,7 @@ export function useDispatchProject(
 
     tasks: tasks ?? [],
     tasksLoading,
+    tasksReady: tasks !== undefined && allTasksFetched,
     tasksIncludingArchived: allTasksIncludingArchived ?? [],
     archivedTasks,
     showArchived,
@@ -2734,6 +2757,7 @@ export function useDispatchProject(
     handleUpdate,
     moveTaskStatus,
     handleCreate,
+    handleUploadAttachments,
     drafts: drafts ?? [],
     agentSessions: agentSessions ?? [],
     handleStartDraft,

@@ -6,6 +6,7 @@ import { canonicalStatus } from './status.js';
 import type {
   Assignee,
   Priority,
+  TaskAttachment,
   TaskDoc,
   TaskKind,
   TaskMeta,
@@ -99,6 +100,7 @@ export function parseTaskFile(content: string, file?: string): TaskDoc {
       );
     }
   }
+  const attachments = parseAttachments(raw.attachments, file);
   const meta: TaskMeta = {
     id: String(raw.id),
     title: String(raw.title),
@@ -127,8 +129,44 @@ export function parseTaskFile(content: string, file?: string): TaskDoc {
     ...(raw['derived-from'] == null
       ? {}
       : { derivedFrom: String(raw['derived-from']) }),
+    ...(attachments.length === 0 ? {} : { attachments }),
   };
   return { meta, body: content.slice(m[0].length) };
+}
+
+// Validates the frontmatter's `attachments:` list — maps carrying string
+// `name`/`path`/`added-at` and a non-negative `size` — into TaskAttachments.
+// An absent or empty list is [] (the key stays off the meta).
+function parseAttachments(raw: unknown, file?: string): TaskAttachment[] {
+  if (raw == null) return [];
+  if (!Array.isArray(raw)) {
+    throw new TaskParseError('invalid attachments: expected a list', file);
+  }
+  return raw.map((entry) => {
+    const item =
+      typeof entry === 'object' && entry !== null && !Array.isArray(entry)
+        ? (entry as Record<string, unknown>)
+        : null;
+    const name = item?.name;
+    const path = item?.path;
+    const size = item?.size;
+    const addedAt = item?.['added-at'];
+    if (
+      item === null ||
+      typeof name !== 'string' ||
+      typeof path !== 'string' ||
+      typeof addedAt !== 'string' ||
+      typeof size !== 'number' ||
+      !Number.isFinite(size) ||
+      size < 0
+    ) {
+      throw new TaskParseError(
+        'invalid attachments: expected entries with name, path, size and added-at',
+        file
+      );
+    }
+    return { name, path, size, addedAt };
+  });
 }
 
 export function serializeTaskFile(doc: TaskDoc): string {
@@ -163,6 +201,16 @@ export function serializeTaskFile(doc: TaskDoc): string {
     ...(meta.derivedFrom === undefined
       ? {}
       : { 'derived-from': meta.derivedFrom }),
+    ...(meta.attachments === undefined || meta.attachments.length === 0
+      ? {}
+      : {
+          attachments: meta.attachments.map((a) => ({
+            name: a.name,
+            path: a.path,
+            size: a.size,
+            'added-at': a.addedAt,
+          })),
+        }),
   };
   return `---\n${YAML.stringify(fm).trimEnd()}\n---\n${doc.body}`;
 }

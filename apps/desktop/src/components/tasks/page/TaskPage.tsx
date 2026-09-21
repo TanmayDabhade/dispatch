@@ -22,6 +22,7 @@ import {
   Maximize2,
   Play,
   Sparkles,
+  Star,
   Waypoints,
   X,
 } from 'lucide-react';
@@ -39,6 +40,7 @@ import {
   useTaskVerification,
 } from '../../../hooks/useOrchestration';
 import { parseActivity } from '../../../lib/activityFeed';
+import { filesFromDataTransfer } from '../../../lib/attachments';
 import { isFakeExecutorDevToolEnabled } from '../../../lib/devTools';
 import { fixLoopNeedsRuling } from '../../../lib/fixLoopStatus';
 import {
@@ -62,6 +64,8 @@ import {
 } from '../../../lib/taskEnrich';
 import { ImpactPanel } from '../../impact/ImpactPanel';
 import { PlanQuestionsForm } from '../../plans/PlanQuestionsForm';
+import { useDeepLinkActions } from '../../shell/DeepLinkContext';
+import { useSavedViewsContext } from '../../shell/SavedViewsContext';
 import { useShellActions } from '../../shell/ShellActionsContext';
 import { useToasts } from '../../shell/Toasts';
 import { FindingsPanel } from '../detail/FindingsPanel';
@@ -73,6 +77,7 @@ import { EnrichReview } from '../EnrichReview';
 import { EpicDagModal } from '../EpicDagModal';
 import { getStackByTaskId } from '../StackRail';
 import { ActivitySection } from './ActivitySection';
+import { AttachmentsRow, useAttachmentUpload } from './AttachmentsRow';
 import { PropertiesRail, type RailPicker } from './PropertiesRail';
 import { SessionsBlock } from './SessionsBlock';
 import { SubtasksBlock } from './SubtasksBlock';
@@ -250,7 +255,13 @@ export function TaskPage({
 }: TaskPageProps) {
   const shell = useShellActions();
   const toasts = useToasts();
+  // Both null until App mounts their providers (P7); the page then shows no
+  // Copy link and no star, which is also the browser-harness and test state.
+  const deepLink = useDeepLinkActions();
+  const savedViews = useSavedViewsContext();
   const rootRef = useRef<HTMLDivElement>(null);
+  const attachmentUpload = useAttachmentUpload(client, doc.meta.id);
+  const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   const [sidePanelOpen, setSidePanelOpen] = useState(true);
   const [picker, setPicker] = useState<RailPicker | null>(null);
   const [dispatching, setDispatching] = useState(false);
@@ -544,6 +555,14 @@ export function TaskPage({
       >
         <Copy />
       </IconButton>
+      {deepLink !== null && (
+        <IconButton
+          label="Copy link"
+          onClick={() => deepLink.copyTaskLink(doc.meta.id)}
+        >
+          <Link2 />
+        </IconButton>
+      )}
       <DropdownMenu>
         <DropdownMenuTrigger render={<IconButton label="More actions" />}>
           <Ellipsis />
@@ -602,8 +621,44 @@ export function TaskPage({
     </>
   );
 
+  const favoriteRef = { kind: 'task' as const, id: doc.meta.id };
+  const favorite = savedViews?.isFavorite(favoriteRef) ?? false;
+  const star =
+    savedViews === null ? undefined : (
+      <IconButton
+        label={favorite ? 'Unfavorite' : 'Favorite'}
+        active={favorite}
+        onClick={() => savedViews.toggleFavorite(favoriteRef)}
+      >
+        <Star />
+      </IconButton>
+    );
+
+  // A drop or a paste carrying files anywhere on the content column attaches
+  // them; a text paste is left to whatever field has focus.
+  const archived = doc.meta.archivedAt !== undefined;
+  const attachable = !archived && client !== null;
+  function attachFromTransfer(dt: DataTransfer | null): boolean {
+    if (!attachable) return false;
+    const files = filesFromDataTransfer(dt);
+    if (files.length === 0) return false;
+    void attachmentUpload.upload(files);
+    return true;
+  }
+
   const detailsBody = (
-    <div className="flex flex-col gap-6">
+    <div
+      className="flex flex-col gap-6"
+      onDragOver={(e) => {
+        if (attachable) e.preventDefault();
+      }}
+      onDrop={(e) => {
+        if (attachFromTransfer(e.dataTransfer)) e.preventDefault();
+      }}
+      onPaste={(e) => {
+        if (attachFromTransfer(e.clipboardData)) e.preventDefault();
+      }}
+    >
       <TaskTitle
         value={doc.meta.title}
         onCommit={(title) => void patch({ title })}
@@ -725,6 +780,17 @@ export function TaskPage({
         onSaveAcceptance={(next) => void patch({ acceptanceCriteria: next })}
       />
 
+      <AttachmentsRow
+        taskId={doc.meta.id}
+        attachments={doc.meta.attachments ?? []}
+        client={client}
+        port={port}
+        editable={!archived}
+        upload={attachmentUpload.upload}
+        uploading={attachmentUpload.uploading}
+        inputRef={attachmentInputRef}
+      />
+
       {amendments !== '' && (
         <MainSection title="Amendments">
           <p className="text-muted-foreground font-book text-[13px] whitespace-pre-wrap">
@@ -804,6 +870,11 @@ export function TaskPage({
           const note = notePatch(text);
           if (note !== null) void patch(note);
         }}
+        onAttach={
+          !archived && client !== null
+            ? () => attachmentInputRef.current?.click()
+            : undefined
+        }
       />
     </div>
   );
@@ -818,6 +889,7 @@ export function TaskPage({
       {mode === 'page' ? (
         <PageHeader
           crumb={crumb}
+          star={star}
           actions={headerActions}
           tabs={tabs}
           controls={controls}

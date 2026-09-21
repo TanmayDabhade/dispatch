@@ -4,12 +4,18 @@ import type {
   EpicSession,
 } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
+import { PRIORITY_ORDER } from '@dispatch/core/browser';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 import { type ReactNode, useState } from 'react';
 
 import { toggleCollapsedGroup } from '../../lib/collapsedEpics';
 import type { WorkEpicOptions } from '../../lib/epicSession';
+import { priorityLabel } from '../../lib/taskDisplay';
+import {
+  DEFAULT_TASKS_DISPLAY,
+  type TasksSubGrouping,
+} from '../../lib/tasksPrefs';
 import {
   type CreateTaskPreset,
   type ShellActions,
@@ -23,7 +29,8 @@ function task(
   title: string,
   status: string,
   parent: string | null = null,
-  kind = 'task'
+  kind = 'task',
+  extra: { priority?: string; assignee?: string; labels?: string[] } = {}
 ): TaskDoc {
   return {
     meta: {
@@ -31,11 +38,11 @@ function task(
       title,
       status,
       kind,
-      priority: 'medium',
+      priority: extra.priority ?? 'medium',
       parent,
       milestone: null,
-      labels: [],
-      assignee: 'none',
+      labels: extra.labels ?? [],
+      assignee: extra.assignee ?? 'none',
       blockedBy: [],
       created: '2026-08-10T00:00:00.000Z',
       updated: '2026-08-10T00:00:00.000Z',
@@ -103,12 +110,28 @@ const EPICS = [
 
 const TASKS = [
   ...EPICS,
-  task('t-1', 'Card one', 'todo', 'e-1'),
-  task('t-2', 'Card two', 'todo', 'e-1'),
-  task('t-3', 'Card three', 'done', 'e-1'),
-  task('t-4', 'Card four', 'todo', 'e-2'),
+  task('t-1', 'Card one', 'todo', 'e-1', 'task', {
+    priority: 'urgent',
+    assignee: 'human:wyat',
+    labels: ['ui'],
+  }),
+  task('t-2', 'Card two', 'todo', 'e-1', 'task', {
+    priority: 'low',
+    assignee: 'agent:claude',
+    labels: ['docs'],
+  }),
+  task('t-3', 'Card three', 'done', 'e-1', 'task', {
+    priority: 'urgent',
+    assignee: 'human:alice',
+  }),
+  task('t-4', 'Card four', 'todo', 'e-2', 'task', { priority: 'none' }),
   task('t-loose', 'Unparented card', 'done'),
 ];
+
+/** The display model with one sub-grouping — the lanes the board draws. */
+function display(subGrouping: TasksSubGrouping) {
+  return { ...DEFAULT_TASKS_DISPLAY, subGrouping };
+}
 
 /** The shell seam the board needs: `+` presets. Records what it was asked. */
 function shellWith(presets: CreateTaskPreset[]) {
@@ -160,7 +183,7 @@ function Harness({
           latestRunByTaskId={new Map()}
           epicProgressById={new Map()}
           epicConcurrencyDefault={3}
-          groupByEpic
+          display={display('epic')}
           collapsedLaneKeys={collapsed}
           onToggleLane={(key) =>
             setCollapsed((prev) => toggleCollapsedGroup(prev, key))
@@ -637,12 +660,179 @@ test('a lane header "+" presets the epic', () => {
 });
 
 test('the flat board has no lane headers and crumbs each card with its epic', () => {
-  render(<Harness groupByEpic={false} />);
+  render(<Harness display={display('none')} />);
   expect(document.querySelector('[data-slot=group-header]')).toBeNull();
+  expect(
+    document.querySelector('[data-lane-key]')?.getAttribute('data-lane-key')
+  ).toBe('all');
   const card = screen.getByText('Card one').closest('[data-slot=task-card]');
   const meta = card?.querySelector('[data-slot=task-card-meta]');
   expect(meta?.textContent).toContain('t-1');
   expect(meta?.querySelector('[data-slot=task-card-crumb]')?.textContent).toBe(
     'Payments epic'
   );
+});
+
+/** The `group-header` lane headers on screen: their icon slot and title, in order. */
+function groupHeaders(): { title: string; icon: Element | null }[] {
+  return Array.from(document.querySelectorAll('[data-slot=group-header]')).map(
+    (header) => ({
+      title:
+        header.querySelector('[data-slot=group-header-name] button')
+          ?.textContent ?? '',
+      icon: header.querySelector('[data-slot=group-header-icon] > *'),
+    })
+  );
+}
+
+// Sub-grouping › Assignee: agents lead, then people by handle, then the unassigned lane —
+// each header the assignee's own 16px avatar, and the cards keep their epic crumb.
+test('assignee lanes put agents first and Unassigned last, avatar on every header', () => {
+  render(<Harness display={display('assignee')} />);
+  const headers = groupHeaders();
+  expect(headers.map((h) => h.title)).toEqual([
+    'claude',
+    'alice',
+    'wyat',
+    'Unassigned',
+  ]);
+  // An initials avatar for the agent and the people, the dashed ring for Unassigned.
+  expect(headers.map((h) => h.icon?.getAttribute('data-slot'))).toEqual([
+    'initials-avatar',
+    'initials-avatar',
+    'initials-avatar',
+    'assignee-avatar',
+  ]);
+  expect(headers[0]?.icon?.getAttribute('data-kind')).toBe('agent');
+  expect(
+    Array.from(document.querySelectorAll('[data-lane-key]')).map((s) =>
+      s.getAttribute('data-lane-key')
+    )
+  ).toEqual([
+    'assignee:agent:claude',
+    'assignee:human:alice',
+    'assignee:human:wyat',
+    'assignee:none',
+  ]);
+  // Epics head epic lanes only; on any other board they are not cards either.
+  expect(draggableTitles()).toHaveLength(5);
+  expect(draggableTitles().some((t) => t.startsWith('e-'))).toBe(false);
+  const card = screen.getByText('Card one').closest('[data-slot=task-card]');
+  expect(card?.querySelector('[data-slot=task-card-crumb]')?.textContent).toBe(
+    'Payments epic'
+  );
+  // No `+` on the lane headers (the column headers keep theirs): a new task cannot be
+  // preset to an assignee.
+  expect(
+    screen
+      .getAllByRole('button', { name: /^New task in/ })
+      .map((b) => b.getAttribute('aria-label'))
+  ).toEqual([
+    'New task in todo',
+    'New task in in-progress',
+    'New task in done',
+  ]);
+});
+
+test('priority lanes follow PRIORITY_ORDER with the glyph on each header', () => {
+  render(<Harness display={display('priority')} />);
+  const headers = groupHeaders();
+  const present = (
+    Object.keys(PRIORITY_ORDER) as (keyof typeof PRIORITY_ORDER)[]
+  )
+    .filter((p) => ['urgent', 'medium', 'low', 'none'].includes(p))
+    .map(priorityLabel);
+  expect(headers.map((h) => h.title)).toEqual(present);
+  expect(headers.map((h) => h.icon?.getAttribute('data-priority'))).toEqual([
+    'urgent',
+    'medium',
+    'low',
+    'none',
+  ]);
+  for (const header of Array.from(
+    document.querySelectorAll('[data-slot=group-header]')
+  )) {
+    expect(header.className).toContain('h-9');
+    expect(header.className).not.toContain('status-tint');
+  }
+  // Every lane is a full row of the status columns.
+  const lane = document.querySelector('[data-lane-key="priority:urgent"]');
+  expect(lane?.querySelectorAll('[data-slot=board-column]')).toHaveLength(3);
+});
+
+test('collapsing a priority lane hides its cards and nothing else', () => {
+  render(<Harness display={display('priority')} />);
+  fireEvent.click(laneToggle('Urgent'));
+  expect(screen.queryByText('Card one')).toBeNull();
+  expect(screen.queryByText('Card three')).toBeNull();
+  expect(screen.queryByText('Card two')).not.toBeNull();
+  expect(laneToggle('Urgent').getAttribute('aria-expanded')).toBe('false');
+  fireEvent.click(laneToggle('Urgent'));
+  expect(screen.queryByText('Card one')).not.toBeNull();
+});
+
+// A drop in any lane's column moves the card's status — the lane itself is not a target.
+// Driven through @dnd-kit's keyboard sensor (Space lifts, arrows move 25px a press, Space
+// drops) over hand-measured column rects, since happy-dom lays nothing out.
+test('a drop in a priority lane column still moves status', async () => {
+  const moved: [string, string][] = [];
+  render(
+    <Harness
+      display={display('priority')}
+      onMoveStatus={(id, status) => {
+        moved.push([id, status]);
+        return Promise.resolve();
+      }}
+    />
+  );
+  const rect = (x: number): DOMRect =>
+    ({
+      x,
+      y: 0,
+      top: 0,
+      left: x,
+      right: x + 300,
+      bottom: 200,
+      width: 300,
+      height: 200,
+      toJSON: () => ({}),
+    }) as DOMRect;
+  const columns = Array.from(
+    document.querySelectorAll<HTMLElement>(
+      '[data-lane-key="priority:low"] [data-slot=board-column]'
+    )
+  );
+  expect(columns).toHaveLength(3);
+  columns.forEach((column, i) => {
+    column.getBoundingClientRect = () => rect(i * 348);
+  });
+  // Card two (low, todo) lives in the Low lane's first column; drag it two columns right.
+  const card = screen
+    .getByText('Card two')
+    .closest<HTMLElement>('[aria-roledescription="draggable"]');
+  if (card === null) throw new Error('no card');
+  card.getBoundingClientRect = () => rect(0);
+  const press = async (key: string, code: string) => {
+    await act(async () => {
+      fireEvent.keyDown(card, { key, code });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  };
+  await press(' ', 'Space');
+  for (let i = 0; i < 28; i++) await press('ArrowRight', 'ArrowRight');
+  await press(' ', 'Space');
+  expect(moved).toEqual([['t-2', 'done']]);
+});
+
+test('the label catalogue reaches every card', async () => {
+  render(<Harness display={display('none')} />);
+  await settle(() => {
+    fireEvent.click(
+      screen.getAllByRole('button', { name: 'Change labels' })[0]
+    );
+  });
+  expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual([
+    'docs',
+    'ui',
+  ]);
 });
