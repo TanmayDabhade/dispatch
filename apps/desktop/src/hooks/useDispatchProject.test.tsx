@@ -17,11 +17,14 @@ const PORT = 4321;
 
 // The one connection the hook asks for. Mocked at the module level because
 // `ensureDispatchd` shells out to Tauri, which does not exist under bun:test.
+// bun hoists this mock across every file in the run, so `isTauri` keeps the
+// real function's contract (the window global) rather than a constant — the
+// deep-link tests enter Tauri by defining `__TAURI_INTERNALS__`.
 void mock.module('../lib/tauri', () => ({
   ensureDispatchd: () =>
     Promise.resolve({ port: PORT, appToken: 'app-token', agentToken: null }),
   restartDispatchd: () => Promise.resolve(),
-  isTauri: () => false,
+  isTauri: () => '__TAURI_INTERNALS__' in window,
 }));
 
 // Captured from the hook's own `connectEvents` call, so a test can play the
