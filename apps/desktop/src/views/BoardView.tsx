@@ -54,6 +54,7 @@ import {
   type TasksViewMode,
   useTasksViewMode,
 } from '../lib/tasksViewMode';
+import { MilestoneBranchesView } from './MilestoneBranchesView';
 import { type FocusEpicRequest, MilestonesView } from './MilestonesView';
 import { TasksListView } from './TasksListView';
 import { IconButton } from '@/ui/ai/icon-button';
@@ -182,13 +183,15 @@ function BoardLineArt() {
 
 /**
  * The Tasks page: Linear's two-row panel header (`Project › Tasks`, the favourite star and
- * the ghost actions, then the Board | List | Milestones view tabs — plus one per saved view
- * — and the Filter / Display / side-panel triad) over one of three layouts. `board` is the
- * kanban — status columns on the bare panel, split into swim lanes by Display ›
- * Sub-grouping (epic, assignee or priority; the side-panel toggle flips epic lanes);
- * `list` is the grouped list; `milestones` groups the same tasks by milestone. The Display
- * popover writes the one `TasksDisplayPrefs` every layout reads, and the Filter menu's
- * clauses (typed, or asked of the daemon's AI filter) apply before grouping on all three.
+ * the ghost actions, then the Board | List | Milestones | Branches view tabs — plus one per
+ * saved view — and the Filter / Display / side-panel triad) over one of four layouts.
+ * `board` is the kanban — status columns on the bare panel, split into swim lanes by
+ * Display › Sub-grouping (epic, assignee or priority; the side-panel toggle flips epic
+ * lanes); `list` is the grouped list; `milestones` groups the same tasks by milestone;
+ * `branches` draws each milestone's tasks as a git-log graph with the critical path on the
+ * trunk. The Display popover writes the one `TasksDisplayPrefs` every layout reads, and the
+ * Filter menu's clauses (typed, or asked of the daemon's AI filter) apply before grouping on
+ * all four.
  *
  * Saved views (`useSavedViewsContext`, null outside App's provider): selecting one applies
  * its filters and display, `Save view…` / `Update view` snapshot the current ones, and the
@@ -370,7 +373,7 @@ export function BoardView({
     [data.liveRunStateByTaskId, epicTitleById]
   );
   const filtersActive = hasActiveTaskFilters(filters);
-  // The clauses as a predicate for the list/milestones — `undefined` when nothing is active
+  // The clauses as a predicate for the list/branches — `undefined` when nothing is active
   // so they skip a per-task closure call on the common unfiltered path.
   const taskFilterFn = useMemo(
     () =>
@@ -706,11 +709,12 @@ export function BoardView({
               />
             }
             sidePanel={
-              // Milestones always groups by milestone, so the lane toggle has nothing to do.
+              // Milestones and Branches always group by milestone, so the lane toggle has
+              // nothing to do on either.
               <SidePanelIconButton
                 label={laneBy === 'epic' ? 'Ungroup epics' : 'Group by epic'}
                 active={laneBy === 'epic'}
-                disabled={mode === 'milestones'}
+                disabled={mode === 'milestones' || mode === 'branches'}
                 onClick={toggleEpicLanes}
               />
             }
@@ -744,6 +748,18 @@ export function BoardView({
             display={prefs}
             onRequestFilter={() => setFilterOpen(true)}
             onRequestDisplay={() => setDisplayOpen(true)}
+          />
+        </div>
+      ) : mode === 'branches' ? (
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <MilestoneBranchesView
+            data={data}
+            onOpenTask={onSelectTask}
+            display={prefs}
+            taskFilter={taskFilterFn}
+            onRequestFilter={() => setFilterOpen(true)}
+            onRequestDisplay={() => setDisplayOpen(true)}
+            onPlanWork={onPlanWork}
           />
         </div>
       ) : mode === 'board' ? (

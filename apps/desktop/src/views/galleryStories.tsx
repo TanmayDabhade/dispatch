@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 
+import { branchGraphStories } from './stories/branch-graph.stories';
 import { codeBlockStories } from './stories/code-block.stories';
 import { contextCardsStories } from './stories/context-cards.stories';
 import { diffTableStories } from './stories/diff-table.stories';
@@ -680,4 +681,5 @@ export const galleryStories: GalleryStory[] = [
   ...codeBlockStories,
   ...fineTuneCardStories,
   ...selectionActionsStories,
+  ...branchGraphStories,
 ];

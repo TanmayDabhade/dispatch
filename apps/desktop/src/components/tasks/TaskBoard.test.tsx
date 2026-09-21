@@ -824,6 +824,92 @@ test('a drop in a priority lane column still moves status', async () => {
   expect(moved).toEqual([['t-2', 'done']]);
 });
 
+/** Every lane header's sticky wrapper — the `px-3` div around an epic, assignee or priority
+ * lane's header — in lane order. */
+function laneHeaderWrappers(): HTMLElement[] {
+  return Array.from(
+    document.querySelectorAll<HTMLElement>('[data-slot=board-lane-header]')
+  );
+}
+
+// The header pins to the scroll container's left edge so its actions stay on-screen while
+// the (wider) column strip below scrolls sideways. Nothing measures in happy-dom, so the
+// unmeasured board sets no inline width — the header just spans its lane.
+test('lane headers are sticky to the left with no inline width before a measure', () => {
+  const { unmount } = render(<Harness />);
+  const wrappers = laneHeaderWrappers();
+  expect(wrappers).toHaveLength(3);
+  for (const wrapper of wrappers) {
+    expect(wrapper.className).toContain('sticky');
+    expect(wrapper.className).toContain('left-0');
+    expect(wrapper.className).toContain('px-3');
+    expect(wrapper.style.width).toBe('');
+  }
+  unmount();
+  render(<Harness display={display('priority')} />);
+  for (const wrapper of laneHeaderWrappers()) {
+    expect(wrapper.className).toContain('sticky left-0');
+  }
+});
+
+// A `ResizeObserver` stand-in that hands the test the board's callback and the element it
+// watches, so a test can play a measurement without a layout engine.
+test('a measured board sizes every lane header to its visible width', () => {
+  const Original = globalThis.ResizeObserver;
+  let callback: ResizeObserverCallback | null = null;
+  const observed: Element[] = [];
+  let disconnected = false;
+  class FakeResizeObserver {
+    constructor(cb: ResizeObserverCallback) {
+      callback = cb;
+    }
+    observe(target: Element) {
+      observed.push(target);
+    }
+    unobserve() {}
+    disconnect() {
+      disconnected = true;
+    }
+  }
+  globalThis.ResizeObserver =
+    FakeResizeObserver as unknown as typeof ResizeObserver;
+  try {
+    const { unmount } = render(<Harness />);
+    const board = document.querySelector<HTMLElement>('[data-slot=task-board]');
+    if (board === null) throw new Error('no board');
+    expect(observed).toEqual([board]);
+    Object.defineProperty(board, 'clientWidth', {
+      configurable: true,
+      get: () => 1200,
+    });
+    act(() => {
+      callback?.([], {} as ResizeObserver);
+    });
+    const wrappers = laneHeaderWrappers();
+    expect(wrappers).toHaveLength(3);
+    for (const wrapper of wrappers) {
+      expect(wrapper.style.width).toBe('1200px');
+    }
+    // A narrower window re-measures; the column strip itself is never resized.
+    Object.defineProperty(board, 'clientWidth', {
+      configurable: true,
+      get: () => 900,
+    });
+    act(() => {
+      callback?.([], {} as ResizeObserver);
+    });
+    expect(laneHeaderWrappers()[0]?.style.width).toBe('900px');
+    expect(
+      document.querySelector<HTMLElement>('[data-lane-key] .flex.items-start')
+        ?.style.width
+    ).toBe('');
+    unmount();
+    expect(disconnected).toBe(true);
+  } finally {
+    globalThis.ResizeObserver = Original;
+  }
+});
+
 test('the label catalogue reaches every card', async () => {
   render(<Harness display={display('none')} />);
   await settle(() => {

@@ -7,17 +7,19 @@ import { useCallback, useState } from 'react';
  * project's configured status columns under it, so there is no longer a separate `lanes` mode —
  * the flat status-only board and the epic swim lanes were the same board grouped two ways, and
  * one layout that collapses does both jobs. `list` is the dense grouped list; `milestones` groups
- * the same tasks by milestone.
+ * the same tasks by milestone; `branches` draws each milestone's tasks as a git-log graph with
+ * the critical path on the trunk.
  */
-export type TasksViewMode = 'board' | 'list' | 'milestones';
+export type TasksViewMode = 'board' | 'list' | 'milestones' | 'branches';
 
-/** The page header's view tabs (`Board` `List` `Milestones`), in the order they render; the
- * Display popover's segmented control lists the same three. */
+/** The page header's view tabs (`Board` `List` `Milestones` `Branches`), in the order they
+ * render; the Display popover's segmented control lists the same four. */
 export const TASKS_VIEW_TABS: readonly { id: TasksViewMode; label: string }[] =
   [
     { id: 'board', label: 'Board' },
     { id: 'list', label: 'List' },
     { id: 'milestones', label: 'Milestones' },
+    { id: 'branches', label: 'Branches' },
   ];
 
 /**
@@ -34,7 +36,12 @@ export const VIEW_MODE_STORAGE_KEY = 'dispatch:tasks-view-mode-v2';
 /** A stored `'lanes'` (this key's own former default) is not special-cased: swim lanes and the
  * flat board merged into `board`, so it falls through to the default and lands there anyway. */
 export function parseViewMode(stored: string | null): TasksViewMode {
-  if (stored === 'list' || stored === 'board' || stored === 'milestones') {
+  if (
+    stored === 'list' ||
+    stored === 'board' ||
+    stored === 'milestones' ||
+    stored === 'branches'
+  ) {
     return stored;
   }
   return 'board';

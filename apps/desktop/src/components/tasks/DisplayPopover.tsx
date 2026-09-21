@@ -1,6 +1,7 @@
 import {
   ArrowDownNarrowWide,
   ArrowUpNarrowWide,
+  GitBranch,
   LayoutGrid,
   List,
   Target,
@@ -75,6 +76,7 @@ const LAYOUT_ICON: Record<TasksViewMode, ReactNode> = {
   list: <List aria-hidden />,
   board: <LayoutGrid aria-hidden />,
   milestones: <Target aria-hidden />,
+  branches: <GitBranch aria-hidden />,
 };
 
 // One `Label … [control]` row of the popover: 13px/450 secondary text left, the control right.
@@ -181,11 +183,11 @@ export interface DisplayPopoverProps {
 
 /**
  * Linear's Display popover (§6): a 260px `#202022` card off the header's sliders button —
- * the List | Board | Milestones segmented control, then grouping / sub-grouping / ordering
- * select pills with a direction button and `Order completed by recency`, `Show sub-tasks`,
- * the list options (nested sub-tasks, empty groups, archived) and the display-property
- * toggle chips. Every change writes straight into `TasksDisplayPrefs`, the one model the
- * list, board and milestones layouts all read.
+ * the Board | List | Milestones | Branches segmented control, then grouping / sub-grouping /
+ * ordering select pills with a direction button and `Order completed by recency`, `Show
+ * sub-tasks`, the list options (nested sub-tasks, empty groups, archived) and the
+ * display-property toggle chips. Every change writes straight into `TasksDisplayPrefs`, the
+ * one model the list, board, milestones and branches layouts all read.
  */
 export function DisplayPopover({
   mode,
@@ -203,10 +205,15 @@ export function DisplayPopover({
     value: TasksDisplayPrefs[K]
   ) => onPrefsChange({ ...prefs, [key]: value });
   const ascending = prefs.orderDir === 'asc';
+  // Milestones and Branches both group by milestone and nothing else, so Grouping is greyed
+  // out on either rather than offering a choice the layout cannot honour.
+  const groupingFixed = mode === 'milestones' || mode === 'branches';
   // The board's columns are always status and its lanes follow Sub-grouping, so on the board
   // the Grouping pill is pinned to `Status` with every other option greyed out — a `Milestone`
-  // chosen on the list never reads as a column layout the board does not draw.
-  const grouping = mode === 'board' ? 'status' : prefs.grouping;
+  // chosen on the list never reads as a column layout the board does not draw. The fixed
+  // layouts pin it to `Milestone` the same way, so the greyed pill shows what they draw.
+  const grouping =
+    mode === 'board' ? 'status' : groupingFixed ? 'milestone' : prefs.grouping;
   const groupings = GROUPINGS.map((option) => ({
     ...option,
     disabled: mode === 'board' && option.id !== 'status',
@@ -221,9 +228,12 @@ export function DisplayPopover({
         className="w-[260px] p-0"
       >
         <Section>
+          {/* Four cells: at the control's own `px-2` their min-content widths (~241px in
+              Inter 500) overrun the 260px card's content box, so the cells tighten to `px-1`. */}
           <SegmentedControl
             label="Layout"
             value={mode}
+            className="[&_[role=radio]]:px-1"
             onChange={(id) => onModeChange(id as TasksViewMode)}
             options={TASKS_VIEW_TABS.map((tab) => ({
               id: tab.id,
@@ -239,7 +249,7 @@ export function DisplayPopover({
               value={grouping}
               options={groupings}
               onChange={(next) => set('grouping', next)}
-              disabled={mode === 'milestones'}
+              disabled={groupingFixed}
             />
           </Row>
           <Row label="Sub-grouping">
