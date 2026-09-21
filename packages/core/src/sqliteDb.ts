@@ -210,7 +210,7 @@ function adaptDriver(
  * be migrated through. Stored in SQLite's own `user_version` pragma, so the
  * schema carries its version without a table of its own.
  */
-export const DISPATCH_DB_VERSION = 1;
+export const DISPATCH_DB_VERSION = 2;
 
 /**
  * Where a project's database lives by default.
@@ -258,6 +258,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   archived_at  TEXT,
   exercised    INTEGER NOT NULL,
   derived_from TEXT,
+  attachments  TEXT,
   slug         TEXT NOT NULL,
   body         TEXT NOT NULL
 );
@@ -369,6 +370,10 @@ export function openDispatchDb(dbPath: string): SqliteDatabase {
       `dispatch database at ${dbPath} was written by a newer schema (version ${existing}, this build understands ${DISPATCH_DB_VERSION})`
     );
   }
+  // The version-gated migration step. A fresh file is user_version 0 and gets
+  // every column from the DDL; a file an older build stamped takes the ALTERs
+  // its version is missing, one per bump, before the DDL adds any new tables.
+  if (existing === 1) db.exec('ALTER TABLE tasks ADD COLUMN attachments TEXT');
   db.exec(DDL);
   db.exec(`PRAGMA user_version = ${DISPATCH_DB_VERSION}`);
   return db;

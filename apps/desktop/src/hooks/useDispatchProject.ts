@@ -477,7 +477,12 @@ export interface DispatchProjectData {
 
   handleUpdate: (id: string, patch: UpdatePatch) => Promise<void>;
   moveTaskStatus: (id: string, status: string) => Promise<void>;
-  handleCreate: (input: CreateInput) => Promise<void>;
+  /** Resolves with the created doc (the create dialog attaches pending files to its id);
+   * `null` without a client. */
+  handleCreate: (input: CreateInput) => Promise<TaskDoc | null>;
+  /** Multipart upload against a task; `task.changed` then refreshes the list. */
+  handleUploadAttachments: (taskId: string, files: File[]) => Promise<void>;
+  handleRemoveAttachment: (taskId: string, name: string) => Promise<void>;
   /** Every task draft currently held in memory, newest first — feeds the app-wide drafts
    * tray. Running and ready drafts survive navigation and a tray reopen; see `drafts`. */
   drafts: DraftRecord[];
@@ -1797,13 +1802,33 @@ export function useDispatchProject(
   );
 
   const handleCreate = useCallback(
-    async (input: CreateInput): Promise<void> => {
-      if (client === null) return;
-      await client.createTask(input);
+    async (input: CreateInput): Promise<TaskDoc | null> => {
+      if (client === null) return null;
+      const created = await client.createTask(input);
       void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
       void queryClient.invalidateQueries({ queryKey: readyQueryKey });
+      return created;
     },
     [client, queryClient, tasksQueryKey, readyQueryKey]
+  );
+
+  // The `handle` prefix puts both under withActionFeedback's error toasts.
+  const handleUploadAttachments = useCallback(
+    async (taskId: string, files: File[]): Promise<void> => {
+      if (client === null) return;
+      await client.uploadTaskAttachments(taskId, files);
+      void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+    },
+    [client, queryClient, tasksQueryKey]
+  );
+
+  const handleRemoveAttachment = useCallback(
+    async (taskId: string, name: string): Promise<void> => {
+      if (client === null) return;
+      await client.removeTaskAttachment(taskId, name);
+      void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+    },
+    [client, queryClient, tasksQueryKey]
   );
 
   // Seeds the drafts query with the 202's `running` record immediately, so the tray shows it
@@ -2734,6 +2759,8 @@ export function useDispatchProject(
     handleUpdate,
     moveTaskStatus,
     handleCreate,
+    handleUploadAttachments,
+    handleRemoveAttachment,
     drafts: drafts ?? [],
     agentSessions: agentSessions ?? [],
     handleStartDraft,

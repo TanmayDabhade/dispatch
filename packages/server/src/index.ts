@@ -21,6 +21,7 @@ import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import packageJson from '../package.json';
+import type { AiTaskFilterPort } from './aiTaskFilter.js';
 import {
   bearerToken,
   handleApi,
@@ -182,6 +183,11 @@ export interface StartServerOptions {
   // SDK's plan mode; bin.ts's DISPATCH_ENABLE_FAKES gate additionally
   // registers a 'fake' planner alongside the real one for CLI e2e testing.
   registerPlanners?: (planManager: PlanManager) => void;
+  // The sentence-to-filter port behind POST /api/tasks/filter/ai, in place of
+  // the production default (ClaudeAiTaskFilter built per request). bin.ts's
+  // DISPATCH_ENABLE_FAKES gate passes FakeAiTaskFilter so a Playwright or dev
+  // daemon never bills a model for a filter; route tests pass it directly.
+  aiTaskFilter?: AiTaskFilterPort;
   // Same seam again for the overseer's chat backends, in place of the
   // production default (ClaudeOverseer as 'claude' only). Tests register a
   // FakeOverseer (see orchestrator/overseers/fake.ts) under 'claude' so no
@@ -1285,6 +1291,7 @@ async function bootServer(
     store,
     judgments,
     inboxClusterer: opts.inboxClusterer,
+    aiTaskFilter: opts.aiTaskFilter,
     cache,
     events,
     orchestrator,

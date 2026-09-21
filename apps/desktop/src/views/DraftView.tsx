@@ -35,8 +35,9 @@ interface DraftViewProps {
   /** The active project's display name — the header's `Project › Drafts › Draft` crumb. */
   projectName?: string;
   /** The unwrapped create call — rejects on failure (unlike `data.handleCreate`) so a failed
-   * save keeps this page open with the draft intact instead of discarding it. */
-  onCreate: (input: CreateInput) => Promise<void>;
+   * save keeps this page open with the draft intact instead of discarding it. The result is
+   * ignored, so a caller returning the created doc fits too. */
+  onCreate: (input: CreateInput) => Promise<unknown>;
   /** The draft being reviewed — may be `running` or `failed`, not just `ready`, since
    * notifications, history restore, and the tray can all land here mid-turn. */
   draft: DraftRecord;

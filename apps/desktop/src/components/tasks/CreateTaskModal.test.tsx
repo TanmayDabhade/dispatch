@@ -27,6 +27,12 @@ function epic(id: string, title: string): TaskDoc {
   return { meta: { id, title, kind: 'epic' }, body: '' } as unknown as TaskDoc;
 }
 
+// What a successful `handleCreate` resolves with: enough of a doc for the dialog to
+// read the new id off.
+function createdDoc(id: string): TaskDoc {
+  return { meta: { id, title: 'created', kind: 'task' }, body: '' } as unknown as TaskDoc;
+}
+
 // Only `createPreset` is read; every other verb throws if reached so a test that
 // accidentally drives the shell says so.
 function shellActions(createPreset: CreateTaskPreset | null): ShellActions {
@@ -53,11 +59,15 @@ function shellActions(createPreset: CreateTaskPreset | null): ShellActions {
 function mount({
   preset = null,
   projectName,
-  onCreate = () => Promise.resolve(),
+  labels,
+  onCreate = () => Promise.resolve(createdDoc('t-new001')),
+  onUploadAttachments,
 }: {
   preset?: CreateTaskPreset | null;
   projectName?: string;
-  onCreate?: (input: CreateInput) => Promise<void>;
+  labels?: readonly string[];
+  onCreate?: (input: CreateInput) => Promise<TaskDoc | null | undefined>;
+  onUploadAttachments?: (taskId: string, files: File[]) => Promise<void>;
 } = {}) {
   const created: CreateInput[] = [];
   let closed = 0;
@@ -68,10 +78,12 @@ function mount({
           statuses={STATUSES}
           epics={[epic('e-1', 'Search index')]}
           projectName={projectName}
+          labels={labels}
           onCreate={(input) => {
             created.push(input);
             return onCreate(input);
           }}
+          onUploadAttachments={onUploadAttachments}
           onClose={() => {
             closed += 1;
           }}
@@ -80,6 +92,10 @@ function mount({
     </ToastProvider>
   );
   return { created, closed: () => closed };
+}
+
+function attachInput() {
+  return document.querySelector<HTMLInputElement>('input[type="file"]')!;
 }
 
 function titleField() {
@@ -225,4 +241,100 @@ test('the crumb reads the project name when one is given', () => {
   mount({ projectName: 'Audiobook' });
   expect(screen.getByText('Audiobook')).toBeTruthy();
   expect(screen.queryByText('Dispatch')).toBeNull();
+});
+
+test('the Labels chip opens the colour-dotted picker over the catalogue and reads back on create', async () => {
+  const { created } = mount({ labels: ['bug', 'auth'] });
+  await act(async () => {
+    fireEvent.click(screen.getByLabelText('Labels'));
+    await Promise.resolve();
+  });
+  const options = screen.getAllByRole('option').map((o) => o.textContent);
+  expect(options).toEqual(['auth', 'bug']);
+  expect(document.querySelectorAll('[data-slot="label-dot"]').length).toBe(2);
+  await act(async () => {
+    fireEvent.click(screen.getByRole('option', { name: 'bug' }));
+    await Promise.resolve();
+  });
+  // A multi-select: the picker stays open and the face reads the pick.
+  expect(screen.getByLabelText('Labels').textContent).toBe('bug');
+  expect(screen.queryAllByRole('option').length).toBeGreaterThan(0);
+
+  fireEvent.change(titleField(), { target: { value: 'Tagged' } });
+  fireEvent.click(createButton());
+  await settle();
+  expect(created[0]?.labels).toEqual(['bug']);
+});
+
+test('the footer paperclip is disabled without an upload handler', () => {
+  mount();
+  expect(
+    screen.getByRole<HTMLButtonElement>('button', { name: 'Attach' }).disabled
+  ).toBe(true);
+  expect(document.querySelector('input[type="file"]')).toBeNull();
+});
+
+test('pending files show as removable pills and upload against the created id', async () => {
+  const uploads: { taskId: string; names: string[] }[] = [];
+  const { closed } = mount({
+    onUploadAttachments: (taskId, files) => {
+      uploads.push({ taskId, names: files.map((f) => f.name) });
+      return Promise.resolve();
+    },
+  });
+  expect(
+    screen.getByRole<HTMLButtonElement>('button', { name: 'Attach' }).disabled
+  ).toBe(false);
+  fireEvent.change(attachInput(), {
+    target: { files: [new File(['a'], 'spec.png'), new File(['b'], 'notes.txt')] },
+  });
+  const pills = document.querySelector('[data-slot="pending-attachments"]');
+  expect(pills?.textContent).toContain('spec.png');
+  expect(pills?.textContent).toContain('notes.txt');
+  fireEvent.click(screen.getByRole('button', { name: 'Remove notes.txt' }));
+  expect(
+    document.querySelector('[data-slot="pending-attachments"]')?.textContent
+  ).not.toContain('notes.txt');
+
+  fireEvent.change(titleField(), { target: { value: 'With a file' } });
+  fireEvent.click(createButton());
+  await settle();
+
+  expect(uploads).toEqual([{ taskId: 't-new001', names: ['spec.png'] }]);
+  expect(closed()).toBe(1);
+});
+
+test('a failed upload toasts per file and the task still counts as created', async () => {
+  const { created, closed } = mount({
+    onUploadAttachments: () => Promise.reject(new Error('disk full')),
+  });
+  fireEvent.change(attachInput(), {
+    target: { files: [new File(['a'], 'spec.png')] },
+  });
+  fireEvent.change(titleField(), { target: { value: 'Still created' } });
+  fireEvent.click(createButton());
+  await settle();
+
+  expect(created).toHaveLength(1);
+  expect(closed()).toBe(1);
+  expect(await screen.findByText('Could not attach spec.png')).toBeTruthy();
+  expect(await screen.findByText('disk full')).toBeTruthy();
+});
+
+test('no upload is attempted when create resolves without a doc', async () => {
+  const uploads: string[] = [];
+  mount({
+    onCreate: () => Promise.resolve(undefined),
+    onUploadAttachments: (taskId) => {
+      uploads.push(taskId);
+      return Promise.resolve();
+    },
+  });
+  fireEvent.change(attachInput(), {
+    target: { files: [new File(['a'], 'spec.png')] },
+  });
+  fireEvent.change(titleField(), { target: { value: 'Swallowed' } });
+  fireEvent.click(createButton());
+  await settle();
+  expect(uploads).toEqual([]);
 });

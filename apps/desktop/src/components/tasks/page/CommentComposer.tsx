@@ -6,13 +6,16 @@ import { IconButton } from '@/ui/ai/icon-button';
 import { Textarea } from '@/ui/textarea';
 
 // The `Leave a comment…` card at the foot of the activity feed: a comment-card surface
-// holding a borderless multi-line textarea, an attach button on the left (disabled — there
-// is no attachment model yet) and a send button on the right. Enter is a newline; `⌘⏎`
-// sends, as does the button. The draft is cleared once `onSubmit` is handed the text.
+// holding a borderless multi-line textarea, an attach button on the left and a send button
+// on the right. Enter is a newline; `⌘⏎` sends, as does the button. The draft is cleared
+// once `onSubmit` is handed the text. `onAttach` opens the task's file picker (the
+// attachments row's hidden input); without it the paperclip stays disabled.
 export function CommentComposer({
   onSubmit,
+  onAttach,
 }: {
   onSubmit: (text: string) => void;
+  onAttach?: () => void;
 }) {
   const [draft, setDraft] = useState('');
   const text = noteFromDraft(draft);
@@ -47,7 +50,11 @@ export function CommentComposer({
         }}
       />
       <div className="flex items-center justify-between">
-        <IconButton label="Attach a file" disabled>
+        <IconButton
+          label="Attach a file"
+          disabled={onAttach === undefined}
+          onClick={onAttach}
+        >
           <Paperclip />
         </IconButton>
         <IconButton

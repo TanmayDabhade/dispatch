@@ -9,6 +9,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 
+import { ATTACHMENTS_DIR } from './attachments.js';
 import { generateTaskId, isTaskId } from './ids.js';
 import { slugify } from './slug.js';
 import { canonicalStatus } from './status.js';
@@ -26,6 +27,7 @@ import type { Amendment } from './taskfile.js';
 import type {
   Assignee,
   Priority,
+  TaskAttachment,
   TaskDoc,
   TaskKind,
   TaskMeta,
@@ -33,6 +35,12 @@ import type {
 } from './types.js';
 
 export const DISPATCH_DIR = '.dispatch';
+
+// Where a task's uploaded blobs live on this machine. Both stores remove it
+// with the task; the daemon's attachment routes write into it.
+export function attachmentsDir(rootDir: string, taskId: string): string {
+  return join(rootDir, ATTACHMENTS_DIR, taskId);
+}
 
 // New projects opt into the board syncer by default; every project
 // initialized before this plan has `autoCommit: false` already written to
@@ -87,6 +95,9 @@ export interface UpdatePatch {
   // Set once a verify run passes. Never cleared by a patch — a later failing
   // verify run leaves it exactly as it was.
   exercised?: boolean;
+  // The full attachment list after an upload or removal; `[]` reads back as
+  // an absent key. Only the daemon's attachment routes write it.
+  attachments?: TaskAttachment[];
   appendActivity?: string;
   // The serialized ActorRef credited for `appendActivity`. Omitted leaves the
   // line unattributed, which is what pre-team task files already look like.
@@ -235,6 +246,11 @@ export function applyUpdatePatch(
   // separately rather than spread in like the other fields.
   if (archivedAt === null) delete meta.archivedAt;
   else if (archivedAt !== undefined) meta.archivedAt = archivedAt;
+  // Like derivedFrom, attachments is a key a task only carries once it has
+  // some, so an emptied list drops the key rather than persisting `[]`.
+  if (meta.attachments !== undefined && meta.attachments.length === 0) {
+    delete meta.attachments;
+  }
   // A whole-body replacement is the new base the section edits below apply
   // to, so a patch carrying both `body` and `description` lands the rewrite
   // first and then the section edit on top of it, rather than depending on
@@ -300,8 +316,15 @@ const MACHINE_LOCAL_GROUP: IgnoreGroup = {
     "# The daemon's database is per-machine state, never committable, and",
     '# neither is the marker naming it — a clone carrying the marker without',
     '# the database reads as a board that is confidently empty.',
+    "# Uploaded files are per-machine too; the task's frontmatter names them.",
   ],
-  rules: ['dispatch.db', 'dispatch.db-wal', 'dispatch.db-shm', 'storage.json'],
+  rules: [
+    'dispatch.db',
+    'dispatch.db-wal',
+    'dispatch.db-shm',
+    'storage.json',
+    'attachments/',
+  ],
 };
 
 const DAEMON_STATE_GROUP: IgnoreGroup = {
@@ -491,6 +514,7 @@ export class TaskStore implements TaskStorePort {
     const file = this.taskFilePath(id);
     if (file === null) return false;
     rmSync(file, { force: true });
+    rmSync(attachmentsDir(this.rootDir, id), { recursive: true, force: true });
     return true;
   }
 

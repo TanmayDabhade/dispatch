@@ -1,6 +1,12 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -240,6 +246,24 @@ for (const { name, make } of BACKENDS) {
       expect(store.get(derived.meta.id)!.meta.derivedFrom).toBe('github-pr:41');
     });
 
+    it('round-trips the optional attachments key', () => {
+      const store = make();
+      const plain = store.create({ title: 'Plain' });
+      expect('attachments' in store.get(plain.meta.id)!.meta).toBe(false);
+      const attachments = [
+        {
+          name: 'spec.png',
+          path: `.dispatch/attachments/${plain.meta.id}/spec.png`,
+          size: 49152,
+          addedAt: '2026-09-20T10:00:00Z',
+        },
+      ];
+      store.update(plain.meta.id, { attachments });
+      expect(store.get(plain.meta.id)!.meta.attachments).toEqual(attachments);
+      store.update(plain.meta.id, { attachments: [] });
+      expect('attachments' in store.get(plain.meta.id)!.meta).toBe(false);
+    });
+
     it('appends an amendment and bumps updated', () => {
       const store = make();
       const doc = store.create({ title: 'Fix login' }, '2026-07-13T00:00:00Z');
@@ -463,6 +487,57 @@ describe('SqliteTaskStore persistence', () => {
     const db = openDispatchDb(':memory:');
     openDbs.push(db);
     expect(dbVersion(db)).toBe(DISPATCH_DB_VERSION);
+  });
+
+  // The first migration: a version-1 file predates the attachments column and
+  // gains it through ALTER TABLE rather than the DDL, which CREATE IF NOT
+  // EXISTS would skip over.
+  it('migrates a version-1 database by adding the attachments column', () => {
+    const dbPath = dispatchDbPath(root);
+    mkdirSync(join(root, '.dispatch'), { recursive: true });
+    const v1 = new Database(dbPath);
+    v1.exec(`
+CREATE TABLE tasks (
+  id           TEXT PRIMARY KEY,
+  title        TEXT NOT NULL,
+  status       TEXT NOT NULL,
+  kind         TEXT NOT NULL,
+  parent       TEXT,
+  milestone    TEXT,
+  blocked_by   TEXT NOT NULL,
+  labels       TEXT NOT NULL,
+  priority     TEXT NOT NULL,
+  assignee     TEXT NOT NULL,
+  created      TEXT NOT NULL,
+  updated      TEXT NOT NULL,
+  external     TEXT,
+  self_review  INTEGER NOT NULL,
+  fix_loop     INTEGER,
+  writes       TEXT NOT NULL,
+  risk         TEXT NOT NULL,
+  model        TEXT,
+  archived_at  TEXT,
+  exercised    INTEGER NOT NULL,
+  derived_from TEXT,
+  slug         TEXT NOT NULL,
+  body         TEXT NOT NULL
+);
+PRAGMA user_version = 1;
+`);
+    v1.close();
+
+    const db = openDispatchDb(dbPath);
+    openDbs.push(db);
+    const columns = db
+      .prepare('PRAGMA table_info(tasks)')
+      .all()
+      .map((row) => (row as { name: string }).name);
+    expect(columns).toContain('attachments');
+    expect(dbVersion(db)).toBe(DISPATCH_DB_VERSION);
+    // And the migrated file is a working store.
+    const store = new SqliteTaskStore(root, db);
+    const doc = store.create({ title: 'After the move' });
+    expect(store.get(doc.meta.id)).toEqual(doc);
   });
 
   // A database a newer Dispatch wrote can hold columns this build's DDL has no

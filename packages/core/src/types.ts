@@ -66,6 +66,19 @@ export interface TaskMeta {
   // of someone else's artifact, so it is never dispatchable, never synced
   // outward, and retires itself once that review ends.
   derivedFrom?: string;
+  // Files uploaded against the task. The frontmatter (or row) names them; the
+  // bytes live gitignored under `.dispatch/attachments/<taskId>/` on the
+  // machine that took the upload. Absent when the task has none.
+  attachments?: TaskAttachment[];
+}
+
+export interface TaskAttachment {
+  // The sanitized file name, unique within the task.
+  name: string;
+  // Project-relative posix path to the blob (attachmentRelativePath).
+  path: string;
+  size: number;
+  addedAt: string;
 }
 
 export interface TaskDoc {

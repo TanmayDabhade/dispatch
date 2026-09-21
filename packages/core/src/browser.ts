@@ -3,6 +3,12 @@
 
 export * from './status.js';
 export * from './types.js';
+export {
+  ATTACHMENT_MAX_BYTES,
+  ATTACHMENTS_DIR,
+  attachmentRelativePath,
+  sanitizeAttachmentName,
+} from './attachments.js';
 export * from './configTypes.js';
 export * from './policy.js';
 export * from './linearMap.js';

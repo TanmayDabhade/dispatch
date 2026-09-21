@@ -1315,6 +1315,21 @@ export interface ReviewComment {
   origin?: 'local' | 'github';
 }
 
+/** One filter clause the AI filter proposes — the desktop's own facet/op
+ * vocabulary (apps/desktop/src/lib/taskFilters.ts), mirrors AiFilterClause in
+ * packages/server/src/aiTaskFilter.ts. */
+export interface AiTaskFilterClause {
+  facet: string;
+  op: string;
+  values: string[];
+}
+
+/** What POST /api/tasks/filter/ai answers for a sentence. */
+export interface AiTaskFilterResult {
+  clauses: AiTaskFilterClause[];
+  join: 'and' | 'or';
+}
+
 /** One model-proposed grouping of related captures, ready to become an epic. */
 export interface InboxClusterGroup {
   epicTitle: string;
@@ -1754,8 +1769,24 @@ async function request<T>(
   // still passes the server's Content-Type gate. It goes on every state-changing
   // request, body or not, so the gate can be a blanket rule rather than one the
   // body-less POSTs (cancelRun, gitPull, clusterInbox, …) have to be exempt from.
+  const res = await send(target, path, init);
+  return (await res.json()) as T;
+}
+
+// The fetch behind request() and requestBlob(): auth header, the JSON default
+// content-type, and the `{ error }` throw on a non-2xx. A FormData body is
+// left without a content-type so fetch writes the multipart boundary itself.
+async function send(
+  target: ApiTarget,
+  path: string,
+  init?: RequestInit
+): Promise<Response> {
   const headers = new Headers(init?.headers);
-  if (!headers.has('content-type') && isStateChanging(init)) {
+  if (
+    !headers.has('content-type') &&
+    isStateChanging(init) &&
+    !(init?.body instanceof FormData)
+  ) {
     headers.set('content-type', 'application/json');
   }
   if (target.token !== undefined) {
@@ -1773,7 +1804,13 @@ async function request<T>(
       body.code
     );
   }
-  return (await res.json()) as T;
+  return res;
+}
+
+// request() for a binary body: same auth and error handling, the response
+// as a Blob (an attachment download).
+async function requestBlob(target: ApiTarget, path: string): Promise<Blob> {
+  return (await send(target, path)).blob();
 }
 
 function jsonBody(value: unknown): RequestInit {
@@ -1943,6 +1980,14 @@ export interface ApiClient {
   createTask(input: CreateInput): Promise<TaskDoc>;
   updateTask(id: string, patch: UpdatePatch): Promise<TaskDoc>;
   amendTask(id: string, input: AmendTaskInput): Promise<TaskDoc>;
+  /** Multipart upload of `files` against the task; resolves with the doc
+   * carrying the grown `attachments` list. */
+  uploadTaskAttachments(id: string, files: File[]): Promise<TaskDoc>;
+  removeTaskAttachment(id: string, name: string): Promise<TaskDoc>;
+  /** The attachment's bytes — 404 when this daemon's machine lacks the blob. */
+  fetchTaskAttachment(id: string, name: string): Promise<Blob>;
+  /** Turns a sentence into filter clauses the Tasks page applies as chips. */
+  aiFilterTasks(sentence: string): Promise<AiTaskFilterResult>;
   // Starts a background planner turn and returns immediately with a `running`
   // `DraftRecord`; watch it settle via `fetchDrafts` or `draft.changed`.
   draftTask(prompt: string): Promise<DraftRecord>;
@@ -2520,6 +2565,31 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       request(target, `/api/tasks/${id}/amend`, {
         method: 'POST',
         ...jsonBody(input),
+      }),
+    uploadTaskAttachments: (id, files) => {
+      const form = new FormData();
+      for (const file of files) form.append('files', file, file.name);
+      return request(
+        target,
+        `/api/tasks/${encodeURIComponent(id)}/attachments`,
+        { method: 'POST', body: form }
+      );
+    },
+    removeTaskAttachment: (id, name) =>
+      request(
+        target,
+        `/api/tasks/${encodeURIComponent(id)}/attachments/${encodeURIComponent(name)}`,
+        { method: 'DELETE' }
+      ),
+    fetchTaskAttachment: (id, name) =>
+      requestBlob(
+        target,
+        `/api/tasks/${encodeURIComponent(id)}/attachments/${encodeURIComponent(name)}`
+      ),
+    aiFilterTasks: (sentence) =>
+      request(target, '/api/tasks/filter/ai', {
+        method: 'POST',
+        ...jsonBody({ sentence }),
       }),
     draftTask: (prompt) =>
       request(target, '/api/tasks/draft', {

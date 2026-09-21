@@ -176,6 +176,74 @@ describe('request() declares content-type on every state-changing request', () =
   });
 });
 
+// A multipart upload must reach fetch without a content-type: the browser (or
+// Bun) writes `multipart/form-data; boundary=…` itself, and a hand-set header
+// would lose the boundary the server needs to split the parts.
+describe('attachments', () => {
+  it('sends a FormData body with no content-type default', async () => {
+    const stub = stubFetch();
+    try {
+      await createApiClient('http://example.test').uploadTaskAttachments(
+        't-1',
+        [new File(['x'], 'spec.png')]
+      );
+      expect(stub.calls).toHaveLength(1);
+      expect(stub.calls[0].url).toBe(
+        'http://example.test/api/tasks/t-1/attachments'
+      );
+      expect(stub.calls[0].init?.method).toBe('POST');
+      const body = stub.calls[0].init?.body;
+      expect(body instanceof FormData).toBe(true);
+      expect((body as FormData).getAll('files')).toHaveLength(1);
+      const headers = new Headers(stub.calls[0].init?.headers);
+      expect(headers.has('content-type')).toBe(false);
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('encodes the attachment name on remove and download', async () => {
+    const stub = stubFetch();
+    try {
+      const client = createApiClient('http://example.test');
+      await client.removeTaskAttachment('t-1', 'my spec.png');
+      expect(stub.calls[0].url).toBe(
+        'http://example.test/api/tasks/t-1/attachments/my%20spec.png'
+      );
+      expect(stub.calls[0].init?.method).toBe('DELETE');
+      await client.fetchTaskAttachment('t-1', 'my spec.png');
+      expect(stub.calls[1].url).toBe(
+        'http://example.test/api/tasks/t-1/attachments/my%20spec.png'
+      );
+    } finally {
+      stub.restore();
+    }
+  });
+});
+
+describe('aiFilterTasks', () => {
+  it('posts { sentence } as JSON to /api/tasks/filter/ai', async () => {
+    const stub = stubFetch();
+    try {
+      await createApiClient('http://example.test').aiFilterTasks(
+        'urgent tasks nobody is on'
+      );
+      expect(stub.calls).toHaveLength(1);
+      expect(stub.calls[0].url).toBe(
+        'http://example.test/api/tasks/filter/ai'
+      );
+      expect(stub.calls[0].init?.method).toBe('POST');
+      expect(stub.calls[0].init?.body).toBe(
+        JSON.stringify({ sentence: 'urgent tasks nobody is on' })
+      );
+      const headers = new Headers(stub.calls[0].init?.headers);
+      expect(headers.get('content-type')).toBe('application/json');
+    } finally {
+      stub.restore();
+    }
+  });
+});
+
 describe('getImpact', () => {
   it('targets /api/impact with subject and id as query parameters', async () => {
     const stub = stubFetch();
