@@ -18,6 +18,9 @@ dist-sidecar
 # Dev-only surfaces neither the demo server nor the desktop web build touch.
 apps/desktop/src-tauri
 apps/desktop/e2e
+# playwright.config.ts is typechecked by the desktop build (tsconfig.e2e.json)
+# and imports this one file, so it rides along; the specs and snapshots do not.
+!apps/desktop/e2e/paths.ts
 .superpowers
 .agents
 .dispatch
