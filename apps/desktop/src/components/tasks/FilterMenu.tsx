@@ -1,4 +1,4 @@
-import type { RunState } from '@dispatch/client';
+import { ApiError, type RunState } from '@dispatch/client';
 import type { Assignee, Priority, TaskDoc } from '@dispatch/core/browser';
 import {
   Activity,
@@ -9,6 +9,7 @@ import {
   CircleDot,
   Milestone,
   SignalHigh,
+  Sparkles,
   Tag,
   Target,
   User,
@@ -40,6 +41,7 @@ import { FilterIconButton } from '@/ui/ai/page-header';
 import { Input } from '@/ui/input';
 import { Kbd } from '@/ui/kbd';
 import { Popover, PopoverContent, PopoverTrigger } from '@/ui/popover';
+import { Spinner } from '@/ui/spinner';
 
 const PRIORITIES: Priority[] = ['urgent', 'high', 'medium', 'low', 'none'];
 const ASSIGNEES: Assignee[] = ['agent', 'human', 'none'];
@@ -99,6 +101,9 @@ export interface FilterMenuProps {
   /** Controlled open state, so `f` on the list can open it. */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  /** Turns a typed sentence into a filter set (the daemon's AI filter). When absent the
+   * `AI filter` row is not rendered and the menu is unchanged. */
+  onAiFilter?: (sentence: string) => Promise<TaskFilterSet>;
 }
 
 interface FacetOption {
@@ -158,6 +163,19 @@ function matches(query: string, text: string): boolean {
   return text.toLowerCase().includes(query.trim().toLowerCase());
 }
 
+const AI_FILTER_LABEL = 'AI filter';
+
+// What the AI subview shows under its input when the daemon says no: an old daemon has no
+// route (404), anything else carries its own message.
+function aiFilterErrorText(err: unknown): string {
+  if (err instanceof ApiError && err.status === 404) {
+    return 'Update the daemon to use AI filters';
+  }
+  return err instanceof Error && err.message !== ''
+    ? err.message
+    : 'AI filter failed';
+}
+
 // The arrow-key roving a `role="menu"` promises: ArrowDown/ArrowUp move focus between the
 // menu's items (wrapping), Home/End jump to the ends. Tab still leaves the menu.
 function moveMenuFocus(e: KeyboardEvent<HTMLElement>) {
@@ -191,7 +209,8 @@ function moveMenuFocus(e: KeyboardEvent<HTMLElement>) {
  * Milestone, Run state, Created, Updated — each opening its values (a `▸` drill-in rather
  * than a hover submenu, so it works the same from the keyboard). Picking a value toggles it
  * into the facet's clause; the applied clauses render as chips under the header
- * (`AppliedFilters`). Typing searches facets and their values together.
+ * (`AppliedFilters`). Typing searches facets and their values together. With `onAiFilter`
+ * an `AI filter` row sits first: a sentence typed there becomes clauses the same way.
  */
 export function FilterMenu({
   filters,
@@ -199,19 +218,69 @@ export function FilterMenu({
   context,
   open,
   onOpenChange,
+  onAiFilter,
 }: FilterMenuProps) {
   const [query, setQuery] = useState('');
   const [facet, setFacet] = useState<FilterFacet | null>(null);
+  const [aiMode, setAiMode] = useState(false);
+  const [sentence, setSentence] = useState('');
+  const [aiPending, setAiPending] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  // Mirrors the popover's open state when nobody controls it, so applying an AI filter can
+  // close the menu either way.
+  const [innerOpen, setInnerOpen] = useState(false);
+  const isOpen = open ?? innerOpen;
   const inputRef = useRef<HTMLInputElement>(null);
+  // One AI call in flight at a time: a result that lands after the subview closed, or after
+  // a newer submit, is ignored rather than applied over what the user did since.
+  const aiCallRef = useRef(0);
   const active = filters.clauses.length > 0;
 
   // Reopening starts at the facet list with an empty search.
   useEffect(() => {
-    if (open === false) {
+    if (!isOpen) {
+      aiCallRef.current += 1;
       setQuery('');
       setFacet(null);
+      setAiMode(false);
+      setSentence('');
+      setAiPending(false);
+      setAiError(null);
     }
-  }, [open]);
+  }, [isOpen]);
+
+  // The subview's input mounts after the popover's `initialFocus` already ran, so it takes
+  // focus itself.
+  useEffect(() => {
+    if (aiMode) inputRef.current?.focus();
+  }, [aiMode]);
+
+  function leaveAi() {
+    aiCallRef.current += 1;
+    setAiMode(false);
+    setSentence('');
+    setAiPending(false);
+    setAiError(null);
+  }
+
+  async function submitAi() {
+    if (onAiFilter === undefined || sentence.trim() === '') return;
+    const call = ++aiCallRef.current;
+    setAiPending(true);
+    setAiError(null);
+    try {
+      const result = await onAiFilter(sentence.trim());
+      if (call !== aiCallRef.current) return;
+      onChange(result);
+      leaveAi();
+      setInnerOpen(false);
+      onOpenChange?.(false);
+    } catch (err) {
+      if (call !== aiCallRef.current) return;
+      setAiPending(false);
+      setAiError(aiFilterErrorText(err));
+    }
+  }
 
   const clauseFor = (f: FilterFacet) =>
     filters.clauses.find((c) => c.facet === f);
@@ -250,14 +319,15 @@ export function FilterMenu({
   // Search results: facets whose name matches, then values across every facet.
   const searchRows = useMemo(() => {
     if (query.trim() === '') return null;
+    const ai = onAiFilter !== undefined && matches(query, AI_FILTER_LABEL);
     const facets = FILTER_FACETS.filter((f) => matches(query, facetLabel(f)));
     const values = FILTER_FACETS.flatMap((f) =>
       optionsFor(f, context)
         .filter((o) => matches(query, o.label))
         .map((o) => ({ facet: f, option: o }))
     );
-    return { facets, values };
-  }, [query, context]);
+    return { ai, facets, values };
+  }, [query, context, onAiFilter]);
 
   const optionRow = (f: FilterFacet, option: FacetOption, crumb: boolean) => {
     const selected = isPicked(f, option.value);
@@ -282,14 +352,36 @@ export function FilterMenu({
     );
   };
 
+  // Linear's first row (§7): opens the sentence subview instead of a facet.
+  const aiRow =
+    onAiFilter === undefined ? null : (
+      <button
+        key="ai"
+        type="button"
+        role="menuitem"
+        data-facet="ai"
+        onClick={() => {
+          setQuery('');
+          setAiMode(true);
+        }}
+        className={ROW_CLASS}
+      >
+        <Sparkles aria-hidden />
+        <span className="min-w-0 flex-1 truncate">{AI_FILTER_LABEL}</span>
+        <ChevronRight aria-hidden className="text-muted-foreground size-3" />
+      </button>
+    );
+
   return (
     <Popover
-      open={open}
+      open={isOpen}
       onOpenChange={(next) => {
+        setInnerOpen(next);
         onOpenChange?.(next);
         if (!next) {
           setQuery('');
           setFacet(null);
+          leaveAi();
         }
       }}
     >
@@ -300,7 +392,63 @@ export function FilterMenu({
         initialFocus={inputRef}
         className="w-[180px] p-0"
       >
-        {facet === null ? (
+        {aiMode ? (
+          // Escape steps back to the facet list, the same as leaving a facet.
+          <div
+            data-slot="ai-filter"
+            onKeyDown={(e) => {
+              if (e.key !== 'Escape') return;
+              e.preventDefault();
+              e.stopPropagation();
+              leaveAi();
+            }}
+          >
+            <div className="shadow-hairline-bottom flex h-9 items-center gap-1 px-1">
+              <IconButton label="Back to filters" onClick={leaveAi}>
+                <ChevronLeft aria-hidden />
+              </IconButton>
+              <span className="text-muted-foreground min-w-0 truncate text-[12px] font-medium">
+                {AI_FILTER_LABEL}
+              </span>
+            </div>
+            <div className="flex flex-col gap-1 p-2.5">
+              <div className="flex h-7 items-center gap-2">
+                <Input
+                  ref={inputRef}
+                  variant="borderless"
+                  placeholder="Describe a filter…"
+                  aria-label={AI_FILTER_LABEL}
+                  aria-invalid={aiError !== null || undefined}
+                  value={sentence}
+                  disabled={aiPending}
+                  onChange={(e) => {
+                    setSentence(e.target.value);
+                    setAiError(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key !== 'Enter' || aiPending) return;
+                    e.preventDefault();
+                    void submitAi();
+                  }}
+                  className="flex-1 text-[13px]"
+                />
+                {aiPending ? (
+                  <Spinner className="text-muted-foreground size-3.5" />
+                ) : (
+                  <Kbd>⏎</Kbd>
+                )}
+              </div>
+              {aiError !== null && (
+                <span
+                  role="alert"
+                  className="font-book text-muted-foreground text-[12px]"
+                >
+                  {aiError}
+                </span>
+              )}
+            </div>
+          </div>
+        ) : facet === null ? (
           <>
             <div className="shadow-hairline-bottom flex h-9 items-center gap-2 px-2.5">
               <Input
@@ -311,10 +459,15 @@ export function FilterMenu({
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && searchRows?.facets.length === 1) {
+                  if (e.key !== 'Enter' || searchRows === null) return;
+                  if (searchRows.facets.length === 1) {
                     e.preventDefault();
                     setFacet(searchRows.facets[0]);
                     setQuery('');
+                  } else if (searchRows.ai && searchRows.facets.length === 0) {
+                    e.preventDefault();
+                    setQuery('');
+                    setAiMode(true);
                   }
                 }}
                 className="flex-1 text-[13px]"
@@ -328,32 +481,36 @@ export function FilterMenu({
               className="flex max-h-80 flex-col overflow-y-auto p-1"
             >
               {searchRows === null ? (
-                FILTER_FACETS.map((f) => (
-                  <button
-                    key={f}
-                    type="button"
-                    role="menuitem"
-                    data-facet={f}
-                    onClick={() => setFacet(f)}
-                    className={ROW_CLASS}
-                  >
-                    {FACET_ICON[f]}
-                    <span className="min-w-0 flex-1 truncate">
-                      {facetLabel(f)}
-                    </span>
-                    {selectedValues(f).size > 0 && (
-                      <span className="font-book text-muted-foreground text-[11px]">
-                        {selectedValues(f).size}
+                <>
+                  {aiRow}
+                  {FILTER_FACETS.map((f) => (
+                    <button
+                      key={f}
+                      type="button"
+                      role="menuitem"
+                      data-facet={f}
+                      onClick={() => setFacet(f)}
+                      className={ROW_CLASS}
+                    >
+                      {FACET_ICON[f]}
+                      <span className="min-w-0 flex-1 truncate">
+                        {facetLabel(f)}
                       </span>
-                    )}
-                    <ChevronRight
-                      aria-hidden
-                      className="text-muted-foreground size-3"
-                    />
-                  </button>
-                ))
+                      {selectedValues(f).size > 0 && (
+                        <span className="font-book text-muted-foreground text-[11px]">
+                          {selectedValues(f).size}
+                        </span>
+                      )}
+                      <ChevronRight
+                        aria-hidden
+                        className="text-muted-foreground size-3"
+                      />
+                    </button>
+                  ))}
+                </>
               ) : (
                 <>
+                  {searchRows.ai && aiRow}
                   {searchRows.facets.map((f) => (
                     <button
                       key={f}
@@ -379,7 +536,8 @@ export function FilterMenu({
                   {searchRows.values.map(({ facet: f, option }) =>
                     optionRow(f, option, true)
                   )}
-                  {searchRows.facets.length === 0 &&
+                  {!searchRows.ai &&
+                    searchRows.facets.length === 0 &&
                     searchRows.values.length === 0 && (
                       <span className="font-book text-muted-foreground flex h-8 items-center px-2 text-[13px]">
                         No matching filter
