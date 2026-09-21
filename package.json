@@ -19,6 +19,7 @@
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
     "oxlint-tsgolint": "catalog:",
+    "railway": "catalog:",
     "stylelint": "catalog:",
     "stylelint-config-standard": "catalog:",
     "type-coverage": "catalog:",

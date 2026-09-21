@@ -161,6 +161,8 @@ catalog:
   'oxlint': '1.42.0'
   'oxlint-tsgolint': '0.11.3'
   '@base-ui/react': '1.8.0'
+  # Types for .railway/railway.ts (the `railway/iac` authoring API the Railway CLI runs).
+  railway: '3.11.0'
   'react': '19.2.7'
   'react-dom': '19.2.7'
   'react-markdown': '9.0.1'
