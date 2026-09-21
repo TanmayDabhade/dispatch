@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import { DEEP_LINK_SCHEME, formatTaskLink, parseTaskLink } from './deepLink';
 
 const LINK = { taskId: 't-1a2b3c', project: '/Users/me/Sites/repo' };
-const HARNESS = `http://localhost:5173/?root=${encodeURIComponent(LINK.project)}&port=4100&token=secret`;
+const HARNESS = `http://localhost:5173/?root=${encodeURIComponent(LINK.project)}&port=4100&token=secret&appToken=app-secret`;
 
 describe('formatTaskLink', () => {
   test('the app form encodes the project root as a query param', () => {
@@ -16,10 +16,11 @@ describe('formatTaskLink', () => {
     expect(DEEP_LINK_SCHEME).toBe('dispatch');
   });
 
-  test('the browser form sets task, strips token and keeps root/port', () => {
+  test('the browser form sets task, strips both tokens and keeps root/port', () => {
     const url = new URL(formatTaskLink(LINK, 'browser', HARNESS));
     expect(url.searchParams.get('task')).toBe('t-1a2b3c');
     expect(url.searchParams.has('token')).toBe(false);
+    expect(url.searchParams.has('appToken')).toBe(false);
     expect(url.searchParams.get('root')).toBe('/Users/me/Sites/repo');
     expect(url.searchParams.get('port')).toBe('4100');
     expect(url.origin + url.pathname).toBe('http://localhost:5173/');
@@ -41,6 +42,22 @@ describe('parseTaskLink', () => {
   test('round-trips an epic id and a root with spaces', () => {
     const link = { taskId: 'e-abc123', project: '/Users/me/My Repo' };
     expect(parseTaskLink(formatTaskLink(link, 'app'))).toEqual(link);
+  });
+
+  test('drops a trailing slash on the project so it matches the active root', () => {
+    expect(
+      parseTaskLink(
+        `dispatch://task/t-1a2b3c?project=${encodeURIComponent('/Users/me/repo/')}`
+      )
+    ).toEqual({ taskId: 't-1a2b3c', project: '/Users/me/repo' });
+    expect(parseTaskLink('dispatch://task/t-1a2b3c?project=/repo//')).toEqual({
+      taskId: 't-1a2b3c',
+      project: '/repo',
+    });
+    expect(parseTaskLink('dispatch://task/t-1a2b3c?project=/')).toEqual({
+      taskId: 't-1a2b3c',
+      project: '/',
+    });
   });
 
   test('a browser-form link is not an app link', () => {

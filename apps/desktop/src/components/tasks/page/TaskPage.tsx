@@ -40,6 +40,7 @@ import {
   useTaskVerification,
 } from '../../../hooks/useOrchestration';
 import { parseActivity } from '../../../lib/activityFeed';
+import { filesFromDataTransfer } from '../../../lib/attachments';
 import { isFakeExecutorDevToolEnabled } from '../../../lib/devTools';
 import { fixLoopNeedsRuling } from '../../../lib/fixLoopStatus';
 import {
@@ -61,7 +62,6 @@ import {
   enrichPatch,
   enrichPlanError,
 } from '../../../lib/taskEnrich';
-import { filesFromDataTransfer } from '../../../lib/attachments';
 import { ImpactPanel } from '../../impact/ImpactPanel';
 import { PlanQuestionsForm } from '../../plans/PlanQuestionsForm';
 import { useDeepLinkActions } from '../../shell/DeepLinkContext';
@@ -870,6 +870,11 @@ export function TaskPage({
           const note = notePatch(text);
           if (note !== null) void patch(note);
         }}
+        onAttach={
+          !archived && client !== null
+            ? () => attachmentInputRef.current?.click()
+            : undefined
+        }
       />
     </div>
   );

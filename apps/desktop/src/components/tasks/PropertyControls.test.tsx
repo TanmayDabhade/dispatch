@@ -343,9 +343,9 @@ describe('PropertyControls', () => {
     await pick(/Create “docs”/);
     expect(changes).toEqual([['ui', 'docs']]);
     // The search resets for the next pick instead of the popover closing.
-    expect(
-      (screen.getByPlaceholderText('Label…') as HTMLInputElement).value
-    ).toBe('');
+    expect(screen.getByPlaceholderText<HTMLInputElement>('Label…').value).toBe(
+      ''
+    );
   });
 
   test('a case-variant of an existing label is not offered for creation', async () => {

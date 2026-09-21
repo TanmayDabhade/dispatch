@@ -22,8 +22,9 @@ export interface TaskLink {
  * Formats a task link for one of the two places the UI runs. `'app'` is the
  * `dispatch://task/<id>?project=<root>` form the bundled app opens; `'browser'`
  * is the browser-dev harness's own URL with `task=<id>` set — `root`/`port`
- * ride along so the link lands on the same daemon, but `token` (the harness's
- * agent token) never rides on a pasted link.
+ * ride along so the link lands on the same daemon, but neither daemon token
+ * rides on a pasted link: `token` (the agent tier) nor `appToken` (the decide
+ * tier the overseer harness carries).
  */
 export function formatTaskLink(
   link: TaskLink,
@@ -36,6 +37,7 @@ export function formatTaskLink(
   const url = new URL(browserLocation);
   url.searchParams.set('task', link.taskId);
   url.searchParams.delete('token');
+  url.searchParams.delete('appToken');
   return url.toString();
 }
 
@@ -43,7 +45,10 @@ export function formatTaskLink(
  * Parses the `'app'` form back into a `TaskLink`, or `null` for anything else:
  * another scheme, a non-task host, an id the store would refuse, or a missing
  * or relative `project`. WHATWG parses `dispatch://task/<id>` with `task` as
- * the host and `/<id>` as the path.
+ * the host and `/<id>` as the path. A trailing slash on `project` (a
+ * hand-edited or shell-completed path) is dropped so the link compares equal
+ * to the active project's root instead of re-keying the daemon on a second
+ * spelling of it.
  */
 export function parseTaskLink(url: string): TaskLink | null {
   let parsed: URL;
@@ -58,7 +63,8 @@ export function parseTaskLink(url: string): TaskLink | null {
   if (!parsed.pathname.startsWith('/') || !TASK_ID_PATTERN.test(taskId)) {
     return null;
   }
-  const project = parsed.searchParams.get('project');
-  if (project === null || !project.startsWith('/')) return null;
+  const raw = parsed.searchParams.get('project');
+  if (raw === null || !raw.startsWith('/')) return null;
+  const project = raw.replace(/\/+$/, '') || '/';
   return { taskId, project };
 }

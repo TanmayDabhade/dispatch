@@ -49,14 +49,14 @@ function loadViews(projectPath: string | null): SavedView[] {
     : loadSavedViews(projectPath, window.localStorage);
 }
 
-function loadFavs(projectPath: string | null): FavoriteRef[] {
+function readFavorites(projectPath: string | null): FavoriteRef[] {
   return projectPath === null
     ? []
     : loadFavorites(projectPath, window.localStorage);
 }
 
 /**
- * The saved views and favourites for one project root, every mutation persisted. The hook
+ * The saved views and favorites for one project root, every mutation persisted. The hook
  * swaps roots in place (App keeps one instance and changes `projectPath`), so the state seeds
  * from storage on mount and reloads in an effect when the root changes; `activeViewId` resets
  * with the root and when its view is deleted. The returned object is memoised so it can sit
@@ -65,32 +65,41 @@ function loadFavs(projectPath: string | null): FavoriteRef[] {
 export function useSavedViews(projectPath: string | null): SavedViewsApi {
   const [views, setViews] = useState<SavedView[]>(() => loadViews(projectPath));
   const [favorites, setFavorites] = useState<FavoriteRef[]>(() =>
-    loadFavs(projectPath)
+    readFavorites(projectPath)
   );
   const [activeViewId, setActiveViewId] = useState<string | null>(null);
 
   useEffect(() => {
     setViews(loadViews(projectPath));
-    setFavorites(loadFavs(projectPath));
+    setFavorites(readFavorites(projectPath));
     setActiveViewId(null);
   }, [projectPath]);
 
-  // Both writers no-op without a root: the get-started state has nowhere to persist to.
+  // Every mutation goes through a functional updater so two calls in one tick compose
+  // instead of the second clobbering the first with a stale snapshot. Persisting inside the
+  // updater is safe: `setItem` is idempotent under StrictMode's double invoke. Both writers
+  // no-op without a root — the get-started state has nowhere to persist to.
   const commitViews = useCallback(
-    (next: SavedView[]) => {
-      setViews(next);
-      if (projectPath !== null) {
-        saveSavedViews(projectPath, next, window.localStorage);
-      }
+    (update: (prev: SavedView[]) => SavedView[]) => {
+      setViews((prev) => {
+        const next = update(prev);
+        if (next !== prev && projectPath !== null) {
+          saveSavedViews(projectPath, next, window.localStorage);
+        }
+        return next;
+      });
     },
     [projectPath]
   );
   const commitFavorites = useCallback(
-    (next: FavoriteRef[]) => {
-      setFavorites(next);
-      if (projectPath !== null) {
-        saveFavorites(projectPath, next, window.localStorage);
-      }
+    (update: (prev: FavoriteRef[]) => FavoriteRef[]) => {
+      setFavorites((prev) => {
+        const next = update(prev);
+        if (next !== prev && projectPath !== null) {
+          saveFavorites(projectPath, next, window.localStorage);
+        }
+        return next;
+      });
     },
     [projectPath]
   );
@@ -116,30 +125,34 @@ export function useSavedViews(projectPath: string | null): SavedViewsApi {
           display,
           createdAt: new Date().toISOString(),
         };
-        commitViews(addSavedView(views, view));
+        commitViews((prev) => addSavedView(prev, view));
         if (favorite) {
-          commitFavorites(
-            toggleFavorite(favorites, { kind: 'view', id: view.id })
+          commitFavorites((prev) =>
+            toggleFavorite(prev, { kind: 'view', id: view.id })
           );
         }
         return view;
       },
       updateView: (id, patch) => {
-        commitViews(views.map((v) => (v.id === id ? { ...v, ...patch } : v)));
+        commitViews((prev) =>
+          prev.map((v) => (v.id === id ? { ...v, ...patch } : v))
+        );
       },
       renameView: (id, name) => {
-        commitViews(renameSavedView(views, id, name));
+        commitViews((prev) => renameSavedView(prev, id, name));
       },
       deleteView: (id) => {
-        const next = removeSavedView(views, favorites, id);
-        commitViews(next.views);
-        if (next.favorites.length !== favorites.length) {
-          commitFavorites(next.favorites);
-        }
+        commitViews((prev) => removeSavedView(prev, [], id).views);
+        // Only a view that was starred changes the favorites list; returning `prev`
+        // otherwise skips the write and the re-render.
+        commitFavorites((prev) => {
+          const next = removeSavedView([], prev, id).favorites;
+          return next.length === prev.length ? prev : next;
+        });
         if (activeViewId === id) setActiveViewId(null);
       },
       toggleFavorite: (ref) => {
-        commitFavorites(toggleFavorite(favorites, ref));
+        commitFavorites((prev) => toggleFavorite(prev, ref));
       },
       isFavorite: (ref) => isFavorite(favorites, ref),
     };

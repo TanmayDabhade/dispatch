@@ -31,7 +31,10 @@ export function useDeepLinkActions(): DeepLinkActions | null {
  * for before a project is active.
  */
 export function useCopyTaskLink(
-  projectRoot: string | null
+  projectRoot: string | null,
+  // Which link form to write; the app's `dispatch://` or the harness's `?task=`. Read
+  // once per call from the window, so a test can name the surface without touching it.
+  surface: () => 'app' | 'browser' = () => (isTauri() ? 'app' : 'browser')
 ): (taskId: string) => void {
   const toasts = useToasts();
   return useCallback(
@@ -44,10 +47,7 @@ export function useCopyTaskLink(
         });
         return;
       }
-      const link = formatTaskLink(
-        { taskId, project: projectRoot },
-        isTauri() ? 'app' : 'browser'
-      );
+      const link = formatTaskLink({ taskId, project: projectRoot }, surface());
       void navigator.clipboard
         .writeText(link)
         .then(() => toasts.push({ title: 'Copied link', tone: 'success' }))
@@ -59,6 +59,6 @@ export function useCopyTaskLink(
           })
         );
     },
-    [projectRoot, toasts]
+    [projectRoot, surface, toasts]
   );
 }

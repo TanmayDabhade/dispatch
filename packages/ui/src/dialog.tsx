@@ -43,6 +43,34 @@ function DialogOverlay({
   );
 }
 
+const FOCUSABLE_SELECTOR =
+  'input, textarea, select, button, a[href], [tabindex]';
+const CHROME_SELECTOR =
+  '[data-slot="dialog-chrome"], [data-slot="dialog-corner-close"]';
+
+// Where a dialog's focus lands when it opens: the first field or control in its body,
+// skipping the chrome row's Expand/Close and the corner close that Base UI's own
+// "first tabbable" rule would pick — so `c` opens the creator with the caret in the title,
+// not a ring on `×`. A dialog with nothing but chrome (the shortcuts reference) focuses
+// the popup itself, which Base UI gives `tabIndex=-1` for exactly this.
+export function initialFocusTarget(
+  popup: HTMLElement | null
+): HTMLElement | null {
+  if (popup === null) return null;
+  const candidates = Array.from(
+    popup.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)
+  );
+  return (
+    candidates.find(
+      (el) =>
+        el.getAttribute('tabindex') !== '-1' &&
+        !el.matches(':disabled') &&
+        !el.hasAttribute('hidden') &&
+        el.closest(CHROME_SELECTOR) === null
+    ) ?? popup
+  );
+}
+
 // The corner close is a fallback for dialogs without a `DialogChrome` row: once a
 // chrome row is anywhere inside the popup, its own close takes over and the corner one
 // hides, so consumers do not need to pass `showCloseButton={false}` to avoid two.
@@ -50,19 +78,42 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  ref,
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean;
 }) {
+  const popupRef = React.useRef<HTMLDivElement | null>(null);
+  // One callback ref feeds both the focus lookup above and whatever ref the consumer
+  // passed (`TaskPeekDialog` keeps its own for `initialFocus`).
+  const mergedRef = React.useCallback(
+    (node: HTMLDivElement | null) => {
+      popupRef.current = node;
+      if (typeof ref === 'function') {
+        ref(node);
+      } else if (ref !== undefined && ref !== null) {
+        ref.current = node;
+      }
+    },
+    [ref]
+  );
   return (
     <DialogPortal>
       <DialogOverlay />
       <DialogPrimitive.Popup
+        ref={mergedRef}
         data-slot="dialog-content"
         className={cn(
           'fixed top-1/2 left-1/2 z-50 flex w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col gap-0 rounded-popover bg-popover p-0 shadow-overlay transition-[opacity,scale] duration-100 outline-none data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0 sm:max-w-lg',
           className
         )}
+        // Before `{...props}` so a consumer's explicit `initialFocus` still wins. A touch
+        // open keeps Base UI's default (the popup) so the virtual keyboard stays closed.
+        initialFocus={(openType) =>
+          openType === 'touch'
+            ? popupRef.current
+            : initialFocusTarget(popupRef.current)
+        }
         {...props}
       >
         {children}

@@ -6,17 +6,32 @@ import {
   ClaudeAiTaskFilter,
 } from '../aiTaskFilter.js';
 import type { TaskCache } from '../cache.js';
-import type { Orchestrator } from '../orchestrator/orchestrator.js';
+import type { RunState } from '../orchestrator/types.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 
 // The slice of ApiContext this route reads, so a test can hand it a fake cache
-// and orchestrator without booting a daemon.
+// without booting a daemon.
 export interface AiFilterRouteContext {
   rootDir: string;
   cache: Pick<TaskCache, 'query'>;
-  orchestrator: Pick<Orchestrator, 'list'>;
   aiTaskFilter?: AiTaskFilterPort;
 }
+
+// Every `RunState`, not just the ones with a live run: "tasks an agent is
+// working on" must still sanitize to `run is running` when nothing is running.
+const RUN_STATES: RunState[] = [
+  'provisioning',
+  'running',
+  'awaiting-approval',
+  'finished',
+  'failed',
+  'cancelled',
+  'interrupted-dirty',
+];
+
+// A sentence is a line typed into a menu; anything longer is spliced verbatim
+// into a paid model prompt for nothing.
+const MAX_SENTENCE = 500;
 
 // The project's live filter vocabulary, read from the cache (never the task
 // files) so the SQLite and markdown backends answer the same thing.
@@ -32,13 +47,12 @@ function vocabularyFor(ctx: AiFilterRouteContext): AiFilterVocabulary {
       epics.push({ id: doc.meta.id, title: doc.meta.title });
     }
   }
-  const runStates = new Set(ctx.orchestrator.list().map((run) => run.state));
   return {
     statuses: [...loadConfig(ctx.rootDir).statuses],
     labels: [...labels].sort(),
     milestones: [...milestones].sort(),
     epics,
-    runStates: [...runStates].sort(),
+    runStates: [...RUN_STATES],
   };
 }
 
@@ -53,6 +67,9 @@ export async function aiFilterTasks(
   const sentence = (parsed.value as { sentence?: unknown }).sentence;
   if (typeof sentence !== 'string' || sentence.trim() === '') {
     return errorResponse(400, 'sentence is required');
+  }
+  if (sentence.length > MAX_SENTENCE) {
+    return errorResponse(400, 'sentence is too long');
   }
   const port = ctx.aiTaskFilter ?? new ClaudeAiTaskFilter(ctx.rootDir);
   try {

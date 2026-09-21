@@ -191,7 +191,7 @@ describe('view list helpers', () => {
     expect(added[1]?.name).toBe('View v-2');
   });
 
-  test('removeSavedView cascades the favourite and leaves task favourites alone', () => {
+  test('removeSavedView cascades the favorite and leaves task favorites alone', () => {
     const favorites: FavoriteRef[] = [
       { kind: 'view', id: 'v-1' },
       { kind: 'task', id: 'v-1' },
@@ -270,5 +270,40 @@ describe('viewMatches', () => {
     expect(viewMatches(view('v-1'), shuffledFilters, shuffledDisplay)).toBe(
       true
     );
+  });
+
+  // Removing and re-adding a value in the Filter menu reorders it; the same set of clauses
+  // and values in any order is still the saved view.
+  test('is insensitive to clause order and value order', () => {
+    const saved: TaskFilterSet = {
+      clauses: [
+        { facet: 'status', op: 'is', values: ['working', 'ready'] },
+        { facet: 'priority', op: 'is not', values: ['low'] },
+      ],
+      join: 'and',
+    };
+    const reordered: TaskFilterSet = {
+      clauses: [
+        { facet: 'priority', op: 'is not', values: ['low'] },
+        { facet: 'status', op: 'is', values: ['ready', 'working'] },
+      ],
+      join: 'and',
+    };
+    const v = view('v-1', { filters: saved });
+    expect(viewMatches(v, reordered, DISPLAY)).toBe(true);
+    expect(viewMatches(v, { ...reordered, join: 'or' }, DISPLAY)).toBe(false);
+    expect(
+      viewMatches(
+        v,
+        {
+          ...reordered,
+          clauses: [
+            reordered.clauses[0],
+            { facet: 'status', op: 'is', values: ['ready'] },
+          ],
+        },
+        DISPLAY
+      )
+    ).toBe(false);
   });
 });

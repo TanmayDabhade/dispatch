@@ -683,7 +683,7 @@ describe('SqliteTaskStore rejects rows it cannot trust', () => {
   // read as [] would erase its declared write scope. The file backend throws a
   // TaskParseError here, so the database backend raises too.
   it('throws rather than defaulting a damaged JSON column', () => {
-    for (const column of ['blocked_by', 'labels', 'writes']) {
+    for (const column of ['blocked_by', 'labels', 'writes', 'attachments']) {
       const db = openDispatchDb(':memory:');
       openDbs.push(db);
       const store = storeWith(db);
@@ -691,6 +691,16 @@ describe('SqliteTaskStore rejects rows it cannot trust', () => {
         title: 'Blocked',
         blockedBy: ['t-aaaaaa'],
         writes: ['src/**'],
+      });
+      store.update(doc.meta.id, {
+        attachments: [
+          {
+            name: 'spec.png',
+            path: `.dispatch/attachments/${doc.meta.id}/spec.png`,
+            size: 1,
+            addedAt: '2026-09-20T10:00:00.000Z',
+          },
+        ],
       });
       db.prepare(`UPDATE tasks SET ${column} = ? WHERE id = ?`).run(
         'not json',
@@ -700,6 +710,23 @@ describe('SqliteTaskStore rejects rows it cannot trust', () => {
       expect(() => store.get(doc.meta.id)).toThrow(column);
       expect(() => store.list()).toThrow(SqliteRowError);
     }
+  });
+
+  // Valid JSON of the wrong shape is as damaged as no JSON: an entry without
+  // a path or size could not be opened or labelled.
+  it('throws on an attachments value that is not a list of attachments', () => {
+    const db = openDispatchDb(':memory:');
+    openDbs.push(db);
+    const store = storeWith(db);
+    const doc = store.create({ title: 'Carries' });
+    db.prepare('UPDATE tasks SET attachments = ? WHERE id = ?').run(
+      '[{"name":1}]',
+      doc.meta.id
+    );
+    expect(() => store.get(doc.meta.id)).toThrow(SqliteRowError);
+    expect(() => store.get(doc.meta.id)).toThrow(
+      'is not an array of attachments'
+    );
   });
 
   it('throws on an enum column outside its set', () => {

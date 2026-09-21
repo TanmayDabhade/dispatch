@@ -92,7 +92,6 @@ function SaveViewForm({
               submit();
             }
           }}
-          autoFocus
         />
       </DialogBody>
       <DialogFooter

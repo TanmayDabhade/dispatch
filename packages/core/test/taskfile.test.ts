@@ -301,9 +301,9 @@ describe('attachments frontmatter', () => {
     expect(serializeTaskFile(doc)).not.toContain('attachments');
     const emptied: TaskDoc = { ...doc, meta: { ...doc.meta, attachments: [] } };
     expect(serializeTaskFile(emptied)).not.toContain('attachments');
-    expect('attachments' in parseTaskFile(serializeTaskFile(emptied)).meta).toBe(
-      false
-    );
+    expect(
+      'attachments' in parseTaskFile(serializeTaskFile(emptied)).meta
+    ).toBe(false);
   });
 
   it('throws on a malformed entry', () => {

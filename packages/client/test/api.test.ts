@@ -215,8 +215,32 @@ describe('attachments', () => {
       expect(stub.calls[1].url).toBe(
         'http://example.test/api/tasks/t-1/attachments/my%20spec.png'
       );
+      expect(await client.hasTaskAttachment('t-1', 'my spec.png')).toBe(true);
+      expect(stub.calls[2].url).toBe(
+        'http://example.test/api/tasks/t-1/attachments/my%20spec.png'
+      );
+      expect(stub.calls[2].init?.method).toBe('HEAD');
     } finally {
       stub.restore();
+    }
+  });
+
+  // The presence probe folds a 404 into `false`; any other failure still
+  // throws so a dead daemon is not read as a missing file.
+  it('reads a 404 on the HEAD probe as absent', async () => {
+    const original = globalThis.fetch;
+    let status = 404;
+    globalThis.fetch = ((_url: string | URL, _init?: RequestInit) =>
+      Promise.resolve(new Response(null, { status }))) as typeof fetch;
+    try {
+      const client = createApiClient('http://example.test');
+      expect(await client.hasTaskAttachment('t-1', 'spec.png')).toBe(false);
+      status = 500;
+      await expect(client.hasTaskAttachment('t-1', 'spec.png')).rejects.toThrow(
+        'request failed: 500'
+      );
+    } finally {
+      globalThis.fetch = original;
     }
   });
 });
@@ -229,9 +253,7 @@ describe('aiFilterTasks', () => {
         'urgent tasks nobody is on'
       );
       expect(stub.calls).toHaveLength(1);
-      expect(stub.calls[0].url).toBe(
-        'http://example.test/api/tasks/filter/ai'
-      );
+      expect(stub.calls[0].url).toBe('http://example.test/api/tasks/filter/ai');
       expect(stub.calls[0].init?.method).toBe('POST');
       expect(stub.calls[0].init?.body).toBe(
         JSON.stringify({ sentence: 'urgent tasks nobody is on' })

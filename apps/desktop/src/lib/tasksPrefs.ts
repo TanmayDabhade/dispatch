@@ -68,6 +68,9 @@ export interface TasksDisplayPrefs {
 
 export const TASK_FILTERS_STORAGE_KEY = 'dispatch:tasks-filters-v1';
 export const TASKS_DISPLAY_STORAGE_KEY = 'dispatch:tasks-display-v1';
+/** Stamped into every serialised display model. Payloads without it (or below it) were
+ * written before board lanes moved to `subGrouping` and go through that migration once. */
+const TASKS_DISPLAY_VERSION = 2;
 
 export const EMPTY_TASK_FILTERS: TaskFilters = { statuses: [], priorities: [] };
 
@@ -198,8 +201,17 @@ export function tasksDisplayFromValue(
   let subGrouping = oneOf(record.subGrouping, SUB_GROUPINGS, d.subGrouping);
   // Board lanes moved from `grouping` to `subGrouping`: a board stored as grouped by epic
   // with no sub-grouping of its own keeps its epic lanes. `grouping` stays as stored — the
-  // list still groups by it.
-  if (layout === 'board' && grouping === 'epic' && subGrouping === 'none') {
+  // list still groups by it. Only unstamped payloads migrate; a stamped one wrote
+  // `subGrouping: 'none'` deliberately (the board's Ungroup) and must stay that way.
+  const stamped =
+    typeof record.version === 'number' &&
+    record.version >= TASKS_DISPLAY_VERSION;
+  if (
+    !stamped &&
+    layout === 'board' &&
+    grouping === 'epic' &&
+    subGrouping === 'none'
+  ) {
     subGrouping = 'epic';
   }
   return {
@@ -229,10 +241,12 @@ export function parseTasksDisplay(stored: string | null): TasksDisplayPrefs {
 }
 
 /** The storage payload. Field order is fixed here and `properties` is written as a sorted
- * array, so two equal models always serialise to the same string whatever order their
- * fields were assigned in — `savedViews.ts` compares these strings. */
+ * array, so two equal models always serialize to the same string whatever order their
+ * fields were assigned in — `savedViews.ts` compares these strings. The `version` stamp
+ * marks the payload as post-migration (see `tasksDisplayFromValue`). */
 export function serializeTasksDisplay(prefs: TasksDisplayPrefs): string {
   return JSON.stringify({
+    version: TASKS_DISPLAY_VERSION,
     layout: prefs.layout,
     grouping: prefs.grouping,
     subGrouping: prefs.subGrouping,

@@ -271,6 +271,13 @@ export function FilterMenu({
     try {
       const result = await onAiFilter(sentence.trim());
       if (call !== aiCallRef.current) return;
+      // No clauses is the model's "cannot express that" answer: keep the sentence editable
+      // rather than wiping the chips already applied.
+      if (result.clauses.length === 0) {
+        setAiPending(false);
+        setAiError('No filter matched that sentence');
+        return;
+      }
       onChange(result);
       leaveAi();
       setInnerOpen(false);
@@ -433,7 +440,7 @@ export function FilterMenu({
                   className="flex-1 text-[13px]"
                 />
                 {aiPending ? (
-                  <Spinner className="text-muted-foreground size-3.5" />
+                  <Spinner className="text-muted-foreground size-3.5 motion-reduce:animate-none" />
                 ) : (
                   <Kbd>⏎</Kbd>
                 )}

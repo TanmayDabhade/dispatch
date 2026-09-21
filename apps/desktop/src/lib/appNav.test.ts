@@ -60,6 +60,43 @@ describe('navReducer', () => {
     expect(next.globalView).toBe('overseer');
   });
 
+  test('setGlobalView to settings with a page stores it', () => {
+    const next = navReducer(initialNavState, {
+      type: 'setGlobalView',
+      view: 'settings',
+      page: 'integrations',
+    });
+    expect(next.globalView).toBe('settings');
+    expect(next.settingsPage).toBe('integrations');
+  });
+
+  test('a plain setGlobalView to settings keeps the page last asked for', () => {
+    const state: NavState = {
+      ...initialNavState,
+      settingsPage: 'integrations',
+    };
+    const next = navReducer(state, { type: 'setGlobalView', view: 'settings' });
+    expect(next.settingsPage).toBe('integrations');
+    expect(
+      navReducer(initialNavState, { type: 'setGlobalView', view: 'settings' })
+        .settingsPage
+    ).toBeNull();
+  });
+
+  test('setGlobalView to another global view leaves the settings page alone', () => {
+    const state: NavState = {
+      ...initialNavState,
+      settingsPage: 'integrations',
+    };
+    const next = navReducer(state, { type: 'setGlobalView', view: 'sessions' });
+    expect(next.globalView).toBe('sessions');
+    expect(next.settingsPage).toBe('integrations');
+  });
+
+  test('the initial state has no settings page asked for', () => {
+    expect(initialNavState.settingsPage).toBeNull();
+  });
+
   test('setGlobalView clears an open peek — it should never render over Settings/Sessions', () => {
     const state: NavState = { ...initialNavState, peekTaskId: 'task-1' };
     const next = navReducer(state, { type: 'setGlobalView', view: 'settings' });

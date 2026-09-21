@@ -11,6 +11,10 @@ import type { ReactNode } from 'react';
 
 import { testConfig } from '../components/settings/fixtures.test-helper';
 import {
+  type DeepLinkActions,
+  DeepLinkProvider,
+} from '../components/shell/DeepLinkContext';
+import {
   type CreateTaskPreset,
   type ShellActions,
   ShellActionsProvider,
@@ -125,12 +129,18 @@ function shellWith(log: ShellLog) {
 function renderList(
   data: DispatchProjectData,
   onSelectTask: (id: string) => void = () => {},
-  log = shellLog()
+  log = shellLog(),
+  deepLink: DeepLinkActions | null = null
 ) {
   const Shell = shellWith(log);
+  const view = <TasksListView data={data} onSelectTask={onSelectTask} />;
   const result = render(
     <Shell>
-      <TasksListView data={data} onSelectTask={onSelectTask} />
+      {deepLink === null ? (
+        view
+      ) : (
+        <DeepLinkProvider value={deepLink}>{view}</DeepLinkProvider>
+      )}
     </Shell>
   );
   return { ...result, log };
@@ -311,8 +321,16 @@ test('the single-key set: j/k move, x selects, Enter opens, Space peeks, s opens
 
   fireEvent.keyDown(grid, { key: 'j' });
   expect(rowOf('Second task').getAttribute('data-focused')).toBe('true');
+  // The grid names the cursor row for assistive tech; every row has a DOM id for it.
+  expect(rowOf('Second task').id).toBe('task-row-t-2');
+  expect(grid.getAttribute('aria-activedescendant')).toBe(
+    rowOf('Second task').id
+  );
   fireEvent.keyDown(grid, { key: 'ArrowUp' });
   expect(rowOf('First task').getAttribute('data-focused')).toBe('true');
+  expect(grid.getAttribute('aria-activedescendant')).toBe(
+    rowOf('First task').id
+  );
 
   fireEvent.keyDown(grid, { key: 'x' });
   expect(rowOf('First task').getAttribute('data-selected')).toBe('true');
@@ -349,8 +367,9 @@ test('keys inside an open picker menu do not reach the list (s then Enter picks,
   const opened: string[] = [];
   const moved: [string, string][] = [];
   const data = dataWith([task('t-1', 'First task')]);
-  data.moveTaskStatus = async (id: string, status: string) => {
+  data.moveTaskStatus = (id: string, status: string) => {
     moved.push([id, status]);
+    return Promise.resolve();
   };
   renderList(data, (id) => opened.push(id));
   const grid = screen.getByRole('grid', { name: 'Tasks' });
@@ -384,16 +403,24 @@ test('collapsing the only group keeps its header so it can be expanded again', (
   expect(screen.getByText('Only task')).not.toBeNull();
 });
 
+/** The row menu's labels in order, shortcuts stripped. */
+async function menuLabels(): Promise<(string | undefined)[]> {
+  const menu = await screen.findByRole('menu');
+  return within(menu)
+    .getAllByRole('menuitem')
+    .map((item) => item.textContent?.replace(/[A-Z⌘]+$|Space$/u, '').trim());
+}
+
 test('the context menu offers the property submenus, open/peek/dispatch/copy, archive and drop', async () => {
-  renderList(dataWith([task('t-1', 'First task')]));
+  const linked: string[] = [];
+  renderList(dataWith([task('t-1', 'First task')]), () => {}, shellLog(), {
+    copyTaskLink: (id) => linked.push(id),
+  });
 
   fireEvent.contextMenu(rowOf('First task'), { clientX: 10, clientY: 10 });
 
   const menu = await screen.findByRole('menu');
-  const labels = within(menu)
-    .getAllByRole('menuitem')
-    .map((item) => item.textContent?.replace(/[A-Z⌘]+$|Space$/u, '').trim());
-  expect(labels).toEqual([
+  expect(await menuLabels()).toEqual([
     'Status',
     'Priority',
     'Assignee',
@@ -404,11 +431,27 @@ test('the context menu offers the property submenus, open/peek/dispatch/copy, ar
     'Peek',
     'Dispatch',
     'Copy id',
+    'Copy link',
     'Archive',
     'Drop',
   ]);
   expect(within(menu).getByText('S')).not.toBeNull();
   expect(within(menu).getByText('⌘C')).not.toBeNull();
+
+  fireEvent.click(within(menu).getByRole('menuitem', { name: 'Copy link' }));
+  expect(linked).toEqual(['t-1']);
+});
+
+// Outside App's `DeepLinkProvider` (the harness, most view tests) there is nothing to
+// copy a link with, so the row menu shows no `Copy link`.
+test('the context menu has no Copy link without a deep-link provider', async () => {
+  renderList(dataWith([task('t-1', 'First task')]));
+
+  fireEvent.contextMenu(rowOf('First task'), { clientX: 10, clientY: 10 });
+
+  const labels = await menuLabels();
+  expect(labels).toContain('Copy id');
+  expect(labels).not.toContain('Copy link');
 });
 
 test('collapsing a group hides its rows and takes them out of the keyboard order', () => {

@@ -14,7 +14,6 @@ import {
   sanitizeAiFilter,
 } from '../src/aiTaskFilter';
 import { aiFilterTasks } from '../src/api/aiFilter';
-import type { RunMeta } from '../src/orchestrator/types';
 
 const vocab: AiFilterVocabulary = {
   statuses: ['draft', 'ready', 'working', 'review', 'landed'],
@@ -272,9 +271,6 @@ function routeContext(port: AiTaskFilterPort = new FakeAiTaskFilter()) {
   return {
     rootDir: root,
     cache: { query: () => docs },
-    orchestrator: {
-      list: () => [{ state: 'running' } as RunMeta],
-    },
     aiTaskFilter: port,
   };
 }
@@ -315,8 +311,25 @@ describe('aiFilterTasks', () => {
       labels: ['ui'],
       milestones: ['v1'],
       epics: [{ id: 'e-1', title: 'Payments epic' }],
-      runStates: ['running'],
+      runStates: [
+        'provisioning',
+        'running',
+        'awaiting-approval',
+        'finished',
+        'failed',
+        'cancelled',
+        'interrupted-dirty',
+      ],
     });
+  });
+
+  test('400 when the sentence is longer than a menu line', async () => {
+    const res = await aiFilterTasks(
+      post({ sentence: 'urgent '.repeat(100) }),
+      routeContext()
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'sentence is too long' });
   });
 
   test('400 without a sentence', async () => {

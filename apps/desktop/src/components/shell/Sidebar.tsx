@@ -1,9 +1,11 @@
 import type { DraftRecord } from '@dispatch/client';
 import {
   Brain,
+  CircleDot,
   GitBranch,
   GitMerge,
   Inbox,
+  Layers,
   LayoutDashboard,
   Link2,
   ListChecks,
@@ -103,7 +105,28 @@ export function useSidebarCollapsed(): [boolean, (next: boolean) => void] {
 }
 
 /** The collapsible sections' ids — also the keys in the persisted map. */
-export type SidebarSectionId = 'workspace' | 'fleet' | 'live' | 'try';
+export type SidebarSectionId =
+  | 'favorites'
+  | 'workspace'
+  | 'fleet'
+  | 'live'
+  | 'try';
+
+/** A starred view or task, resolved to the label its rail row shows. */
+interface SidebarFavorite {
+  kind: 'view' | 'task';
+  id: string;
+  label: string;
+}
+
+// Row-id prefixes for the rows built from the saved-view and favourite stores.
+const VIEW_ROW = 'view-';
+const FAV_VIEW_ROW = 'fav-view-';
+const FAV_TASK_ROW = 'fav-task-';
+
+// Stable empty defaults so the props stay optional without a fresh array per render.
+const NO_VIEWS: { id: string; name: string }[] = [];
+const NO_FAVORITES: SidebarFavorite[] = [];
 
 // Which sections the user has folded, as a JSON map. The Try block is the one that folds
 // itself: it is open on a fresh install and collapses the first time one of its rows is
@@ -220,20 +243,37 @@ interface SidebarProps {
   onOpenDraft: (id: string) => void;
   onDismissDraft: (id: string) => void;
   onSetProjectView: (view: ProjectView) => void;
-  onSetGlobalView: (view: GlobalView) => void;
+  /** `page` lands Settings on one of its pages — the Try block's Connect Linear opens
+   * Integrations. */
+  onSetGlobalView: (
+    view: GlobalView,
+    options?: { page?: 'integrations' }
+  ) => void;
   /** The `Live agents ▾` section's body (`LiveRail`), or `null` outside project scope. */
   liveRail: ReactNode;
   /** The Try block's "Drop a thought" — the ⌘D quick capture. */
   onQuickCapture: () => void;
+  /** The project's saved views, one nested row each under Tasks (linear-reference §2's
+   * `Views`). Defaults to none. */
+  savedViews?: { id: string; name: string }[];
+  /** Starred views and tasks — the `Favorites ▾` section, present only when non-empty. */
+  favorites?: SidebarFavorite[];
+  /** The saved view the Tasks page is showing, which makes its nested row the active one
+   * while the project view is `board`. */
+  activeSavedViewId?: string | null;
+  onSelectSavedView?: (id: string) => void;
+  onOpenFavorite?: (ref: { kind: 'view' | 'task'; id: string }) => void;
 }
 
 /**
  * Linear's rail on the `#08080a` frame: a top strip holding the project switcher plus
  * search and new-task icon buttons, a fixed heading-less group (Inbox, Drafts, Overseer),
- * then the collapsible `Workspace ▾`, `Fleet ▾`, `Live agents ▾` and `Try ▾` sections.
- * Built on `SidebarNav` (`ui/ai/sidebar-nav.tsx`) inside the `Sidebar` shell that App's
+ * then the collapsible `Favorites ▾` (when anything is starred), `Workspace ▾` — with the
+ * saved views nested under Tasks — `Fleet ▾`, `Live agents ▾` and `Try ▾` sections. Built
+ * on `SidebarNav` (`ui/ai/sidebar-nav.tsx`) inside the `Sidebar` shell that App's
  * `SidebarProvider` hides entirely on `[`. Settings is not a row: it lives in the
- * switcher's menu, on `G S`, and behind the status strip's `?`.
+ * switcher's menu, on `G S` and behind the header's gear; the status strip's `?` is the
+ * shortcuts sheet.
  */
 export function Sidebar({
   hasActiveProject,
@@ -254,6 +294,11 @@ export function Sidebar({
   onSetGlobalView,
   liveRail,
   onQuickCapture,
+  savedViews = NO_VIEWS,
+  favorites = NO_FAVORITES,
+  activeSavedViewId = null,
+  onSelectSavedView,
+  onOpenFavorite,
 }: SidebarProps) {
   const sections = useSidebarSections();
   const [draftsOpen, setDraftsOpen] = useState(false);
@@ -263,7 +308,13 @@ export function Sidebar({
       d.state === 'running' || d.state === 'ready' || d.questions.length > 0
   ).length;
 
-  const activeId = section === 'project' ? projectView : globalView;
+  // A saved view showing on the Tasks page lights its nested row rather than Tasks itself.
+  const activeId =
+    section === 'project'
+      ? projectView === 'board' && activeSavedViewId !== null
+        ? VIEW_ROW + activeSavedViewId
+        : projectView
+      : globalView;
 
   const topGroup: SidebarNavSection = {
     id: 'top',
@@ -300,16 +351,53 @@ export function Sidebar({
     collapsible: true,
     collapsed: sections.collapsed('workspace'),
     onToggle: () => sections.toggle('workspace'),
-    items: WORKSPACE_VIEWS.map((view) => {
+    items: WORKSPACE_VIEWS.flatMap((view) => {
       const Icon = view.icon;
-      return {
+      const row = {
         id: view.id,
         label: view.label,
         icon: <Icon strokeWidth={2} />,
         disabled: !hasActiveProject,
       } satisfies SidebarNavItem;
+      if (view.id !== 'board') return [row];
+      // The saved views nest under Tasks, the 16px-indented rows of a team's `Views`.
+      return [
+        row,
+        ...savedViews.map(
+          (saved) =>
+            ({
+              id: VIEW_ROW + saved.id,
+              label: saved.name,
+              icon: <Layers strokeWidth={2} />,
+              indent: 1,
+              disabled: !hasActiveProject,
+            }) satisfies SidebarNavItem
+        ),
+      ];
     }),
   };
+
+  const favoritesSection: SidebarNavSection | null =
+    favorites.length > 0
+      ? {
+          id: 'favorites',
+          label: 'Favorites',
+          collapsible: true,
+          collapsed: sections.collapsed('favorites'),
+          onToggle: () => sections.toggle('favorites'),
+          items: favorites.map((fav) => ({
+            id: (fav.kind === 'view' ? FAV_VIEW_ROW : FAV_TASK_ROW) + fav.id,
+            label: fav.label,
+            icon:
+              fav.kind === 'view' ? (
+                <Layers strokeWidth={2} />
+              ) : (
+                <CircleDot strokeWidth={2} />
+              ),
+            disabled: !hasActiveProject,
+          })),
+        }
+      : null;
 
   const fleet: SidebarNavSection = {
     id: 'fleet',
@@ -373,6 +461,7 @@ export function Sidebar({
 
   const navSections: SidebarNavSection[] = [
     topGroup,
+    ...(favoritesSection !== null ? [favoritesSection] : []),
     workspace,
     fleet,
     ...(live !== null ? [live] : []),
@@ -390,9 +479,19 @@ export function Sidebar({
         sections.collapse('try');
         if (id === 'try-plan') onSetProjectView('plans');
         else if (id === 'try-capture') onQuickCapture();
-        // Lands on Settings' first page: `SettingsView` keeps its page in local state and
-        // has no initial-page prop yet, so Settings › Integrations is not addressable here.
-        else onSetGlobalView('settings');
+        else onSetGlobalView('settings', { page: 'integrations' });
+        return;
+      }
+      if (id.startsWith(VIEW_ROW)) {
+        onSelectSavedView?.(id.slice(VIEW_ROW.length));
+        return;
+      }
+      if (id.startsWith(FAV_VIEW_ROW)) {
+        onOpenFavorite?.({ kind: 'view', id: id.slice(FAV_VIEW_ROW.length) });
+        return;
+      }
+      if (id.startsWith(FAV_TASK_ROW)) {
+        onOpenFavorite?.({ kind: 'task', id: id.slice(FAV_TASK_ROW.length) });
         return;
       }
       if ((PROJECT_VIEW_ORDER as string[]).includes(id)) {
@@ -401,7 +500,14 @@ export function Sidebar({
       }
       onSetGlobalView(id as GlobalView);
     },
-    [sections, onSetProjectView, onSetGlobalView, onQuickCapture]
+    [
+      sections,
+      onSetProjectView,
+      onSetGlobalView,
+      onQuickCapture,
+      onSelectSavedView,
+      onOpenFavorite,
+    ]
   );
 
   return (

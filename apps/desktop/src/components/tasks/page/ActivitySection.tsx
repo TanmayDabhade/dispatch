@@ -75,13 +75,16 @@ function CommentCard({ entry }: { entry: ActivityEntry }) {
 
 // The `Activity` section: a 15px/600 heading, then the feed — orchestrator events as
 // muted timeline lines and comments as cards, oldest first — closed by the comment
-// composer. `onSubmitNote` receives the composer's trimmed text.
+// composer. `onSubmitNote` receives the composer's trimmed text; `onAttach` is the
+// composer's paperclip, opening the task's attachment picker when the page has one.
 export function ActivitySection({
   entries,
   onSubmitNote,
+  onAttach,
 }: {
   entries: ActivityEntry[];
   onSubmitNote: (text: string) => void;
+  onAttach?: () => void;
 }) {
   return (
     <section data-slot="activity-section" className="flex flex-col gap-3">
@@ -103,7 +106,7 @@ export function ActivitySection({
           )}
         </ul>
       )}
-      <CommentComposer onSubmit={onSubmitNote} />
+      <CommentComposer onSubmit={onSubmitNote} onAttach={onAttach} />
     </section>
   );
 }

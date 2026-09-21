@@ -129,6 +129,36 @@ describe('useSavedViews', () => {
     expect(result.current.views).toHaveLength(1);
   });
 
+  // Two mutations from one handler must both land: each reads the state the previous one
+  // produced, not the snapshot the handler closed over.
+  test('mutations in one tick compose instead of clobbering each other', () => {
+    const { result } = mount();
+    let a = '';
+    let b = '';
+    act(() => {
+      a = save(result.current, 'A').id;
+      b = save(result.current, 'B').id;
+    });
+    expect(result.current.views.map((v) => v.name)).toEqual(['A', 'B']);
+    act(() => {
+      result.current.deleteView(a);
+      result.current.deleteView(b);
+    });
+    expect(result.current.views).toEqual([]);
+    expect(loadSavedViews('/a', window.localStorage)).toEqual([]);
+    act(() => {
+      result.current.toggleFavorite({ kind: 'task', id: 't-1' });
+      result.current.toggleFavorite({ kind: 'task', id: 't-2' });
+    });
+    expect(result.current.favorites).toEqual([
+      { kind: 'task', id: 't-1' },
+      { kind: 'task', id: 't-2' },
+    ]);
+    expect(loadFavorites('/a', window.localStorage)).toEqual(
+      result.current.favorites
+    );
+  });
+
   test('is inert without a root', () => {
     const { result } = mount(null);
     act(() => {

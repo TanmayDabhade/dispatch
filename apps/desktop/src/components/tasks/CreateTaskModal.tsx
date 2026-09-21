@@ -16,7 +16,12 @@ import {
   Tag,
   X,
 } from 'lucide-react';
-import type { ClipboardEvent, DragEvent, KeyboardEvent, ReactNode } from 'react';
+import type {
+  ClipboardEvent,
+  DragEvent,
+  KeyboardEvent,
+  ReactNode,
+} from 'react';
 import { useRef, useState } from 'react';
 
 import { usePersistedDraft } from '../../hooks/usePersistedDraft';
@@ -82,7 +87,8 @@ interface CreateTaskModalProps {
   /** Every label used anywhere in the project — the Labels chip's picker candidates. */
   labels?: readonly string[];
   /** Resolves with the created doc so pending files can be attached to it; `undefined`
-   * (what `withActionFeedback` yields on a failure it already toasted) skips the upload. */
+   * (what `withActionFeedback` yields on a failure it already toasted) or `null` leaves
+   * the dialog open with its draft and files intact. */
   onCreate: (input: CreateInput) => Promise<TaskDoc | null | undefined>;
   /** Given, the footer paperclip and paste/drop on the body collect files that are
    * uploaded once the task exists. */
@@ -130,10 +136,7 @@ function LabelsChip({
   return (
     <PickerPopover
       triggerLabel="Labels"
-      triggerClassName={cn(
-        PILL_BUTTON_CLASS,
-        unset && 'text-muted-foreground'
-      )}
+      triggerClassName={cn(PILL_BUTTON_CLASS, unset && 'text-muted-foreground')}
       placeholder="Label…"
       items={items}
       onSelect={toggle}
@@ -217,30 +220,28 @@ function PropertyChip({
   );
 }
 
-// A chip whose value is free text (labels, the milestone name): the popover holds a 28px
-// input; Enter commits, and `values` render as removable pills above it when `multiple`.
+// A chip whose value is one line of free text (the milestone name): the popover holds a
+// 28px input and Enter commits it.
 function TextChip({
   label,
   glyph,
-  values,
+  value,
   placeholder,
-  multiple,
   onChange,
 }: {
   label: string;
   glyph: ReactNode;
-  values: string[];
+  value: string | null;
   placeholder: string;
-  multiple: boolean;
-  onChange: (values: string[]) => void;
+  onChange: (value: string) => void;
 }) {
   const [text, setText] = useState('');
-  const unset = values.length === 0;
+  const unset = value === null;
 
   function commit() {
     const next = text.trim();
     if (next === '') return;
-    onChange(multiple ? [...new Set([...values, next])] : [next]);
+    onChange(next);
     setText('');
   }
 
@@ -257,26 +258,9 @@ function TextChip({
           />
         }
       >
-        {unset ? label : values.join(', ')}
+        {unset ? label : value}
       </PopoverTrigger>
       <PopoverContent align="start" className="flex w-64 flex-col gap-2">
-        {values.length > 0 && (
-          <div className="flex flex-wrap gap-1">
-            {values.map((v) => (
-              <Pill key={v}>
-                {v}
-                <button
-                  type="button"
-                  aria-label={`Remove ${v}`}
-                  onClick={() => onChange(values.filter((x) => x !== v))}
-                  className="text-muted-foreground hover:text-foreground -mr-1 flex size-3.5 items-center justify-center"
-                >
-                  <X className="size-2.5" />
-                </button>
-              </Pill>
-            ))}
-          </div>
-        )}
         <Input
           aria-label={placeholder}
           placeholder={placeholder}
@@ -391,11 +375,14 @@ export function CreateTaskModal({
         labels,
         description,
       });
-      const createdId = created?.meta.id;
-      if (createdId !== undefined && onUploadAttachments !== undefined) {
+      // No doc means the create did not happen (`withActionFeedback` toasted
+      // and swallowed it, or there is no client yet): keep the draft and the
+      // chosen files in place for another try.
+      if (created === undefined || created === null) return;
+      if (onUploadAttachments !== undefined) {
         for (const file of pendingFiles) {
           try {
-            await onUploadAttachments(createdId, [file]);
+            await onUploadAttachments(created.meta.id, [file]);
           } catch (err) {
             toasts.push({
               tone: 'error',
@@ -579,10 +566,9 @@ export function CreateTaskModal({
             <TextChip
               label="Milestone"
               glyph={<Flag />}
-              values={milestone === null ? [] : [milestone]}
+              value={milestone}
               placeholder="Milestone name"
-              multiple={false}
-              onChange={(v) => setMilestone(v[0] ?? null)}
+              onChange={setMilestone}
             />
             <PropertyChip
               value={kind}

@@ -149,6 +149,29 @@ describe('parseTasksDisplay', () => {
     ).toBe('assignee');
   });
 
+  // The migration is one-shot: once a build that stamps the payload writes it back, a
+  // board with `grouping: 'epic'` and lanes turned off must stay ungrouped across launches.
+  it('does not re-migrate a stamped payload', () => {
+    expect(
+      parseTasksDisplay(
+        '{"layout": "board", "grouping": "epic", "subGrouping": "none", "version": 2}'
+      ).subGrouping
+    ).toBe('none');
+    expect(
+      parseTasksDisplay(
+        '{"layout": "board", "grouping": "epic", "subGrouping": "none", "version": 1}'
+      ).subGrouping
+    ).toBe('epic');
+    const ungrouped = {
+      ...DEFAULT_TASKS_DISPLAY,
+      grouping: 'epic' as const,
+      subGrouping: 'none' as const,
+    };
+    const stored = serializeTasksDisplay(ungrouped);
+    expect(JSON.parse(stored).version).toBe(2);
+    expect(parseTasksDisplay(stored)).toEqual(ungrouped);
+  });
+
   it('leaves a list layout grouped by epic untouched', () => {
     const list = parseTasksDisplay('{"layout": "list", "grouping": "epic"}');
     expect(list.grouping).toBe('epic');

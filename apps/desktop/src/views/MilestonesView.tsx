@@ -66,6 +66,12 @@ interface MilestonesViewProps {
   onRequestDisplay?: () => void;
 }
 
+/** The DOM id `aria-activedescendant` points at for one row; the view prefix keeps ids
+ * unique across view switches. */
+function rowDomId(id: string): string {
+  return `milestone-row-${id}`;
+}
+
 /**
  * Milestones: every milestone is a status-tinted `GroupHeader` — the rolled-up status glyph
  * (the same vocabulary its tasks use), the title, then `FanoutControls`: a `◔ n/m` progress
@@ -340,6 +346,9 @@ export function MilestonesView({
       tabIndex={0}
       role="grid"
       aria-label="Milestones"
+      aria-activedescendant={
+        focusedTaskId !== null ? rowDomId(focusedTaskId) : undefined
+      }
       onKeyDown={handleKeyDown}
       className="flex h-full min-h-0 flex-col overflow-y-auto px-2 pb-2 outline-none"
     >
@@ -439,6 +448,7 @@ export function MilestonesView({
                     focused={focusedTaskId === id}
                     onOpen={() => openRow(id)}
                     onFocus={() => setFocusedTaskId(id)}
+                    rowProps={{ domId: rowDomId(id) }}
                   />
                 );
               })}

@@ -33,6 +33,7 @@ const props = {
   onDisableAutoCommit: () => {},
   spendToday: null as number | null,
   onOpenShortcuts: () => {},
+  onOpenSettings: () => {},
   onOpenOverseer: () => {},
 };
 
@@ -55,6 +56,17 @@ test('the ? button opens the shortcuts reference', () => {
     },
   });
   fireEvent.click(screen.getByRole('button', { name: 'Keyboard shortcuts' }));
+  expect(opened).toBe(1);
+});
+
+test('the gear opens Settings', () => {
+  let opened = 0;
+  mount({
+    onOpenSettings: () => {
+      opened += 1;
+    },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
   expect(opened).toBe(1);
 });
 

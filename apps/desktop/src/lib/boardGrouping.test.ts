@@ -1,9 +1,13 @@
 import type { TaskDoc, TaskMeta } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
-import { boardGroupingFor, groupTasksByStatus } from './boardGrouping';
+import { groupTasksByLane, groupTasksByStatus } from './boardGrouping';
 
-function makeTask(id: string, status: string): TaskDoc {
+function makeTask(
+  id: string,
+  status: string,
+  overrides: Partial<TaskMeta> = {}
+): TaskDoc {
   const meta: TaskMeta = {
     id,
     title: `Task ${id}`,
@@ -23,6 +27,7 @@ function makeTask(id: string, status: string): TaskDoc {
     risk: 'routine',
     model: null,
     exercised: false,
+    ...overrides,
   };
   return { meta, body: '' };
 }
@@ -58,13 +63,52 @@ describe('groupTasksByStatus', () => {
   });
 });
 
-describe('boardGroupingFor', () => {
-  test('only epic lanes the board; every list-only grouping is the flat status kanban', () => {
-    expect(boardGroupingFor('epic')).toBe('epic');
-    expect(boardGroupingFor('status')).toBe('status');
-    expect(boardGroupingFor('milestone')).toBe('status');
-    expect(boardGroupingFor('assignee')).toBe('status');
-    expect(boardGroupingFor('priority')).toBe('status');
-    expect(boardGroupingFor('none')).toBe('status');
+describe('groupTasksByLane', () => {
+  const statuses = ['ready', 'landed'];
+  const epic = makeTask('e-1', 'ready', { kind: 'epic', title: 'Payments' });
+  const tasks = [
+    epic,
+    makeTask('a', 'ready', { parent: 'e-1', priority: 'high' }),
+    makeTask('b', 'landed', { assignee: 'agent:claude' }),
+  ];
+
+  test('`none` is the one headerless lane the flat board draws', () => {
+    const lanes = groupTasksByLane(tasks, statuses, [epic], 'none');
+    expect(lanes).toHaveLength(1);
+    expect(lanes[0]).toMatchObject({
+      key: 'all',
+      kind: 'none',
+      epicId: null,
+      title: '',
+      total: 2,
+    });
+    expect(lanes[0].columns.map((c) => c.status)).toEqual(statuses);
+  });
+
+  test('`epic` delegates to the epic lanes, stamped with their key and kind', () => {
+    const lanes = groupTasksByLane(tasks, statuses, [epic], 'epic');
+    expect(lanes.map((l) => [l.key, l.kind, l.epicId, l.title])).toEqual([
+      ['e-1', 'epic', 'e-1', 'Payments'],
+      ['__no-epic__', 'epic', null, 'No epic'],
+    ]);
+  });
+
+  test('`assignee` and `priority` lane on the task field, epics never becoming cards', () => {
+    const byAssignee = groupTasksByLane(tasks, statuses, [epic], 'assignee');
+    expect(byAssignee.map((l) => [l.key, l.kind, l.title, l.total])).toEqual([
+      ['assignee:agent:claude', 'assignee', 'claude', 1],
+      ['assignee:none', 'assignee', 'Unassigned', 1],
+    ]);
+    const byPriority = groupTasksByLane(tasks, statuses, [epic], 'priority');
+    expect(byPriority.map((l) => [l.key, l.kind, l.title, l.total])).toEqual([
+      ['priority:high', 'priority', 'High', 1],
+      ['priority:none', 'priority', 'No priority', 1],
+    ]);
+    for (const lane of [...byAssignee, ...byPriority]) {
+      expect(lane.epicId).toBeNull();
+      for (const column of lane.columns) {
+        expect(column.tasks.some((t) => t.meta.kind === 'epic')).toBe(false);
+      }
+    }
   });
 });

@@ -30,7 +30,10 @@ function epic(id: string, title: string): TaskDoc {
 // What a successful `handleCreate` resolves with: enough of a doc for the dialog to
 // read the new id off.
 function createdDoc(id: string): TaskDoc {
-  return { meta: { id, title: 'created', kind: 'task' }, body: '' } as unknown as TaskDoc;
+  return {
+    meta: { id, title: 'created', kind: 'task' },
+    body: '',
+  } as unknown as TaskDoc;
 }
 
 // Only `createPreset` is read; every other verb throws if reached so a test that
@@ -95,7 +98,9 @@ function mount({
 }
 
 function attachInput() {
-  return document.querySelector<HTMLInputElement>('input[type="file"]')!;
+  const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+  if (input === null) throw new Error('no file input mounted');
+  return input;
 }
 
 function titleField() {
@@ -286,7 +291,9 @@ test('pending files show as removable pills and upload against the created id', 
     screen.getByRole<HTMLButtonElement>('button', { name: 'Attach' }).disabled
   ).toBe(false);
   fireEvent.change(attachInput(), {
-    target: { files: [new File(['a'], 'spec.png'), new File(['b'], 'notes.txt')] },
+    target: {
+      files: [new File(['a'], 'spec.png'), new File(['b'], 'notes.txt')],
+    },
   });
   const pills = document.querySelector('[data-slot="pending-attachments"]');
   expect(pills?.textContent).toContain('spec.png');
@@ -321,9 +328,11 @@ test('a failed upload toasts per file and the task still counts as created', asy
   expect(await screen.findByText('disk full')).toBeTruthy();
 });
 
-test('no upload is attempted when create resolves without a doc', async () => {
+// `withActionFeedback` resolves a failed create to `undefined` after toasting
+// it, so the dialog must not read that as success and throw the draft away.
+test('a create that resolves without a doc keeps the dialog, draft and files', async () => {
   const uploads: string[] = [];
-  mount({
+  const { closed } = mount({
     onCreate: () => Promise.resolve(undefined),
     onUploadAttachments: (taskId) => {
       uploads.push(taskId);
@@ -337,4 +346,7 @@ test('no upload is attempted when create resolves without a doc', async () => {
   fireEvent.click(createButton());
   await settle();
   expect(uploads).toEqual([]);
+  expect(closed()).toBe(0);
+  expect(titleField().value).toBe('Swallowed');
+  expect(screen.getByRole('button', { name: 'Remove spec.png' })).toBeTruthy();
 });

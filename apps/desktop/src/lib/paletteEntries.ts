@@ -41,6 +41,10 @@ export interface PaletteEntriesContext {
   readyIds: ReadonlySet<string>;
   /** `import.meta.env.DEV` — the Gallery row exists only in a dev build. */
   dev: boolean;
+  /** The project's saved views — one `Open view …` row each under `Views`. */
+  savedViews?: { id: string; name: string }[];
+  /** The task page or peek showing right now, which earns a `Copy link` row. */
+  currentTaskId?: string | null;
   actions: {
     openCreateTask: () => void;
     openQuickAddTask: () => void;
@@ -51,6 +55,9 @@ export interface PaletteEntriesContext {
     openQuickCapture: () => void;
     toggleSidebar: () => void;
     openShortcuts: () => void;
+    openSavedView?: (id: string) => void;
+    /** Copies the task's `dispatch://` link. */
+    copyTaskLink?: (taskId: string) => void;
   };
 }
 
@@ -61,9 +68,9 @@ const GLOBAL_VIEWS: { id: GlobalView; label: string; shortcut?: string }[] = [
   { id: 'settings', label: 'Settings', shortcut: 'G S' },
 ];
 
-/** The rows the command menu offers right now: actions, then navigation, then one row per
- * task (plus a "Dispatch …" row for each ready one). Project-scoped rows are omitted
- * while no project is active. */
+/** The rows the command menu offers right now: actions (a `Copy link` when a task is up),
+ * then navigation, the saved views, then one row per task (plus a "Dispatch …" row for
+ * each ready one). Project-scoped rows are omitted while no project is active. */
 export function buildPaletteEntries(
   ctx: PaletteEntriesContext
 ): PaletteEntry[] {
@@ -103,6 +110,21 @@ export function buildPaletteEntries(
         run: actions.openQuickCapture,
       }
     );
+    const { currentTaskId } = ctx;
+    const { copyTaskLink } = actions;
+    if (
+      currentTaskId !== undefined &&
+      currentTaskId !== null &&
+      copyTaskLink !== undefined
+    ) {
+      entries.push({
+        id: 'action-copy-link',
+        label: 'Copy link',
+        kind: 'action',
+        section: 'actions',
+        run: () => copyTaskLink(currentTaskId),
+      });
+    }
   }
   entries.push(
     {
@@ -157,6 +179,18 @@ export function buildPaletteEntries(
   }
 
   if (ctx.hasProject) {
+    const { openSavedView } = actions;
+    if (openSavedView !== undefined) {
+      for (const view of ctx.savedViews ?? []) {
+        entries.push({
+          id: `view-${view.id}`,
+          label: `Open view ${view.name}`,
+          kind: 'view',
+          section: 'views',
+          run: () => openSavedView(view.id),
+        });
+      }
+    }
     for (const doc of ctx.tasks) {
       entries.push({
         id: `task-${doc.meta.id}`,

@@ -56,6 +56,34 @@ test('it opens on General and switches to Integrations', () => {
   expect(screen.getByRole('heading', { name: 'Linear' })).toBeDefined();
 });
 
+// `initialPage` is how the rail's Connect Linear and the strip's gear land on Integrations.
+test('initialPage opens on that page, and a new value while mounted switches to it', () => {
+  const { rerender } = render(
+    <SettingsView
+      activeProject={project}
+      data={data}
+      initialPage="integrations"
+    />
+  );
+  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(
+    'Integrations'
+  );
+  expect(
+    within(screen.getByRole('navigation', { name: 'Settings' }))
+      .getByRole('button', { name: 'Integrations' })
+      .getAttribute('aria-current')
+  ).toBe('page');
+  rerender(
+    <SettingsView activeProject={project} data={data} initialPage="daemon" />
+  );
+  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Daemon');
+  expect(
+    within(screen.getByRole('navigation', { name: 'Settings' }))
+      .getByRole('button', { name: 'Daemon' })
+      .getAttribute('aria-current')
+  ).toBe('page');
+});
+
 // The settings shell: a `Settings` page header, one sentence-case `Project` group
 // heading over the nav rows, and the page title as the column's H1.
 test('the nav lists every page under a Project heading, and the page title is the H1', () => {

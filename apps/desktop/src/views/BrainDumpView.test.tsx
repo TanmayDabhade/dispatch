@@ -285,7 +285,7 @@ test('tapping the row text drops the editor down and tapping again folds it', ()
   expect(screen.queryByLabelText('Edit "first line"')).toBeNull();
 });
 
-test('inbox rows are 36px ListRows with a kind pill and no dense classes', () => {
+test('inbox rows are 36px ListRows with a kind pill', () => {
   const items = [
     inboxItem({ id: 'in-1', text: 'the picker forgets', kind: 'bug' }),
     inboxItem({ id: 'in-2', text: 'a plain note', kind: 'note' }),
@@ -302,8 +302,6 @@ test('inbox rows are 36px ListRows with a kind pill and no dense classes', () =>
   const pills = document.querySelectorAll('[data-slot=label-pill]');
   expect(pills).toHaveLength(1);
   expect(pills[0]?.textContent).toBe('Bug');
-  expect(document.querySelector('.dense-meta')).toBeNull();
-  expect(document.querySelector('.dense-label')).toBeNull();
   expect(document.querySelector('.line-through')).toBeNull();
   // The section bars are GroupHeaders, sentence case, with counts.
   const headers = Array.from(

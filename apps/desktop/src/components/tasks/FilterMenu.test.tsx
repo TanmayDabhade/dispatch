@@ -69,7 +69,7 @@ async function openAi(menu: HTMLElement) {
   await settle(() => {
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'AI filter' }));
   });
-  return within(menu).getByLabelText('AI filter') as HTMLInputElement;
+  return within(menu).getByLabelText<HTMLInputElement>('AI filter');
 }
 
 async function submit(input: HTMLInputElement, sentence: string) {
@@ -176,6 +176,26 @@ describe('FilterMenu AI filter', () => {
     expect(within(menu).queryByRole('status')).toBeNull();
     expect(changes).toEqual([]);
     // The menu stays open on the subview for another try.
+    expect(document.querySelector('[data-slot=filter-menu]')).not.toBeNull();
+    expect(input.disabled).toBe(false);
+  });
+
+  test('an empty result keeps the subview open instead of clearing the chips', async () => {
+    const changes: TaskFilterSet[] = [];
+    const opens: boolean[] = [];
+    const menu = await mountOpen({
+      onAiFilter: async () => EMPTY_TASK_FILTER_SET,
+      onChange: (next) => changes.push(next),
+      opens,
+    });
+    const input = await openAi(menu);
+    await submit(input, 'something the facets cannot say');
+    expect(within(menu).getByRole('alert').textContent).toBe(
+      'No filter matched that sentence'
+    );
+    expect(within(menu).queryByRole('status')).toBeNull();
+    expect(changes).toEqual([]);
+    expect(opens).not.toContain(false);
     expect(document.querySelector('[data-slot=filter-menu]')).not.toBeNull();
     expect(input.disabled).toBe(false);
   });

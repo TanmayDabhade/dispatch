@@ -1,6 +1,5 @@
 import {
   EMPTY_TASK_FILTER_SET,
-  serializeTaskFilterSet,
   type TaskFilterSet,
   taskFilterSetFromValue,
 } from './taskFilters';
@@ -12,7 +11,7 @@ import {
 } from './tasksPrefs';
 
 /**
- * Saved views and favourites (Linear's Views and the header star): a view is a named
+ * Saved views and favorites (Linear's Views and the header star): a view is a named
  * snapshot of the Tasks page's filter set and display model, a favourite points at a view or
  * a task. Both live per project root in localStorage, the `lib/inbox.ts` shape — `Pick<Storage>`
  * parameters so tests pass stubs, a swallowed `setItem` throw — and parse defensively so a
@@ -208,16 +207,31 @@ export function toggleFavorite(
     : [...favorites, { kind: ref.kind, id: ref.id }];
 }
 
+// The filter set with clause order and each clause's value order fixed, for equality only —
+// the stored payload keeps the user's order. Removing and re-adding a value in the Filter
+// menu must not read as drift.
+function normalizedFilterKey(filters: TaskFilterSet): string {
+  const clauses = filters.clauses
+    .map((c) => ({ facet: c.facet, op: c.op, values: [...c.values].sort() }))
+    .sort((a, b) =>
+      a.facet === b.facet
+        ? a.op.localeCompare(b.op)
+        : a.facet.localeCompare(b.facet)
+    );
+  return JSON.stringify({ clauses, join: filters.join });
+}
+
 /** Whether the page currently shows exactly this view — the header's "which tab is active"
- * and "has the active view drifted" question. Compares the serialised forms, which both
- * serializers write in a fixed field order with `properties` sorted. */
+ * and "has the active view drifted" question. Compares normalized forms: the display
+ * serializer writes a fixed field order with `properties` sorted, and the filter set is
+ * compared with clauses and values sorted so only a semantic change counts. */
 export function viewMatches(
   view: SavedView,
   filters: TaskFilterSet,
   display: TasksDisplayPrefs
 ): boolean {
   return (
-    serializeTaskFilterSet(view.filters) === serializeTaskFilterSet(filters) &&
+    normalizedFilterKey(view.filters) === normalizedFilterKey(filters) &&
     serializeTasksDisplay(view.display) === serializeTasksDisplay(display)
   );
 }

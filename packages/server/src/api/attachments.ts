@@ -50,16 +50,37 @@ function decodeSegment(segment: string): string {
   }
 }
 
-// `spec.png` already taken becomes `spec (2).png`, then `spec (3).png`.
+// A multipart request may carry several files, each under the per-file cap;
+// this is the ceiling on the request as a whole, a guard against a runaway
+// body rather than a limit the desktop (one request per file) ever meets.
+const UPLOAD_REQUEST_MAX_BYTES = ATTACHMENT_MAX_BYTES * 4;
+
+// `spec.png` already taken becomes `spec (2).png`, then `spec (3).png`. The
+// comparison folds case: APFS and NTFS would let `Spec.png` overwrite
+// `spec.png` on disk while the list carried both.
 function dedupeName(name: string, taken: Set<string>): string {
-  if (!taken.has(name)) return name;
+  if (!taken.has(name.toLowerCase())) return name;
   const dot = name.lastIndexOf('.');
   const stem = dot > 0 ? name.slice(0, dot) : name;
   const ext = dot > 0 ? name.slice(dot) : '';
   for (let n = 2; ; n++) {
     const candidate = `${stem} (${n})${ext}`;
-    if (!taken.has(candidate)) return candidate;
+    if (!taken.has(candidate.toLowerCase())) return candidate;
   }
+}
+
+// RFC 5987 content-disposition: header values are Latin-1, so a Cyrillic or
+// emoji name goes in `filename*` UTF-8 encoded, next to an ASCII fallback.
+function contentDisposition(name: string): string {
+  const ascii = name
+    .replace(/[^\x20-\x7e]/g, '')
+    .replace(/"/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  // Nothing but an extension left (a non-Latin stem such as Cyrillic, `.png` after sanitizing) gets a stem.
+  const fallback =
+    ascii === '' || ascii.startsWith('.') ? `attachment${ascii}` : ascii;
+  return `inline; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(name)}`;
 }
 
 function persistList(
@@ -85,8 +106,8 @@ export async function uploadTaskAttachments(
   const task = ctx.store.get(id);
   if (task === null) return errorResponse(404, `task not found: ${id}`);
   const declared = Number(req.headers.get('content-length') ?? '0');
-  if (Number.isFinite(declared) && declared > ATTACHMENT_MAX_BYTES) {
-    return errorResponse(413, 'attachment exceeds the 25 MB limit');
+  if (Number.isFinite(declared) && declared > UPLOAD_REQUEST_MAX_BYTES) {
+    return errorResponse(413, 'upload exceeds the 100 MB request limit');
   }
   let entries: unknown[];
   try {
@@ -109,7 +130,7 @@ export async function uploadTaskAttachments(
   ensureProjectGitignore(ctx.rootDir, 'files');
 
   const existing = task.meta.attachments ?? [];
-  const taken = new Set(existing.map((a) => a.name));
+  const taken = new Set(existing.map((a) => a.name.toLowerCase()));
   const added: TaskAttachment[] = [];
   for (const file of files) {
     const clean = sanitizeAttachmentName(file.name);
@@ -122,7 +143,7 @@ export async function uploadTaskAttachments(
     }
     mkdirSync(target.dir, { recursive: true });
     await Bun.write(target.path, file);
-    taken.add(target.name);
+    taken.add(target.name.toLowerCase());
     added.push({
       name: target.name,
       path: attachmentRelativePath(id, target.name),
@@ -145,8 +166,20 @@ export function listTaskAttachments(
 
 // GET /api/tasks/:id/attachments/:name — the bytes, when this machine has
 // them. A file-backed teammate who pulled the frontmatter without the blob
-// gets a 404 rather than a stream that never starts.
+// gets a 404 rather than a stream that never starts. HEAD answers the same
+// status with no body, so a client can ask before opening the path locally.
 export function downloadTaskAttachment(
+  ctx: AttachmentRouteContext,
+  id: string,
+  rawName: string,
+  method: 'GET' | 'HEAD' = 'GET'
+): Response {
+  const res = resolveDownload(ctx, id, rawName);
+  if (method === 'GET') return res;
+  return new Response(null, { status: res.status, headers: res.headers });
+}
+
+function resolveDownload(
   ctx: AttachmentRouteContext,
   id: string,
   rawName: string
@@ -162,9 +195,7 @@ export function downloadTaskAttachment(
     return errorResponse(404, `attachment not found: ${target.name}`);
   }
   return new Response(Bun.file(target.path), {
-    headers: {
-      'content-disposition': `inline; filename="${target.name.replace(/"/g, '')}"`,
-    },
+    headers: { 'content-disposition': contentDisposition(target.name) },
   });
 }
 

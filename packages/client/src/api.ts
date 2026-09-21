@@ -1756,26 +1756,26 @@ function isStateChanging(init: RequestInit | undefined): boolean {
   return STATE_CHANGING_METHODS.has((init?.method ?? 'GET').toUpperCase());
 }
 
-// Shared fetch wrapper: resolves against `target.baseUrl`, presents its token,
-// throws with the server's `{ error }` message (falling back to the status
-// code) on any non-2xx response, and parses the body as JSON on success. Every
-// typed fetcher below is a thin wrapper around this.
+// send() with the body parsed as JSON. Every typed fetcher below is a thin
+// wrapper around this.
 async function request<T>(
   target: ApiTarget,
   path: string,
   init?: RequestInit
 ): Promise<T> {
-  // Defaults content-type here (not per call site), so a bare `{ body: ... }`
-  // still passes the server's Content-Type gate. It goes on every state-changing
-  // request, body or not, so the gate can be a blanket rule rather than one the
-  // body-less POSTs (cancelRun, gitPull, clusterInbox, …) have to be exempt from.
   const res = await send(target, path, init);
   return (await res.json()) as T;
 }
 
-// The fetch behind request() and requestBlob(): auth header, the JSON default
-// content-type, and the `{ error }` throw on a non-2xx. A FormData body is
-// left without a content-type so fetch writes the multipart boundary itself.
+// Shared fetch wrapper behind request() and requestBlob(): resolves against
+// `target.baseUrl`, presents its token, and throws with the server's
+// `{ error }` message (falling back to the status code) on any non-2xx.
+// Defaults content-type here (not per call site), so a bare `{ body: ... }`
+// still passes the server's Content-Type gate. It goes on every state-changing
+// request, body or not, so the gate can be a blanket rule rather than one the
+// body-less POSTs (cancelRun, gitPull, clusterInbox, …) have to be exempt from.
+// A FormData body is left without one so fetch writes the multipart boundary
+// itself.
 async function send(
   target: ApiTarget,
   path: string,
@@ -1986,6 +1986,9 @@ export interface ApiClient {
   removeTaskAttachment(id: string, name: string): Promise<TaskDoc>;
   /** The attachment's bytes — 404 when this daemon's machine lacks the blob. */
   fetchTaskAttachment(id: string, name: string): Promise<Blob>;
+  /** Whether this daemon's machine has the blob (a HEAD), so Tauri can ask
+   * before handing the path to the OS. */
+  hasTaskAttachment(id: string, name: string): Promise<boolean>;
   /** Turns a sentence into filter clauses the Tasks page applies as chips. */
   aiFilterTasks(sentence: string): Promise<AiTaskFilterResult>;
   // Starts a background planner turn and returns immediately with a `running`
@@ -2586,6 +2589,19 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         target,
         `/api/tasks/${encodeURIComponent(id)}/attachments/${encodeURIComponent(name)}`
       ),
+    hasTaskAttachment: async (id, name) => {
+      try {
+        await send(
+          target,
+          `/api/tasks/${encodeURIComponent(id)}/attachments/${encodeURIComponent(name)}`,
+          { method: 'HEAD' }
+        );
+        return true;
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return false;
+        throw err;
+      }
+    },
     aiFilterTasks: (sentence) =>
       request(target, '/api/tasks/filter/ai', {
         method: 'POST',

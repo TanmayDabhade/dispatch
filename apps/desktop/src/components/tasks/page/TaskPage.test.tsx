@@ -1,4 +1,4 @@
-import type { RunMeta } from '@dispatch/client';
+import type { ApiClient, RunMeta } from '@dispatch/client';
 import type {
   TaskAttachment,
   TaskDoc,
@@ -216,6 +216,27 @@ function Providers({
   );
 }
 
+// A client that records attachment uploads and leaves every other fetch the
+// page makes (findings, verification, ledger, impact) pending, so those
+// sections render their loading state and nothing resolves against a stub.
+function clientRecordingUploads(
+  uploads: { id: string; names: string[] }[]
+): ApiClient {
+  const pending = () => new Promise<never>(() => {});
+  return new Proxy({} as ApiClient, {
+    get(_target, key) {
+      if (key === 'uploadTaskAttachments') {
+        return (id: string, files: File[]) => {
+          uploads.push({ id, names: files.map((f) => f.name) });
+          return Promise.resolve({} as never);
+        };
+      }
+      if (typeof key === 'symbol' || key === 'then') return undefined;
+      return pending;
+    },
+  });
+}
+
 function newLog(): Log {
   return {
     updates: [],
@@ -413,7 +434,7 @@ describe('TaskPage', () => {
     expect(log.favorites).toEqual([{ kind: 'task', id: 't-8f2a' }]);
   });
 
-  test('the attachments row under the description lists the doc\'s files', () => {
+  test("the attachments row under the description lists the doc's files", () => {
     const attachments: TaskAttachment[] = [
       {
         name: 'spec.png',
@@ -430,6 +451,41 @@ describe('TaskPage', () => {
       document.querySelectorAll('[data-slot="main-section"]')
     ).find((s) => s.textContent?.includes('Acceptance criteria'));
     expect(acceptance?.nextElementSibling).toBe(row);
+  });
+
+  // The content column is the drop target, so a drop that bubbles up from any
+  // field on the page goes through the same upload as the row's picker.
+  test('dropping a file on the page uploads it through the client', async () => {
+    const uploads: { id: string; names: string[] }[] = [];
+    mountPage(task('t-8f2a', 'Apply', {}, BODY), {
+      client: clientRecordingUploads(uploads),
+      port: 4100,
+    });
+    const png = new File(['png-bytes'], 'spec.png', { type: 'image/png' });
+    await settle(() => {
+      fireEvent.drop(screen.getByLabelText('Task title'), {
+        dataTransfer: { files: [png], items: [] },
+      });
+    });
+    expect(uploads).toEqual([{ id: 't-8f2a', names: ['spec.png'] }]);
+  });
+
+  // A text paste carries no files and must reach whichever field has focus
+  // untouched.
+  test('a text-only paste is left to the field and never reaches the client', () => {
+    const uploads: { id: string; names: string[] }[] = [];
+    mountPage(task('t-8f2a', 'Apply', {}, BODY), {
+      client: clientRecordingUploads(uploads),
+      port: 4100,
+    });
+    const title = screen.getByLabelText('Task title');
+    const event = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'clipboardData', {
+      value: { files: [], items: [], getData: () => 'plain text' },
+    });
+    title.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(uploads).toEqual([]);
   });
 
   test('the title is a 24px in-place textarea and the description is rendered prose', () => {

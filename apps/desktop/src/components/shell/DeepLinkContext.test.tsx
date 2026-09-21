@@ -9,7 +9,7 @@ import {
 } from './DeepLinkContext';
 import { ToastProvider } from './Toasts';
 
-// The harness URL a copied link is derived from: `token` must not survive.
+// The harness URL a copied link is derived from: neither token may survive.
 function setHarnessUrl(search: string) {
   (
     window as unknown as { happyDOM: { setURL(url: string): void } }
@@ -33,7 +33,9 @@ function wrapper({ children }: { children: ReactNode }) {
   return <ToastProvider>{children}</ToastProvider>;
 }
 
-afterEach(() => setHarnessUrl(''));
+afterEach(() => {
+  setHarnessUrl('');
+});
 
 describe('useDeepLinkActions', () => {
   test('is null outside the provider', () => {
@@ -53,9 +55,9 @@ describe('useDeepLinkActions', () => {
 });
 
 describe('useCopyTaskLink (browser harness)', () => {
-  test('writes the ?task= form without the token and toasts Copied link', async () => {
+  test('writes the ?task= form without either token and toasts Copied link', async () => {
     setHarnessUrl(
-      `?root=${encodeURIComponent('/repo/a')}&port=4100&token=secret`
+      `?root=${encodeURIComponent('/repo/a')}&port=4100&token=secret&appToken=app-secret`
     );
     const written: string[] = [];
     stubClipboard(written);
@@ -71,6 +73,26 @@ describe('useCopyTaskLink (browser harness)', () => {
     expect(url.searchParams.get('root')).toBe('/repo/a');
     expect(url.searchParams.get('port')).toBe('4100');
     expect(url.searchParams.has('token')).toBe(false);
+    expect(url.searchParams.has('appToken')).toBe(false);
+    expect(await screen.findByText('Copied link')).toBeTruthy();
+  });
+
+  test('in the app it writes the dispatch:// form instead', async () => {
+    setHarnessUrl(`?root=${encodeURIComponent('/repo/a')}&token=secret`);
+    const written: string[] = [];
+    stubClipboard(written);
+    // Named rather than read off `window.__TAURI_INTERNALS__`: bun hoists every
+    // `mock.module('../lib/tauri')` in the run, so `isTauri()` is not ours to set here.
+    const { result } = renderHook(
+      () => useCopyTaskLink('/repo/a', () => 'app'),
+      { wrapper }
+    );
+    act(() => {
+      result.current('t-1a2b3c');
+    });
+    expect(written).toEqual([
+      `dispatch://task/t-1a2b3c?project=${encodeURIComponent('/repo/a')}`,
+    ]);
     expect(await screen.findByText('Copied link')).toBeTruthy();
   });
 

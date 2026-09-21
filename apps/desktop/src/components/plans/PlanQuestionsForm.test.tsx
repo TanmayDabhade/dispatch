@@ -77,6 +77,5 @@ describe('PlanQuestionsForm chrome', () => {
     expect(heading.className).toContain('text-[12px]');
     expect(heading.className).toContain('font-medium');
     expect(heading.className).not.toContain('uppercase');
-    expect(heading.className).not.toContain('dense-label');
   });
 });

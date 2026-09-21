@@ -43,7 +43,7 @@ function harness(
   const tasks = overrides.tasks ?? ['t-1a2b3c'];
   const deps: DeepLinkRouterDeps = {
     activeProjectPath: '/repo/a',
-    tasksLoading: false,
+    tasksReady: true,
     hasTask: (id) => tasks.includes(id),
     hasDispatch: (path) => {
       checked.push(path);
@@ -60,13 +60,21 @@ function harness(
 describe('useDeepLinkRouter', () => {
   test('a same-project link opens once tasks have loaded', async () => {
     setLink('/repo/a', 't-1a2b3c');
-    const h = harness({ tasksLoading: true });
+    // Cold start: the project is active before its daemon client exists, so
+    // the task queries are disabled (not loading) and the lists are empty.
+    const h = harness({ tasksReady: false, tasks: [] });
     const { rerender } = renderHook(
       (deps: DeepLinkRouterDeps) => useDeepLinkRouter(deps),
       { initialProps: h.deps }
     );
+    await act(async () => {});
     expect(h.opened).toEqual([]);
-    rerender({ ...h.deps, tasksLoading: false });
+    expect(h.toasts).toEqual([]);
+    rerender({
+      ...h.deps,
+      tasksReady: true,
+      hasTask: (id) => id === 't-1a2b3c',
+    });
     await waitFor(() => expect(h.opened).toEqual(['t-1a2b3c']));
     expect(h.checked).toEqual([]);
     expect(h.switched).toEqual([]);
@@ -81,8 +89,8 @@ describe('useDeepLinkRouter', () => {
       { initialProps: h.deps }
     );
     await waitFor(() => expect(h.opened).toEqual(['t-1a2b3c']));
-    rerender({ ...h.deps, tasksLoading: true });
-    rerender({ ...h.deps, tasksLoading: false });
+    rerender({ ...h.deps, tasksReady: false });
+    rerender({ ...h.deps, tasksReady: true });
     expect(h.opened).toEqual(['t-1a2b3c']);
   });
 
@@ -96,10 +104,18 @@ describe('useDeepLinkRouter', () => {
     await waitFor(() => expect(h.switched).toEqual(['/repo/b']));
     expect(h.checked).toEqual(['/repo/b']);
     expect(h.opened).toEqual([]);
-    // The switch resets nav and loads the new project's tasks.
-    rerender({ ...h.deps, activeProjectPath: '/repo/b', tasksLoading: true });
+    // The switch resets nav; the new project's tasks are not fetched yet (its
+    // client is still resolving, so the queries are disabled and empty).
+    rerender({
+      ...h.deps,
+      activeProjectPath: '/repo/b',
+      tasksReady: false,
+      hasTask: () => false,
+    });
+    await act(async () => {});
     expect(h.opened).toEqual([]);
-    rerender({ ...h.deps, activeProjectPath: '/repo/b', tasksLoading: false });
+    expect(h.toasts).toEqual([]);
+    rerender({ ...h.deps, activeProjectPath: '/repo/b', tasksReady: true });
     await waitFor(() => expect(h.opened).toEqual(['t-1a2b3c']));
     expect(h.toasts).toEqual([]);
   });

@@ -1,5 +1,5 @@
 import type { PlannedTask } from '@dispatch/client';
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 
 import { type TaskSpec, TaskSpecView } from '../tasks/TaskSpecView';
 import { Dialog, DialogChrome, DialogContent, DialogTitle } from '@/ui/dialog';
@@ -52,6 +52,7 @@ export function PlanTaskSpecDialog({
     () => (task === undefined ? null : specFromPlannedTask(task, tasks)),
     [task, tasks]
   );
+  const contentRef = useRef<HTMLDivElement>(null);
 
   return (
     <Dialog
@@ -65,6 +66,10 @@ export function PlanTaskSpecDialog({
       <DialogContent
         showCloseButton={false}
         className="max-h-[85vh] sm:max-w-xl"
+        // The spec view is read-only: focus the popup itself so a description link or
+        // blocker row deep in the scrolling body does not pull the scroll on open.
+        ref={contentRef}
+        initialFocus={contentRef}
       >
         {spec !== null && index !== null && (
           <>

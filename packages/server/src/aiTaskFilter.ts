@@ -11,7 +11,7 @@ import { openClaudeQuery } from './orchestrator/claudeCli.js';
  * the daemon, sanitized against the project's live vocabulary before it leaves.
  */
 
-export interface AiFilterClause {
+interface AiFilterClause {
   facet: string;
   op: string;
   values: string[];
@@ -60,7 +60,7 @@ const PRIORITIES = ['none', 'low', 'medium', 'high', 'urgent'];
 const ASSIGNEES = ['agent', 'human', 'none'];
 const NONE = 'none';
 
-export const AI_FILTER_SCHEMA = {
+const AI_FILTER_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   required: ['clauses', 'join'],
@@ -126,7 +126,7 @@ export function buildAiFilterPrompt(
 }
 
 /** A hung model call must not pin the Filter menu's spinner open forever. */
-export const AI_FILTER_TIMEOUT_MS = 30_000;
+const AI_FILTER_TIMEOUT_MS = 30_000;
 
 // The SDK signals an abort as either an AbortError or a fetch-cancellation
 // message, so a real cancellation is never read as an unrelated failure.

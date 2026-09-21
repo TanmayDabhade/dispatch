@@ -176,7 +176,7 @@ export function migrateLegacyFilters(legacyV1: string | null): TaskFilterSet {
     : { clauses, join: 'and' };
 }
 
-/** The storage payload, in a fixed field order so two equal sets always serialise to the
+/** The storage payload, in a fixed field order so two equal sets always serialize to the
  * same string — `savedViews.ts` compares these strings. */
 export function serializeTaskFilterSet(filters: TaskFilterSet): string {
   return JSON.stringify({

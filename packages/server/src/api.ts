@@ -4470,8 +4470,8 @@ export async function handleApi(
         }
       }
       if (segments.length === 4 && segments[2] === 'attachments') {
-        if (method === 'GET') {
-          return downloadTaskAttachment(ctx, segments[1], segments[3]);
+        if (method === 'GET' || method === 'HEAD') {
+          return downloadTaskAttachment(ctx, segments[1], segments[3], method);
         }
         if (method === 'DELETE') {
           return removeTaskAttachment(ctx, segments[1], segments[3]);

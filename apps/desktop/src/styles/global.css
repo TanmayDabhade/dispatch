@@ -56,34 +56,6 @@ button {
   background: var(--accent-tint);
 }
 
-/* Section-heading and meta treatments, bundled as one class each so a component says what a
-   thing *is* rather than restating three properties per call site. In `@layer components`
-   so a Tailwind colour utility on the same element always wins: these carry a default
-   `color`, and unlayered they would outrank `@layer utilities` at any specificity, silently
-   swallowing `className="text-foreground"`. */
-@layer components {
-  /* deprecated — use ListRow/GroupHeader/Pill; delete once grep is empty */
-  .dense-label {
-    font-size: var(--text-mini);
-    font-weight: var(--weight-medium);
-    letter-spacing: 0;
-    text-transform: none;
-    color: var(--text-muted);
-  }
-
-  /* deprecated — use ListRow/GroupHeader/Pill; delete once grep is empty */
-  .dense-meta {
-    font-family: inherit;
-    font-size: var(--text-mini);
-    font-weight: var(--weight-body);
-    letter-spacing: 0;
-    /* Elapsed times and diff counts are read down a column, so digits must not change width
-       as they tick. */
-    font-variant-numeric: tabular-nums;
-    color: var(--text-muted);
-  }
-}
-
 /* A group header tinted with its status colour: the left edge picks up `--tint-strength` of
    `--tint` and fades to the plain quaternary surface. Set `--tint` to the group's status
    colour on the element. Mixed in lch so the ramp matches Linear's. */

@@ -1,5 +1,5 @@
 import type { SyncStatus } from '@dispatch/client';
-import { CircleHelp, History } from 'lucide-react';
+import { CircleHelp, Cog, History } from 'lucide-react';
 
 import { formatUsd } from '../../lib/epicSession';
 import { syncSummary, type SyncTone } from './SyncChip';
@@ -29,6 +29,8 @@ interface FrameStatusStripProps {
    * `null` when none carries one. Absent or `live: 0` shows nothing. */
   ceilings?: LiveCeilings | null;
   onOpenShortcuts: () => void;
+  /** The gear after `?` — App lands it on Settings › Integrations. */
+  onOpenSettings: () => void;
   onOpenOverseer: () => void;
   className?: string;
 }
@@ -50,10 +52,10 @@ export function liveCeilingsLabel(ceilings: LiveCeilings): string {
 }
 
 /**
- * The 36px strip under the inset panel (Linear §1): `?` and the sync pill bottom-left of
- * the frame, today's spend, the live milestones' spend against their ceilings, and an
- * Overseer link bottom-right. Everything here is glanceable context, which is why it
- * sits on the frame rather than inside any view.
+ * The 36px strip under the inset panel (Linear §1): `?`, a Settings gear and the sync
+ * pill bottom-left of the frame, today's spend, the live milestones' spend against
+ * their ceilings, and an Overseer link bottom-right. Everything here is glanceable
+ * context, which is why it sits on the frame rather than inside any view.
  */
 export function FrameStatusStrip({
   syncStatus,
@@ -61,6 +63,7 @@ export function FrameStatusStrip({
   spendToday,
   ceilings,
   onOpenShortcuts,
+  onOpenSettings,
   onOpenOverseer,
   className,
 }: FrameStatusStripProps) {
@@ -85,6 +88,14 @@ export function FrameStatusStrip({
           <CircleHelp />
         </TooltipTrigger>
         <TooltipContent side="top">Keyboard shortcuts · ?</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger
+          render={<IconButton label="Settings" onClick={onOpenSettings} />}
+        >
+          <Cog />
+        </TooltipTrigger>
+        <TooltipContent side="top">Settings › Integrations</TooltipContent>
       </Tooltip>
 
       {sync !== null && (

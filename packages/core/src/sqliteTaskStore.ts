@@ -79,10 +79,7 @@ interface TaskRow {
 // Reads the `attachments` JSON column back into the list of TaskAttachments
 // serializeTaskFile expects, throwing a SqliteRowError when the text is not
 // what rowValuesFromDoc wrote.
-function parseAttachments(
-  value: string,
-  rowId: string
-): TaskAttachment[] {
+function parseAttachments(value: string, rowId: string): TaskAttachment[] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(value);

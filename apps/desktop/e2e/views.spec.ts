@@ -287,35 +287,3 @@ test.describe('review detail', () => {
     });
   });
 });
-
-// `.dense-meta`/`.dense-label` set a default colour, so a Tailwind colour
-// utility on the same element must outrank them. Only a real browser can decide
-// that — it turns on cascade layers, which happy-dom does not implement.
-test('a colour utility beats the dense type treatments', async ({
-  page,
-  baseURL,
-}) => {
-  await page.goto(authedUrl(baseURL));
-  await page.locator('#dispatch-sidebar').waitFor();
-
-  const colours = await page.evaluate(() => {
-    const read = (className: string) => {
-      const probe = document.createElement('span');
-      probe.className = className;
-      document.body.append(probe);
-      const colour = getComputedStyle(probe).color;
-      probe.remove();
-      return colour;
-    };
-    return {
-      plain: read('dense-meta'),
-      overridden: read('dense-meta text-foreground'),
-      label: read('dense-label text-foreground'),
-      foreground: read('text-foreground'),
-    };
-  });
-
-  expect(colours.overridden).toBe(colours.foreground);
-  expect(colours.label).toBe(colours.foreground);
-  expect(colours.plain).not.toBe(colours.foreground);
-});

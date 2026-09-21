@@ -18,8 +18,9 @@ import { PillButton } from '@/ui/ai/pill';
 
 /**
  * The upload half of the row, shared with the page's paste/drop handlers: splits off
- * files over the daemon's cap (one toast naming them), sends the rest, and toasts a
- * failure. No manual refetch — the daemon's `task.changed` broadcast refreshes the doc.
+ * files over the daemon's cap (one toast naming them) and sends the rest one request
+ * each, so a failure names its file and the others still land. No manual refetch — the
+ * daemon's `task.changed` broadcast refreshes the doc.
  */
 export function useAttachmentUpload(
   client: ApiClient | null,
@@ -40,13 +41,17 @@ export function useAttachmentUpload(
       if (accepted.length === 0 || client === null) return;
       setUploading(true);
       try {
-        await client.uploadTaskAttachments(taskId, accepted);
-      } catch (err) {
-        toasts.push({
-          title: 'Upload failed',
-          description: describeError(err),
-          tone: 'error',
-        });
+        for (const file of accepted) {
+          try {
+            await client.uploadTaskAttachments(taskId, [file]);
+          } catch (err) {
+            toasts.push({
+              title: `Could not attach ${file.name}`,
+              description: describeError(err),
+              tone: 'error',
+            });
+          }
+        }
       } finally {
         setUploading(false);
       }
@@ -76,8 +81,10 @@ export interface AttachmentsRowProps {
  * The icon row under the description (linear-reference §8): one pill per attachment
  * — a paperclip glyph, `name · size`, an `×` — plus the Attach button over a hidden
  * multi-file input, and a muted `Uploading…` while a send is in flight. A pill opens
- * the file: in Tauri through the daemon machine's path, in a browser through a blob
- * URL, and a 404 (a teammate's frontmatter without the bytes) is a toast.
+ * the file: in Tauri through the daemon machine's path once a HEAD confirms the blob
+ * is there (`open` would otherwise resolve on a missing file), in a browser through
+ * a blob URL. Either way a missing blob (a teammate's frontmatter without the bytes)
+ * is a toast.
  */
 export function AttachmentsRow({
   taskId,
@@ -94,25 +101,57 @@ export function AttachmentsRow({
   const fileInput = inputRef ?? ownInputRef;
   const health = useQuery({
     queryKey: ['dispatch-health', port],
-    queryFn: () => client!.fetchHealth(),
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchHealth();
+    },
     enabled: client !== null && isTauri(),
   });
 
+  function toastMissing(attachment: TaskAttachment) {
+    toasts.push({
+      title: 'Attachment not on this machine',
+      description: attachment.name,
+      tone: 'error',
+    });
+  }
+
   async function open(attachment: TaskAttachment) {
     if (client === null) return;
-    try {
-      if (isTauri() && health.data !== undefined) {
+    if (isTauri() && health.data !== undefined) {
+      try {
+        if (!(await client.hasTaskAttachment(taskId, attachment.name))) {
+          toastMissing(attachment);
+          return;
+        }
         await openPath(absoluteAttachmentPath(health.data.rootDir, attachment));
+      } catch (err) {
+        toasts.push({
+          title: 'Open failed',
+          description: describeError(err),
+          tone: 'error',
+        });
+      }
+      return;
+    }
+    // The tab opens inside the click's user activation; a `window.open` after
+    // the fetch would be a blocked popup in WebKit.
+    const tab = window.open('', '_blank');
+    try {
+      const blob = await client.fetchTaskAttachment(taskId, attachment.name);
+      const url = URL.createObjectURL(blob);
+      if (tab === null) window.open(url, '_blank');
+      else tab.location.href = url;
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (err) {
+      tab?.close();
+      if ((err as { status?: unknown }).status === 404) {
+        toastMissing(attachment);
         return;
       }
-      const blob = await client.fetchTaskAttachment(taskId, attachment.name);
-      window.open(URL.createObjectURL(blob), '_blank');
-    } catch (err) {
-      const status = (err as { status?: unknown }).status;
       toasts.push({
-        title:
-          status === 404 ? 'Attachment not on this machine' : 'Open failed',
-        description: status === 404 ? attachment.name : describeError(err),
+        title: 'Open failed',
+        description: describeError(err),
         tone: 'error',
       });
     }
