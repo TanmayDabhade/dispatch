@@ -305,6 +305,11 @@ export class TerminalRegistry {
    * `hydrate` would throw away.
    */
   private persist(): void {
+    // Nothing to write and nothing written before: a daemon on a project where
+    // no one ever opened a terminal should not leave a directory behind, and
+    // `shutdown` runs on every daemon stop. Once an index exists this falls
+    // through, so removing the last session still records that it is gone.
+    if (this.sessions.size === 0 && !existsSync(this.indexPath())) return;
     const dir = this.dir();
     mkdirSync(dir, { recursive: true });
     for (const session of this.sessions.values()) {

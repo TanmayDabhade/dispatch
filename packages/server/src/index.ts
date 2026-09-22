@@ -12,6 +12,7 @@ import {
 } from '@dispatch/core';
 import type {
   CartoMode,
+  ExecutorCommand,
   GitReader,
   ProjectStores,
   TaskStoreBackend,
@@ -316,7 +317,18 @@ export function registerCliExecutors(
   orchestrator: Orchestrator,
   rootDir: string
 ): void {
-  const configured = loadConfig(rootDir).executors ?? {};
+  // Boot must survive a malformed config.yml, the same way the carto and
+  // prWorktreeDir reads below do: a config typo must cost the user their
+  // declared agents, not their daemon. The presets still register, and a
+  // per-request load still surfaces the real error.
+  let configured: Record<string, { command?: ExecutorCommand }> = {};
+  try {
+    configured = loadConfig(rootDir).executors ?? {};
+  } catch (err) {
+    console.error(
+      `dispatchd: could not read executor config, registering presets only: ${(err as Error).message}`
+    );
+  }
   const commands = { ...availableCliPresets() };
   for (const [name, entry] of Object.entries(configured)) {
     if (entry.command !== undefined) commands[name] = entry.command;

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -271,7 +271,36 @@ describe('TerminalRegistry', () => {
     expect(registry.remove('nope')).toBe(false);
   });
 
-  it('reports a command that is not on PATH instead of throwing', async () => {
+  it('leaves no directory behind when no session was ever opened', () => {
+    // `shutdown` runs on every daemon stop, so a project where nobody opened a
+    // terminal must not get a state directory created for it.
+    const local = new TerminalRegistry(root, {
+      spawn: () =>
+        new FakeProcess({
+          command: [],
+          cwd: root,
+          env: {},
+        }),
+    });
+    local.shutdown();
+    expect(existsSync(join(home, '.dispatch'))).toBe(false);
+  });
+
+  it('records an emptied index rather than silently keeping the last session', () => {
+    const local = build();
+    const info = local.create({ cwd: root, command: ['bash'] });
+    local.remove(info.id);
+    local.shutdown();
+
+    // Once an index exists it keeps being written, so a revived registry sees
+    // the removal rather than resurrecting the session.
+    const revived = build();
+    expect(revived.get(info.id)).toBeNull();
+    revived.shutdown();
+    local.shutdown();
+  });
+
+  it('reports a command that is not on PATH instead of throwing', () => {
     // A missing binary — `ssh` for a remote session, a shell that was
     // uninstalled — must leave a visible session saying so, not fail the
     // request with nothing to look at.
