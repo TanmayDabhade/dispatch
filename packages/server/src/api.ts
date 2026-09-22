@@ -47,6 +47,7 @@ import {
   screenshotBrowser,
   startBrowserPick,
 } from './api/browser.js';
+import { fanoutTask } from './api/fanout.js';
 import {
   listDirectory,
   rawFile,
@@ -4486,6 +4487,16 @@ export async function handleApi(
     }
 
     if (segments[0] === 'tasks') {
+      // Before any `:id` sub-route below, and matched on its own literal so
+      // "fanout" is never read as a run id.
+      if (
+        segments.length === 3 &&
+        segments[2] === 'fanout' &&
+        method === 'POST' &&
+        segments[1] !== undefined
+      ) {
+        return await fanoutTask(req, ctx, segments[1]);
+      }
       if (segments.length === 1 && method === 'GET') {
         return jsonResponse(
           ctx.cache.query({
