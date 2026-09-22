@@ -15,6 +15,7 @@ import {
   consultProjectPolicy,
   policyActivityAppender,
 } from '../policyEngine.js';
+import { humanActor } from './caller.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 
 // The transcript text a scope request lands as, so the session log records
@@ -201,7 +202,7 @@ function recordGrantedLedgerEntry(
     kind: 'decision',
     title: `Scope extended for run ${runId}`,
     detail,
-    authoredBy: ctx.actorContext.humanRef,
+    authoredBy: humanActor(ctx),
   });
   ctx.events.broadcast({ type: 'ledger.changed' });
   return taskId;

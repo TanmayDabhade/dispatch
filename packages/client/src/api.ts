@@ -154,6 +154,8 @@ export interface RunMeta {
   error?: string;
   /** The Claude model this run was dispatched with, if one was chosen. */
   model?: string;
+  /** ActorRef of the human who dispatched this run — see the server's RunMeta. */
+  dispatchedBy?: string;
   // The approval this run is parked on while `state` is 'awaiting-approval',
   // so a client that connects after the `approval.requested` event fired (a
   // reload, a relaunched app, the CLI) can still answer it. The daemon

@@ -703,6 +703,9 @@ export class Orchestrator {
 
     this.worktrees.add(wtPath, branch, baseBranch);
 
+    const actor = opts.actor ?? this.ctx.actorContext?.humanRef;
+    const dispatchedBy =
+      actor !== undefined && actor.startsWith('human:') ? actor : undefined;
     const meta: RunMeta = {
       id: runId,
       taskId,
@@ -715,6 +718,10 @@ export class Orchestrator {
       createdAt: now,
       updatedAt: now,
       model: opts.model,
+      // Only a human ref is recorded: 'none' is how an automatic caller says
+      // nobody pressed dispatch for this task, and crediting that to anyone
+      // would be inventing an owner.
+      ...(dispatchedBy === undefined ? {} : { dispatchedBy }),
       // Seeded from the task's own declared write-set — see RunMeta.claims.
       claims: [...task.meta.writes],
       // Spread in only for a genuinely stacked run, so an unblocked run's

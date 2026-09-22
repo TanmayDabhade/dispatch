@@ -42,6 +42,8 @@ export interface RunMeta {
   turns?: number;
   sessionId?: string;
   error?: string;
+  /** ActorRef of the human who dispatched this run — see the server's RunMeta. */
+  dispatchedBy?: string;
   model?: string;
   reviewedAt?: string;
   reviewAction?: 'merge' | 'discard' | 'pr';

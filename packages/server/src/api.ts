@@ -35,6 +35,7 @@ import {
   removeTaskAttachment,
   uploadTaskAttachments,
 } from './api/attachments.js';
+import { humanActor } from './api/caller.js';
 import {
   clickInBrowser,
   closeBrowser,
@@ -311,6 +312,9 @@ export interface ApiContext {
   // the idle sweep and the shutdown stop belong to the process that owns the
   // port allocations.
   previews: PreviewSupervisor;
+  /** Who made the request being handled, when their credential resolved.
+   *  Set per request by handleApi — never on the daemon-wide context. */
+  caller?: TokenIdentity;
 }
 
 // Mirrors the CLI's own enum check (packages/cli/src/commands/task.ts
@@ -578,10 +582,10 @@ async function updateTask(
 
   // PATCH /api/tasks/:id is only ever reached by a human — the web/desktop
   // task drawer, or a direct API call — so any Activity line it appends is
-  // credited to this daemon's human, never whatever the client sent (an
-  // untrusted body must not be able to forge attribution).
+  // credited to the human whose credential made the call, never whatever the
+  // client sent (an untrusted body must not be able to forge attribution).
   if (typeof patch.appendActivity === 'string' && patch.appendActivity !== '') {
-    patch.activityActor = ctx.actorContext.humanRef;
+    patch.activityActor = humanActor(ctx);
   }
 
   const doc = ctx.store.update(id, patch);
@@ -693,6 +697,9 @@ async function createRun(
     executor: typeof executorField === 'string' ? executorField : undefined,
     model: typeof modelField === 'string' ? modelField : undefined,
     fresh: freshField === true,
+    // Whoever pressed dispatch, so the run — and its claims, and the
+    // decisions it later parks on — is theirs rather than the operator's.
+    actor: humanActor(ctx),
   });
   return jsonResponse(meta, 201);
 }
@@ -4331,7 +4338,7 @@ export function rejectUnauthorized(
 
 export async function handleApi(
   req: Request,
-  ctx: ApiContext
+  daemonCtx: ApiContext
 ): Promise<Response> {
   const url = new URL(req.url);
   const segments = url.pathname
@@ -4345,9 +4352,16 @@ export async function handleApi(
 
   const tier = requiredTier(method, segments);
   if (tier !== null) {
-    const unauthorized = rejectUnauthorized(req, ctx.tokens, tier);
+    const unauthorized = rejectUnauthorized(req, daemonCtx.tokens, tier);
     if (unauthorized !== null) return unauthorized;
   }
+
+  // Every handler below sees who made this request. A shallow copy per
+  // request, so the daemon-wide context is never mutated with one caller's
+  // identity and a concurrent request can never read someone else's.
+  const caller = daemonCtx.tokens.registry.resolve(bearerToken(req));
+  const ctx: ApiContext =
+    caller === null ? daemonCtx : { ...daemonCtx, caller };
 
   try {
     if (segments[0] === 'health' && segments.length === 1 && method === 'GET') {

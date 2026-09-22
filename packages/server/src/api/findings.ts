@@ -8,6 +8,7 @@ import type {
 
 import type { ApiContext } from '../api.js';
 import { ADJUDICATION_VERDICTS } from '../orchestrator/fixLoop.js';
+import { humanActor } from './caller.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 
 // Declared as `readonly string[]` (not the literal union) so a membership
@@ -102,7 +103,7 @@ export async function createFinding(
     line: typeof body.line === 'number' ? body.line : null,
     round: typeof body.round === 'number' ? body.round : undefined,
     recommendation: body.recommendation as FindingRecommendation | undefined,
-    raisedBy: ctx.actorContext.humanRef,
+    raisedBy: humanActor(ctx),
   });
   ctx.events.broadcast({ type: 'finding.changed' });
   return jsonResponse(finding, 201);
@@ -176,7 +177,7 @@ export function listLedger(ctx: ApiContext, url: URL): Response {
 // (stale, or made up) is credited to no one rather than guessed at, and a
 // request with no runId at all is a human calling the endpoint directly.
 function ledgerAuthorFor(ctx: ApiContext, runId: string | null): string {
-  if (runId === null) return ctx.actorContext.humanRef;
+  if (runId === null) return humanActor(ctx);
   const run = ctx.orchestrator.getRun(runId);
   return run === null ? 'none' : ctx.actorContext.agentRef(run.meta.executor);
 }
