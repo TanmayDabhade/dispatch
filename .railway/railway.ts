@@ -7,6 +7,14 @@
 import { defineRailway, preserve, project, service } from 'railway/iac';
 
 // One replica in Railway's default region, restarted on failure; shared by both.
+//
+// `restartPolicyType`/`restartPolicyMaxRetries` are the desired state but do NOT
+// persist as service settings: `railway config apply` reports success, yet
+// `config pull` reads them back as null, so `config plan` keeps proposing them
+// (checked 2026-09-22, CLI 5.58.0). Every other field here applied cleanly. Until
+// that round-trips, the per-deployment `railway.json` files are what actually put
+// the policy on a deployment — do not delete them, or deploys fall back to
+// Railway's default.
 const deploy = {
   restartPolicyType: 'ON_FAILURE',
   restartPolicyMaxRetries: 10,
