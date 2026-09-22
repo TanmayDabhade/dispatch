@@ -28,6 +28,7 @@ import { registerOrchestrateCommands } from './commands/orchestrate.js';
 import { registerPlanCommands } from './commands/plan.js';
 import { registerRemoteCommands } from './commands/remote.js';
 import { registerScopeCommands } from './commands/scope.js';
+import { registerShareCommands } from './commands/share.js';
 import { registerTaskCommands } from './commands/task.js';
 import { registerWorktreeCommands } from './commands/worktree.js';
 import { type CliContext, CliError } from './context.js';
@@ -224,6 +225,7 @@ export function makeProgram(ctx: CliContext): Command {
   registerFanoutCommand(program, ctx);
   registerRemoteCommands(program, ctx);
   registerWorktreeCommands(program, ctx);
+  registerShareCommands(program, ctx);
   registerMigrateCommand(program, ctx);
 
   return program;

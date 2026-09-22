@@ -1,6 +1,8 @@
 import type {
   CommandEvidence,
   CreateInput,
+  Finding,
+  LedgerEntry,
   MutationEvidence,
   TaskDoc,
   UpdatePatch,
@@ -602,6 +604,12 @@ export interface ApiClient {
   ): Promise<RunMeta>;
   cancelRun(runId: string): Promise<void>;
   getRunDiff(runId: string): Promise<DiffResult>;
+  /** Findings raised against one task. `dispatch share` folds them into a
+   *  run's page; nothing else in the CLI reads them yet. */
+  getTaskFindings(taskId: string): Promise<Finding[]>;
+  /** Every recorded decision and ruling. Unfiltered: the ledger is
+   *  project-wide, and the share page shows what applies to the run's task. */
+  getLedger(): Promise<LedgerEntry[]>;
   reviewRun(
     runId: string,
     action: 'merge' | 'discard' | 'pr'
@@ -662,6 +670,9 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
     cancelRun: (runId) =>
       request(target, `/api/runs/${runId}/cancel`, { ...jsonBody({}) }),
     getRunDiff: (runId) => request(target, `/api/runs/${runId}/diff`),
+    getTaskFindings: (taskId) =>
+      request(target, `/api/findings?taskId=${encodeURIComponent(taskId)}`),
+    getLedger: () => request(target, '/api/ledger'),
     reviewRun: (runId, action) =>
       request(target, `/api/runs/${runId}/review`, {
         ...jsonBody({ action }),

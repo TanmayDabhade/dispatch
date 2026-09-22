@@ -180,6 +180,37 @@ Each agent gets its own clone of the task, its own worktree and its own branch,
 so comparing them is the review you already do — one diff each — and merging the
 winner is merging that task.
 
+## Sharing a run
+
+    dispatch share r-abc123
+    dispatch share r-abc123 --out review.html
+
+Writes a self-contained HTML page of one run — summary, diff, findings,
+decisions, evidence and transcript — with no scripts, no remote assets and no
+link back to the project. It is a file you can attach to a ticket, hand to a
+reviewer who has never installed Dispatch, or keep as the receipt for what an
+agent did. `--json` prints the assembled data instead, for feeding a different
+template.
+
+## Previewing a run
+
+A run's work is a diff until you can look at it. `dispatch serve` will start a
+dev server inside a finished run's own worktree and proxy it at
+`/preview/<runId>/`, which the desktop app shows in the task's **Preview** tab.
+The command is detected from the worktree's `package.json` (`dev`, else
+`start`); set `preview.command` in `.dispatch/config.yml` to name one yourself,
+and `preview.installCommand` for a fresh worktree that needs dependencies first:
+
+    preview:
+      enabled: true
+      command: pnpm run dev
+      installCommand: pnpm install
+      readyTimeoutSec: 180
+      idleTimeoutSec: 900
+
+Previews start only when asked for, stop with the daemon, and are swept once
+they have had no request for `idleTimeoutSec`.
+
 ## MCP server
 
 `dispatch init` registers a stdio MCP server in the project's `.mcp.json`
