@@ -105,7 +105,7 @@ export function LiveRail({
           <span className="min-w-0 flex-1 truncate">
             {firstPendingAction?.summary ??
               overseer.record?.prompt ??
-              'Overseer'}
+              'Assistant'}
           </span>
           {overseer.record !== undefined && (
             <Elapsed

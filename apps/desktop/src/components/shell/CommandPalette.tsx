@@ -119,7 +119,7 @@ export function CommandPalette({
             placeholder="Type a command or search…"
             hint={
               <>
-                <span>Ask Overseer</span>
+                <span>Ask the Assistant</span>
                 <Kbd>Tab</Kbd>
               </>
             }
@@ -128,7 +128,7 @@ export function CommandPalette({
             <CommandEmpty className="p-0">
               <EmptyState
                 heading="No results"
-                description="Try another task id or title, or press Tab to ask the Overseer."
+                description="Try another task id or title, or press Tab to ask the Assistant."
                 className="py-6"
               />
             </CommandEmpty>

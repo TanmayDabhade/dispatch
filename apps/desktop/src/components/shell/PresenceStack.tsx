@@ -71,7 +71,9 @@ export function PresenceStack({ presence, className }: PresenceStackProps) {
             aria-hidden
             className={cn(
               'bg-surface-quaternary border-border-chip flex size-5 items-center justify-center rounded-full border text-[9px] font-medium',
-              i > 0 && '-ml-1.5',
+              // Side by side, not overlapped: two-letter initials stacked
+              // over each other read as one run-together word, not two people.
+              i > 0 && 'ml-0.5',
               // A ring on anyone with a live agent, so "who is busy" reads
               // without opening the tooltip.
               entry.runs.length > 0 && 'ring-state-review ring-1'

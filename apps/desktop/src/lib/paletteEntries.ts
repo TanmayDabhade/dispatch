@@ -64,7 +64,7 @@ export interface PaletteEntriesContext {
 const GLOBAL_VIEWS: { id: GlobalView; label: string; shortcut?: string }[] = [
   { id: 'all-agents', label: 'All agents' },
   { id: 'sessions', label: 'Sessions' },
-  { id: 'overseer', label: 'Overseer', shortcut: 'G A' },
+  { id: 'overseer', label: 'Assistant', shortcut: 'G A' },
   { id: 'settings', label: 'Settings', shortcut: 'G S' },
 ];
 

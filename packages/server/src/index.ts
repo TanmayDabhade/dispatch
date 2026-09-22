@@ -18,6 +18,8 @@ import type {
   TaskStoreBackend,
   TaskStorePort,
 } from '@dispatch/core';
+import { existsSync } from 'node:fs';
+import { networkInterfaces } from 'node:os';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -111,6 +113,8 @@ import { PresenceTracker } from './presence.js';
 import { PreviewSupervisor } from './preview.js';
 import { isReceiptEvent, ReceiptsScheduler } from './receipts/scheduler.js';
 import { ReviewCommentStore } from './reviewComments.js';
+import type { SharedPageConfig } from './shared.js';
+import { bindModeFor, isLoopbackAddress, ownOrigins } from './shared.js';
 import { readProjectBackend, writeProjectBackend } from './storage.js';
 import { BoardSyncScheduler } from './sync/scheduler.js';
 import {
@@ -160,6 +164,14 @@ export interface StartServerOptions {
   // exist until Slice S3 builds it, in which case static serving is a no-op
   // 404 fallthrough rather than an error.
   webDistDir?: string | null;
+  // Where to bind. `127.0.0.1` (the default) keeps the daemon to this machine;
+  // `0.0.0.0` is team-local mode, reachable by teammates on the network. See
+  // shared.ts for what changes between the two — the short version is that
+  // nothing loopback made safe is assumed once it is not loopback.
+  host?: string;
+  // Extra origins teammates load the app from in team-local mode — a hostname
+  // or a reverse proxy — beyond the interface addresses found automatically.
+  publicOrigins?: string[];
   // Tests pass false so parallel test runs don't fight over the one
   // per-rootDir daemon file.
   writeDaemonFile?: boolean;
@@ -264,6 +276,16 @@ function watchdogStallMsFromEnv(): number | undefined {
 }
 
 const DEFAULT_WEB_DIST_DIR = join(moduleDir, '..', '..', 'web', 'dist');
+// The desktop app's own browser build, for team-local mode (see bootServer).
+const DESKTOP_DIST_DIR = join(
+  moduleDir,
+  '..',
+  '..',
+  '..',
+  'apps',
+  'desktop',
+  'dist'
+);
 
 /**
  * Which store backend a project uses.
@@ -381,17 +403,24 @@ function safeRebuild(store: TaskStorePort, cache: TaskCache): void {
 
 // The origin to echo back in `Access-Control-Allow-Origin`, or null when it is
 // untrusted — a wildcard would let any page you visit read this daemon's tasks.
-function resolveCorsOrigin(origin: string | null): string | null {
+function resolveCorsOrigin(
+  origin: string | null,
+  own: ReadonlySet<string>
+): string | null {
   if (origin === null) return null;
-  return isTrustedOrigin(origin) ? origin : null;
+  return isTrustedOrigin(origin, own) ? origin : null;
 }
 
 // Adds CORS headers so the desktop webview / browser dev harness (a different
 // origin than `http://127.0.0.1:<port>`) can read this daemon's responses,
 // but ONLY for trusted origins (see resolveCorsOrigin). Mutating the existing
 // response's headers keeps streamed bodies (Bun.file static responses) intact.
-function withCors(res: Response, origin: string | null): Response {
-  const allowed = resolveCorsOrigin(origin);
+function withCors(
+  res: Response,
+  origin: string | null,
+  own: ReadonlySet<string>
+): Response {
+  const allowed = resolveCorsOrigin(origin, own);
   if (allowed !== null) {
     res.headers.set('access-control-allow-origin', allowed);
     res.headers.set(
@@ -431,12 +460,31 @@ const CONTENT_TYPES: Record<string, string> = {
  * cannot read this response either — static assets go through the same
  * `withCors` as everything else, and an untrusted origin gets no CORS header.
  */
+/**
+ * What the served page is handed. On loopback, the agent token — a browser page
+ * has no filesystem to read the daemon file from, and nothing but this machine
+ * can load the page. In team-local mode, never a token: anyone on the network
+ * can load this page, and injecting the operator's credential would hand it to
+ * all of them. The page gets where it is and signs in with its own.
+ */
+type PageInjection =
+  | { kind: 'token'; agentToken: string }
+  | { kind: 'shared'; config: SharedPageConfig };
+
+// `<` escaped so a root path containing `</script>` cannot close the tag.
+function scriptJson(value: unknown): string {
+  return JSON.stringify(value).replace(/</g, '\\u003c');
+}
+
 async function serveIndexHtml(
   indexFile: ReturnType<typeof Bun.file>,
-  agentToken: string
+  injection: PageInjection
 ): Promise<Response> {
   const html = await indexFile.text();
-  const inject = `<script>window.__DISPATCH_DAEMON_TOKEN__=${JSON.stringify(agentToken)}</script>`;
+  const inject =
+    injection.kind === 'token'
+      ? `<script>window.__DISPATCH_DAEMON_TOKEN__=${scriptJson(injection.agentToken)}</script>`
+      : `<script>window.__DISPATCH_SHARED__=${scriptJson(injection.config)}</script>`;
   return new Response(
     html.includes('</head>')
       ? html.replace('</head>', `${inject}</head>`)
@@ -554,13 +602,13 @@ async function proxyPreview(
 async function serveStatic(
   pathname: string,
   webDistDir: string,
-  agentToken: string
+  injection: PageInjection
 ): Promise<Response | null> {
   const relative = pathname === '/' ? 'index.html' : pathname.slice(1);
   const candidate = Bun.file(join(webDistDir, relative));
   if (await candidate.exists()) {
     if (relative === 'index.html') {
-      return await serveIndexHtml(candidate, agentToken);
+      return await serveIndexHtml(candidate, injection);
     }
     const type = CONTENT_TYPES[extname(relative)];
     return new Response(
@@ -570,7 +618,7 @@ async function serveStatic(
   }
   const indexFile = Bun.file(join(webDistDir, 'index.html'));
   if (await indexFile.exists()) {
-    return await serveIndexHtml(indexFile, agentToken);
+    return await serveIndexHtml(indexFile, injection);
   }
   return null;
 }
@@ -724,9 +772,33 @@ async function bootServer(
   watchdog: EventLoopWatchdog
 ): Promise<ServerHandle> {
   const { rootDir } = opts;
-  const webDistDir =
-    opts.webDistDir === undefined ? DEFAULT_WEB_DIST_DIR : opts.webDistDir;
+
   const shouldWriteDaemonFile = opts.writeDaemonFile ?? true;
+  const bindHost = opts.host ?? '127.0.0.1';
+  const bindMode = bindModeFor(bindHost);
+  if (!bindMode.ok) throw new Error(bindMode.error);
+  const shared = bindMode.mode === 'shared';
+  // Filled once the port is bound; empty in loopback mode, where nothing but
+  // this machine's own origins is ever trusted.
+  const ownOriginSet = new Set<string>();
+  // Which bundle to serve. Team-local mode needs the desktop app's build: it
+  // is the one with a sign-in screen, where the frozen @dispatch/web UI
+  // expects an injected token that shared mode will never inject. With no
+  // desktop build on disk, shared mode serves no UI at all rather than one
+  // that cannot sign in — the API still answers the CLI and the MCP server.
+  const webDistDir =
+    opts.webDistDir !== undefined
+      ? opts.webDistDir
+      : shared
+        ? existsSync(join(DESKTOP_DIST_DIR, 'index.html'))
+          ? DESKTOP_DIST_DIR
+          : null
+        : DEFAULT_WEB_DIST_DIR;
+  if (shared && webDistDir === null) {
+    console.error(
+      'dispatchd: team-local mode found no desktop build to serve — run `moonx desktop:build` or pass --web-dist <dir>'
+    );
+  }
   // One timestamp for both places that name this process: the daemon file
   // and GET /api/health.
   const startedAt = new Date().toISOString();
@@ -1523,11 +1595,13 @@ async function bootServer(
     watchdogStatus: () => watchdog.status(),
     previews,
     presence: presenceTracker,
+    ownOrigins: ownOriginSet,
+    shared,
   };
 
   const server = Bun.serve<SocketData>({
     port: opts.port ?? 0,
-    hostname: '127.0.0.1',
+    hostname: bindHost,
     async fetch(req, srv) {
       const url = new URL(req.url);
       const origin = req.headers.get('origin');
@@ -1539,10 +1613,11 @@ async function bootServer(
         // CORS never applies to a WebSocket, so without this an untrusted page
         // could upgrade and read the whole event stream. A null Origin is a
         // non-browser client, which the router's guard lets through too.
-        if (origin !== null && !isTrustedOrigin(origin)) {
+        if (origin !== null && !isTrustedOrigin(origin, ownOriginSet)) {
           return withCors(
             new Response('cross-origin websocket rejected', { status: 403 }),
-            origin
+            origin,
+            ownOriginSet
           );
         }
         // The browser WebSocket API cannot set request headers, so this is the
@@ -1554,7 +1629,8 @@ async function bootServer(
           'request',
           wsToken
         );
-        if (unauthorized !== null) return withCors(unauthorized, origin);
+        if (unauthorized !== null)
+          return withCors(unauthorized, origin, ownOriginSet);
         // Carry who connected onto the socket: presence is read off open
         // sockets, and the credential was just checked above, so resolving it
         // again cannot fail here.
@@ -1568,7 +1644,8 @@ async function bootServer(
         }
         return withCors(
           new Response('expected websocket upgrade', { status: 400 }),
-          origin
+          origin,
+          ownOriginSet
         );
       }
 
@@ -1580,12 +1657,29 @@ async function bootServer(
       // preflight; answer it here (untrusted origins get no CORS header and are
       // thus blocked).
       if (req.method === 'OPTIONS') {
-        return withCors(new Response(null, { status: 204 }), origin);
+        return withCors(
+          new Response(null, { status: 204 }),
+          origin,
+          ownOriginSet
+        );
       }
 
       // Before /api/ and the static fallback: this is the one path whose
       // content belongs to someone else's server.
       if (url.pathname.startsWith('/preview/')) {
+        // A preview has no credential of its own — an iframe cannot send one
+        // on every sub-resource — so on loopback it is exactly as private as
+        // the machine. In team-local mode that no longer holds, and a preview
+        // of unmerged agent work is not something to serve the whole network
+        // unauthenticated. Teammates review the diff and the share page; the
+        // live preview stays on the machine running it.
+        const peer = srv.requestIP(req)?.address ?? '';
+        if (shared && !isLoopbackAddress(peer)) {
+          return new Response(
+            'previews are only served to the machine running the daemon',
+            { status: 403 }
+          );
+        }
         return await proxyPreview(url, req, previews);
       }
 
@@ -1593,19 +1687,26 @@ async function bootServer(
         // Bun's 10s idle timeout is shorter than a model turn, so raise it for
         // every /api/ route rather than keeping a per-path list.
         srv.timeout(req, 65);
-        return withCors(await handleApi(req, apiCtx), origin);
+        return withCors(await handleApi(req, apiCtx), origin, ownOriginSet);
       }
 
       if (webDistDir !== null) {
         const staticResponse = await serveStatic(
           url.pathname,
           webDistDir,
-          tokens.agentToken
+          shared
+            ? { kind: 'shared', config: { root: rootDir, baseUrl: '' } }
+            : { kind: 'token', agentToken: tokens.agentToken }
         );
-        if (staticResponse !== null) return withCors(staticResponse, origin);
+        if (staticResponse !== null)
+          return withCors(staticResponse, origin, ownOriginSet);
       }
 
-      return withCors(new Response('not found', { status: 404 }), origin);
+      return withCors(
+        new Response('not found', { status: 404 }),
+        origin,
+        ownOriginSet
+      );
     },
     // Without this, an error escaping `fetch` falls to Bun's development
     // error page, which embeds the stack trace, absolute paths, and source
@@ -1659,6 +1760,18 @@ async function bootServer(
   // defined in practice. Falling back to 0 keeps the types honest without an
   // assertion.
   const port = server.port ?? 0;
+  if (shared) {
+    for (const origin of ownOrigins(
+      port,
+      networkInterfaces(),
+      opts.publicOrigins
+    )) {
+      ownOriginSet.add(origin);
+    }
+    console.log(
+      `dispatchd: team-local mode — teammates open ${[...ownOriginSet].join(' or ')} and sign in with a token from \`dispatch team invite\``
+    );
+  }
 
   if (shouldWriteDaemonFile) {
     writeDaemonFile({

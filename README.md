@@ -211,6 +211,50 @@ and `preview.installCommand` for a fresh worktree that needs dependencies first:
 Previews start only when asked for, stop with the daemon, and are swept once
 they have had no request for `idleTimeoutSec`.
 
+## Working as a team on one daemon
+
+A daemon is yours by default: it binds `127.0.0.1` and nothing else can reach
+it. Team-local mode lets teammates on your network use the same board from a
+browser, each as themselves.
+
+    moonx desktop:build                     # the bundle teammates are served
+    dispatch serve --host 0.0.0.0           # prints the address to share
+    dispatch team invite ada@example.com    # prints Ada's token, once
+
+Ada opens the printed address, pastes her token, and is signed in. From then on
+her findings, notes, scope decisions and dispatched runs are credited to
+`human:ada`, not to you; the status strip shows who is connected and what each
+is running; the Inbox badge counts only what is yours to answer, with teammates'
+asks under **Teammates**; and the dispatch dialog warns, by name, before you
+start work on files someone else's live run has claimed.
+
+    dispatch team invite ada --decide       # let Ada approve and merge too
+    dispatch team tokens                    # who holds a credential
+    dispatch team revoke ada                # her token stops working at once
+
+Tokens are stored only as hashes, outside the repo, and are shown once — lose
+one and issue a new one, which replaces it. A new teammate gets the `request`
+tier (drive the board, dispatch, review) until you grant `decide`. Every `team`
+command needs the daemon's app token (`--token` or `DISPATCH_APP_TOKEN`).
+
+What changes when the daemon is shared, and why:
+
+- **No token is ever put in the served page.** On loopback the page carries the
+  daemon's agent token; on a shared bind that would hand it to anyone who can
+  reach the port, so teammates sign in with their own.
+- **Only the daemon's own address is a trusted origin**, never whatever a Host
+  header claims, so a DNS-rebinding page cannot pass for a teammate.
+- **Live previews stay on your machine.** A preview has no credential of its
+  own, so it is served only to loopback; teammates see the diff and can be sent
+  a `dispatch share` page instead.
+- `--host` accepts `127.0.0.1` or `0.0.0.0` only. A single interface address
+  would stop the daemon answering on loopback, where the CLI, MCP server and app
+  reach it.
+
+This is plain HTTP on your network, like any dev server — run it on a network
+you trust, or put it behind a TLS-terminating proxy and name that origin with
+`--public-origin`.
+
 ## MCP server
 
 `dispatch init` registers a stdio MCP server in the project's `.mcp.json`

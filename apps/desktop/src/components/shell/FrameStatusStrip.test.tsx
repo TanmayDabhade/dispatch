@@ -147,7 +147,7 @@ test('the Overseer link opens the overseer', () => {
       opened += 1;
     },
   });
-  fireEvent.click(screen.getByRole('button', { name: 'Overseer' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Assistant' }));
   expect(opened).toBe(1);
 });
 

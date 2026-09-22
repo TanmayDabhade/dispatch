@@ -315,6 +315,11 @@ export interface ApiContext {
   previews: PreviewSupervisor;
   /** Who is connected right now; see presence.ts. */
   presence: PresenceTracker;
+  /** The daemon's own network origins in team-local mode, empty otherwise.
+   *  The same Set instance the HTTP layer fills once the port is bound. */
+  ownOrigins: ReadonlySet<string>;
+  /** Whether this daemon is bound beyond loopback — see shared.ts. */
+  shared: boolean;
   /** Who made the request being handled, when their credential resolved.
    *  Set per request by handleApi — never on the daemon-wide context. */
   caller?: TokenIdentity;
@@ -4109,24 +4114,36 @@ const READ_ONLY_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 // Origins allowed to drive this daemon — the same set resolveCorsOrigin in
 // index.ts uses to decide whether a response may be read.
-export function isTrustedOrigin(origin: string): boolean {
+export function isTrustedOrigin(
+  origin: string,
+  // The daemon's own network origins, non-empty only in team-local mode (see
+  // shared.ts). A teammate's page loaded from http://192.168.1.5:4771 makes
+  // same-origin requests from exactly that origin; nothing else is added.
+  own: ReadonlySet<string> = NO_OWN_ORIGINS
+): boolean {
   return (
     origin === 'tauri://localhost' ||
     origin === 'https://tauri.localhost' ||
     origin === 'http://tauri.localhost' ||
-    /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+    /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ||
+    own.has(origin)
   );
 }
+
+const NO_OWN_ORIGINS: ReadonlySet<string> = new Set();
 
 // CORS cannot stop a body-less cross-origin POST (no preflight, and headers go
 // on only after the handler ran). Kept alongside the token guard below as
 // defence in depth: Origin rejects the browser case, the token the co-resident
 // case.
-function rejectUntrustedOrigin(req: Request): Response | null {
+function rejectUntrustedOrigin(
+  req: Request,
+  own: ReadonlySet<string>
+): Response | null {
   if (READ_ONLY_METHODS.has(req.method)) return null;
   const origin = req.headers.get('origin');
   // Browsers always send Origin on a state change; the CLI, MCP and curl never do.
-  if (origin === null || isTrustedOrigin(origin)) return null;
+  if (origin === null || isTrustedOrigin(origin, own)) return null;
   return errorResponse(403, 'cross-origin request rejected');
 }
 
@@ -4350,7 +4367,7 @@ export async function handleApi(
     .filter(Boolean);
   const method = req.method;
 
-  const untrusted = rejectUntrustedOrigin(req);
+  const untrusted = rejectUntrustedOrigin(req, daemonCtx.ownOrigins);
   if (untrusted !== null) return untrusted;
 
   const tier = requiredTier(method, segments);

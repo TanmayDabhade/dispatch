@@ -8,6 +8,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { MonitorPlay, RotateCw } from 'lucide-react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
+import { isTeamLocalPage } from '../../lib/teamLocal';
 import { TabSkeleton } from './TabSkeleton';
 import { Button } from '@/ui/button';
 import { EmptyState } from '@/ui/chrome';
@@ -102,6 +103,20 @@ export function TaskPreviewTab({ data, selectedRun }: TaskPreviewTabProps) {
     onSuccess: () => queryClient.setQueryData(queryKey, nothing),
   });
 
+  // A team-local daemon serves previews only to the machine it runs on (see
+  // proxyPreview in packages/server/src/index.ts): a preview has no credential
+  // of its own, so serving unmerged agent work to the whole network would be
+  // serving it to anyone. Said plainly here rather than as a frame full of 403.
+  if (isTeamLocalPage()) {
+    return (
+      <EmptyState
+        icon={MonitorPlay}
+        heading="Previews run on the host's machine"
+        description="Live previews are only served to the machine running this project's daemon. Review the diff here, or ask them to share the run."
+        className="h-full justify-center"
+      />
+    );
+  }
   if (selectedRun === undefined) {
     return (
       <EmptyState
