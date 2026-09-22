@@ -19,6 +19,7 @@ import type {
   OrchestratorConfig,
   QueueConfig,
   ReceiptsConfig,
+  RemoteConfig,
   RepoDigestConfig,
   VerifyConfig,
 } from './configTypes.js';
@@ -115,6 +116,7 @@ const DEFAULTS: DispatchConfig = {
   orchestrator: { ...DEFAULT_ORCHESTRATOR },
   models: { ...DEFAULT_MODELS },
   executors: {},
+  remotes: {},
   linear: { ...DEFAULT_LINEAR, statusMap: { ...DEFAULT_LINEAR.statusMap } },
   fixLoop: cloneFixLoop(DEFAULT_FIX_LOOP),
   carto: { ...DEFAULT_CARTO },
@@ -471,6 +473,62 @@ function parseExecutorCommand(
     run,
     ...(env === undefined ? {} : { env: env as Record<string, string> }),
   };
+}
+
+// Validates the optional `remotes:` block. Every field is checked by name so a
+// typo (`hostname:` for `host:`) fails the load with the key that was wrong,
+// rather than silently producing a remote that cannot connect.
+function parseRemotesConfig(raw: unknown): Record<string, RemoteConfig> {
+  if (raw === undefined) return {};
+  const prefix = 'invalid .dispatch/config.yml';
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(`${prefix}: remotes must be an object`);
+  }
+  const result: Record<string, RemoteConfig> = {};
+  for (const [name, entry] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      throw new ConfigError(`${prefix}: remotes.${name} must be an object`);
+    }
+    const value = entry as Record<string, unknown>;
+    for (const key of Object.keys(value)) {
+      if (!['host', 'user', 'port', 'path', 'identityFile'].includes(key)) {
+        throw new ConfigError(
+          `${prefix}: unknown remotes.${name} key "${key}" (expected host|user|port|path|identityFile)`
+        );
+      }
+    }
+    if (typeof value.host !== 'string' || value.host.trim() === '') {
+      throw new ConfigError(`${prefix}: remotes.${name}.host is required`);
+    }
+    for (const key of ['user', 'path', 'identityFile'] as const) {
+      if (value[key] !== undefined && typeof value[key] !== 'string') {
+        throw new ConfigError(
+          `${prefix}: remotes.${name}.${key} must be a string`
+        );
+      }
+    }
+    if (
+      value.port !== undefined &&
+      (typeof value.port !== 'number' ||
+        !Number.isInteger(value.port) ||
+        value.port <= 0)
+    ) {
+      throw new ConfigError(
+        `${prefix}: remotes.${name}.port must be a positive integer`
+      );
+    }
+    // Every field has already been narrowed by the checks above, so these read
+    // without casts.
+    const { user, port, path, identityFile } = value;
+    result[name] = {
+      host: value.host.trim(),
+      ...(typeof user === 'string' ? { user } : {}),
+      ...(typeof port === 'number' ? { port } : {}),
+      ...(typeof path === 'string' ? { path } : {}),
+      ...(typeof identityFile === 'string' ? { identityFile } : {}),
+    };
+  }
+  return result;
 }
 
 // Validates the optional `executors:` block, same contract as
@@ -992,6 +1050,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
       orchestrator: { ...DEFAULTS.orchestrator },
       models: { ...DEFAULTS.models },
       executors: {},
+      remotes: {},
       linear: {
         ...DEFAULTS.linear,
         statusMap: { ...DEFAULTS.linear.statusMap },
@@ -1077,6 +1136,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
     orchestrator: parseOrchestratorConfig(raw.orchestrator),
     models: parseModelConfig(raw.models),
     executors: parseExecutorsConfig(raw.executors),
+    remotes: parseRemotesConfig(raw.remotes),
     linear: parseLinearConfig(raw.linear),
     fixLoop: parseFixLoopConfig(raw.fixLoop),
     verify: parseVerifyConfig(raw.verify),

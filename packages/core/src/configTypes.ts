@@ -83,6 +83,8 @@ export interface DispatchConfig {
    *  `executorModels`). `loadConfig` always populates it; optional only so
    *  hand-built config literals (test fixtures) stay valid. */
   executors?: Record<string, ExecutorConfig>;
+  /** Machines reachable over ssh — see RemoteConfig. Absent means none. */
+  remotes?: Record<string, RemoteConfig>;
   linear: LinearConfig;
   fixLoop: FixLoopConfig;
   /** How to run this project for a `verify` run to exercise it. Absent means
@@ -391,6 +393,26 @@ export interface ExecutorCommand {
   run: string[];
   /** Extra environment for the child, merged over the daemon's own. */
   env?: Record<string, string>;
+}
+
+/**
+ * A machine Dispatch can reach over ssh.
+ *
+ * Only what ssh itself needs, plus the checkout to work in. Everything else —
+ * keys, jump hosts, multiplexing — belongs in the user's own `~/.ssh/config`,
+ * which ssh already reads and which is where anyone maintaining a fleet
+ * already keeps it. Re-declaring that here would be a second place to keep in
+ * step with the first.
+ */
+export interface RemoteConfig {
+  /** Hostname or an alias from the user's ssh config. */
+  host: string;
+  user?: string;
+  port?: number;
+  /** The checkout on that machine; commands run here. */
+  path?: string;
+  /** Passed as `ssh -i`. Prefer an ssh-config `IdentityFile` where possible. */
+  identityFile?: string;
 }
 
 export interface ExecutorConfig {

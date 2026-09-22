@@ -247,6 +247,7 @@ export type {
   ReceiptsConfig,
   QueueConfig,
   QueueWeightsResult,
+  RemoteConfig,
   RepoDigestConfig,
   VerifyConfig,
   VerifyStep,
