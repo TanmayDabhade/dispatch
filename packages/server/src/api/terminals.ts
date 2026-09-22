@@ -1,9 +1,6 @@
-import { existsSync } from 'node:fs';
-import { resolve, sep } from 'node:path';
-
 import type { ApiContext } from '../api.js';
-import { worktreePath, worktreesDir } from '../orchestrator/paths.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
+import { isDirectory, resolveWorkspacePath } from './workspacePaths.js';
 
 // The routes under /api/terminals — create a shell session, read its output
 // from a byte cursor, type into it, resize it, close it.
@@ -26,11 +23,11 @@ const MAX_READ_BYTES = 256 * 1024;
  * Resolves the directory a new session should start in.
  *
  * A caller names either a run (its worktree) or a path, and a path is only
- * accepted inside the project or inside the worktree root. The check is not
- * about the human's authority — they hold the app token and could run a shell
- * themselves — it is about keeping a session anchored to something the app can
- * label and clean up, so a stray `..` does not silently open a terminal in
- * someone's home directory under a project's name.
+ * accepted inside that scope. The check is not about the human's authority —
+ * they hold the app token and could run a shell themselves — it is about
+ * keeping a session anchored to something the app can label and clean up, so a
+ * stray `..` does not silently open a terminal in someone's home directory
+ * under a project's name.
  */
 export function resolveTerminalCwd(
   rootDir: string,
@@ -38,36 +35,18 @@ export function resolveTerminalCwd(
 ):
   | { ok: true; cwd: string; runId: string | null }
   | { ok: false; message: string } {
-  if (typeof spec.runId === 'string' && spec.runId !== '') {
-    const path = worktreePath(rootDir, spec.runId);
-    if (!existsSync(path)) {
-      return {
-        ok: false,
-        message: `run ${spec.runId} has no worktree on disk`,
-      };
-    }
-    return { ok: true, cwd: path, runId: spec.runId };
+  const resolved = resolveWorkspacePath(rootDir, {
+    runId: spec.runId,
+    path: spec.cwd,
+  });
+  if (!resolved.ok) {
+    // The shared guard talks about "path"; this route's field is `cwd`.
+    return { ok: false, message: resolved.message.replace('path', 'cwd') };
   }
-  if (spec.cwd === undefined || spec.cwd === null || spec.cwd === '') {
-    return { ok: true, cwd: rootDir, runId: null };
+  if (!isDirectory(resolved.path)) {
+    return { ok: false, message: `no such directory: ${resolved.path}` };
   }
-  if (typeof spec.cwd !== 'string') {
-    return { ok: false, message: 'cwd must be a string' };
-  }
-  const path = resolve(rootDir, spec.cwd);
-  const root = resolve(rootDir);
-  const worktrees = resolve(worktreesDir(rootDir));
-  const inside = (parent: string): boolean =>
-    path === parent || path.startsWith(parent + sep);
-  if (!inside(root) && !inside(worktrees)) {
-    return {
-      ok: false,
-      message: 'cwd must be inside the project or one of its worktrees',
-    };
-  }
-  if (!existsSync(path))
-    return { ok: false, message: `no such directory: ${path}` };
-  return { ok: true, cwd: path, runId: null };
+  return { ok: true, cwd: resolved.path, runId: resolved.runId };
 }
 
 // A command is a list of strings or nothing at all (meaning "the login

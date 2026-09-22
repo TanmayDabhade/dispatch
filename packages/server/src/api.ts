@@ -36,6 +36,13 @@ import {
   uploadTaskAttachments,
 } from './api/attachments.js';
 import {
+  listDirectory,
+  rawFile,
+  readFile as readWorkspaceFile,
+  searchFiles,
+  writeFile as writeWorkspaceFile,
+} from './api/files.js';
+import {
   createFinding,
   createLedgerEntry,
   listFindings,
@@ -4101,6 +4108,10 @@ const DECIDE_TIER_ROUTES: ReadonlyArray<{
   // around the scope, floor and approval gates the rest of this file enforces
   // — reading output is listed too, since scrollback carries whatever the
   // human typed into it, credentials included.
+  // Writing a file straight to disk bypasses the orchestrator, which is what
+  // holds a run's edits to the task's declared `writes` and records them.
+  // Reads stay on the request tier with the rest of the read surface.
+  { method: 'POST', segments: ['files', 'write'] },
   { method: 'GET', segments: ['terminals'] },
   { method: 'POST', segments: ['terminals'] },
   { method: 'GET', segments: ['terminals', '*'] },
@@ -4338,6 +4349,24 @@ export async function handleApi(
           return errorResponse(400, 'taskIds must be a list of strings');
         }
         return jsonResponse(await ctx.linearSync.syncOnce(raw));
+      }
+    }
+
+    if (segments[0] === 'files' && segments.length === 2) {
+      if (segments[1] === 'tree' && method === 'GET') {
+        return listDirectory(ctx, url.searchParams);
+      }
+      if (segments[1] === 'read' && method === 'GET') {
+        return readWorkspaceFile(ctx, url.searchParams);
+      }
+      if (segments[1] === 'raw' && method === 'GET') {
+        return rawFile(ctx, url.searchParams);
+      }
+      if (segments[1] === 'search' && method === 'GET') {
+        return await searchFiles(ctx, url.searchParams);
+      }
+      if (segments[1] === 'write' && method === 'POST') {
+        return await writeWorkspaceFile(req, ctx);
       }
     }
 
