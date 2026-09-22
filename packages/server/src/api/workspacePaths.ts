@@ -1,5 +1,5 @@
-import { existsSync, statSync } from 'node:fs';
-import { resolve, sep } from 'node:path';
+import { existsSync, lstatSync, realpathSync, statSync } from 'node:fs';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 
 import { worktreePath } from '../orchestrator/paths.js';
 
@@ -43,14 +43,43 @@ export function resolveWorkspaceBase(
   return { ok: true, base: resolve(rootDir), runId: null };
 }
 
+function isInside(path: string, base: string): boolean {
+  return path === base || path.startsWith(base + sep);
+}
+
+// Where `path` really lands on disk: its deepest existing ancestor with every
+// symlink resolved, plus the part that does not exist yet (a file about to be
+// created). Null when that ancestor is a dangling symlink, whose target cannot
+// be checked.
+function realLocation(path: string): string | null {
+  let existing = path;
+  const rest: string[] = [];
+  for (;;) {
+    try {
+      lstatSync(existing);
+      break;
+    } catch {
+      const parent = dirname(existing);
+      if (parent === existing) break;
+      rest.unshift(basename(existing));
+      existing = parent;
+    }
+  }
+  try {
+    return join(realpathSync(existing), ...rest);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * A path inside the project or a run's worktree.
  *
- * The containment check compares against `base + sep` rather than `base`
- * alone, so a sibling directory whose name merely starts with the base's
- * (`/repo-backup` next to `/repo`) is not mistaken for something inside it.
- * `resolve` has already collapsed any `..`, so this one comparison is the
- * whole guard.
+ * Two checks. The first is on the path's text: `resolve` has collapsed any
+ * `..`, and comparing against `base + sep` rather than `base` keeps a sibling
+ * whose name merely starts with the base's (`/repo-backup` next to `/repo`)
+ * out. The second is on where the path really lands, because a symlink inside
+ * the project that points outside it passes the first.
  */
 export function resolveWorkspacePath(
   rootDir: string,
@@ -67,7 +96,14 @@ export function resolveWorkspacePath(
     return { ok: false, message: 'path must be a string' };
   }
   const path = resolve(scope.base, raw);
-  if (path !== scope.base && !path.startsWith(scope.base + sep)) {
+  const real = realLocation(path);
+  const realBase = realLocation(scope.base);
+  if (
+    !isInside(path, scope.base) ||
+    real === null ||
+    realBase === null ||
+    !isInside(real, realBase)
+  ) {
     return {
       ok: false,
       message: 'path must be inside the project or the run’s worktree',

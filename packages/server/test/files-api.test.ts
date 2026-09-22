@@ -1,6 +1,14 @@
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -240,6 +248,58 @@ describe('path traversal', () => {
       `/api/files/read?path=${encodeURIComponent('../' + root.split('/').pop() + '-backup/x')}`
     );
     expect(res.status).toBe(400);
+  });
+
+  describe('through a symlink that points outside', () => {
+    // A symlink passes a check on the path's text, so the guard has to look at
+    // where the path really lands on disk.
+    let outside: string;
+
+    beforeEach(() => {
+      outside = mkdtempSync(join(tmpdir(), 'dispatch-files-outside-'));
+      writeFileSync(join(outside, 'secret.txt'), 'outside the project\n');
+      symlinkSync(outside, join(root, 'escape'));
+    });
+
+    afterEach(() => {
+      rmSync(outside, { recursive: true, force: true });
+    });
+
+    it('refuses to read through it', async () => {
+      const res = await apiFetch(
+        `/api/files/read?path=${encodeURIComponent('escape/secret.txt')}`
+      );
+      expect(res.status).toBe(400);
+    });
+
+    it('refuses to list through it', async () => {
+      const res = await apiFetch(
+        `/api/files/tree?path=${encodeURIComponent('escape')}`
+      );
+      expect(res.status).toBe(400);
+    });
+
+    it('refuses to write through it, including a new file', async () => {
+      for (const path of ['escape/secret.txt', 'escape/new/created.txt']) {
+        const res = await apiFetch('/api/files/write', {
+          method: 'POST',
+          body: JSON.stringify({ path, text: 'owned' }),
+        });
+        expect(res.status).toBe(400);
+      }
+      expect(readFileSync(join(outside, 'secret.txt'), 'utf8')).toBe(
+        'outside the project\n'
+      );
+      expect(existsSync(join(outside, 'new'))).toBe(false);
+    });
+
+    it('still serves a symlink that stays inside the project', async () => {
+      symlinkSync(join(root, 'src'), join(root, 'src-link'));
+      const res = await apiFetch(
+        `/api/files/read?path=${encodeURIComponent('src-link/index.ts')}`
+      );
+      expect(res.status).toBe(200);
+    });
   });
 });
 
