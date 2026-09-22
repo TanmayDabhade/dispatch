@@ -780,7 +780,9 @@ export type ServerEvent =
   // refetch GET /api/landing. No payload: the cache itself is the source of
   // truth, same "go refetch" contract as task.changed. Mirrors
   // packages/server/src/events.ts exactly.
-  | { type: 'landing.changed' };
+  | { type: 'landing.changed' }
+  // Someone arrived or left; refetch GET /api/presence.
+  | { type: 'presence.changed' };
 
 // Mirrors RunQuestion in packages/server/src/orchestrator/questions.ts: one
 // question an agent is blocked on until the human answers it.
@@ -1512,6 +1514,18 @@ export interface LandingRow {
   checklist?: { passed: number; total: number; weak: string[] };
 }
 
+/** One person connected to this daemon — mirrors PresenceEntry in
+ * packages/server/src/presence.ts. */
+export interface PresenceEntry {
+  handle: string;
+  ref: string;
+  /** How many of their clients are open; two means app plus a tab. */
+  connections: number;
+  since: string;
+  /** Live runs they dispatched. */
+  runs: string[];
+}
+
 /** One run's dev-server preview — mirrors PreviewState in
  * packages/server/src/preview.ts. */
 export interface RunPreview {
@@ -2234,6 +2248,8 @@ export interface ApiClient {
   fetchRunDiff(runId: string): Promise<DiffResult>;
   /** What the daemon is holding for this run, without starting anything —
    *  safe to poll while a preview is coming up. */
+  /** Who is connected right now, and what each is running. */
+  fetchPresence(): Promise<PresenceEntry[]>;
   fetchRunPreview(runId: string): Promise<RunPreviewResult>;
   /** Starts this run's dev server if it has none. Decide-tier: it runs a
    *  command out of the run's own worktree. Resolves with `preview: null` and
@@ -2895,6 +2911,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     resumeRun: (runId) =>
       request(target, `/api/runs/${runId}/resume`, { method: 'POST' }),
     fetchRunDiff: (runId) => request(target, `/api/runs/${runId}/diff`),
+    fetchPresence: () => request(target, '/api/presence'),
     fetchRunPreview: (runId) => request(target, `/api/runs/${runId}/preview`),
     startRunPreview: (runId) =>
       request(target, `/api/runs/${runId}/preview`, { method: 'POST' }),

@@ -107,6 +107,7 @@ import {
   PolicyEngine,
 } from './policyEngine.js';
 import type { ApprovalFloor } from './policyEngine.js';
+import { PresenceTracker } from './presence.js';
 import { PreviewSupervisor } from './preview.js';
 import { isReceiptEvent, ReceiptsScheduler } from './receipts/scheduler.js';
 import { ReviewCommentStore } from './reviewComments.js';
@@ -448,6 +449,16 @@ async function serveIndexHtml(
       },
     }
   );
+}
+
+/** What each event socket carries: who opened it, and how to record them
+ *  leaving. `handle` is null only for a socket whose credential resolved to
+ *  nobody, which the upgrade guard already refuses — kept nullable so the
+ *  type does not promise more than the guard does. */
+interface SocketData {
+  handle: string | null;
+  ref: string | null;
+  release?: () => boolean;
 }
 
 // How often the idle sweep runs. Well under the shortest sensible
@@ -1447,6 +1458,9 @@ async function bootServer(
   });
   const stopPolicyEngine = policyEngine.start();
 
+  // Who is connected right now — read off open event sockets, see presence.ts.
+  const presenceTracker = new PresenceTracker();
+
   // Per-run dev-server previews. Config is read fresh per start (the same
   // shape the notifications reader above uses), so editing `preview:` in
   // config.yml takes effect without restarting the daemon.
@@ -1508,9 +1522,10 @@ async function bootServer(
     claimsDaemonFile: shouldWriteDaemonFile,
     watchdogStatus: () => watchdog.status(),
     previews,
+    presence: presenceTracker,
   };
 
-  const server = Bun.serve({
+  const server = Bun.serve<SocketData>({
     port: opts.port ?? 0,
     hostname: '127.0.0.1',
     async fetch(req, srv) {
@@ -1540,7 +1555,17 @@ async function bootServer(
           wsToken
         );
         if (unauthorized !== null) return withCors(unauthorized, origin);
-        if (srv.upgrade(req)) return undefined;
+        // Carry who connected onto the socket: presence is read off open
+        // sockets, and the credential was just checked above, so resolving it
+        // again cannot fail here.
+        const who = tokens.registry.resolve(wsToken);
+        if (
+          srv.upgrade(req, {
+            data: { handle: who?.handle ?? null, ref: who?.ref ?? null },
+          })
+        ) {
+          return undefined;
+        }
         return withCors(
           new Response('expected websocket upgrade', { status: 400 }),
           origin
@@ -1602,6 +1627,16 @@ async function bootServer(
     },
     websocket: {
       open(ws) {
+        // Presence is announced before this socket joins the bus: everyone
+        // else hears the arrival, and the newcomer does not get an event about
+        // itself wedged in ahead of `hello` — it learns who is here by
+        // fetching, like everything else it learns on connect.
+        const { handle, ref } = ws.data;
+        if (handle !== null && ref !== null) {
+          const presence = presenceTracker.connect(handle, ref);
+          ws.data.release = presence.release;
+          if (presence.changed) events.broadcast({ type: 'presence.changed' });
+        }
         events.add(ws);
         ws.send(
           JSON.stringify({ type: 'hello', version: packageJson.version })
@@ -1612,6 +1647,9 @@ async function bootServer(
       message() {},
       close(ws) {
         events.remove(ws);
+        if (ws.data.release?.() === true) {
+          events.broadcast({ type: 'presence.changed' });
+        }
       },
     },
   });

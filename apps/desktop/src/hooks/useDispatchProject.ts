@@ -16,6 +16,7 @@ import type {
   MergeQueueSnapshot,
   PlanProposal,
   PlanRecord,
+  PresenceEntry,
   ReadinessReading,
   RepoPr,
   ReviewComment,
@@ -213,6 +214,9 @@ export interface DispatchProjectData {
    *  URL and cannot go through the API client at all. Honours the web demo's
    *  proxy base the same way every API call does. */
   daemonBaseUrl: string | null;
+  /** Everyone connected to this daemon right now, you included. One entry on
+   *  a solo project; more once teammates hold their own tokens. */
+  presence: PresenceEntry[];
   portLoading: boolean;
   portError: boolean;
   portErrorDetail: unknown;
@@ -745,6 +749,7 @@ export function useDispatchProject(
   const configQueryKey = useMemo(() => dispatchConfigKey(port), [port]);
   const readyQueryKey = useMemo(() => ['dispatch-ready-tasks', port], [port]);
   const runsQueryKey = useMemo(() => ['dispatch-runs', port], [port]);
+  const presenceQueryKey = useMemo(() => ['dispatch-presence', port], [port]);
   const runDetailQueryKey = useMemo(
     () => ['dispatch-run', port, selectedRunId],
     [port, selectedRunId]
@@ -936,6 +941,16 @@ export function useDispatchProject(
     queryFn: () => {
       if (client === null) throw new Error('dispatchd client not ready');
       return client.fetchReadyTasks();
+    },
+    enabled: client !== null,
+  });
+  // Who else is on this daemon. Refetched on `presence.changed` (someone
+  // arrived or left) and `run.changed` (what they are running moved).
+  const { data: presence } = useQuery({
+    queryKey: presenceQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchPresence();
     },
     enabled: client !== null,
   });
@@ -1297,8 +1312,11 @@ export function useDispatchProject(
             void queryClient.invalidateQueries({
               queryKey: overseerKeyPrefix(port),
             });
+          } else if (event.type === 'presence.changed') {
+            void queryClient.invalidateQueries({ queryKey: presenceQueryKey });
           } else if (event.type === 'run.changed') {
             void queryClient.invalidateQueries({ queryKey: runsQueryKey });
+            void queryClient.invalidateQueries({ queryKey: presenceQueryKey });
             void queryClient.invalidateQueries({
               queryKey: ['dispatch-run', port],
             });
@@ -2698,6 +2716,7 @@ export function useDispatchProject(
     client,
     port,
     daemonBaseUrl: connection === undefined ? null : daemonBaseUrl(connection),
+    presence: presence ?? [],
     portLoading,
     portError,
     portErrorDetail,

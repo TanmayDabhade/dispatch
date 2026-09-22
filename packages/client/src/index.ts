@@ -118,6 +118,7 @@ export type {
   RunClaim,
   RunDetail,
   RunKind,
+  PresenceEntry,
   RunMeta,
   RunPreview,
   RunPreviewReason,

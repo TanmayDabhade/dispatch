@@ -1,7 +1,8 @@
-import type { SyncStatus } from '@dispatch/client';
+import type { PresenceEntry, SyncStatus } from '@dispatch/client';
 import { CircleHelp, Cog, History } from 'lucide-react';
 
 import { formatUsd } from '../../lib/epicSession';
+import { PresenceStack } from './PresenceStack';
 import { syncSummary, type SyncTone } from './SyncChip';
 import { cn } from '@/lib/utils';
 import { IconButton } from '@/ui/ai/icon-button';
@@ -32,6 +33,8 @@ interface FrameStatusStripProps {
   /** The gear after `?` — App lands it on Settings › Integrations. */
   onOpenSettings: () => void;
   onOpenOverseer: () => void;
+  /** Everyone on this daemon; the stack shows only once there are two. */
+  presence?: PresenceEntry[];
   className?: string;
 }
 
@@ -65,6 +68,7 @@ export function FrameStatusStrip({
   onOpenShortcuts,
   onOpenSettings,
   onOpenOverseer,
+  presence = [],
   className,
 }: FrameStatusStripProps) {
   const sync = syncStatus !== null ? syncSummary(syncStatus) : null;
@@ -97,6 +101,8 @@ export function FrameStatusStrip({
         </TooltipTrigger>
         <TooltipContent side="top">Settings › Integrations</TooltipContent>
       </Tooltip>
+
+      <PresenceStack presence={presence} />
 
       {sync !== null && (
         <Tooltip>

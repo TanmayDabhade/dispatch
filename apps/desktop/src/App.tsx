@@ -1417,6 +1417,7 @@ function App() {
                       setGlobalView('settings', { page: 'integrations' })
                     }
                     onOpenOverseer={() => setGlobalView('overseer')}
+                    presence={activeProject !== null ? data.presence : []}
                   />
 
                   <QuickCaptureDialog

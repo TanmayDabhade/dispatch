@@ -181,6 +181,7 @@ import {
 } from './orchestrator/types.js';
 import type { RunMeta } from './orchestrator/types.js';
 import type { VerificationRunner } from './orchestrator/verify.js';
+import type { PresenceTracker } from './presence.js';
 import type { PreviewSupervisor } from './preview.js';
 import type { ReceiptsScheduler } from './receipts/scheduler.js';
 import {
@@ -312,6 +313,8 @@ export interface ApiContext {
   // the idle sweep and the shutdown stop belong to the process that owns the
   // port allocations.
   previews: PreviewSupervisor;
+  /** Who is connected right now; see presence.ts. */
+  presence: PresenceTracker;
   /** Who made the request being handled, when their credential resolved.
    *  Set per request by handleApi — never on the daemon-wide context. */
   caller?: TokenIdentity;
@@ -4414,6 +4417,25 @@ export async function handleApi(
       if (segments.length === 4 && method === 'DELETE') {
         return revokeTeamToken(ctx, segments[2], segments[3]);
       }
+    }
+
+    // GET /api/presence — who is here and what they are running. Derived on
+    // every read from open sockets and live runs, so there is nothing to go
+    // stale.
+    if (
+      segments[0] === 'presence' &&
+      segments.length === 1 &&
+      method === 'GET'
+    ) {
+      return jsonResponse(
+        ctx.presence.list(
+          ctx.orchestrator.list().map((run) => ({
+            id: run.id,
+            dispatchedBy: run.dispatchedBy,
+            live: !TERMINAL_RUN_STATES.has(run.state),
+          }))
+        )
+      );
     }
 
     // GET /api/whoami — who the presented credential speaks for. The one
