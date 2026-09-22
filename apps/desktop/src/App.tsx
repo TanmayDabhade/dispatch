@@ -90,6 +90,7 @@ import { AllAgentsView } from './views/AllAgentsView';
 import { BoardView } from './views/BoardView';
 import { BrainDumpView } from './views/BrainDumpView';
 import { BranchesView } from './views/BranchesView';
+import { DesignView } from './views/DesignView';
 import { DraftView } from './views/DraftView';
 import { FilesView } from './views/FilesView';
 import { GalleryView } from './views/GalleryView';
@@ -1307,6 +1308,9 @@ function App() {
                                     dispatchNav({ type: 'openImpact', subject })
                                   }
                                 />
+                              )}
+                              {navState.projectView === 'design' && (
+                                <DesignView data={data} />
                               )}
                               {navState.projectView === 'files' && (
                                 <FilesView data={data} />

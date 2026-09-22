@@ -2,6 +2,7 @@ import type { DraftRecord } from '@dispatch/client';
 import {
   Brain,
   CircleDot,
+  Crosshair,
   FileCode2,
   GitBranch,
   GitMerge,
@@ -61,6 +62,7 @@ const WORKSPACE_VIEWS: {
   { id: 'impact', label: 'Impact', icon: Waypoints },
   { id: 'branches', label: 'Git', icon: GitBranch },
   { id: 'files', label: 'Files', icon: FileCode2 },
+  { id: 'design', label: 'Design', icon: Crosshair },
   { id: 'terminals', label: 'Terminals', icon: TerminalSquare },
   // Every open PR with its gates plus what already landed.
   { id: 'landing', label: 'Landing', icon: GitMerge },

@@ -70,6 +70,7 @@ test('the exported view order is the ⌘N order App.tsx indexes into', () => {
     'impact',
     'branches',
     'files',
+    'design',
     'terminals',
     'landing',
   ]);
@@ -82,6 +83,7 @@ test('the exported view order is the ⌘N order App.tsx indexes into', () => {
     'Impact',
     'Git',
     'Files',
+    'Design',
     'Terminals',
     'Landing',
   ]);
@@ -100,6 +102,7 @@ test('sections come in Linear order: fixed top group, then Workspace, Fleet, Liv
     'impact',
     'branches',
     'files',
+    'design',
     'terminals',
     'landing',
     'all-agents',
