@@ -242,6 +242,23 @@ describe('path traversal', () => {
     }
   });
 
+  it('refuses a run id that climbs out of the worktrees directory', async () => {
+    // The run id names the directory `path` is checked against, so a run id
+    // of `../..` would move the fence itself: every `path` below would pass
+    // the inside-the-base check against a base of the caller's choosing.
+    writeFileSync(join(fakeHome, 'secret.txt'), 'the operator’s own file\n');
+    for (const runId of ['../../..', '../../../..', '..', '.', 'r-1/../..']) {
+      for (const route of ['read', 'tree', 'raw']) {
+        const path = route === 'tree' ? '' : 'secret.txt';
+        const res = await apiFetch(
+          `/api/files/${route}?runId=${encodeURIComponent(runId)}&path=${path}`
+        );
+        expect(res.status).toBe(400);
+        expect(await res.text()).not.toContain('the operator’s own file');
+      }
+    }
+  });
+
   it('is not fooled by a sibling directory sharing the root’s prefix', async () => {
     // `/tmp/repo-backup` must not count as inside `/tmp/repo`.
     const res = await apiFetch(

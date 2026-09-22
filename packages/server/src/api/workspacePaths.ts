@@ -26,7 +26,20 @@ export type WorkspaceResolution =
   | ({ ok: true } & WorkspaceTarget)
   | { ok: false; message: string };
 
-/** The directory a request is scoped to: a run's worktree, or the repo root. */
+// What a run id may look like before it is joined onto the worktrees
+// directory: one path segment, never `.` or `..`. Real ids are `r-` and six
+// hex digits; this is looser than that on purpose, since it only has to keep
+// the id from naming a directory other than a run's own.
+const RUN_ID_SEGMENT = /^[A-Za-z0-9._-]+$/;
+
+/**
+ * The directory a request is scoped to: a run's worktree, or the repo root.
+ *
+ * The run id is checked before anything else because it chooses the base that
+ * `resolveWorkspacePath` then fences `path` inside. An id of `../../..` would
+ * move that fence to a directory of the caller's choosing — the user's home,
+ * or `/` — and every path under it would pass.
+ */
 export function resolveWorkspaceBase(
   rootDir: string,
   runId: unknown
@@ -34,6 +47,9 @@ export function resolveWorkspaceBase(
   | { ok: true; base: string; runId: string | null }
   | { ok: false; message: string } {
   if (typeof runId === 'string' && runId !== '') {
+    if (!RUN_ID_SEGMENT.test(runId) || runId === '.' || runId === '..') {
+      return { ok: false, message: `not a run id: ${runId}` };
+    }
     const base = worktreePath(rootDir, runId);
     if (!existsSync(base)) {
       return { ok: false, message: `run ${runId} has no worktree on disk` };
