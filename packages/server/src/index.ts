@@ -106,6 +106,7 @@ import {
   PolicyEngine,
 } from './policyEngine.js';
 import type { ApprovalFloor } from './policyEngine.js';
+import { PreviewSupervisor } from './preview.js';
 import { isReceiptEvent, ReceiptsScheduler } from './receipts/scheduler.js';
 import { ReviewCommentStore } from './reviewComments.js';
 import { readProjectBackend, writeProjectBackend } from './storage.js';
@@ -446,6 +447,92 @@ async function serveIndexHtml(
       },
     }
   );
+}
+
+// How often the idle sweep runs. Well under the shortest sensible
+// idleTimeoutSec, so a swept preview is reclaimed promptly rather than up to
+// a full interval late.
+const PREVIEW_SWEEP_INTERVAL_MS = 30_000;
+
+// Hop-by-hop headers, which belong to one connection and must not be
+// forwarded to or from an upstream (RFC 9110 7.6.1). Forwarding
+// `connection`/`upgrade` in particular makes Bun's fetch reject the request.
+const HOP_BY_HOP = new Set([
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+]);
+
+function withoutHopByHop(headers: Headers): Headers {
+  const copy = new Headers();
+  headers.forEach((value, key) => {
+    if (!HOP_BY_HOP.has(key.toLowerCase())) copy.append(key, value);
+  });
+  return copy;
+}
+
+/**
+ * Proxies `/preview/<runId>/...` to that run's dev server.
+ *
+ * The daemon-relative URL is the point: clients never learn the dev server's
+ * own port, the supervisor sees every request (which is what keeps the idle
+ * sweep honest), and a preview that has not started yet answers with a status
+ * a UI can render instead of a connection error.
+ *
+ * SECURITY — the iframe embedding this MUST be sandboxed without
+ * `allow-same-origin`. A preview serves code the agent just wrote, from this
+ * daemon's own origin, and `serveIndexHtml` injects the agent token into the
+ * HTML at `/`. Same-origin preview script could therefore fetch `/`, scrape
+ * that token and drive the request tier of the API. An opaque-origin iframe
+ * cannot, and `isTrustedOrigin` accepting every loopback port means CORS will
+ * not save us here. The sandbox attribute in the app is load-bearing, not
+ * cosmetic.
+ */
+async function proxyPreview(
+  url: URL,
+  req: Request,
+  previews: PreviewSupervisor
+): Promise<Response> {
+  const [, , runId = '', ...rest] = url.pathname.split('/');
+  const preview = previews.get(runId);
+  if (preview === undefined) {
+    return new Response('no preview for this run', { status: 404 });
+  }
+  if (preview.status !== 'ready') {
+    // 503 rather than 404: the preview exists, it is just not up yet, and a
+    // client polling this should keep polling.
+    return new Response(`preview is ${preview.status}`, { status: 503 });
+  }
+  previews.touch(runId);
+
+  const target = new URL(
+    `/${rest.join('/')}${url.search}`,
+    `http://127.0.0.1:${preview.port}`
+  );
+  try {
+    const upstream = await fetch(target, {
+      method: req.method,
+      headers: withoutHopByHop(req.headers),
+      body: req.body,
+      redirect: 'manual',
+      // A dev server streams; buffering here would break hot reload's
+      // long-lived responses.
+      ...{ duplex: 'half' },
+    });
+    return new Response(upstream.body, {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      headers: withoutHopByHop(upstream.headers),
+    });
+  } catch {
+    // The dev server died between the readiness probe and this request.
+    return new Response('preview is not reachable', { status: 502 });
+  }
 }
 
 // Serves a built web UI out of `webDistDir`, falling back to `index.html` for
@@ -1346,6 +1433,21 @@ async function bootServer(
   });
   const stopPolicyEngine = policyEngine.start();
 
+  // Per-run dev-server previews. Config is read fresh per start (the same
+  // shape the notifications reader above uses), so editing `preview:` in
+  // config.yml takes effect without restarting the daemon.
+  const previews = new PreviewSupervisor({
+    loadConfig: () => loadConfig(rootDir),
+  });
+  // Previews are swept on a timer rather than on each request: the sweep has
+  // to reclaim a preview whose reviewer closed the tab and is therefore
+  // making no requests at all, which a request-driven check never sees.
+  const previewSweep = setInterval(() => {
+    for (const runId of previews.sweepIdle()) {
+      console.log(`dispatchd: swept idle preview for run ${runId}`);
+    }
+  }, PREVIEW_SWEEP_INTERVAL_MS);
+
   const apiCtx: ApiContext = {
     rootDir,
     store,
@@ -1391,6 +1493,7 @@ async function bootServer(
     mergeDriverOk,
     claimsDaemonFile: shouldWriteDaemonFile,
     watchdogStatus: () => watchdog.status(),
+    previews,
   };
 
   const server = Bun.serve({
@@ -1439,6 +1542,12 @@ async function bootServer(
       // thus blocked).
       if (req.method === 'OPTIONS') {
         return withCors(new Response(null, { status: 204 }), origin);
+      }
+
+      // Before /api/ and the static fallback: this is the one path whose
+      // content belongs to someone else's server.
+      if (url.pathname.startsWith('/preview/')) {
+        return await proxyPreview(url, req, previews);
       }
 
       if (url.pathname.startsWith('/api/')) {
@@ -1518,6 +1627,8 @@ async function bootServer(
     prWorktrees,
     async stop() {
       watchdog.stop();
+      clearInterval(previewSweep);
+      previews.stopAll();
       // First, so the boot recovery sweep stops before anything it might act
       // on is torn down — it can sit in a quiet window for minutes and ends by
       // starting an agent (see Orchestrator.shutdown).

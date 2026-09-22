@@ -178,6 +178,7 @@ import {
 } from './orchestrator/types.js';
 import type { RunMeta } from './orchestrator/types.js';
 import type { VerificationRunner } from './orchestrator/verify.js';
+import type { PreviewSupervisor } from './preview.js';
 import type { ReceiptsScheduler } from './receipts/scheduler.js';
 import {
   formatCommentsForAgent,
@@ -303,6 +304,11 @@ export interface ApiContext {
   // watch for: a compiled daemon whose worker module was left out of the
   // build boots fine and reports that here, and nowhere else.
   watchdogStatus: () => WatchdogStatus;
+  // Per-run dev-server previews. Held by the daemon rather than the
+  // orchestrator because its lifetime is the daemon's, not any one run's:
+  // the idle sweep and the shutdown stop belong to the process that owns the
+  // port allocations.
+  previews: PreviewSupervisor;
 }
 
 // Mirrors the CLI's own enum check (packages/cli/src/commands/task.ts
@@ -687,6 +693,44 @@ async function createRun(
     fresh: freshField === true,
   });
   return jsonResponse(meta, 201);
+}
+
+/**
+ * The one run-preview endpoint, three methods.
+ *
+ * GET reports what the daemon is holding for this run and never starts
+ * anything, so a UI can poll it without side effects. POST is the only thing
+ * that starts a dev server, and it is deliberately the reviewer opening the
+ * pane rather than the run finishing: a dev server per finished run would
+ * install and boot checkouts nobody asked to look at.
+ *
+ * A refusal ("this repo has no dev script", "previews are off") comes back
+ * 200 with a reason rather than as an error. It is an ordinary fact about a
+ * repo, and a surface should render it as an empty state, not a failure.
+ */
+async function handleRunPreview(
+  ctx: ApiContext,
+  runId: string,
+  method: string
+): Promise<Response> {
+  if (method === 'GET') {
+    return jsonResponse({ preview: ctx.previews.get(runId) ?? null });
+  }
+  if (method === 'DELETE') {
+    ctx.previews.stop(runId);
+    return jsonResponse({ ok: true });
+  }
+  if (method !== 'POST') {
+    return errorResponse(405, `method not allowed: ${method}`);
+  }
+  const run = ctx.orchestrator.getRun(runId);
+  if (run === null) return errorResponse(404, `run not found: ${runId}`);
+
+  const result = await ctx.previews.ensure(runId, run.meta.worktreePath);
+  if (!result.ok) {
+    return jsonResponse({ preview: null, reason: result.refusal.reason });
+  }
+  return jsonResponse({ preview: result.preview });
 }
 
 async function approveRun(
@@ -4153,6 +4197,14 @@ const DECIDE_TIER_ROUTES: ReadonlyArray<{
   { method: 'POST', segments: ['terminals', '*', 'input'] },
   { method: 'POST', segments: ['terminals', '*', 'resize'] },
   { method: 'POST', segments: ['terminals', '*', 'close'] },
+  // Starting a preview runs a command out of the run's own worktree — a
+  // worktree the agent just wrote to, including its package.json. On the
+  // request tier an agent holding the on-disk agent token could use this to
+  // execute code of its own choosing in the daemon's process group, outside
+  // the sandbox its run was given. Stopping one is paired with it so the
+  // control surface is not half-privileged.
+  { method: 'POST', segments: ['runs', '*', 'preview'] },
+  { method: 'DELETE', segments: ['runs', '*', 'preview'] },
 ];
 
 function matchesRoute(
@@ -4775,6 +4827,9 @@ export async function handleApi(
       ) {
         await ctx.orchestrator.cancel(segments[1]);
         return jsonResponse({ ok: true });
+      }
+      if (segments.length === 3 && segments[2] === 'preview') {
+        return await handleRunPreview(ctx, segments[1], method);
       }
       // POST /api/runs/:id/stop — the graceful counterpart to cancel: the agent
       // finishes what it is doing and then stops, so its work is committed.
