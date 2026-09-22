@@ -101,6 +101,7 @@ function makeClient(getRun: (id: string) => Promise<RunDetail>): ApiClient {
     getEpicProgress: () => Promise.reject(new Error('not used')),
     getScopeRequest: () => Promise.reject(new Error('not used')),
     decideScopeRequest: () => Promise.reject(new Error('not used')),
+    fanoutTask: () => Promise.reject(new Error('not used')),
     launchBrowser: () => Promise.reject(new Error('not used')),
     listBrowsers: () => Promise.reject(new Error('not used')),
     closeBrowser: () => Promise.reject(new Error('not used')),

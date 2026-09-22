@@ -533,8 +533,30 @@ export type PickOutcome =
   | { state: 'cancelled' }
   | { state: 'waiting' };
 
+/** One agent a fan-out tried the work with. */
+export interface FanoutVariantResult {
+  executor: string;
+  model?: string;
+  task: TaskDoc;
+  run: RunMeta | null;
+  /** Why this variant has no run, when dispatching it failed. */
+  error?: string;
+}
+
+export interface FanoutResult {
+  sourceTaskId: string;
+  /** The label every clone carries, so the group stays findable. */
+  label: string;
+  variants: FanoutVariantResult[];
+}
+
 export interface ApiClient {
   baseUrl: string;
+  /** Clone a task once per agent and dispatch each, for a side-by-side compare. */
+  fanoutTask(
+    taskId: string,
+    variants: (string | { executor: string; model?: string })[]
+  ): Promise<FanoutResult>;
   // The browser family. Every one of these needs the daemon APP token, not
   // the agent token: `browserEvaluate` runs arbitrary script in a browser
   // carrying the user's own cookies.
@@ -666,6 +688,12 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
     fetchExecutors: () => request(target, '/api/executors'),
     stopEpic: (epicId) =>
       request(target, `/api/epics/${epicId}/stop`, { ...jsonBody({}) }),
+    fanoutTask: (taskId, variants) =>
+      request(
+        target,
+        `/api/tasks/${encodeURIComponent(taskId)}/fanout`,
+        jsonBody({ variants })
+      ),
     launchBrowser: (opts = {}) =>
       request(target, '/api/browser', jsonBody(opts)),
     listBrowsers: () => request(target, '/api/browser'),

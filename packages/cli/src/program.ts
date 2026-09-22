@@ -20,6 +20,7 @@ import {
   registerDaemonCommands,
 } from './commands/daemon.js';
 import { registerDoctorCommand } from './commands/doctor.js';
+import { registerFanoutCommand } from './commands/fanout.js';
 import { registerMergeTaskCommand } from './commands/mergeTask.js';
 import { registerMergeTeamCommand } from './commands/mergeTeam.js';
 import { registerMigrateCommand } from './commands/migrate.js';
@@ -219,6 +220,7 @@ export function makeProgram(ctx: CliContext): Command {
   registerMergeTeamCommand(program, ctx);
   registerScopeCommands(program, ctx);
   registerBrowserCommands(program, ctx);
+  registerFanoutCommand(program, ctx);
   registerWorktreeCommands(program, ctx);
   registerMigrateCommand(program, ctx);
 
