@@ -8,10 +8,11 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { TerminalSubscribe } from '../../hooks/useTerminalOutput';
 import { useTerminalOutput } from '../../hooks/useTerminalOutput';
+import { createInputQueue } from '../../lib/terminalInput';
 import { encodeKey } from '../../lib/terminalKeys';
 import { TerminalCanvas } from './TerminalCanvas';
 import { Button } from '@/ui/button';
@@ -80,19 +81,16 @@ export function TerminalPane({
 
   const running = info?.state === 'running';
 
-  const send = useCallback(
-    async (data: string) => {
-      if (client === null || terminalId === null) return;
-      try {
+  // Queued so keys typed faster than a round trip still arrive in order.
+  const send = useMemo(
+    () =>
+      createInputQueue(async (data) => {
+        if (client === null || terminalId === null) return;
         await client.sendTerminalInput(terminalId, data);
         // Read straight back rather than waiting for the socket: at a prompt
         // the echo is the only feedback that a key landed.
         refresh();
-      } catch {
-        // A write to a session that just exited is the ordinary race; the next
-        // read reports the new state.
-      }
-    },
+      }),
     [client, terminalId, refresh]
   );
 
@@ -103,7 +101,7 @@ export function TerminalPane({
       if (bytes === null) return;
       event.preventDefault();
       event.stopPropagation();
-      void send(bytes);
+      send(bytes);
     },
     [running, send]
   );
@@ -114,7 +112,7 @@ export function TerminalPane({
       const text = event.clipboardData.getData('text');
       if (text === '') return;
       event.preventDefault();
-      void send(text);
+      send(text);
     },
     [running, send]
   );
