@@ -1,6 +1,6 @@
 import type { Command } from 'commander';
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { basename, isAbsolute, join, resolve } from 'node:path';
 
 import type { CliContext } from '../context.js';
@@ -27,6 +27,13 @@ export interface WorktreeRow {
   detached: boolean;
   /** True for the repository's own working copy. */
   main: boolean;
+}
+
+// A path with its symlinks resolved, so it compares equal to the one git
+// reports: git prints real paths, and on macOS `/tmp` and `/var` are symlinks
+// into `/private`. A path that no longer exists is only normalized.
+function canonicalPath(path: string): string {
+  return existsSync(path) ? realpathSync(path) : resolve(path);
 }
 
 function git(cwd: string, args: string[]): string {
@@ -185,7 +192,7 @@ export function registerWorktreeCommands(
         const target = isAbsolute(path) ? path : join(ctx.cwd, path);
         const row = parseWorktreeList(
           git(ctx.cwd, ['worktree', 'list', '--porcelain'])
-        ).find((entry) => resolve(entry.path) === resolve(target));
+        ).find((entry) => canonicalPath(entry.path) === canonicalPath(target));
         if (row === undefined) throw new CliError(`no worktree at ${target}`);
         if (row.main) {
           throw new CliError(
