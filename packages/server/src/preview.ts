@@ -292,7 +292,7 @@ export class PreviewSupervisor {
   }
 
   /**
-   * Stops every preview that has gone unrequested for longer than the
+   * Stops every preview that has had no request for longer than the
    * configured idle window. Returns the run ids it stopped, so the caller can
    * log or broadcast rather than this having to know how.
    */

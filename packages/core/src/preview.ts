@@ -6,9 +6,9 @@
 /** The package managers a checkout's lockfile can name. */
 export type PackageManager = 'pnpm' | 'npm' | 'yarn' | 'bun';
 
-// Lockfile to package manager. Ordered most-specific first only for
+// Lock file to package manager. Ordered most-specific first only for
 // readability; the lookup is exact, so order does not affect the result.
-const LOCKFILES: ReadonlyArray<readonly [string, PackageManager]> = [
+const LOCK_FILES: ReadonlyArray<readonly [string, PackageManager]> = [
   ['pnpm-lock.yaml', 'pnpm'],
   ['bun.lockb', 'bun'],
   ['bun.lock', 'bun'],
@@ -17,10 +17,10 @@ const LOCKFILES: ReadonlyArray<readonly [string, PackageManager]> = [
 ];
 
 /**
- * Which package manager a checkout uses, from the lockfiles present at its
+ * Which package manager a checkout uses, from the lock files present at its
  * root. Defaults to npm when none is found: every Node checkout understands
  * `npm run`, so a wrong guess still starts something, where refusing would
- * leave a previewable project previewless.
+ * leave a project that could have been previewed with no preview at all.
  *
  * `filenames` is the worktree root's directory listing, not paths.
  */
@@ -28,7 +28,7 @@ export function detectPackageManager(
   filenames: readonly string[]
 ): PackageManager {
   const present = new Set(filenames);
-  for (const [file, manager] of LOCKFILES) {
+  for (const [file, manager] of LOCK_FILES) {
     if (present.has(file)) return manager;
   }
   return 'npm';

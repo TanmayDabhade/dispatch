@@ -55,8 +55,8 @@ export interface PreviewConfig {
   enabled: boolean;
   /** Shell command to start this project's dev server, run inside the run's
    *  worktree. Absent means autodetect from the worktree's package.json — see
-   *  `detectPreviewCommand`. A repo with neither stays previewless, which is
-   *  an ordinary state, not an error. */
+   *  `detectPreviewCommand`. A repo with neither simply has no preview, which
+   *  is an ordinary state, not an error. */
   command?: string;
   /** Command that installs dependencies, run once before `command` when the
    *  worktree has no `node_modules`. A run's worktree is a fresh checkout, so
@@ -66,7 +66,7 @@ export interface PreviewConfig {
    *  gives up and reports the preview as failed. Generous by default: a cold
    *  worktree may install first. */
   readyTimeoutSec: number;
-  /** How long a preview may go unrequested before the daemon sweeps it. Dev
+  /** How long a preview may sit with no request before the daemon sweeps it. Dev
    *  servers are expensive and a reviewer looks at one for a minute, so an
    *  idle preview is pure cost. */
   idleTimeoutSec: number;
