@@ -87,6 +87,7 @@ import {
   listScopeRequests,
   requestScope,
 } from './api/scopeRequests.js';
+import { issueTeamToken, listTeamTokens, revokeTeamToken } from './api/team.js';
 import {
   closeTerminal,
   createTerminal,
@@ -4218,6 +4219,12 @@ const DECIDE_TIER_ROUTES: ReadonlyArray<{
   // control surface is not half-privileged.
   { method: 'POST', segments: ['runs', '*', 'preview'] },
   { method: 'DELETE', segments: ['runs', '*', 'preview'] },
+  // Handing out a credential is an adjudication: on the request tier an agent
+  // holding the on-disk agent token could mint itself a second identity, and
+  // listing holders tells it whose to go looking for.
+  { method: 'GET', segments: ['team', 'tokens'] },
+  { method: 'POST', segments: ['team', 'tokens'] },
+  { method: 'DELETE', segments: ['team', 'tokens', '*', '*'] },
 ];
 
 function matchesRoute(
@@ -4383,6 +4390,16 @@ export async function handleApi(
         models: loadConfig(ctx.rootDir).models,
         watchdog: ctx.watchdogStatus(),
       });
+    }
+
+    if (segments[0] === 'team' && segments[1] === 'tokens') {
+      if (segments.length === 2 && method === 'GET') return listTeamTokens(ctx);
+      if (segments.length === 2 && method === 'POST') {
+        return await issueTeamToken(req, ctx);
+      }
+      if (segments.length === 4 && method === 'DELETE') {
+        return revokeTeamToken(ctx, segments[2], segments[3]);
+      }
     }
 
     // GET /api/whoami — who the presented credential speaks for. The one

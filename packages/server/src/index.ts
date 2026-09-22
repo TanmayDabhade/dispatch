@@ -52,7 +52,7 @@ import { FindingStore } from './findings.js';
 import type { FindingStorePort } from './findings.js';
 import { floorCheckForToolInput } from './floor.js';
 import { GitRepo } from './git/commands.js';
-import { TokenRegistry } from './identity.js';
+import { fileTokenStore, TokenRegistry } from './identity.js';
 import { InboxStore } from './inbox.js';
 import type { InboxClusterer } from './inboxClusterer.js';
 import { createJudgmentClient } from './judgments/client.js';
@@ -81,7 +81,7 @@ import { Orchestrator } from './orchestrator/orchestrator.js';
 import { OverseerManager } from './orchestrator/overseer.js';
 import { ClaudeOverseer } from './orchestrator/overseers/claude.js';
 import { OverseerToolRegistry } from './orchestrator/overseerTools.js';
-import { scopeRequestsPath } from './orchestrator/paths.js';
+import { scopeRequestsPath, teamTokensPath } from './orchestrator/paths.js';
 import { PlanManager } from './orchestrator/plan.js';
 import { ClaudePlanner } from './orchestrator/planners/claude.js';
 import type { CommandRunner } from './orchestrator/pr.js';
@@ -732,7 +732,11 @@ async function bootServer(
   const tokenPair = opts.tokens ?? mintDaemonTokens();
   const tokens: DaemonTokens = {
     ...tokenPair,
-    registry: new TokenRegistry(tokenPair, actorContext.member.handle),
+    registry: new TokenRegistry(
+      tokenPair,
+      actorContext.member.handle,
+      fileTokenStore(teamTokensPath(rootDir))
+    ),
   };
 
   // The one handle on this project's state for the life of the daemon. Every

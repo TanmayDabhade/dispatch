@@ -639,6 +639,32 @@ export interface ApiClient {
     granted: boolean,
     reason: string
   ): Promise<ScopeRequest>;
+  /** Decide-tier: build the client on the app token. */
+  issueTeamToken(input: {
+    email?: string;
+    handle?: string;
+    displayName?: string;
+    tier?: 'request' | 'decide';
+  }): Promise<IssuedTeamToken>;
+  listTeamTokens(): Promise<TeamTokenHolder[]>;
+  revokeTeamToken(handle: string, tier: 'request' | 'decide'): Promise<void>;
+}
+
+/** A freshly issued teammate credential — the only response that ever carries
+ *  one. Mirrors issueTeamToken in packages/server/src/api/team.ts. */
+interface IssuedTeamToken {
+  handle: string;
+  tier: 'request' | 'decide';
+  token: string;
+}
+
+/** Who holds a credential, without it — mirrors IssuedTokenSummary in
+ *  packages/server/src/identity.ts. */
+interface TeamTokenHolder {
+  handle: string;
+  tier: 'request' | 'decide';
+  builtIn: boolean;
+  issuedAt: string | null;
 }
 
 // `token` is the credential every call presents — the agent token from the
@@ -764,5 +790,15 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
         `/api/runs/${runId}/scope-requests/${requestId}/decide`,
         jsonBody({ granted, reason })
       ),
+    issueTeamToken: (input) =>
+      request(target, '/api/team/tokens', jsonBody(input)),
+    listTeamTokens: () => request(target, '/api/team/tokens'),
+    revokeTeamToken: async (handle, tier) => {
+      await request(
+        target,
+        `/api/team/tokens/${encodeURIComponent(handle)}/${tier}`,
+        { method: 'DELETE' }
+      );
+    },
   };
 }

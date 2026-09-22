@@ -180,6 +180,22 @@ export function receiptsDir(rootDir: string): string {
   );
 }
 
+/**
+ * Where issued teammate tokens live across a restart — as sha256 hashes, never
+ * the tokens (see identity.ts). Beside the receipt log under `projects/`, and
+ * outside the repo for the obvious reason: a credential file must never be
+ * one `git add -A` away from a commit.
+ */
+export function teamTokensPath(rootDir: string): string {
+  return join(
+    dispatchHome(),
+    '.dispatch',
+    'projects',
+    rootHash(rootDir),
+    'team-tokens.json'
+  );
+}
+
 // Where open scope requests live across a daemon restart — see
 // ScopeRequestRegistry's persist()/hydrate(). Without it a request an agent
 // was parked on when dispatchd restarted vanished with the process, and the
