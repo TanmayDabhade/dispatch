@@ -4403,6 +4403,26 @@ export async function handleApi(
       }
     }
 
+    // GET /api/remotes — the machines this project can open a terminal on.
+    // Names and destinations only: an identity file path is a local detail of
+    // whoever runs the daemon, not something a client needs.
+    if (
+      segments[0] === 'remotes' &&
+      segments.length === 1 &&
+      method === 'GET'
+    ) {
+      const remotes = loadConfig(ctx.rootDir).remotes ?? {};
+      return jsonResponse(
+        Object.entries(remotes).map(([name, remote]) => ({
+          name,
+          host: remote.host,
+          user: remote.user ?? null,
+          port: remote.port ?? null,
+          path: remote.path ?? null,
+        }))
+      );
+    }
+
     if (segments[0] === 'browser') {
       if (segments.length === 1 && method === 'GET') {
         return jsonResponse(ctx.browsers.list());

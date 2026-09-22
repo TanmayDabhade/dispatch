@@ -244,3 +244,75 @@ describe('terminal routes', () => {
     expect(spawnAttempt.status).toBe(403);
   });
 });
+
+// Remote sessions. The ssh invocation itself is covered in ssh.test.ts; this
+// is about the route accepting a remote, validating it against config, and
+// recording the session as remote.
+describe('remote terminals', () => {
+  function writeRemotesConfig(body: string): void {
+    writeFileSync(join(root, '.dispatch', 'config.yml'), body);
+  }
+
+  it('lists no remotes when none are configured', async () => {
+    expect(await json(await apiFetch('/api/remotes'))).toEqual([]);
+  });
+
+  it('lists configured remotes without leaking the identity file', async () => {
+    // A key path is a local detail of whoever runs the daemon.
+    writeRemotesConfig(
+      'remotes:\n  box:\n    host: build-box\n    user: ci\n    path: /srv/repo\n    identityFile: /keys/id\n'
+    );
+    const remotes = await json(await apiFetch('/api/remotes'));
+    expect(remotes).toEqual([
+      {
+        name: 'box',
+        host: 'build-box',
+        user: 'ci',
+        port: null,
+        path: '/srv/repo',
+      },
+    ]);
+    expect(JSON.stringify(remotes)).not.toContain('/keys/id');
+  });
+
+  it('400s a remote that is not configured, naming the ones that are', async () => {
+    writeRemotesConfig('remotes:\n  box:\n    host: build-box\n');
+    const res = await apiFetch('/api/terminals', {
+      method: 'POST',
+      body: JSON.stringify({ remote: 'nonesuch' }),
+    });
+    expect(res.status).toBe(400);
+    expect((await json(res)).error).toContain('box');
+  });
+
+  it('opens a session against a configured remote and records it as remote', async () => {
+    // `build-box` does not resolve, so the ssh process fails — which is fine:
+    // what is asserted here is that the route built a remote session at all.
+    writeRemotesConfig(
+      'remotes:\n  box:\n    host: build-box\n    path: /srv/repo\n'
+    );
+    const info = await json(
+      await apiFetch('/api/terminals', {
+        method: 'POST',
+        body: JSON.stringify({ remote: 'box' }),
+      })
+    );
+    expect(info.remote).toBe('box');
+    expect(info.command[0]).toBe('ssh');
+    // ssh allocates the pty on the far side, so the command is NOT wrapped in
+    // `script` — two nested ptys would double every echo.
+    expect(info.command).not.toContain('script');
+    expect(info.command.join(' ')).toContain('build-box');
+    expect(info.title).toBe('box');
+  });
+
+  it('marks a local session as not remote', async () => {
+    const info = await json(
+      await apiFetch('/api/terminals', {
+        method: 'POST',
+        body: JSON.stringify({ command: ['sh'] }),
+      })
+    );
+    expect(info.remote).toBeNull();
+  });
+});

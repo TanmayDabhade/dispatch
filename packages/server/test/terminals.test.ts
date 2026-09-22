@@ -271,6 +271,25 @@ describe('TerminalRegistry', () => {
     expect(registry.remove('nope')).toBe(false);
   });
 
+  it('reports a command that is not on PATH instead of throwing', async () => {
+    // A missing binary — `ssh` for a remote session, a shell that was
+    // uninstalled — must leave a visible session saying so, not fail the
+    // request with nothing to look at.
+    const local = new TerminalRegistry(root, {
+      spawn: () => {
+        throw new Error('Executable not found in $PATH: "ssh"');
+      },
+    });
+    const info = local.create({ cwd: root, command: ['ssh', 'nowhere'] });
+    expect(info.state).toBe('exited');
+    expect(info.exitCode).toBe(127);
+    expect(decode(local.read(info.id, 0)?.data ?? '')).toContain(
+      'Executable not found'
+    );
+    expect(local.write(info.id, 'x')).toBe(false);
+    local.shutdown();
+  });
+
   it('hydrates a previous daemon as orphaned with its scrollback intact', async () => {
     const info = registry.create({
       cwd: root,
@@ -291,6 +310,20 @@ describe('TerminalRegistry', () => {
     // Nothing is on the other end of an orphan's stdin.
     expect(revived.write(info.id, 'x')).toBe(false);
     registry = revived;
+  });
+
+  it('does not wrap a remote command in a second pty', () => {
+    // A remote command is `ssh -tt …`, which already has a pty on the far
+    // side. Nesting `script` around it would double every echo.
+    const info = registry.create({
+      cwd: root,
+      command: ['ssh', '-tt', 'box', 'exec $SHELL -l'],
+      remote: 'box',
+    });
+    expect(info.remote).toBe('box');
+    expect(info.pty).toBe(true);
+    expect(spawned[0]?.opts.command[0]).toBe('ssh');
+    expect(spawned[0]?.opts.command).not.toContain('script');
   });
 
   it('announces output and exit to the daemon', async () => {

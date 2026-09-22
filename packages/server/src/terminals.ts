@@ -68,6 +68,8 @@ export interface TerminalInfo {
   trimmed: number;
   /** The run this session belongs to, when it was opened on a run's worktree. */
   runId: string | null;
+  /** The configured remote this session runs on, or null for this machine. */
+  remote: string | null;
 }
 
 export interface TerminalReadResult {
@@ -91,6 +93,14 @@ export interface CreateTerminalSpec {
   rows?: number;
   runId?: string | null;
   env?: Record<string, string>;
+  /**
+   * The remote this session runs on, or null for this machine.
+   *
+   * A remote session's `command` is already a full `ssh -tt …` invocation, and
+   * ssh allocates the pty on the far side — so it must NOT be wrapped in
+   * `script` as well. Two nested ptys would double every echo.
+   */
+  remote?: string | null;
 }
 
 /** The slice of a spawned child this module uses, so a test can supply its own. */
@@ -272,6 +282,8 @@ export class TerminalRegistry {
         info: {
           ...info,
           state: info.state === 'exited' ? 'exited' : 'orphaned',
+          // Absent in an index written before remotes existed.
+          remote: info.remote ?? null,
           // A session whose process is gone cannot grow, so the cursor range
           // is pinned to exactly what is on disk.
           total: info.total,
@@ -366,7 +378,14 @@ export class TerminalRegistry {
       spec.command !== undefined && spec.command.length > 0
         ? spec.command
         : defaultShell(process.env);
-    const wrapped = ptyCommand(requested);
+    const remote = spec.remote ?? null;
+    // A remote command is `ssh -tt …`, which already has a pty on the far
+    // side; wrapping it in `script` too would nest two of them and double
+    // every echo.
+    const wrapped =
+      remote === null
+        ? ptyCommand(requested)
+        : { command: requested, pty: true };
 
     // `TERM` is what makes a program emit colour and cursor motion at all, and
     // `COLUMNS`/`LINES` are how a program that cannot ask the pty for its size
@@ -395,17 +414,37 @@ export class TerminalRegistry {
       total: 0,
       trimmed: 0,
       runId: spec.runId ?? null,
+      remote,
     };
 
-    const proc = this.spawn({ command: wrapped.command, cwd: spec.cwd, env });
     const session: Session = {
       info,
       buffer: Buffer.alloc(0),
-      proc,
+      proc: null,
       persistTimer: null,
       dirty: true,
     };
     this.sessions.set(id, session);
+
+    let proc: TerminalProcess;
+    try {
+      proc = this.spawn({ command: wrapped.command, cwd: spec.cwd, env });
+    } catch (err) {
+      // Bun throws synchronously when the executable is not on PATH — a
+      // missing `ssh` for a remote session, a shell that was uninstalled. The
+      // session is still created, already exited, with the reason written into
+      // its scrollback: that is what a terminal does when a command does not
+      // exist, and it keeps a bad session visible instead of failing the
+      // request with nothing to look at.
+      const message = err instanceof Error ? err.message : String(err);
+      this.append(session, new TextEncoder().encode(`${message}\r\n`));
+      session.info.state = 'exited';
+      session.info.exitCode = 127;
+      session.info.exitedAt = this.now().toISOString();
+      this.persist();
+      return { ...session.info };
+    }
+    session.proc = proc;
 
     void this.pump(session, proc.stdout);
     void proc.exited.then((code) => {

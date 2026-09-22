@@ -1,4 +1,7 @@
+import { loadConfig } from '@dispatch/core';
+
 import type { ApiContext } from '../api.js';
+import { resolveRemote, sshShell, UnknownRemoteError } from '../remote/ssh.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 import { isDirectory, resolveWorkspacePath } from './workspacePaths.js';
 
@@ -76,9 +79,6 @@ export async function createTerminal(
   if (!parsed.ok) return parsed.response;
   const body = parsed.value as Record<string, unknown>;
 
-  const where = resolveTerminalCwd(ctx.rootDir, body);
-  if (!where.ok) return errorResponse(400, where.message);
-
   const command = readCommand(body.command);
   if (!command.ok)
     return errorResponse(400, 'command must be a list of strings');
@@ -88,18 +88,61 @@ export async function createTerminal(
     return errorResponse(400, 'title must be a string');
   }
 
+  const dimensions = {
+    ...(readDimension(body.cols) === undefined
+      ? {}
+      : { cols: readDimension(body.cols) }),
+    ...(readDimension(body.rows) === undefined
+      ? {}
+      : { rows: readDimension(body.rows) }),
+  };
+
+  // A remote session skips the local path checks entirely: `cwd` names a
+  // directory on the other machine, which this one cannot resolve or contain.
+  // The remote's own configured path is the scope there.
+  if (body.remote !== undefined && body.remote !== null) {
+    if (typeof body.remote !== 'string' || body.remote === '') {
+      return errorResponse(400, 'remote must be a string');
+    }
+    const cwd = typeof body.cwd === 'string' ? body.cwd : undefined;
+    let remote;
+    try {
+      remote = resolveRemote(
+        loadConfig(ctx.rootDir).remotes ?? {},
+        body.remote
+      );
+    } catch (err) {
+      if (err instanceof UnknownRemoteError) {
+        return errorResponse(400, err.message);
+      }
+      throw err;
+    }
+    return jsonResponse(
+      ctx.terminals.create({
+        // The local process's own working directory is irrelevant for an ssh
+        // invocation, but the registry records one, so the project root is the
+        // honest answer to "where did this get started from".
+        cwd: ctx.rootDir,
+        remote: body.remote,
+        runId: null,
+        command: sshShell(remote, ...(cwd === undefined ? [] : [{ cwd }])),
+        title: title ?? `${body.remote}${cwd === undefined ? '' : `:${cwd}`}`,
+        ...dimensions,
+      }),
+      201
+    );
+  }
+
+  const where = resolveTerminalCwd(ctx.rootDir, body);
+  if (!where.ok) return errorResponse(400, where.message);
+
   return jsonResponse(
     ctx.terminals.create({
       cwd: where.cwd,
       runId: where.runId,
       ...(command.command === undefined ? {} : { command: command.command }),
       ...(title === undefined ? {} : { title }),
-      ...(readDimension(body.cols) === undefined
-        ? {}
-        : { cols: readDimension(body.cols) }),
-      ...(readDimension(body.rows) === undefined
-        ? {}
-        : { rows: readDimension(body.rows) }),
+      ...dimensions,
     }),
     201
   );
