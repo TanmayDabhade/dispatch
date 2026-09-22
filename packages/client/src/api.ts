@@ -1838,6 +1838,15 @@ function reviewTargetPath(reviewTarget: ReviewTarget): string {
 // Pure helper (no fetch involved) so the query-string shape is unit
 // testable without a network layer: `?` + params when any filter is set, ''
 // otherwise, in the same status/kind/parent order the server accepts.
+// The `path` (+ optional `runId`) query every /api/files route takes. One
+// builder so a scope is never half-applied — a tree request that forgot the
+// run would silently browse the main checkout instead.
+function workspaceQuery(path: string, scope: WorkspaceScope): string {
+  const params = new URLSearchParams({ path });
+  if (scope.runId != null) params.set('runId', scope.runId);
+  return params.toString();
+}
+
 export function taskQueryString(filter: TaskFilter = {}): string {
   const params = new URLSearchParams();
   if (filter.status !== undefined) params.set('status', filter.status);
@@ -2018,6 +2027,59 @@ export interface CreateTerminalInput {
   title?: string;
   cols?: number;
   rows?: number;
+}
+
+/** One entry in a directory listing. `path` is relative to the scope's base. */
+export interface WorkspaceEntry {
+  name: string;
+  path: string;
+  kind: 'file' | 'directory';
+  size: number;
+  modifiedAt: string | null;
+}
+
+export interface WorkspaceTree {
+  path: string;
+  runId: string | null;
+  entries: WorkspaceEntry[];
+}
+
+/**
+ * A file the editor opened.
+ *
+ * `kind` is why there may be no text: `binary` and `too-large` are facts about
+ * the file that the UI renders, not errors — both arrive with a 200.
+ */
+export interface WorkspaceFile {
+  path: string;
+  runId: string | null;
+  size: number;
+  modifiedAt: string;
+  mime: string;
+  /** How the preview pane should render it, when it cannot be edited as text. */
+  preview: 'image' | 'pdf' | 'video' | 'audio' | 'none';
+  kind: 'text' | 'binary' | 'too-large';
+  text: string | null;
+}
+
+export interface WorkspaceSearchHit {
+  path: string;
+  score: number;
+  /** Indices in `path` that matched, for highlighting. */
+  positions: number[];
+}
+
+export interface WorkspaceSearchResult {
+  runId: string | null;
+  query: string;
+  /** How many files were considered, so a UI can say "12 of 4,300". */
+  total: number;
+  results: WorkspaceSearchHit[];
+}
+
+/** Which checkout a file request is against: a run's worktree, or the repo. */
+export interface WorkspaceScope {
+  runId?: string | null;
 }
 
 // Bound client shape returned by `createApiClient` — every method already
@@ -2586,6 +2648,27 @@ export interface ApiClient {
   // `GET /api/impact?subject=<kind>&id=<id>`.
   getImpact(subject: ImpactSubjectKind, id: string): Promise<ImpactResponse>;
   /** The `/ws` URL, token included — it is a credential, so never render or log it. */
+  /** One directory's children, for a lazily expanded tree. */
+  fetchWorkspaceTree(
+    path: string,
+    scope?: WorkspaceScope
+  ): Promise<WorkspaceTree>;
+  fetchWorkspaceFile(
+    path: string,
+    scope?: WorkspaceScope
+  ): Promise<WorkspaceFile>;
+  saveWorkspaceFile(
+    path: string,
+    text: string,
+    scope?: WorkspaceScope
+  ): Promise<{ path: string; size: number; modifiedAt: string }>;
+  /** A URL the browser can put straight in an `img` or `embed` tag. */
+  workspaceFileUrl(path: string, scope?: WorkspaceScope): string;
+  /** Quick open: fuzzy filename search, gitignore-aware. */
+  searchWorkspace(
+    query: string,
+    scope?: WorkspaceScope & { limit?: number }
+  ): Promise<WorkspaceSearchResult>;
   /** Every shell session this daemon knows about, oldest first. */
   fetchTerminals(): Promise<TerminalInfo[]>;
   fetchTerminal(id: string): Promise<TerminalInfo>;
@@ -3225,6 +3308,27 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         target,
         `/api/impact?${new URLSearchParams({ subject, id }).toString()}`
       ),
+    fetchWorkspaceTree: (path, scope = {}) =>
+      request(target, `/api/files/tree?${workspaceQuery(path, scope)}`),
+    fetchWorkspaceFile: (path, scope = {}) =>
+      request(target, `/api/files/read?${workspaceQuery(path, scope)}`),
+    saveWorkspaceFile: (path, text, scope = {}) =>
+      request(target, '/api/files/write', {
+        method: 'POST',
+        ...jsonBody({
+          path,
+          text,
+          ...(scope.runId == null ? {} : { runId: scope.runId }),
+        }),
+      }),
+    workspaceFileUrl: (path, scope = {}) =>
+      `${baseUrl}/api/files/raw?${workspaceQuery(path, scope)}`,
+    searchWorkspace: (query, scope = {}) => {
+      const params = new URLSearchParams({ q: query });
+      if (scope.runId != null) params.set('runId', scope.runId);
+      if (scope.limit !== undefined) params.set('limit', String(scope.limit));
+      return request(target, `/api/files/search?${params.toString()}`);
+    },
     fetchTerminals: () => request(target, '/api/terminals'),
     fetchTerminal: (id) =>
       request(target, `/api/terminals/${encodeURIComponent(id)}`),
