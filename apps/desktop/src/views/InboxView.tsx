@@ -34,6 +34,7 @@ import {
   filterInboxItems,
   groupInboxItems,
   INBOX_FILTER_LABEL,
+  teammateOf,
   inboxItemActor,
   inboxItemBadge,
   inboxItemState,
@@ -192,6 +193,7 @@ export function InboxView({
     [visible, groupByKind]
   );
   const unread = unreadInboxCount(items, readIds);
+  const hasTeammateItems = items.some((item) => teammateOf(item) !== undefined);
 
   // A project switch reloads the set for the new root rather than carrying the old one over.
   useEffect(() => {
@@ -395,13 +397,16 @@ export function InboxView({
                   value={filter}
                   onValueChange={(value) => setFilter(value as InboxFilter)}
                 >
-                  {(Object.keys(INBOX_FILTER_LABEL) as InboxFilter[]).map(
-                    (value) => (
+                  {(Object.keys(INBOX_FILTER_LABEL) as InboxFilter[])
+                    // No Teammates option on a board nobody else works on.
+                    .filter(
+                      (value) => value !== 'teammates' || hasTeammateItems
+                    )
+                    .map((value) => (
                       <DropdownMenuRadioItem key={value} value={value}>
                         {INBOX_FILTER_LABEL[value]}
                       </DropdownMenuRadioItem>
-                    )
-                  )}
+                    ))}
                 </DropdownMenuRadioGroup>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -488,13 +493,28 @@ export function InboxView({
                         onSelect={() => select(item)}
                         onOpen={() => open(item)}
                         badge={
-                          failedAttempt !== undefined ? (
-                            <LabelPill
-                              color="var(--state-failed-fg)"
-                              title={failedAttempt.reason}
-                            >
-                              Failed to land
-                            </LabelPill>
+                          failedAttempt !== undefined ||
+                          teammateOf(item) !== undefined ? (
+                            <>
+                              {failedAttempt !== undefined && (
+                                <LabelPill
+                                  color="var(--state-failed-fg)"
+                                  title={failedAttempt.reason}
+                                >
+                                  Failed to land
+                                </LabelPill>
+                              )}
+                              {teammateOf(item) !== undefined && (
+                                // Whose it is, so a teammate's parked approval
+                                // reads as theirs to answer, not yours.
+                                <LabelPill
+                                  color="var(--text-secondary)"
+                                  title="Dispatched by a teammate — theirs to answer"
+                                >
+                                  {ownerLabel(teammateOf(item))}
+                                </LabelPill>
+                              )}
+                            </>
                           ) : undefined
                         }
                         action={
@@ -550,6 +570,11 @@ export function InboxView({
 /** One 48px inbox row: the actor's 28px avatar carrying a 12px action badge, the title line
  * (6px indigo dot while unread, muted once read) over a 12px subtitle, and the 14px state
  * glyph over the relative time at the right. Selection is the neutral selected surface. */
+/** `human:ada` → `ada's`, for the row badge. */
+function ownerLabel(ref: string | undefined): string {
+  return `${(ref ?? '').replace(/^human:/, '')}'s`;
+}
+
 function InboxRow({
   item,
   read,

@@ -376,6 +376,8 @@ describe('GET /api/runs/claims', () => {
       runId: dispatchRes.id,
       taskId: task.meta.id,
       claims: ['a.ts', 'b.ts'],
+      // A manual dispatch is someone's: the claim says whose.
+      dispatchedBy: expect.stringMatching(/^human:/),
     });
   });
 });

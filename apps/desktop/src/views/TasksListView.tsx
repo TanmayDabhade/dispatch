@@ -51,6 +51,7 @@ import {
   type OpenPicker,
   TaskListRow,
 } from './TaskListRow';
+import { liveClaimsFrom } from '@/lib/dispatchPreview';
 import { GroupHeader } from '@/ui/ai/group-header';
 import { IconButton } from '@/ui/ai/icon-button';
 import { PillButton } from '@/ui/ai/pill';
@@ -669,6 +670,7 @@ export function TasksListView({
           tasks={selectedTasks}
           readyIds={data.readyIds}
           runningNow={data.liveRunStateByTaskId.size}
+          liveClaims={liveClaimsFrom(data.runs)}
           defaultConcurrency={data.config?.orchestrator.epicConcurrency ?? 3}
           onCancel={() => setDispatchOpen(false)}
           onConfirm={async ({ concurrency }) => {

@@ -217,6 +217,9 @@ export interface DispatchProjectData {
   /** Everyone connected to this daemon right now, you included. One entry on
    *  a solo project; more once teammates hold their own tokens. */
   presence: PresenceEntry[];
+  /** This window's own ActorRef (`human:<handle>`), or `null` until the daemon
+   *  has said. While null, nothing is treated as a teammate's. */
+  me: string | null;
   portLoading: boolean;
   portError: boolean;
   portErrorDetail: unknown;
@@ -750,6 +753,7 @@ export function useDispatchProject(
   const readyQueryKey = useMemo(() => ['dispatch-ready-tasks', port], [port]);
   const runsQueryKey = useMemo(() => ['dispatch-runs', port], [port]);
   const presenceQueryKey = useMemo(() => ['dispatch-presence', port], [port]);
+  const whoamiQueryKey = useMemo(() => ['dispatch-whoami', port], [port]);
   const runDetailQueryKey = useMemo(
     () => ['dispatch-run', port, selectedRunId],
     [port, selectedRunId]
@@ -943,6 +947,18 @@ export function useDispatchProject(
       return client.fetchReadyTasks();
     },
     enabled: client !== null,
+  });
+  // Who this window is, as the daemon sees its credential. Fetched once per
+  // connection — a credential does not change identity mid-session — and read
+  // wherever the app has to tell "mine" from "a teammate's".
+  const { data: whoami } = useQuery({
+    queryKey: whoamiQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchWhoami();
+    },
+    enabled: client !== null,
+    staleTime: Number.POSITIVE_INFINITY,
   });
   // Who else is on this daemon. Refetched on `presence.changed` (someone
   // arrived or left) and `run.changed` (what they are running moved).
@@ -2717,6 +2733,7 @@ export function useDispatchProject(
     port,
     daemonBaseUrl: connection === undefined ? null : daemonBaseUrl(connection),
     presence: presence ?? [],
+    me: whoami?.ref ?? null,
     portLoading,
     portError,
     portErrorDetail,

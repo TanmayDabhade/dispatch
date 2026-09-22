@@ -57,6 +57,7 @@ import {
 import { MilestoneBranchesView } from './MilestoneBranchesView';
 import { type FocusEpicRequest, MilestonesView } from './MilestonesView';
 import { TasksListView } from './TasksListView';
+import { liveClaimsFrom } from '@/lib/dispatchPreview';
 import { IconButton } from '@/ui/ai/icon-button';
 import {
   HeaderIconTriad,
@@ -872,6 +873,7 @@ export function BoardView({
             )}
             readyIds={data.readyIds}
             runningNow={data.liveRunStateByTaskId.size}
+            liveClaims={liveClaimsFrom(data.runs)}
             defaultConcurrency={data.config?.orchestrator.epicConcurrency ?? 3}
             maxConcurrency={data.config?.orchestrator.maxConcurrency}
             runCostEstimateUsd={data.config?.orchestrator.runCostEstimateUsd}

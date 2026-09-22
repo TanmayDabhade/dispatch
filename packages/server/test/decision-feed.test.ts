@@ -586,3 +586,47 @@ describe('DecisionFeed irreversibility floor', () => {
     });
   });
 });
+
+describe('DecisionFeed ownership', () => {
+  it('stamps an item with the human whose run it came from', () => {
+    // The "whose attention" axis: Ada's parked approval is visible to
+    // everyone, but it is Ada's to answer.
+    const adas = runMeta('r-ada', {
+      state: 'awaiting-approval',
+      dispatchedBy: 'human:ada',
+    });
+    h.runs.push(adas);
+    h.approvals.push({
+      runId: adas.id,
+      taskId: adas.taskId,
+      taskTitle: adas.taskTitle,
+      requestId: 'req-1',
+      toolName: 'Bash',
+      input: { command: 'ls' },
+    });
+    h.questions.ask(adas.id, 'Which way?', []);
+
+    const items = h.feed.list();
+    expect(items.map((item) => item.owner)).toEqual(['human:ada', 'human:ada']);
+  });
+
+  it("leaves an item with no dispatcher ownerless, so everyone's", () => {
+    const auto = runMeta('r-auto', { state: 'awaiting-approval' });
+    h.runs.push(auto);
+    h.approvals.push({
+      runId: auto.id,
+      taskId: auto.taskId,
+      taskTitle: auto.taskTitle,
+      requestId: 'req-2',
+      toolName: 'Bash',
+      input: {},
+    });
+    h.titles.set('t-99', 'Capped task');
+    h.loops.push(cappedLoop('t-99'));
+
+    for (const item of h.feed.list()) {
+      expect(item.owner).toBeUndefined();
+      expect('owner' in item).toBe(false);
+    }
+  });
+});

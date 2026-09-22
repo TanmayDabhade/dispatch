@@ -411,3 +411,50 @@ describe('specForTask', () => {
     });
   });
 });
+
+describe('whose attention', () => {
+  const mine = run({ id: 'r-mine', taskId: 't-1', dispatchedBy: 'human:wyat' });
+  const adas = run({
+    id: 'r-ada',
+    taskId: 't-2',
+    taskTitle: "Ada's thing",
+    dispatchedBy: 'human:ada',
+  });
+
+  test("a teammate's ask is listed but not counted against you", () => {
+    const data = buildInbox(input({ runs: [mine, adas], me: 'human:wyat' }));
+
+    // Both are still in the sections — Ada's is visible to everyone.
+    expect(
+      data.sections.flatMap((s) => s.rows.map((r) => r.runId)).sort()
+    ).toEqual(['r-ada', 'r-mine']);
+    // Only yours drives the badge.
+    expect(data.total).toBe(1);
+  });
+
+  test('Needs you and Teammates split the same list', () => {
+    const data = buildInbox(input({ runs: [mine, adas], me: 'human:wyat' }));
+    const items = buildInboxItems(data, []);
+
+    expect(filterInboxItems(items, 'needs-you').map((i) => i.key)).toEqual([
+      expect.stringContaining('r-mine'),
+    ]);
+    const theirs = filterInboxItems(items, 'teammates');
+    expect(theirs).toHaveLength(1);
+    expect(theirs[0]).toMatchObject({ owner: 'human:ada' });
+  });
+
+  test("a solo project is unchanged: no me, nothing is a teammate's", () => {
+    const data = buildInbox(input({ runs: [mine, adas] }));
+    expect(data.total).toBe(2);
+    expect(filterInboxItems(buildInboxItems(data, []), 'teammates')).toEqual(
+      []
+    );
+  });
+
+  test("a run nobody dispatched by hand is everyone's, so yours", () => {
+    const auto = run({ id: 'r-auto', taskId: 't-3' });
+    const data = buildInbox(input({ runs: [auto], me: 'human:wyat' }));
+    expect(data.total).toBe(1);
+  });
+});

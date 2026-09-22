@@ -816,6 +816,8 @@ export interface RunClaim {
   runId: string;
   taskId: string;
   claims: string[];
+  /** ActorRef of who dispatched the run holding these claims, when anyone did. */
+  dispatchedBy?: string;
 }
 
 // Mirrors PlannedTask in packages/server/src/orchestrator/planner.ts.
@@ -2250,6 +2252,12 @@ export interface ApiClient {
    *  safe to poll while a preview is coming up. */
   /** Who is connected right now, and what each is running. */
   fetchPresence(): Promise<PresenceEntry[]>;
+  /** Who this client's credential speaks for. */
+  fetchWhoami(): Promise<{
+    handle: string;
+    ref: string;
+    tier: 'request' | 'decide';
+  }>;
   fetchRunPreview(runId: string): Promise<RunPreviewResult>;
   /** Starts this run's dev server if it has none. Decide-tier: it runs a
    *  command out of the run's own worktree. Resolves with `preview: null` and
@@ -2912,6 +2920,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       request(target, `/api/runs/${runId}/resume`, { method: 'POST' }),
     fetchRunDiff: (runId) => request(target, `/api/runs/${runId}/diff`),
     fetchPresence: () => request(target, '/api/presence'),
+    fetchWhoami: () => request(target, '/api/whoami'),
     fetchRunPreview: (runId) => request(target, `/api/runs/${runId}/preview`),
     startRunPreview: (runId) =>
       request(target, `/api/runs/${runId}/preview`, { method: 'POST' }),

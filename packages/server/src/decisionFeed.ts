@@ -80,6 +80,9 @@ export interface DecisionItem {
    * in both lenses render the hold from this field.
    */
   floor?: FloorCheck;
+  /** ActorRef of the human whose run this came from — see withOwner. Absent
+   *  means nobody in particular, so everyone. */
+  owner?: string;
   disposition: DecisionDisposition;
 }
 
@@ -188,6 +191,26 @@ function ageSince(iso: string, nowMs: number): number {
 function oneLine(text: string, max = 120): string {
   const flat = text.replace(/\s+/g, ' ').trim();
   return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
+}
+
+/**
+ * Stamps an item with the human whose run it came from.
+ *
+ * This is the "whose attention" axis. The feed used to answer one question —
+ * does a human owe this an answer — because on a solo daemon there was only
+ * one human it could be. With teammates on one daemon the next question is
+ * which human: Ada's parked approval is visible to everyone, but it is Ada's
+ * to answer, the same way a solo gate demoted from blocking to recording.
+ * Items with no dispatcher (an auto-filled run, a fix loop, a run from before
+ * dispatchedBy existed) stay ownerless, which surfaces read as everyone's.
+ */
+function withOwner<T extends { runId?: string }>(
+  item: T,
+  runs: Map<string, RunMeta>
+): T & { owner?: string } {
+  const owner =
+    item.runId === undefined ? undefined : runs.get(item.runId)?.dispatchedBy;
+  return owner === undefined ? item : { ...item, owner };
 }
 
 // Run ids some later run resumed from. Built once per recompute rather than
@@ -335,7 +358,9 @@ export class DecisionFeed {
       ...this.questionItems(nowMs, runs),
       ...this.fixLoopItems(nowMs),
       ...this.stalledRunItems(nowMs, runs),
-    ].sort((a, b) => a.since.localeCompare(b.since));
+    ]
+      .map((item) => withOwner(item, runs))
+      .sort((a, b) => a.since.localeCompare(b.since));
 
     const openById = new Map(open.map((item) => [item.id, item]));
     // Anything open last time and absent now was decided, or its run moved on.
