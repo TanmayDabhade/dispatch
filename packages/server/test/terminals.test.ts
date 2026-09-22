@@ -13,12 +13,18 @@ import type {
   SpawnTerminalOptions,
   TerminalProcess,
 } from '../src/terminals.js';
-import { ptyCommand, shellQuote, TerminalRegistry } from '../src/terminals.js';
+import {
+  nativePtyAvailable,
+  ptyCommand,
+  shellQuote,
+  TerminalRegistry,
+} from '../src/terminals.js';
 
 // A stand-in child whose output and exit the test drives by hand, so none of
-// these assertions depend on a real shell's timing or on `script` existing.
+// these assertions depend on a real shell's timing or on a pty existing.
 class FakeProcess implements TerminalProcess {
   readonly written: string[] = [];
+  readonly resized: [number, number][] = [];
   killed = false;
   readonly stdout: ReadableStream<Uint8Array>;
   readonly exited: Promise<number>;
@@ -53,6 +59,10 @@ class FakeProcess implements TerminalProcess {
 
   kill(): void {
     this.killed = true;
+  }
+
+  resize(cols: number, rows: number): void {
+    this.resized.push([cols, rows]);
   }
 }
 
@@ -139,13 +149,13 @@ describe('ptyCommand', () => {
     ]);
   });
 
-  it('uses the BSD argument order on macOS', () => {
+  it('never uses BSD script on macOS, which cannot run under Bun’s piped stdin', () => {
     const result = ptyCommand(['bash', '-l'], {
       os: 'darwin',
       whichScript: () => '/usr/bin/script',
     });
-    expect(result.pty).toBe(true);
-    expect(result.command).toEqual(['script', '-q', '/dev/null', 'bash', '-l']);
+    expect(result.pty).toBe(false);
+    expect(result.command).toEqual(['bash', '-l']);
   });
 
   it('falls back to running the command directly when script is missing', () => {
@@ -254,16 +264,18 @@ describe('TerminalRegistry', () => {
     expect(registry.write(info.id, 'ls\r')).toBe(false);
   });
 
-  it('records a resize even though the running child keeps its own size', () => {
+  it('records a resize and applies it to the child’s pty', () => {
     const info = registry.create({
       cwd: root,
       command: ['bash'],
       cols: 80,
       rows: 24,
     });
+    expect(spawned[0]?.opts).toMatchObject({ cols: 80, rows: 24 });
     expect(registry.resize(info.id, 200, 50)).toBe(true);
     expect(registry.get(info.id)?.cols).toBe(200);
     expect(registry.get(info.id)?.rows).toBe(50);
+    expect(spawned[0]?.resized).toEqual([[200, 50]]);
   });
 
   it('keeps scrollback readable after close, and drops it on remove', async () => {
@@ -298,6 +310,9 @@ describe('TerminalRegistry', () => {
           command: [],
           cwd: root,
           env: {},
+          pty: false,
+          cols: 80,
+          rows: 24,
         }),
     });
     local.shutdown();
@@ -394,6 +409,23 @@ describe('TerminalRegistry', () => {
     expect(info.pty).toBe(true);
     expect(spawned[0]?.opts.command[0]).toBe('ssh');
     expect(spawned[0]?.opts.command).not.toContain('script');
+    expect(spawned[0]?.opts.pty).toBe(false);
+  });
+
+  it('runs a local command unwrapped on the native pty', () => {
+    const local = new TerminalRegistry(root, {
+      spawn: (opts) => {
+        const proc = new FakeProcess(opts);
+        spawned.push(proc);
+        return proc;
+      },
+      nativePty: true,
+    });
+    const before = spawned.length;
+    local.create({ cwd: root, command: ['bash', '-l'] });
+    expect(spawned[before]?.opts.command).toEqual(['bash', '-l']);
+    expect(spawned[before]?.opts.pty).toBe(true);
+    local.shutdown();
   });
 
   it('announces output and exit to the daemon', async () => {
@@ -435,15 +467,18 @@ describe('TerminalRegistry with a real process', () => {
   });
 
   // Polls until the session exits, so the assertion never races the child.
-  async function runToExit(command: string[]): Promise<string> {
-    const info = registry.create({ cwd: root, command });
+  async function waitForExit(id: string): Promise<string> {
     for (let i = 0; i < 200; i++) {
-      if (registry.get(info.id)?.state === 'exited') break;
+      if (registry.get(id)?.state === 'exited') break;
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     // One more beat: `exited` resolves before the last read of stdout lands.
     await new Promise((resolve) => setTimeout(resolve, 50));
-    return decode(registry.read(info.id, 0)?.data ?? '');
+    return decode(registry.read(id, 0)?.data ?? '');
+  }
+
+  function runToExit(command: string[]): Promise<string> {
+    return waitForExit(registry.create({ cwd: root, command }).id);
   }
 
   it('captures a real command’s output', async () => {
@@ -452,12 +487,50 @@ describe('TerminalRegistry with a real process', () => {
     ).toContain('hello-from-a-terminal');
   });
 
-  it('gives the child a tty when script is available', async () => {
-    if (Bun.which('script') === null) return;
-    // `test -t 1` is the direct question: is stdout a terminal?
+  it('gives the child a tty', async () => {
+    if (!nativePtyAvailable()) return;
+    // `test -t` is the direct question: are stdin and stdout a terminal?
     expect(
-      await runToExit(['sh', '-c', 'test -t 1 && echo IS_TTY || echo NO_TTY'])
+      await runToExit([
+        'sh',
+        '-c',
+        'test -t 0 && test -t 1 && echo IS_TTY || echo NO_TTY',
+      ])
     ).toContain('IS_TTY');
+  });
+
+  it('starts the pty at the requested size and resizes it live', async () => {
+    if (!nativePtyAvailable()) return;
+    // `stty size` asks the pty itself, not the COLUMNS/LINES env.
+    const info = registry.create({
+      cwd: root,
+      command: ['sh', '-c', 'stty size; sleep 0.4; stty size'],
+      cols: 100,
+      rows: 30,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    registry.resize(info.id, 132, 40);
+    const output = await waitForExit(info.id);
+    expect(output).toContain('30 100');
+    expect(output).toContain('40 132');
+  });
+
+  it('feeds keystrokes to the child', async () => {
+    if (!nativePtyAvailable()) return;
+    const info = registry.create({
+      cwd: root,
+      command: ['sh', '-c', 'read line; echo got:$line'],
+    });
+    registry.write(info.id, 'typed\r');
+    expect(await waitForExit(info.id)).toContain('got:typed');
+  });
+
+  it('shows what the child writes to stderr when it runs without a pty', async () => {
+    registry.shutdown();
+    registry = new TerminalRegistry(root, { nativePty: false });
+    expect(
+      await runToExit(['sh', '-c', 'echo to-stderr >&2; exit 1'])
+    ).toContain('to-stderr');
   });
 
   it('records a real exit code', async () => {
@@ -470,8 +543,6 @@ describe('TerminalRegistry with a real process', () => {
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     expect(registry.get(info.id)?.state).toBe('exited');
-    // Under `script` the wrapper's own status is what surfaces, and it relays
-    // the child's — either way a clean `exit 7` must not look like success.
-    expect(registry.get(info.id)?.exitCode).not.toBe(0);
+    expect(registry.get(info.id)?.exitCode).toBe(7);
   });
 });

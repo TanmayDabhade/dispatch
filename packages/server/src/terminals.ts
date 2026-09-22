@@ -18,9 +18,10 @@ import { terminalScrollbackPath, terminalsDir } from './orchestrator/paths.js';
  *
  * Two things make this more than "spawn a shell and pipe it":
  *
- *   - The child runs under a real pty (see `ptyCommand`), so a prompt, colour,
- *     and any curses program behave the way they do in a terminal emulator
- *     rather than the line-buffered, colourless way they behave behind a pipe.
+ *   - The child runs under a real pty (Bun's native one, see
+ *     `defaultSpawner`), so a prompt, colour, and any curses program behave
+ *     the way they do in a terminal emulator rather than the line-buffered,
+ *     colourless way they behave behind a pipe.
  *   - Scrollback is kept on disk, so closing the app — or restarting the
  *     daemon — does not lose what a session printed. A reader resumes from a
  *     byte cursor rather than a message index, which means a client that was
@@ -97,8 +98,8 @@ export interface CreateTerminalSpec {
    * The remote this session runs on, or null for this machine.
    *
    * A remote session's `command` is already a full `ssh -tt …` invocation, and
-   * ssh allocates the pty on the far side — so it must NOT be wrapped in
-   * `script` as well. Two nested ptys would double every echo.
+   * ssh allocates the pty on the far side — so it runs over plain pipes here
+   * rather than getting a second, local pty.
    */
   remote?: string | null;
 }
@@ -109,12 +110,18 @@ export interface TerminalProcess {
   readonly exited: Promise<number>;
   write(data: string): void;
   kill(): void;
+  /** Resizes the child's pty. Absent when the child has no pty to resize. */
+  resize?(cols: number, rows: number): void;
 }
 
 export interface SpawnTerminalOptions {
   command: string[];
   cwd: string;
   env: Record<string, string>;
+  /** Run `command` directly under a native pty rather than over pipes. */
+  pty: boolean;
+  cols: number;
+  rows: number;
 }
 
 export type TerminalSpawner = (opts: SpawnTerminalOptions) => TerminalProcess;
@@ -138,31 +145,33 @@ export function shellQuote(arg: string): string {
 }
 
 /**
- * Wraps `command` so it runs under a pty, or returns it unchanged when no
- * wrapper is available.
+ * Bun's native pty (`Bun.spawn({ terminal })`), which is POSIX-only. Where it
+ * exists it is used for every local session: it is a real pty that can be
+ * resized, with no wrapper process in between.
+ */
+export function nativePtyAvailable(): boolean {
+  return platform() !== 'win32' && typeof Bun.Terminal === 'function';
+}
+
+/**
+ * The fallback for a Bun without a native pty: wraps `command` in util-linux
+ * `script -qfec <command-string> /dev/null`, or returns it unchanged to run
+ * over plain pipes.
  *
- * `script(1)` is the portable way to get a pty without a native addon: it
- * allocates one, runs the command inside it, and relays both directions
- * through its own stdio — which is exactly the plumbing a terminal needs. Its
- * two flavours take their arguments in incompatible orders, hence the split:
+ * BSD `script` (macOS) is deliberately not used. It calls `tcgetattr` on its
+ * stdin, and Bun's piped stdin is a socket, so it fails with "Operation not
+ * supported on socket" and exits before running anything.
  *
- *   - util-linux (Linux): `script -qfec <command-string> /dev/null`, where
- *     `-f` flushes after every write so output arrives as it is produced
- *     rather than in block-sized lumps.
- *   - BSD (macOS): `script -q /dev/null <command> <args...>`, which takes the
- *     command as separate arguments and flushes by default.
- *
- * `whichScript` is injected so a test can force either flavour, or none.
+ * `whichScript` is injected so a test can force the lookup either way.
  */
 export function ptyCommand(
   command: string[],
   opts: { os?: string; whichScript?: (name: string) => string | null } = {}
 ): { command: string[]; pty: boolean } {
   const which = opts.whichScript ?? ((name: string) => Bun.which(name));
-  if (which('script') === null) return { command, pty: false };
   const os = opts.os ?? platform();
-  if (os === 'darwin') {
-    return { command: ['script', '-q', '/dev/null', ...command], pty: true };
+  if (os !== 'linux' || which('script') === null) {
+    return { command, pty: false };
   }
   const joined = command.map(shellQuote).join(' ');
   return { command: ['script', '-qfec', joined, '/dev/null'], pty: true };
@@ -176,18 +185,102 @@ function defaultShell(env: Record<string, string | undefined>): string[] {
 }
 
 function defaultSpawner(opts: SpawnTerminalOptions): TerminalProcess {
+  return opts.pty ? spawnNativePty(opts) : spawnPiped(opts);
+}
+
+// Runs the child on Bun's native pty. The pty delivers output through a
+// callback, so it is adapted to the stream the registry pumps; the stream ends
+// on the pty's EOF, or once the child exits, whichever comes first.
+function spawnNativePty(opts: SpawnTerminalOptions): TerminalProcess {
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  let ended = false;
+  const stdout = new ReadableStream<Uint8Array>({
+    start: (c) => {
+      controller = c;
+    },
+  });
+  const end = () => {
+    if (ended) return;
+    ended = true;
+    controller.close();
+  };
+  const proc = Bun.spawn(opts.command, {
+    cwd: opts.cwd,
+    env: opts.env,
+    terminal: {
+      cols: opts.cols,
+      rows: opts.rows,
+      name: 'xterm-256color',
+      // Copied: the callback's buffer is not guaranteed to outlive the call.
+      data: (_terminal, data) => {
+        if (!ended) controller.enqueue(data.slice());
+      },
+      exit: end,
+    },
+  });
+  const terminal = proc.terminal;
+  // A background job can keep the pty open after the shell itself exits, and
+  // an open pty keeps the daemon's event loop alive; closing it on exit also
+  // flushes the last output before `exited` resolves.
+  const exited = proc.exited.then((code) => {
+    terminal?.close();
+    end();
+    return code;
+  });
+  return {
+    stdout,
+    exited,
+    write(data: string) {
+      terminal?.write(data);
+    },
+    kill() {
+      proc.kill();
+    },
+    resize(cols: number, rows: number) {
+      if (terminal !== undefined && !terminal.closed) {
+        terminal.resize(cols, rows);
+      }
+    },
+  };
+}
+
+// Interleaves two byte streams into one, in arrival order, ending once both
+// have. Used to fold stderr into stdout for a child without a pty, where the
+// two are separate pipes but a terminal shows them as one.
+function mergeStreams(
+  a: ReadableStream<Uint8Array>,
+  b: ReadableStream<Uint8Array>
+): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start: async (controller) => {
+      const drain = async (stream: ReadableStream<Uint8Array>) => {
+        const reader = stream.getReader();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) return;
+          controller.enqueue(value);
+        }
+      };
+      await Promise.allSettled([drain(a), drain(b)]);
+      controller.close();
+    },
+  });
+}
+
+// Runs the child over plain pipes: remote sessions (ssh brings its own pty),
+// and local ones on a Bun without a native pty.
+function spawnPiped(opts: SpawnTerminalOptions): TerminalProcess {
   const proc = Bun.spawn(opts.command, {
     cwd: opts.cwd,
     env: opts.env,
     stdin: 'pipe',
     stdout: 'pipe',
-    // Merged into stdout: under a pty both are the same device anyway, and a
-    // reader that had to interleave two streams by hand would reorder output
-    // that the terminal itself never reorders.
     stderr: 'pipe',
   });
   return {
-    stdout: proc.stdout,
+    // Merged, because an error the child prints is output the person needs
+    // to see — dropping stderr hides exactly the message explaining a failure.
+    stdout: mergeStreams(proc.stdout, proc.stderr),
     exited: proc.exited,
     write(data: string) {
       // Both return promises that resolve once the bytes reach the pipe.
@@ -224,6 +317,8 @@ export interface TerminalRegistryOptions {
   onOutput?: (id: string) => void;
   /** Called when a session exits on its own. */
   onExit?: (id: string) => void;
+  /** Overrides native pty detection, so a test can force either path. */
+  nativePty?: boolean;
 }
 
 export class TerminalRegistry {
@@ -238,12 +333,14 @@ export class TerminalRegistry {
   private readonly now: () => Date;
   private readonly onOutput: (id: string) => void;
   private readonly onExit: (id: string) => void;
+  private readonly nativePty: boolean;
 
   constructor(
     private readonly rootDir: string,
     options: TerminalRegistryOptions = {}
   ) {
     this.spawn = options.spawn ?? defaultSpawner;
+    this.nativePty = options.nativePty ?? nativePtyAvailable();
     this.maxBytes = options.maxScrollbackBytes ?? SCROLLBACK_MAX_BYTES;
     this.now = options.now ?? (() => new Date());
     this.onOutput = options.onOutput ?? (() => {});
@@ -391,17 +488,17 @@ export class TerminalRegistry {
         : defaultShell(process.env);
     const remote = spec.remote ?? null;
     // A remote command is `ssh -tt …`, which already has a pty on the far
-    // side; wrapping it in `script` too would nest two of them and double
-    // every echo.
+    // side, so it runs over pipes. A local one gets the native pty, or the
+    // `script` fallback on a Bun without one.
+    const native = remote === null && this.nativePty;
     const wrapped =
-      remote === null
-        ? ptyCommand(requested)
-        : { command: requested, pty: true };
+      remote !== null || native
+        ? { command: requested, pty: true }
+        : ptyCommand(requested);
 
     // `TERM` is what makes a program emit colour and cursor motion at all, and
-    // `COLUMNS`/`LINES` are how a program that cannot ask the pty for its size
-    // learns one — which matters here because `script` gives the pty a fixed
-    // 80x24 and offers no way to resize it (see `resize`).
+    // `COLUMNS`/`LINES` give a size to a program that cannot ask a pty for one
+    // — the only way to tell it under the fallbacks, which cannot resize.
     const env: Record<string, string> = {
       ...(process.env as Record<string, string>),
       ...spec.env,
@@ -439,7 +536,14 @@ export class TerminalRegistry {
 
     let proc: TerminalProcess;
     try {
-      proc = this.spawn({ command: wrapped.command, cwd: spec.cwd, env });
+      proc = this.spawn({
+        command: wrapped.command,
+        cwd: spec.cwd,
+        env,
+        pty: native,
+        cols,
+        rows,
+      });
     } catch (err) {
       // Bun throws synchronously when the executable is not on PATH — a
       // missing `ssh` for a remote session, a shell that was uninstalled. The
@@ -516,21 +620,17 @@ export class TerminalRegistry {
   }
 
   /**
-   * Records a new viewport size.
-   *
-   * Honest limitation: `script` owns the pty and exposes no way to resize it,
-   * and neither Bun nor Node can issue the `TIOCSWINSZ` ioctl that would do it
-   * directly. So this updates what the session reports and what any future
-   * command inherits through `COLUMNS`/`LINES`, but a program already running
-   * under the pty keeps the size it started with. Programs that read the env
-   * (most line editors, `less`, `git`'s pager) follow along; ones that ask the
-   * pty directly (full-screen curses apps) do not.
+   * Records a new viewport size and applies it to the child's pty, which
+   * signals `SIGWINCH` so a running full-screen program redraws at the new
+   * size. Under the fallbacks there is no pty this process can resize, so only
+   * the recorded size changes.
    */
   resize(id: string, cols: number, rows: number): boolean {
     const session = this.sessions.get(id);
     if (session === undefined) return false;
     if (cols > 0) session.info.cols = cols;
     if (rows > 0) session.info.rows = rows;
+    session.proc?.resize?.(session.info.cols, session.info.rows);
     session.dirty = true;
     this.schedulePersist(session);
     return true;
