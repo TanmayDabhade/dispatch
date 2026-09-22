@@ -143,6 +143,7 @@ as text to hand an agent. Needs Chrome or Chromium on the machine; set
     dispatch worktree list --json
     dispatch remote list
     dispatch remote exec build-box -- pnpm test
+    dispatch remote forward build-box 5173
 
 Remotes are declared in `.dispatch/config.yml`; everything else about the
 connection comes from your own `~/.ssh/config`:

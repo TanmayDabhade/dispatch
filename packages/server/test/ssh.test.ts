@@ -5,7 +5,6 @@ import {
   resolveRemote,
   sshCommand,
   sshDestination,
-  sshForward,
   sshShell,
   UnknownRemoteError,
 } from '../src/remote/ssh.js';
@@ -106,26 +105,6 @@ describe('sshShell', () => {
     expect(
       remoteScript(sshShell(host, { cwd: '/work', shell: '/bin/bash' }))
     ).toBe("cd '/work' && exec /bin/bash -l");
-  });
-});
-
-describe('sshForward', () => {
-  it('binds only to loopback', () => {
-    // Binding to every interface would quietly publish a forwarded dev server
-    // to whatever network the laptop is on.
-    expect(sshForward(host, 5173, 5173)).toContain(
-      '127.0.0.1:5173:127.0.0.1:5173'
-    );
-  });
-
-  it('runs no remote command', () => {
-    expect(sshForward(host, 1, 2)).toContain('-N');
-  });
-
-  it('maps differing local and remote ports', () => {
-    expect(sshForward(host, 8080, 3000)).toContain(
-      '127.0.0.1:8080:127.0.0.1:3000'
-    );
   });
 });
 

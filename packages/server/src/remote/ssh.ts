@@ -98,28 +98,6 @@ export function sshShell(
   ];
 }
 
-/**
- * Argv for forwarding a remote port to a local one.
- *
- * `-N` runs no command — the process exists only to hold the tunnel open — and
- * the bind address is fixed to 127.0.0.1 so a forwarded dev server is not
- * quietly published to the whole network the laptop is on.
- */
-export function sshForward(
-  remote: RemoteConfig,
-  localPort: number,
-  remotePort: number
-): string[] {
-  return [
-    'ssh',
-    '-N',
-    '-L',
-    `127.0.0.1:${localPort}:127.0.0.1:${remotePort}`,
-    ...connectionArgs(remote),
-    sshDestination(remote),
-  ];
-}
-
 export class UnknownRemoteError extends Error {
   constructor(name: string, known: readonly string[]) {
     super(

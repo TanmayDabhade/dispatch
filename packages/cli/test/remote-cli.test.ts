@@ -3,8 +3,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { remoteDestination } from '../src/commands/remote.js';
+import {
+  forwardArgs,
+  parsePortPair,
+  remoteDestination,
+} from '../src/commands/remote.js';
 import type { CliContext } from '../src/context.js';
+import { CliError } from '../src/context.js';
 import { makeProgram } from '../src/program.js';
 
 describe('remoteDestination', () => {
@@ -22,6 +27,60 @@ describe('remoteDestination', () => {
     expect(remoteDestination({ host: 'build-box', user: '' })).toBe(
       'build-box'
     );
+  });
+});
+
+describe('parsePortPair', () => {
+  it('treats a single port as the same on both sides', () => {
+    expect(parsePortPair('5173')).toEqual({
+      localPort: 5173,
+      remotePort: 5173,
+    });
+  });
+
+  it('reads a local:remote pair', () => {
+    expect(parsePortPair('8080:3000')).toEqual({
+      localPort: 8080,
+      remotePort: 3000,
+    });
+  });
+
+  it('tolerates spaces', () => {
+    expect(parsePortPair(' 8080 : 3000 ')).toEqual({
+      localPort: 8080,
+      remotePort: 3000,
+    });
+  });
+
+  it('rejects anything that is not a port', () => {
+    for (const bad of ['', 'http', '0', '-1', '70000', '1:2:3', '1.5']) {
+      expect(() => parsePortPair(bad)).toThrow(CliError);
+    }
+  });
+});
+
+describe('forwardArgs', () => {
+  it('binds only to loopback', () => {
+    // Binding to every interface would quietly publish a forwarded dev server
+    // to whatever network the laptop is on.
+    expect(forwardArgs({ host: 'box' }, 5173, 5173)).toContain(
+      '127.0.0.1:5173:127.0.0.1:5173'
+    );
+  });
+
+  it('runs no remote command', () => {
+    expect(forwardArgs({ host: 'box' }, 1, 2)).toContain('-N');
+  });
+
+  it('passes the port and identity file through', () => {
+    const args = forwardArgs(
+      { host: 'box', port: 2222, identityFile: '/keys/id' },
+      1,
+      2
+    );
+    expect(args).toContain('-p');
+    expect(args).toContain('2222');
+    expect(args).toContain('/keys/id');
   });
 });
 
