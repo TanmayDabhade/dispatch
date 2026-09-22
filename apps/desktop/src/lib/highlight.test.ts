@@ -72,11 +72,9 @@ describe('runsFromPositions', () => {
 
 describe('runsFromNeedle', () => {
   it('marks every occurrence', () => {
-    expect(runsFromNeedle('ababa', 'a')).toEqual([
+    expect(runsFromNeedle('a b a', 'a')).toEqual([
       { text: 'a', hit: true },
-      { text: 'b', hit: false },
-      { text: 'a', hit: true },
-      { text: 'b', hit: false },
+      { text: ' b ', hit: false },
       { text: 'a', hit: true },
     ]);
   });

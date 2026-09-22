@@ -506,7 +506,7 @@ interface ExecutorsResponse {
  * Mirrored here rather than imported for the same reason RunMeta is: the
  * server package is Bun-only and cannot be imported from this CLI.
  */
-export interface BrowserInfo {
+interface BrowserInfo {
   id: string;
   url: string;
   headless: boolean;
@@ -514,7 +514,7 @@ export interface BrowserInfo {
   picking: boolean;
 }
 
-export interface PickedElement {
+interface PickedElement {
   selector: string;
   tagName: string;
   id: string | null;
@@ -534,7 +534,7 @@ export type PickOutcome =
   | { state: 'waiting' };
 
 /** One agent a fan-out tried the work with. */
-export interface FanoutVariantResult {
+interface FanoutVariantResult {
   executor: string;
   model?: string;
   task: TaskDoc;
@@ -543,7 +543,7 @@ export interface FanoutVariantResult {
   error?: string;
 }
 
-export interface FanoutResult {
+interface FanoutResult {
   sourceTaskId: string;
   /** The label every clone carries, so the group stays findable. */
   label: string;

@@ -25,7 +25,7 @@ type FanoutRouteContext = Pick<
   'store' | 'cache' | 'events' | 'orchestrator'
 >;
 
-export interface FanoutResult {
+interface FanoutResult {
   sourceTaskId: string;
   label: string;
   variants: {

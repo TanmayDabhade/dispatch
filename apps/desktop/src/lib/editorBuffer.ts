@@ -9,7 +9,7 @@
  * holds exactly that.
  */
 
-export type BufferStatus = 'clean' | 'dirty' | 'saving' | 'error';
+type BufferStatus = 'clean' | 'dirty' | 'saving' | 'error';
 
 export interface EditorBuffer {
   path: string;

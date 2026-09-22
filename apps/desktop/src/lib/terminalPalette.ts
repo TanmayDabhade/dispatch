@@ -42,7 +42,7 @@ function hex(r: number, g: number, b: number): string {
  * A palette index as a CSS colour.
  *
  * Indices split three ways: 0–15 named, 16–231 the colour cube, 232–255 a
- * 24-step greyscale ramp. An index outside 0–255 falls back to the default
+ * 24-step grayscale ramp. An index outside 0–255 falls back to the default
  * foreground rather than throwing — a malformed SGR should not break a render.
  */
 export function paletteColor(index: number): string | null {

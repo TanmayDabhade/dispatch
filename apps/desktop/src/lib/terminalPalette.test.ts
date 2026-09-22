@@ -20,7 +20,7 @@ describe('paletteColor', () => {
     expect(paletteColor(231)).toBe('#ffffff');
   });
 
-  it('walks the greyscale ramp in even steps', () => {
+  it('walks the grayscale ramp in even steps', () => {
     expect(paletteColor(232)).toBe('#080808');
     expect(paletteColor(233)).toBe('#121212');
     expect(paletteColor(255)).toBe('#eeeeee');

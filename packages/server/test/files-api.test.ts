@@ -305,7 +305,7 @@ describe('path traversal', () => {
 
 describe('GET /api/files/search', () => {
   it('ranks a name match first', async () => {
-    const body = await json(await apiFetch('/api/files/search?q=boardview'));
+    const body = await json(await apiFetch('/api/files/search?q=boardView'));
     expect(body.results[0]?.path).toBe('src/BoardView.tsx');
   });
 

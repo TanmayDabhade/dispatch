@@ -40,13 +40,13 @@ describe('fuzzyMatch', () => {
 
   it('scores word-boundary hits above mid-word ones', () => {
     const boundaries = fuzzyMatch('bv', 'board/view.ts');
-    const midWord = fuzzyMatch('bv', 'abcbvxyz.ts');
+    const midWord = fuzzyMatch('bv', 'obvious.ts');
     expect((boundaries?.score ?? 0) > (midWord?.score ?? 0)).toBe(true);
   });
 
   it('treats a camelCase hump as a boundary', () => {
     const camel = fuzzyMatch('bv', 'BoardView.tsx');
-    const flat = fuzzyMatch('bv', 'xbxvxxxxx.tsx');
+    const flat = fuzzyMatch('bv', 'obvious.tsx');
     expect((camel?.score ?? 0) > (flat?.score ?? 0)).toBe(true);
   });
 });

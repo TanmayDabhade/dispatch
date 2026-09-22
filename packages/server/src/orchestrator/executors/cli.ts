@@ -34,7 +34,7 @@ const PROMPT_TOKEN = '{prompt}';
 const MODEL_TOKEN = '{model}';
 const PLACEHOLDER = /\{prompt\}|\{model\}/g;
 
-export interface CliSpawnResult {
+interface CliSpawnResult {
   readonly stdout: ReadableStream<Uint8Array>;
   readonly stderr: ReadableStream<Uint8Array>;
   readonly exited: Promise<number>;
@@ -43,7 +43,7 @@ export interface CliSpawnResult {
   kill(): void;
 }
 
-export interface CliSpawnOptions {
+interface CliSpawnOptions {
   command: string[];
   cwd: string;
   env: Record<string, string>;

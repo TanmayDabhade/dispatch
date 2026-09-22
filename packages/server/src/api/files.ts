@@ -37,7 +37,7 @@ type FileRouteContext = Pick<ApiContext, 'rootDir'>;
 // Past this a file is not opened in the editor. Two megabytes is far more than
 // any source file and far less than the point where holding it as a string in
 // the renderer becomes a problem.
-export const MAX_EDITABLE_BYTES = 2 * 1024 * 1024;
+const MAX_EDITABLE_BYTES = 2 * 1024 * 1024;
 
 // How much of a file is sniffed for a NUL byte. A text file has none anywhere;
 // a binary almost always has one early, and reading the whole thing to be sure
@@ -81,14 +81,14 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   '.md': 'text/markdown',
 };
 
-export function mimeForPath(path: string): string {
+function mimeForPath(path: string): string {
   return (
     MIME_BY_EXTENSION[extname(path).toLowerCase()] ?? 'application/octet-stream'
   );
 }
 
 /** What the preview pane should do with a file, decided by extension. */
-export function previewKindForPath(
+function previewKindForPath(
   path: string
 ): 'image' | 'pdf' | 'video' | 'audio' | 'none' {
   const mime = mimeForPath(path);
@@ -100,13 +100,13 @@ export function previewKindForPath(
 }
 
 /** A NUL byte in the first few kilobytes is the usual binary tell. */
-export function looksBinary(bytes: Uint8Array): boolean {
+function looksBinary(bytes: Uint8Array): boolean {
   const limit = Math.min(bytes.length, SNIFF_BYTES);
   for (let i = 0; i < limit; i++) if (bytes[i] === 0) return true;
   return false;
 }
 
-export interface DirEntry {
+interface DirEntry {
   name: string;
   /** Relative to the scope's base, so a client never handles absolute paths. */
   path: string;

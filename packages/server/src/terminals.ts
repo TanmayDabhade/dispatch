@@ -21,7 +21,7 @@ import { terminalScrollbackPath, terminalsDir } from './orchestrator/paths.js';
  *   - The child runs under a real pty (Bun's native one, see
  *     `defaultSpawner`), so a prompt, colour, and any curses program behave
  *     the way they do in a terminal emulator rather than the line-buffered,
- *     colourless way they behave behind a pipe.
+ *     colorless way they behave behind a pipe.
  *   - Scrollback is kept on disk, so closing the app — or restarting the
  *     daemon — does not lose what a session printed. A reader resumes from a
  *     byte cursor rather than a message index, which means a client that was
@@ -31,7 +31,7 @@ import { terminalScrollbackPath, terminalsDir } from './orchestrator/paths.js';
 // How much output one session keeps. Past this the oldest bytes are dropped;
 // `trimmed` below tells a reader how much it can never see, so a cursor that
 // has fallen behind is corrected rather than silently serving a gap.
-export const SCROLLBACK_MAX_BYTES = 2 * 1024 * 1024;
+const SCROLLBACK_MAX_BYTES = 2 * 1024 * 1024;
 
 // Written to disk at most this often while a session is chatty. A session that
 // exits, or a daemon that shuts down cleanly, flushes immediately regardless.
@@ -48,7 +48,7 @@ const DEFAULT_ROWS = 32;
  * itself. Its output is still readable, but nothing is on the other end of its
  * stdin, so `write` on it fails rather than appearing to work.
  */
-export type TerminalState = 'running' | 'exited' | 'orphaned';
+type TerminalState = 'running' | 'exited' | 'orphaned';
 
 export interface TerminalInfo {
   id: string;

@@ -71,9 +71,9 @@ describe('defaultWorktreePath', () => {
   it('puts a worktree beside the repo, not inside it', () => {
     // Nested in its own repo, a worktree shows up as untracked content in
     // every `git status` and is easy to commit by accident.
-    const path = defaultWorktreePath('/work/myrepo', 'feature');
-    expect(path).toBe(resolve('/work/myrepo-feature'));
-    expect(path.startsWith('/work/myrepo/')).toBe(false);
+    const path = defaultWorktreePath('/work/app', 'feature');
+    expect(path).toBe(resolve('/work/app-feature'));
+    expect(path.startsWith('/work/app/')).toBe(false);
   });
 
   it('flattens a branch name that is not filesystem-safe', () => {

@@ -28,7 +28,7 @@ describe('pollForPick', () => {
   it('returns as soon as something is picked', async () => {
     const picked: PickOutcome = {
       state: 'picked',
-      screenshot: 'iVBOR',
+      screenshot: 'AAAA',
       element: {
         selector: '#title',
         tagName: 'h1',

@@ -19,7 +19,7 @@ export interface PaneNode {
   terminalId: string | null;
 }
 
-export interface SplitNode {
+interface SplitNode {
   kind: 'split';
   id: string;
   /** `row` puts children side by side; `column` stacks them. */

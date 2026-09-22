@@ -152,7 +152,7 @@ describe('buildPickerScript', () => {
     expect(script).toContain('preventDefault');
   });
 
-  it('keeps its own overlay unpickable', () => {
+  it('keeps its own overlay out of the way of a pick', () => {
     expect(buildPickerScript()).toContain('pointer-events:none');
   });
 });

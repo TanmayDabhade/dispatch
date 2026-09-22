@@ -158,7 +158,7 @@ describe('variantTaskInput', () => {
     expect(input.labels).toEqual(['bug', 'fanout:t-1']);
   });
 
-  it('never sets derivedFrom, which would make the clone undispatchable', () => {
+  it('never sets derivedFrom, which would stop the clone being dispatched', () => {
     // `derivedFrom` marks a body as text from outside the repo, and the
     // orchestrator refuses to execute anything carrying it. A clone's body is
     // the user's own task; the label is what ties it back to the source.

@@ -23,7 +23,7 @@
 export const PICK_RESULT_GLOBAL = '__dispatchPick';
 
 /** Set while a pick is armed, so re-arming twice is a no-op. */
-export const PICK_ACTIVE_GLOBAL = '__dispatchPickActive';
+const PICK_ACTIVE_GLOBAL = '__dispatchPickActive';
 
 /**
  * The computed properties captured for a picked element.
@@ -60,7 +60,7 @@ export const CAPTURED_STYLE_PROPERTIES = [
 ] as const;
 
 /** How much of an element's markup is kept, so one huge node cannot flood a prompt. */
-export const MAX_OUTER_HTML_CHARS = 20_000;
+const MAX_OUTER_HTML_CHARS = 20_000;
 
 export function buildPickerScript(): string {
   const props = JSON.stringify(CAPTURED_STYLE_PROPERTIES);

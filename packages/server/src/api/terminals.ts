@@ -37,7 +37,7 @@ const MAX_READ_BYTES = 256 * 1024;
  * stray `..` does not silently open a terminal in someone's home directory
  * under a project's name.
  */
-export function resolveTerminalCwd(
+function resolveTerminalCwd(
   rootDir: string,
   spec: { runId?: unknown; cwd?: unknown }
 ):

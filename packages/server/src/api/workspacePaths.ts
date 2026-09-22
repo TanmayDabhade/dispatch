@@ -13,7 +13,7 @@ import { worktreePath } from '../orchestrator/paths.js';
  * guard is written — and reviewed — once.
  */
 
-export interface WorkspaceTarget {
+interface WorkspaceTarget {
   /** The absolute resolved path. */
   path: string;
   /** The directory it was resolved against: the repo, or a run's worktree. */

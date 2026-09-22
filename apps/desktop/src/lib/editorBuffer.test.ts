@@ -97,7 +97,7 @@ describe('editorBuffer', () => {
   it('stays in the saving state while the user types', () => {
     // The status must not flicker dirty/saving on every keystroke.
     let buffer = beginSave(editBuffer(openBuffer('a.ts', 'one'), 'two'));
-    buffer = editBuffer(buffer, 'twoo');
+    buffer = editBuffer(buffer, 'two!');
     expect(buffer.status).toBe('saving');
   });
 });

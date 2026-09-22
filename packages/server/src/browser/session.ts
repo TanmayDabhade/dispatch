@@ -35,7 +35,7 @@ export interface LaunchOptions {
   extraArgs?: string[];
 }
 
-export interface PickedElement {
+interface PickedElement {
   selector: string;
   tagName: string;
   id: string | null;
@@ -285,7 +285,7 @@ export class BrowserSession {
   /**
    * Clicks the first element matching `selector`.
    *
-   * Through the element's own `click()` rather than synthesised mouse events
+   * Through the element's own `click()` rather than synthesized mouse events
    * at coordinates: a scripted click should not depend on the element being
    * scrolled into view, and coordinates go stale the moment the page reflows.
    */

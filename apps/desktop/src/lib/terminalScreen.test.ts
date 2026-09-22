@@ -68,8 +68,8 @@ describe('TerminalScreen text handling', () => {
     const screen = new TerminalScreen();
     // A real terminal does not clear on \r, so the longer previous frame shows
     // through. This is why programs emit an erase-to-end with it.
-    screen.write('abcdef\rxy');
-    expect(screenText(screen)).toBe('xycdef');
+    screen.write('123456\r78');
+    expect(screenText(screen)).toBe('783456');
   });
 
   it('clears the rest of the line when asked to', () => {
@@ -100,20 +100,20 @@ describe('TerminalScreen text handling', () => {
 describe('TerminalScreen escape handling', () => {
   it('never prints an escape sequence it understands', () => {
     const screen = new TerminalScreen();
-    screen.write('\x1b[32mgreen\x1b[0m');
+    screen.write('\x1b[32m' + 'green' + '\x1b[0m');
     expect(screenText(screen)).toBe('green');
   });
 
   it('never prints one it does not understand either', () => {
     const screen = new TerminalScreen();
     // Mouse tracking, a device query and a scroll region: all consumed.
-    screen.write('\x1b[?1000h\x1b[6n\x1b[1;10rvisible');
+    screen.write('\x1b[?1000h\x1b[6n\x1b[1;10r' + 'visible');
     expect(screenText(screen)).toBe('visible');
   });
 
   it('carries style onto the cells it covers', () => {
     const screen = new TerminalScreen();
-    screen.write('\x1b[1;31mred\x1b[0m plain');
+    screen.write('\x1b[1;31m' + 'red' + '\x1b[0m plain');
     const [line] = screen.toSpans();
     expect(line?.[0]?.text).toBe('red');
     expect(line?.[0]?.style.fg).toBe(1);
@@ -127,7 +127,7 @@ describe('TerminalScreen escape handling', () => {
     // The chunking case: output arrives in arbitrary slices, and a cut through
     // the middle of an escape must not print its tail as text.
     screen.write('\x1b[3');
-    screen.write('2mgreen');
+    screen.write('2m' + 'green');
     expect(screenText(screen)).toBe('green');
     expect(screen.toSpans()[0]?.[0]?.style.fg).toBe(2);
   });
@@ -146,7 +146,7 @@ describe('TerminalScreen escape handling', () => {
 
   it('clears the screen', () => {
     const screen = new TerminalScreen(20, 5);
-    screen.write('old output\n\x1b[2Jfresh');
+    screen.write('old output\n\x1b[2J' + 'fresh');
     expect(screenText(screen)).toBe('fresh');
   });
 
@@ -159,8 +159,8 @@ describe('TerminalScreen escape handling', () => {
 
   it('deletes and inserts characters in place', () => {
     const screen = new TerminalScreen();
-    screen.write('abcdef\x1b[1G\x1b[2P');
-    expect(screenText(screen)).toBe('cdef');
+    screen.write('123456\x1b[1G\x1b[2P');
+    expect(screenText(screen)).toBe('3456');
 
     const other = new TerminalScreen();
     other.write('abc\x1b[1G\x1b[2@');
@@ -176,7 +176,7 @@ describe('TerminalScreen escape handling', () => {
 
   it('does not let an unterminated OSC swallow the output', () => {
     const screen = new TerminalScreen();
-    screen.write('\x1b]0;untermin\x1b[0mstill here');
+    screen.write('\x1b]0;title' + '\x1b[0m' + 'still here');
     expect(screenText(screen)).toBe('still here');
   });
 
@@ -229,7 +229,7 @@ describe('TerminalScreen bookkeeping', () => {
 
   it('merges adjacent cells that share a style', () => {
     const screen = new TerminalScreen();
-    screen.write('\x1b[31maaa\x1b[32mbbb');
+    screen.write('\x1b[31m' + 'aaa' + '\x1b[32m' + 'bbb');
     const [line] = screen.toSpans();
     expect(line?.length).toBe(2);
     expect(line?.[0]?.text).toBe('aaa');
