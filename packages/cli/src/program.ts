@@ -26,6 +26,7 @@ import { registerMergeTeamCommand } from './commands/mergeTeam.js';
 import { registerMigrateCommand } from './commands/migrate.js';
 import { registerOrchestrateCommands } from './commands/orchestrate.js';
 import { registerPlanCommands } from './commands/plan.js';
+import { registerRemoteCommands } from './commands/remote.js';
 import { registerScopeCommands } from './commands/scope.js';
 import { registerTaskCommands } from './commands/task.js';
 import { registerWorktreeCommands } from './commands/worktree.js';
@@ -221,6 +222,7 @@ export function makeProgram(ctx: CliContext): Command {
   registerScopeCommands(program, ctx);
   registerBrowserCommands(program, ctx);
   registerFanoutCommand(program, ctx);
+  registerRemoteCommands(program, ctx);
   registerWorktreeCommands(program, ctx);
   registerMigrateCommand(program, ctx);
 
