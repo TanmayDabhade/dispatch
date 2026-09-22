@@ -112,6 +112,73 @@ database yet, so the daemon still writes them as ordinary files and the receipt
 log does not carry them. On the database backend they are gitignored rather than
 committed.
 
+## Working in the app
+
+Beyond the board and review, the app carries the surfaces you would otherwise
+leave it for.
+
+**Terminals.** Shells on the repo or on a run's worktree, split any number of
+ways. The child runs under a real pty, so prompts, colour and full-screen
+programs behave normally, and scrollback is kept on disk — closing the window,
+or restarting `dispatchd`, does not lose what a session printed. A session the
+daemon inherits from a previous process comes back readable but not writable.
+
+**Files.** Browse and edit a checkout — the project's, or one run's worktree —
+with an editor that saves as you type and previews for Markdown, images, PDFs,
+audio and video. `⌘P` is fuzzy quick open across everything `git ls-files`
+knows about, so build output and dependencies stay out of the results.
+
+**Design.** Open your app in a browser Dispatch drives, click the element that
+is wrong, and get its selector, markup, computed styles and a cropped
+screenshot as text to hand an agent. Needs Chrome or Chromium on the machine;
+set `CHROME_PATH` if it is somewhere unusual.
+
+    dispatch browser open http://localhost:5173
+    dispatch browser pick <id> --out element.png
+    dispatch browser snapshot <id> --out page.png
+
+**Worktrees and remotes.**
+
+    dispatch worktree create feature/login
+    dispatch worktree list --json
+    dispatch remote list
+    dispatch remote exec build-box -- pnpm test
+
+Remotes are declared in `.dispatch/config.yml`; everything else about the
+connection comes from your own `~/.ssh/config`:
+
+    remotes:
+      build-box:
+        host: build-box
+        path: /srv/repo
+
+Terminals can be opened on a remote. Agent runs cannot — the orchestrator works
+in local worktree paths throughout.
+
+## Running more than one agent
+
+Dispatch ships native executors for Claude and Codex. Any other coding agent
+that takes a prompt on the command line can be declared and dispatched:
+
+    executors:
+      gemini:
+        command:
+          run: [gemini, '-p', '{prompt}']
+
+`{prompt}` and `{model}` are substituted before the process starts; an argv
+with no `{prompt}` gets the prompt on stdin instead. Well-known agents already
+on your `PATH` are offered without any config at all. A CLI agent has no
+approval protocol, so runs on one are refused under permission modes that imply
+a human gate, and neither cost nor turns are reported.
+
+To try the same work several ways at once:
+
+    dispatch fanout <taskId> --executors claude,codex,gemini
+
+Each agent gets its own clone of the task, its own worktree and its own branch,
+so comparing them is the review you already do — one diff each — and merging
+the winner is merging that task.
+
 ## MCP server
 
 `dispatch init` registers a stdio MCP server in the project's `.mcp.json`
