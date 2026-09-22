@@ -30,7 +30,7 @@ import {
   mintDaemonTokens,
   rejectUnauthorized,
 } from './api.js';
-import type { ApiContext, DaemonTokens } from './api.js';
+import type { ApiContext, DaemonTokenPair, DaemonTokens } from './api.js';
 import { spawnGitSync } from './blockingGit.js';
 import { BrowserRegistry } from './browser/registry.js';
 import { TaskCache } from './cache.js';
@@ -52,6 +52,7 @@ import { FindingStore } from './findings.js';
 import type { FindingStorePort } from './findings.js';
 import { floorCheckForToolInput } from './floor.js';
 import { GitRepo } from './git/commands.js';
+import { TokenRegistry } from './identity.js';
 import { InboxStore } from './inbox.js';
 import type { InboxClusterer } from './inboxClusterer.js';
 import { createJudgmentClient } from './judgments/client.js';
@@ -221,7 +222,7 @@ export interface StartServerOptions {
   inboxClusterer?: InboxClusterer;
   // Fixed tokens instead of freshly minted ones, so a test can present a known
   // value. Production never passes this.
-  tokens?: DaemonTokens;
+  tokens?: DaemonTokenPair;
   // Debounce for the board syncer's response to a local task-file change.
   // Defaults to BoardSyncScheduler's own multi-second default; tests pass
   // something much shorter.
@@ -715,7 +716,6 @@ async function bootServer(
   const webDistDir =
     opts.webDistDir === undefined ? DEFAULT_WEB_DIST_DIR : opts.webDistDir;
   const shouldWriteDaemonFile = opts.writeDaemonFile ?? true;
-  const tokens = opts.tokens ?? mintDaemonTokens();
   // One timestamp for both places that name this process: the daemon file
   // and GET /api/health.
   const startedAt = new Date().toISOString();
@@ -724,6 +724,16 @@ async function bootServer(
   // store, so a teammate is registered on the roster ahead of any task edit
   // this process might make.
   const actorContext = ActorContext.resolve(rootDir, makeGitReader(rootDir));
+
+  // Credentials, once there is someone for them to speak for. The pair may be
+  // supplied (a harness presetting the decide-tier token); the registry is
+  // built from whichever pair is actually in use, so a preset token is
+  // attributed rather than resolving to nobody.
+  const tokenPair = opts.tokens ?? mintDaemonTokens();
+  const tokens: DaemonTokens = {
+    ...tokenPair,
+    registry: new TokenRegistry(tokenPair, actorContext.member.handle),
+  };
 
   // The one handle on this project's state for the life of the daemon. Every
   // read and write below goes through `stores.tasks`, which is a

@@ -23,7 +23,7 @@ import type {
   VerifyConfig,
 } from '@dispatch/core';
 import type { ActorContext, TaskDoc, TaskStorePort } from '@dispatch/core';
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
 import type { AiTaskFilterPort } from './aiTaskFilter.js';
@@ -118,6 +118,7 @@ import type { GitOutcome } from './git/commands.js';
 import { GitRepo } from './git/commands.js';
 import { CommitMessageGenerator } from './git/commitMessage.js';
 import type { GitBranch } from './git/parse.js';
+import type { TokenIdentity, TokenRegistry } from './identity.js';
 import type { InboxKind } from './inbox.js';
 import { INBOX_KINDS, type InboxStore } from './inbox.js';
 import {
@@ -4129,15 +4130,27 @@ function rejectUntrustedOrigin(req: Request): Response | null {
  * emitted once on stdout and never persisted, so there is no file to read it
  * out of.
  */
-export interface DaemonTokens {
+export interface DaemonTokenPair {
   agentToken: string;
   appToken: string;
+}
+
+/**
+ * The pair plus the registry that says who each credential speaks for.
+ *
+ * Minting stays dumb — it makes two random strings and knows nothing about
+ * people — and the registry is assembled in `bootServer`, which is where the
+ * operator's identity is resolved. That split is why a caller may preset one
+ * token (the Playwright harness does) without the registry going stale.
+ */
+export interface DaemonTokens extends DaemonTokenPair {
+  registry: TokenRegistry;
 }
 
 /** `request` covers everything the daemon does; `decide` adds adjudication. */
 export type AuthTier = 'request' | 'decide';
 
-export function mintDaemonTokens(): DaemonTokens {
+export function mintDaemonTokens(): DaemonTokenPair {
   return {
     agentToken: randomBytes(32).toString('hex'),
     appToken: randomBytes(32).toString('hex'),
@@ -4241,22 +4254,15 @@ function requiredTier(
   return 'request';
 }
 
-// Length-independent comparison, so a mismatch never leaks where it diverged.
-function tokenMatches(presented: string, expected: string): boolean {
-  const a = Buffer.from(presented, 'utf8');
-  const b = Buffer.from(expected, 'utf8');
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
-// Highest tier the presented token grants, or null if it matches neither.
-function grantedTier(
+// Who the presented token speaks for, or null if it matches nothing. The
+// comparison itself moved to TokenRegistry (see identity.ts), which is now the
+// one place a credential is checked — the tiers it returns for the built-in
+// pair are exactly what this function returned before.
+function resolveCaller(
   presented: string | null,
   tokens: DaemonTokens
-): AuthTier | null {
-  if (presented === null) return null;
-  if (tokenMatches(presented, tokens.appToken)) return 'decide';
-  if (tokenMatches(presented, tokens.agentToken)) return 'request';
-  return null;
+): TokenIdentity | null {
+  return tokens.registry.resolve(presented);
 }
 
 /** The bearer token on a request, or null when the header is absent or malformed. */
@@ -4306,11 +4312,11 @@ export function rejectUnauthorized(
   if (presented === null) {
     return authErrorResponse(401, MISSING_TOKEN_MESSAGE, 'auth_missing_token');
   }
-  const granted = grantedTier(presented, tokens);
-  if (granted === null) {
+  const caller = resolveCaller(presented, tokens);
+  if (caller === null) {
     return authErrorResponse(401, INVALID_TOKEN_MESSAGE, 'auth_invalid_token');
   }
-  if (required === 'decide' && granted !== 'decide') {
+  if (required === 'decide' && caller.tier !== 'decide') {
     return authErrorResponse(403, WRONG_TIER_MESSAGE, 'auth_insufficient_tier');
   }
   return null;
@@ -4377,6 +4383,20 @@ export async function handleApi(
         models: loadConfig(ctx.rootDir).models,
         watchdog: ctx.watchdogStatus(),
       });
+    }
+
+    // GET /api/whoami — who the presented credential speaks for. The one
+    // endpoint that exists purely because tokens now name people: presence,
+    // claims and attribution all need a caller to be identifiable before they
+    // can mean anything, and this is how a client checks that it is.
+    if (segments[0] === 'whoami' && segments.length === 1 && method === 'GET') {
+      const caller = ctx.tokens.registry.resolve(bearerToken(req));
+      // requiredTier already rejected an unusable credential, so a null here
+      // would be a bug rather than an unauthenticated caller.
+      if (caller === null) {
+        return errorResponse(401, 'credential resolves to no one');
+      }
+      return jsonResponse(caller);
     }
 
     if (segments[0] === 'config' && segments.length === 1 && method === 'GET') {
