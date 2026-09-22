@@ -34,7 +34,7 @@ export function OverseerView({ data, overseer }: OverseerViewProps) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader
-        crumb={['Overseer']}
+        crumb={['Assistant']}
         actions={
           !daemonDown && overseer.conversationId !== null ? (
             // reset() drops the only UI handle on the conversation, so a queued

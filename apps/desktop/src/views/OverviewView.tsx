@@ -190,7 +190,7 @@ export function OverviewView({
           ...(projectName !== undefined && projectName !== null
             ? [projectName]
             : []),
-          'Control room',
+          'Overview',
         ]}
         tabs={
           <ControlRibbon

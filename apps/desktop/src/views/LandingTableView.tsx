@@ -173,7 +173,7 @@ export function LandingTableView({
           ...(projectName !== undefined && projectName !== null
             ? [projectName]
             : []),
-          'Landing',
+          'Merge queue',
         ]}
         actions={
           // react-query keeps the last snapshot on a failed refetch — this

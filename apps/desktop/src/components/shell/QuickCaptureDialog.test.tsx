@@ -57,14 +57,12 @@ function openPanel() {
 test('the dialog stays closed until opened, and there is no floating button', () => {
   mount();
   expect(screen.queryByRole('dialog')).toBeNull();
-  expect(
-    screen.queryByRole('button', { name: 'Add to Brain dump' })
-  ).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Add to Notes' })).toBeNull();
   openPanel();
   expect(screen.getByRole('dialog')).not.toBeNull();
   // The 12px crumb names where the thought goes.
   const crumb = document.querySelector('[data-slot="dialog-chrome"]');
-  expect(crumb?.textContent).toContain('Brain dump');
+  expect(crumb?.textContent).toContain('Notes');
   expect(crumb?.textContent).toContain('Quick capture');
 });
 
@@ -135,11 +133,11 @@ test('the Drop it button is disabled while the draft is blank', () => {
   ).toBe(true);
 });
 
-test('Open Brain dump navigates and closes the dialog', () => {
+test('Open Notes navigates and closes the dialog', () => {
   let opened = 0;
   mount({ onOpenBrainDump: () => opened++ });
   openPanel();
-  fireEvent.click(screen.getByRole('button', { name: 'Open Brain dump' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Open Notes' }));
   expect(opened).toBe(1);
   expect(screen.queryByRole('dialog')).toBeNull();
 });

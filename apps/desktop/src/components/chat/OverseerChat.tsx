@@ -61,7 +61,7 @@ function OverseerMessageBubble({
       )}
     >
       <div className="text-muted-foreground flex items-baseline gap-1.5 text-[12px] font-medium">
-        {fromUser ? 'You' : 'Overseer'}
+        {fromUser ? 'You' : 'Assistant'}
         <span className="font-book">{formatRelativeTimeFromIso(at)}</span>
       </div>
       {fromUser ? (

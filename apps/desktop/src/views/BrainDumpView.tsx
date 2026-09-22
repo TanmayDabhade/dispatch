@@ -127,7 +127,7 @@ export function BrainDumpView({
   if (data.portLoading || data.portError || data.client === null) {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <PageHeader crumb={['Brain dump']} />
+        <PageHeader crumb={['Notes']} />
         <div className="px-6 py-4">
           <DaemonUnavailable
             starting={data.portLoading}
@@ -303,7 +303,7 @@ export function BrainDumpView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <PageHeader crumb={['Brain dump']} actions={<ExplainerPopover />} />
+      <PageHeader crumb={['Notes']} actions={<ExplainerPopover />} />
 
       <div
         className="min-h-0 flex-1 overflow-y-auto px-6 py-4"

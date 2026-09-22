@@ -79,7 +79,7 @@ test('the header crumb, state pills and tinted group headers over 36px rows', ()
 
   const header = container.querySelector('[data-slot="page-header"]');
   expect(header?.textContent).toContain('dispatch');
-  expect(header?.textContent).toContain('Control room');
+  expect(header?.textContent).toContain('Overview');
 
   // The ribbon is a row of view-tab pills with the count as plain text — no uppercase,
   // no mono.
