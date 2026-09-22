@@ -91,6 +91,7 @@ import { BoardView } from './views/BoardView';
 import { BrainDumpView } from './views/BrainDumpView';
 import { BranchesView } from './views/BranchesView';
 import { DraftView } from './views/DraftView';
+import { FilesView } from './views/FilesView';
 import { GalleryView } from './views/GalleryView';
 import { GetStartedView } from './views/GetStartedView';
 import { ImpactView } from './views/ImpactView';
@@ -1306,6 +1307,9 @@ function App() {
                                     dispatchNav({ type: 'openImpact', subject })
                                   }
                                 />
+                              )}
+                              {navState.projectView === 'files' && (
+                                <FilesView data={data} />
                               )}
                               {navState.projectView === 'terminals' && (
                                 <TerminalsView data={data} />

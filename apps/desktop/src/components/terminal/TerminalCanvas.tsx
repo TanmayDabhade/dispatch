@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react';
 
+import { runsFromNeedle } from '../../lib/highlight';
 import { cellColor } from '../../lib/terminalPalette';
 import type {
   CellStyle,
@@ -59,43 +60,21 @@ interface TerminalCanvasProps {
   follow: boolean;
 }
 
-// Splits one span around every case-insensitive match, so the highlight can be
-// wrapped without disturbing the span's own styling.
-function highlightParts(
-  text: string,
-  needle: string
-): { text: string; hit: boolean }[] {
-  if (needle === '') return [{ text, hit: false }];
-  const parts: { text: string; hit: boolean }[] = [];
-  const haystack = text.toLowerCase();
-  const lower = needle.toLowerCase();
-  let from = 0;
-  for (;;) {
-    const at = haystack.indexOf(lower, from);
-    if (at === -1) break;
-    if (at > from) parts.push({ text: text.slice(from, at), hit: false });
-    parts.push({ text: text.slice(at, at + needle.length), hit: true });
-    from = at + needle.length;
-  }
-  if (from < text.length) parts.push({ text: text.slice(from), hit: false });
-  return parts;
-}
-
 function SpanRun({ span, search }: { span: StyledSpan; search: string }) {
   const css = styleToCss(span.style);
   if (search === '') return <span style={css}>{span.text}</span>;
   return (
     <span style={css}>
-      {highlightParts(span.text, search).map((part, index) =>
-        part.hit ? (
+      {runsFromNeedle(span.text, search).map((run, index) =>
+        run.hit ? (
           <mark
             key={index}
             className="rounded-[2px] bg-amber-300/70 text-black dark:bg-amber-400/70"
           >
-            {part.text}
+            {run.text}
           </mark>
         ) : (
-          <span key={index}>{part.text}</span>
+          <span key={index}>{run.text}</span>
         )
       )}
     </span>
