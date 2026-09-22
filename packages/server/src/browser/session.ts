@@ -54,24 +54,30 @@ export type PickOutcome =
   | { state: 'cancelled' }
   | { state: 'waiting' };
 
-// Where Chromium is on each platform, in the order a person is likely to have
-// them. `CHROME_PATH` wins over all of it, which is both the documented escape
+// Where a Chromium-based browser is on each platform, in the order a person is
+// likely to have them. Any of them speaks the DevTools protocol this drives. `CHROME_PATH` wins over all of it, which is both the documented escape
 // hatch and what lets a test point at a downloaded build.
 const CHROME_CANDIDATES: Record<string, string[]> = {
   darwin: [
     '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
     '/Applications/Chromium.app/Contents/MacOS/Chromium',
     '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+    '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
   ],
   linux: [
     '/usr/bin/google-chrome',
     '/usr/bin/chromium',
     '/usr/bin/chromium-browser',
     '/snap/bin/chromium',
+    '/usr/bin/microsoft-edge',
+    '/usr/bin/brave-browser',
+    '/snap/bin/brave',
   ],
   win32: [
     'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
     'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+    'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
   ],
 };
 
@@ -95,6 +101,8 @@ export function findChrome(
     'chromium',
     'chromium-browser',
     'chrome',
+    'microsoft-edge',
+    'brave-browser',
   ]) {
     const found = which(name);
     if (found !== null) return found;

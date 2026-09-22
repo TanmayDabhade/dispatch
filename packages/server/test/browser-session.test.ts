@@ -89,6 +89,26 @@ describe('findChrome', () => {
   });
 });
 
+describe('findChrome with only Brave installed', () => {
+  it('finds it, since Brave is Chromium underneath', () => {
+    const original = process.env.CHROME_PATH;
+    delete process.env.CHROME_PATH;
+    const brave =
+      '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser';
+    try {
+      expect(
+        findChrome(
+          'darwin',
+          (path) => path === brave,
+          () => null
+        )
+      ).toBe(brave);
+    } finally {
+      if (original !== undefined) process.env.CHROME_PATH = original;
+    }
+  });
+});
+
 describe('envChromeArgs', () => {
   it('is empty when blank', () => {
     expect(envChromeArgs('')).toEqual([]);

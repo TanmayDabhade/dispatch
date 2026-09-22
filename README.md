@@ -130,8 +130,8 @@ about, so build output and dependencies stay out of the results.
 
 **Design.** Open your app in a browser Dispatch drives, click the element that
 is wrong, and get its selector, markup, computed styles and a cropped screenshot
-as text to hand an agent. Needs Chrome or Chromium on the machine; set
-`CHROME_PATH` if it is somewhere unusual.
+as text to hand an agent. Needs a Chromium-based browser (Chrome, Chromium, Edge
+or Brave) on the machine; set `CHROME_PATH` if it is somewhere unusual.
 
     dispatch browser open http://localhost:5173
     dispatch browser pick <id> --out element.png
