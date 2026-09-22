@@ -2,7 +2,7 @@ import type { PresenceEntry } from '@dispatch/client';
 import { render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
-import { initialsFor, PresenceStack, presenceLine } from './PresenceStack';
+import { initialsFor, presenceLine, PresenceStack } from './PresenceStack';
 import { TooltipProvider } from '@/ui/tooltip';
 
 const person = (

@@ -234,8 +234,11 @@ start work on files someone else's live run has claimed.
 
 Tokens are stored only as hashes, outside the repo, and are shown once — lose
 one and issue a new one, which replaces it. A new teammate gets the `request`
-tier (drive the board, dispatch, review) until you grant `decide`. Every `team`
-command needs the daemon's app token (`--token` or `DISPATCH_APP_TOKEN`).
+tier (drive the board, dispatch, review) until you grant `decide`. Grant it only
+to someone you would hand a shell on this machine: besides approvals and merges,
+`decide` opens terminals, drives the browser and writes files directly, all as
+you. Every `team` command needs the daemon's app token (`--token` or
+`DISPATCH_APP_TOKEN`).
 
 What changes when the daemon is shared, and why:
 

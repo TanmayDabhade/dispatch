@@ -1665,6 +1665,7 @@ export function useDispatchProject(
     configQueryKey,
     readyQueryKey,
     runsQueryKey,
+    presenceQueryKey,
     notesQueryKey,
     draftsQueryKey,
     agentSessionsQueryKey,

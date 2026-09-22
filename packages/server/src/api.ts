@@ -35,7 +35,6 @@ import {
   removeTaskAttachment,
   uploadTaskAttachments,
 } from './api/attachments.js';
-import { humanActor } from './api/caller.js';
 import {
   clickInBrowser,
   closeBrowser,
@@ -48,6 +47,7 @@ import {
   screenshotBrowser,
   startBrowserPick,
 } from './api/browser.js';
+import { humanActor } from './api/caller.js';
 import { fanoutTask } from './api/fanout.js';
 import {
   listDirectory,

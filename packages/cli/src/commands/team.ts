@@ -38,7 +38,10 @@ export function registerTeamCommands(program: Command, ctx: CliContext): void {
       'Issue a teammate a token (adds them to team.yml when given an email)'
     )
     .option('--name <displayName>', 'display name for a new roster entry')
-    .option('--decide', 'grant the decide tier (approvals, scope, merges)')
+    .option(
+      '--decide',
+      'grant the decide tier: approvals, merges, and terminals, browser and file writes on this machine'
+    )
     .option('--token <token>', 'the daemon app token (or DISPATCH_APP_TOKEN)')
     .option('--json')
     .action(

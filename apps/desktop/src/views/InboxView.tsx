@@ -34,7 +34,6 @@ import {
   filterInboxItems,
   groupInboxItems,
   INBOX_FILTER_LABEL,
-  teammateOf,
   inboxItemActor,
   inboxItemBadge,
   inboxItemState,
@@ -44,6 +43,7 @@ import {
   markAllItemsRead,
   saveReadIds,
   specForTask,
+  teammateOf,
   unreadInboxCount,
 } from '../lib/inboxQueue';
 import { resolveListKeyCommand } from '../lib/keyboard';
