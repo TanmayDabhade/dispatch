@@ -1962,6 +1962,59 @@ export function connectEvents(
   };
 }
 
+/**
+ * A shell session the daemon holds open — see packages/server/src/terminals.ts.
+ *
+ * `total` and `trimmed` bound the byte cursor a reader holds: everything
+ * between them is still in scrollback, anything below `trimmed` has aged out.
+ */
+export interface TerminalInfo {
+  id: string;
+  title: string;
+  cwd: string;
+  command: string[];
+  cols: number;
+  rows: number;
+  startedAt: string;
+  exitedAt: string | null;
+  exitCode: number | null;
+  /** `orphaned` is a session this daemon inherited from a previous process:
+   * its output is readable, but nothing is listening on its stdin. */
+  state: 'running' | 'exited' | 'orphaned';
+  pty: boolean;
+  total: number;
+  trimmed: number;
+  runId: string | null;
+}
+
+export interface TerminalOutput {
+  id: string;
+  /** Where this read actually began, clamped forward past `trimmed`. */
+  since: number;
+  total: number;
+  trimmed: number;
+  /** Base64 — output is bytes, not text, and a chunk can split a code point. */
+  data: string;
+  state: TerminalInfo['state'];
+  exitCode: number | null;
+  /** The cursor to pass to the next read. */
+  next: number;
+  /** True when the read hit its size cap and more is already waiting. */
+  more: boolean;
+}
+
+export interface CreateTerminalInput {
+  /** A run, to open on its worktree. Takes precedence over `cwd`. */
+  runId?: string;
+  /** A path inside the project or one of its worktrees; defaults to the root. */
+  cwd?: string;
+  /** Defaults to the user's login shell. */
+  command?: string[];
+  title?: string;
+  cols?: number;
+  rows?: number;
+}
+
 // Bound client shape returned by `createApiClient` — every method already
 // carries `baseUrl`, so callers never repeat it.
 export interface ApiClient {
@@ -2528,6 +2581,19 @@ export interface ApiClient {
   // `GET /api/impact?subject=<kind>&id=<id>`.
   getImpact(subject: ImpactSubjectKind, id: string): Promise<ImpactResponse>;
   /** The `/ws` URL, token included — it is a credential, so never render or log it. */
+  /** Every shell session this daemon knows about, oldest first. */
+  fetchTerminals(): Promise<TerminalInfo[]>;
+  fetchTerminal(id: string): Promise<TerminalInfo>;
+  createTerminal(input?: CreateTerminalInput): Promise<TerminalInfo>;
+  /** Scrollback after `since`; pass back the reply's `next` to resume. */
+  fetchTerminalOutput(id: string, since: number): Promise<TerminalOutput>;
+  /** Keystrokes, verbatim — the caller encodes its own control sequences. */
+  sendTerminalInput(id: string, data: string): Promise<void>;
+  resizeTerminal(id: string, cols: number, rows: number): Promise<TerminalInfo>;
+  /** Ends the process, keeping the scrollback readable. */
+  closeTerminal(id: string): Promise<void>;
+  /** Ends the process and forgets the session, scrollback included. */
+  removeTerminal(id: string): Promise<void>;
   wsUrl(): string;
   connectEvents(
     onChange: () => void,
@@ -3154,6 +3220,38 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         target,
         `/api/impact?${new URLSearchParams({ subject, id }).toString()}`
       ),
+    fetchTerminals: () => request(target, '/api/terminals'),
+    fetchTerminal: (id) =>
+      request(target, `/api/terminals/${encodeURIComponent(id)}`),
+    createTerminal: (input = {}) =>
+      request(target, '/api/terminals', { method: 'POST', ...jsonBody(input) }),
+    fetchTerminalOutput: (id, since) =>
+      request(
+        target,
+        `/api/terminals/${encodeURIComponent(id)}/output?since=${since}`
+      ),
+    sendTerminalInput: async (id, data) => {
+      await request(target, `/api/terminals/${encodeURIComponent(id)}/input`, {
+        method: 'POST',
+        ...jsonBody({ data }),
+      });
+    },
+    resizeTerminal: (id, cols, rows) =>
+      request(target, `/api/terminals/${encodeURIComponent(id)}/resize`, {
+        method: 'POST',
+        ...jsonBody({ cols, rows }),
+      }),
+    closeTerminal: async (id) => {
+      await request(target, `/api/terminals/${encodeURIComponent(id)}/close`, {
+        method: 'POST',
+        ...jsonBody({}),
+      });
+    },
+    removeTerminal: async (id) => {
+      await request(target, `/api/terminals/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+    },
     wsUrl: () => wsUrl(baseUrl, target.token),
     connectEvents: (onChange, options) =>
       connectEvents(baseUrl, onChange, { token: target.token, ...options }),
