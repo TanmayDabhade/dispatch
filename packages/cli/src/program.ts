@@ -13,6 +13,7 @@ import { Command } from 'commander';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { registerBrowserCommands } from './commands/browser.js';
 import {
   ensureDaemon,
   openDesktopOrBrowser,
@@ -26,6 +27,7 @@ import { registerOrchestrateCommands } from './commands/orchestrate.js';
 import { registerPlanCommands } from './commands/plan.js';
 import { registerScopeCommands } from './commands/scope.js';
 import { registerTaskCommands } from './commands/task.js';
+import { registerWorktreeCommands } from './commands/worktree.js';
 import { type CliContext, CliError } from './context.js';
 import { registerMcpServer } from './mcpConfig.js';
 import {
@@ -216,6 +218,8 @@ export function makeProgram(ctx: CliContext): Command {
   registerMergeTaskCommand(program, ctx);
   registerMergeTeamCommand(program, ctx);
   registerScopeCommands(program, ctx);
+  registerBrowserCommands(program, ctx);
+  registerWorktreeCommands(program, ctx);
   registerMigrateCommand(program, ctx);
 
   return program;

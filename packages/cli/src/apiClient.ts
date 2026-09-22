@@ -500,8 +500,65 @@ interface ExecutorsResponse {
   default: string;
 }
 
+/**
+ * A Chromium the daemon is driving — see packages/server/src/browser.
+ *
+ * Mirrored here rather than imported for the same reason RunMeta is: the
+ * server package is Bun-only and cannot be imported from this CLI.
+ */
+export interface BrowserInfo {
+  id: string;
+  url: string;
+  headless: boolean;
+  startedAt: string;
+  picking: boolean;
+}
+
+export interface PickedElement {
+  selector: string;
+  tagName: string;
+  id: string | null;
+  className: string | null;
+  text: string;
+  outerHTML: string;
+  outerHTMLTruncated: boolean;
+  styles: Record<string, string>;
+  rect: { x: number; y: number; width: number; height: number };
+  devicePixelRatio: number;
+  url: string;
+}
+
+export type PickOutcome =
+  | { state: 'picked'; element: PickedElement; screenshot: string }
+  | { state: 'cancelled' }
+  | { state: 'waiting' };
+
 export interface ApiClient {
   baseUrl: string;
+  // The browser family. Every one of these needs the daemon APP token, not
+  // the agent token: `browserEvaluate` runs arbitrary script in a browser
+  // carrying the user's own cookies.
+  launchBrowser(opts?: {
+    url?: string;
+    headless?: boolean;
+    width?: number;
+    height?: number;
+  }): Promise<BrowserInfo>;
+  listBrowsers(): Promise<BrowserInfo[]>;
+  closeBrowser(id: string): Promise<void>;
+  navigateBrowser(id: string, url: string): Promise<BrowserInfo>;
+  browserClick(id: string, selector: string): Promise<void>;
+  browserFill(id: string, selector: string, value: string): Promise<void>;
+  browserText(
+    id: string,
+    selector: string
+  ): Promise<{ selector: string; text: string }>;
+  browserEvaluate(id: string, expression: string): Promise<{ value: unknown }>;
+  /** A base64 PNG of the whole page. */
+  browserScreenshot(id: string): Promise<{ screenshot: string }>;
+  /** Arms Design Mode; the next click in the page is captured, not delivered. */
+  browserStartPick(id: string): Promise<{ picking: boolean }>;
+  browserPickResult(id: string): Promise<PickOutcome>;
   // `fresh` forces a brand-new run. Without it the daemon resumes the task's
   // most recent run when that run failed with its worktree still intact — see
   // createRun in packages/server/src/api.ts.
@@ -609,6 +666,55 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
     fetchExecutors: () => request(target, '/api/executors'),
     stopEpic: (epicId) =>
       request(target, `/api/epics/${epicId}/stop`, { ...jsonBody({}) }),
+    launchBrowser: (opts = {}) =>
+      request(target, '/api/browser', jsonBody(opts)),
+    listBrowsers: () => request(target, '/api/browser'),
+    closeBrowser: async (id) => {
+      await request(target, `/api/browser/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+    },
+    navigateBrowser: (id, url) =>
+      request(
+        target,
+        `/api/browser/${encodeURIComponent(id)}/navigate`,
+        jsonBody({ url })
+      ),
+    browserClick: async (id, selector) => {
+      await request(
+        target,
+        `/api/browser/${encodeURIComponent(id)}/click`,
+        jsonBody({ selector })
+      );
+    },
+    browserFill: async (id, selector, value) => {
+      await request(
+        target,
+        `/api/browser/${encodeURIComponent(id)}/fill`,
+        jsonBody({ selector, value })
+      );
+    },
+    browserText: (id, selector) =>
+      request(
+        target,
+        `/api/browser/${encodeURIComponent(id)}/text?selector=${encodeURIComponent(selector)}`
+      ),
+    browserEvaluate: (id, expression) =>
+      request(
+        target,
+        `/api/browser/${encodeURIComponent(id)}/evaluate`,
+        jsonBody({ expression })
+      ),
+    browserScreenshot: (id) =>
+      request(target, `/api/browser/${encodeURIComponent(id)}/screenshot`),
+    browserStartPick: (id) =>
+      request(
+        target,
+        `/api/browser/${encodeURIComponent(id)}/pick`,
+        jsonBody({})
+      ),
+    browserPickResult: (id) =>
+      request(target, `/api/browser/${encodeURIComponent(id)}/pick`),
     getEpicProgress: (epicId) =>
       request(target, `/api/epics/${epicId}/progress`),
     getScopeRequest: (runId, requestId) =>
