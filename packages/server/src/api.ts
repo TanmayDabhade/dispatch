@@ -36,6 +36,18 @@ import {
   uploadTaskAttachments,
 } from './api/attachments.js';
 import {
+  clickInBrowser,
+  closeBrowser,
+  evaluateInBrowser,
+  fillInBrowser,
+  launchBrowser,
+  navigateBrowser,
+  readBrowserPick,
+  readBrowserText,
+  screenshotBrowser,
+  startBrowserPick,
+} from './api/browser.js';
+import {
   listDirectory,
   rawFile,
   readFile as readWorkspaceFile,
@@ -83,6 +95,7 @@ import {
   writeTerminalInput,
 } from './api/terminals.js';
 import { getTaskVerification, startTaskVerification } from './api/verify.js';
+import type { BrowserRegistry } from './browser/registry.js';
 import type { TaskCache } from './cache.js';
 import type { ConversationStore } from './conversations.js';
 import { isSnippet, isSubjectRef } from './conversations.js';
@@ -247,6 +260,10 @@ export interface ApiContext {
   // Shell sessions the desktop attaches to — see terminals.ts. Owned by the
   // daemon rather than the app so a session survives the window closing, and
   // so its scrollback is written once, in one place.
+  // Chromium instances the daemon drives — see browser/registry.ts. Owned
+  // here so a browser opened on a dev server outlives the app window, and so
+  // shutdown has something to kill.
+  browsers: BrowserRegistry;
   terminals: TerminalRegistry;
   // The Git page's backend — see packages/server/src/git/commands.ts.
   gitRepo: GitRepo;
@@ -4112,6 +4129,21 @@ const DECIDE_TIER_ROUTES: ReadonlyArray<{
   // holds a run's edits to the task's declared `writes` and records them.
   // Reads stay on the request tier with the rest of the read surface.
   { method: 'POST', segments: ['files', 'write'] },
+  // `evaluate` runs arbitrary JavaScript in a browser carrying the user's own
+  // session cookies, which is at least the authority a shell has. The whole
+  // family stays above the agent token for that reason.
+  { method: 'GET', segments: ['browser'] },
+  { method: 'POST', segments: ['browser'] },
+  { method: 'GET', segments: ['browser', '*'] },
+  { method: 'DELETE', segments: ['browser', '*'] },
+  { method: 'POST', segments: ['browser', '*', 'navigate'] },
+  { method: 'POST', segments: ['browser', '*', 'click'] },
+  { method: 'POST', segments: ['browser', '*', 'fill'] },
+  { method: 'GET', segments: ['browser', '*', 'text'] },
+  { method: 'POST', segments: ['browser', '*', 'evaluate'] },
+  { method: 'GET', segments: ['browser', '*', 'screenshot'] },
+  { method: 'POST', segments: ['browser', '*', 'pick'] },
+  { method: 'GET', segments: ['browser', '*', 'pick'] },
   { method: 'GET', segments: ['terminals'] },
   { method: 'POST', segments: ['terminals'] },
   { method: 'GET', segments: ['terminals', '*'] },
@@ -4367,6 +4399,56 @@ export async function handleApi(
       }
       if (segments[1] === 'write' && method === 'POST') {
         return await writeWorkspaceFile(req, ctx);
+      }
+    }
+
+    if (segments[0] === 'browser') {
+      if (segments.length === 1 && method === 'GET') {
+        return jsonResponse(ctx.browsers.list());
+      }
+      if (segments.length === 1 && method === 'POST') {
+        return await launchBrowser(req, ctx);
+      }
+      const id = segments[1];
+      if (id !== undefined && segments.length === 2) {
+        if (method === 'GET') {
+          const info = ctx.browsers.get(id);
+          return info === null
+            ? errorResponse(404, `no browser ${id}`)
+            : jsonResponse(info);
+        }
+        if (method === 'DELETE') return closeBrowser(ctx, id);
+      }
+      if (id !== undefined && segments.length === 3) {
+        const action = segments[2];
+        if (action === 'navigate' && method === 'POST') {
+          return await navigateBrowser(req, ctx, id);
+        }
+        if (action === 'click' && method === 'POST') {
+          return await clickInBrowser(req, ctx, id);
+        }
+        if (action === 'fill' && method === 'POST') {
+          return await fillInBrowser(req, ctx, id);
+        }
+        if (action === 'text' && method === 'GET') {
+          return await readBrowserText(
+            ctx,
+            id,
+            url.searchParams.get('selector')
+          );
+        }
+        if (action === 'evaluate' && method === 'POST') {
+          return await evaluateInBrowser(req, ctx, id);
+        }
+        if (action === 'screenshot' && method === 'GET') {
+          return await screenshotBrowser(ctx, id);
+        }
+        if (action === 'pick' && method === 'POST') {
+          return await startBrowserPick(ctx, id);
+        }
+        if (action === 'pick' && method === 'GET') {
+          return await readBrowserPick(ctx, id);
+        }
       }
     }
 

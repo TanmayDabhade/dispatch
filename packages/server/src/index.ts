@@ -31,6 +31,7 @@ import {
 } from './api.js';
 import type { ApiContext, DaemonTokens } from './api.js';
 import { spawnGitSync } from './blockingGit.js';
+import { BrowserRegistry } from './browser/registry.js';
 import { TaskCache } from './cache.js';
 import { ConversationStore } from './conversations.js';
 import {
@@ -1272,6 +1273,10 @@ async function bootServer(
   const approvalFloor: ApprovalFloor = (_toolName, input) =>
     floorCheckForToolInput(input) !== null;
 
+  // Chromium instances the daemon drives. Nothing is launched at boot; this
+  // only holds the ones a request asks for, so shutdown can kill them.
+  const browsers = new BrowserRegistry();
+
   // Shell sessions, hydrated here so scrollback from a previous daemon is
   // readable the moment the app reconnects. Output is announced rather than
   // streamed: a client holds a byte cursor and pulls the increment, so a
@@ -1360,6 +1365,7 @@ async function bootServer(
     reviewComments,
     conversations,
     questions,
+    browsers,
     terminals,
     scopeRequests,
     decisionFeed,
@@ -1518,6 +1524,8 @@ async function bootServer(
       // Kills every child and flushes scrollback; the sessions stay in the
       // index so the next daemon hydrates them as `orphaned`.
       terminals.shutdown();
+      // Otherwise every session leaks a Chromium process.
+      browsers.shutdown();
       boardSyncScheduler?.stop();
       // Before stores.close() below, since the exporter reads the database.
       receiptsScheduler?.stop();
