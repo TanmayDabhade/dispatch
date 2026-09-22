@@ -7,8 +7,10 @@
     ".": {
       // Root-level tooling invoked from moon tasks and the moon-managed git
       // hooks (.moon/workspace.yml's vcs.hooks), not imported by anything.
-      "entry": ["scripts/*.ts"],
-      "project": ["scripts/**/*.ts"]
+      // .railway/railway.ts is run by the Railway CLI (`railway config plan`/
+      // `apply`), which is what its `railway/iac` import is for.
+      "entry": ["scripts/*.ts", ".railway/railway.ts"],
+      "project": ["scripts/**/*.ts", ".railway/*.ts"]
     },
     "packages/server": {
       // The daemon's `bin` is src/bin.ts, but src/index.ts is the library face
