@@ -2082,6 +2082,37 @@ export interface WorkspaceScope {
   runId?: string | null;
 }
 
+/** A Chromium the daemon is driving — see packages/server/src/browser. */
+export interface BrowserInfo {
+  id: string;
+  url: string;
+  headless: boolean;
+  startedAt: string;
+  /** True while Design Mode is armed and waiting for a click. */
+  picking: boolean;
+}
+
+/** What Design Mode captured: enough to tell an agent which thing is meant. */
+export interface PickedElement {
+  selector: string;
+  tagName: string;
+  id: string | null;
+  className: string | null;
+  text: string;
+  outerHTML: string;
+  /** True when the markup was cut at the capture limit. */
+  outerHTMLTruncated: boolean;
+  styles: Record<string, string>;
+  rect: { x: number; y: number; width: number; height: number };
+  devicePixelRatio: number;
+  url: string;
+}
+
+export type PickOutcome =
+  | { state: 'picked'; element: PickedElement; screenshot: string }
+  | { state: 'cancelled' }
+  | { state: 'waiting' };
+
 // Bound client shape returned by `createApiClient` — every method already
 // carries `baseUrl`, so callers never repeat it.
 export interface ApiClient {
@@ -2669,6 +2700,25 @@ export interface ApiClient {
     query: string,
     scope?: WorkspaceScope & { limit?: number }
   ): Promise<WorkspaceSearchResult>;
+  /** Open a Chromium the daemon drives. Headed unless `headless` is set. */
+  launchBrowser(opts?: {
+    url?: string;
+    headless?: boolean;
+    width?: number;
+    height?: number;
+  }): Promise<BrowserInfo>;
+  listBrowsers(): Promise<BrowserInfo[]>;
+  closeBrowser(id: string): Promise<void>;
+  navigateBrowser(id: string, url: string): Promise<BrowserInfo>;
+  browserClick(id: string, selector: string): Promise<void>;
+  browserFill(id: string, selector: string, value: string): Promise<void>;
+  browserEvaluate(id: string, expression: string): Promise<{ value: unknown }>;
+  /** A base64 PNG of the page. */
+  browserScreenshot(id: string): Promise<{ screenshot: string }>;
+  /** Arms Design Mode: the next click in the page is captured, not delivered. */
+  browserStartPick(id: string): Promise<{ picking: boolean }>;
+  /** Polled while a pick is armed. */
+  browserPickResult(id: string): Promise<PickOutcome>;
   /** Every shell session this daemon knows about, oldest first. */
   fetchTerminals(): Promise<TerminalInfo[]>;
   fetchTerminal(id: string): Promise<TerminalInfo>;
@@ -3329,6 +3379,45 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       if (scope.limit !== undefined) params.set('limit', String(scope.limit));
       return request(target, `/api/files/search?${params.toString()}`);
     },
+    launchBrowser: (opts = {}) =>
+      request(target, '/api/browser', { method: 'POST', ...jsonBody(opts) }),
+    listBrowsers: () => request(target, '/api/browser'),
+    closeBrowser: async (id) => {
+      await request(target, `/api/browser/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+    },
+    navigateBrowser: (id, url) =>
+      request(target, `/api/browser/${encodeURIComponent(id)}/navigate`, {
+        method: 'POST',
+        ...jsonBody({ url }),
+      }),
+    browserClick: async (id, selector) => {
+      await request(target, `/api/browser/${encodeURIComponent(id)}/click`, {
+        method: 'POST',
+        ...jsonBody({ selector }),
+      });
+    },
+    browserFill: async (id, selector, value) => {
+      await request(target, `/api/browser/${encodeURIComponent(id)}/fill`, {
+        method: 'POST',
+        ...jsonBody({ selector, value }),
+      });
+    },
+    browserEvaluate: (id, expression) =>
+      request(target, `/api/browser/${encodeURIComponent(id)}/evaluate`, {
+        method: 'POST',
+        ...jsonBody({ expression }),
+      }),
+    browserScreenshot: (id) =>
+      request(target, `/api/browser/${encodeURIComponent(id)}/screenshot`),
+    browserStartPick: (id) =>
+      request(target, `/api/browser/${encodeURIComponent(id)}/pick`, {
+        method: 'POST',
+        ...jsonBody({}),
+      }),
+    browserPickResult: (id) =>
+      request(target, `/api/browser/${encodeURIComponent(id)}/pick`),
     fetchTerminals: () => request(target, '/api/terminals'),
     fetchTerminal: (id) =>
       request(target, `/api/terminals/${encodeURIComponent(id)}`),
