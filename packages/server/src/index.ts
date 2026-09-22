@@ -111,6 +111,7 @@ import {
   defaultGitRunner,
   SyncWorktree,
 } from './sync/worktree.js';
+import { TerminalRegistry } from './terminals.js';
 import { TrackedFilesCache } from './trackedFiles.js';
 import { EventLoopWatchdog } from './watchdog.js';
 import { watchSourceDirs, watchTasks } from './watcher.js';
@@ -1240,6 +1241,17 @@ async function bootServer(
   const approvalFloor: ApprovalFloor = (_toolName, input) =>
     floorCheckForToolInput(input) !== null;
 
+  // Shell sessions, hydrated here so scrollback from a previous daemon is
+  // readable the moment the app reconnects. Output is announced rather than
+  // streamed: a client holds a byte cursor and pulls the increment, so a
+  // dropped event costs a round trip and never a gap.
+  const terminals = new TerminalRegistry(rootDir, {
+    onOutput: (terminalId) =>
+      events.broadcast({ type: 'terminal.output', terminalId }),
+    onExit: (terminalId) =>
+      events.broadcast({ type: 'terminal.exited', terminalId }),
+  });
+
   const decisionFeed = new DecisionFeed({
     orchestrator,
     questions,
@@ -1317,6 +1329,7 @@ async function bootServer(
     reviewComments,
     conversations,
     questions,
+    terminals,
     scopeRequests,
     decisionFeed,
     linearSync,
@@ -1471,6 +1484,9 @@ async function bootServer(
       stopWebhookDelivery();
       stopDecisionFeed();
       stopPolicyEngine();
+      // Kills every child and flushes scrollback; the sessions stay in the
+      // index so the next daemon hydrates them as `orphaned`.
+      terminals.shutdown();
       boardSyncScheduler?.stop();
       // Before stores.close() below, since the exporter reads the database.
       receiptsScheduler?.stop();

@@ -67,6 +67,14 @@ import {
   listScopeRequests,
   requestScope,
 } from './api/scopeRequests.js';
+import {
+  closeTerminal,
+  createTerminal,
+  deleteTerminal,
+  readTerminalOutput,
+  resizeTerminal,
+  writeTerminalInput,
+} from './api/terminals.js';
 import { getTaskVerification, startTaskVerification } from './api/verify.js';
 import type { TaskCache } from './cache.js';
 import type { ConversationStore } from './conversations.js';
@@ -161,6 +169,7 @@ import type { ReviewTarget } from './reviewTarget.js';
 import { redactSecretUrls } from './secretUrls.js';
 import type { SyncResult } from './sync/boardSyncer.js';
 import type { BoardSyncScheduler } from './sync/scheduler.js';
+import type { TerminalRegistry } from './terminals.js';
 import type { TrackedFilesCache } from './trackedFiles.js';
 import type { WatchdogStatus } from './watchdog.js';
 
@@ -228,6 +237,10 @@ export interface ApiContext {
   // same value the daemon file records, surfaced at GET /api/health so a
   // client can tell which process is answering.
   startedAt: string;
+  // Shell sessions the desktop attaches to — see terminals.ts. Owned by the
+  // daemon rather than the app so a session survives the window closing, and
+  // so its scrollback is written once, in one place.
+  terminals: TerminalRegistry;
   // The Git page's backend — see packages/server/src/git/commands.ts.
   gitRepo: GitRepo;
   // The two tokens this daemon accepts — see DaemonTokens.
@@ -4082,6 +4095,20 @@ const DECIDE_TIER_ROUTES: ReadonlyArray<{
   // it on the request tier, any agent holding the on-disk agent token could
   // wave its own parked tool call through.
   { method: 'POST', segments: ['runs', '*', 'approval'] },
+  // A terminal is arbitrary command execution in the project's checkout, so
+  // the whole family sits above the agent token. On the request tier, any
+  // agent holding the on-disk token could open a shell and walk straight
+  // around the scope, floor and approval gates the rest of this file enforces
+  // — reading output is listed too, since scrollback carries whatever the
+  // human typed into it, credentials included.
+  { method: 'GET', segments: ['terminals'] },
+  { method: 'POST', segments: ['terminals'] },
+  { method: 'GET', segments: ['terminals', '*'] },
+  { method: 'DELETE', segments: ['terminals', '*'] },
+  { method: 'GET', segments: ['terminals', '*', 'output'] },
+  { method: 'POST', segments: ['terminals', '*', 'input'] },
+  { method: 'POST', segments: ['terminals', '*', 'resize'] },
+  { method: 'POST', segments: ['terminals', '*', 'close'] },
 ];
 
 function matchesRoute(
@@ -4311,6 +4338,39 @@ export async function handleApi(
           return errorResponse(400, 'taskIds must be a list of strings');
         }
         return jsonResponse(await ctx.linearSync.syncOnce(raw));
+      }
+    }
+
+    if (segments[0] === 'terminals') {
+      if (segments.length === 1 && method === 'GET') {
+        return jsonResponse(ctx.terminals.list());
+      }
+      if (segments.length === 1 && method === 'POST') {
+        return await createTerminal(req, ctx);
+      }
+      const id = segments[1];
+      if (id !== undefined && segments.length === 2) {
+        if (method === 'GET') {
+          const info = ctx.terminals.get(id);
+          return info === null
+            ? errorResponse(404, `no terminal ${id}`)
+            : jsonResponse(info);
+        }
+        if (method === 'DELETE') return deleteTerminal(ctx, id);
+      }
+      if (id !== undefined && segments.length === 3) {
+        if (segments[2] === 'output' && method === 'GET') {
+          return readTerminalOutput(ctx, id, url.searchParams.get('since'));
+        }
+        if (segments[2] === 'input' && method === 'POST') {
+          return await writeTerminalInput(req, ctx, id);
+        }
+        if (segments[2] === 'resize' && method === 'POST') {
+          return await resizeTerminal(req, ctx, id);
+        }
+        if (segments[2] === 'close' && method === 'POST') {
+          return closeTerminal(ctx, id);
+        }
       }
     }
 

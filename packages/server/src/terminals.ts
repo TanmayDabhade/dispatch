@@ -1,0 +1,526 @@
+import { randomUUID } from 'node:crypto';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { platform } from 'node:os';
+import { join } from 'node:path';
+
+import { terminalScrollbackPath, terminalsDir } from './orchestrator/paths.js';
+
+/**
+ * Long-lived shell sessions the desktop app attaches to — one per repo or run
+ * worktree, split any number of ways in the UI.
+ *
+ * Two things make this more than "spawn a shell and pipe it":
+ *
+ *   - The child runs under a real pty (see `ptyCommand`), so a prompt, colour,
+ *     and any curses program behave the way they do in a terminal emulator
+ *     rather than the line-buffered, colourless way they behave behind a pipe.
+ *   - Scrollback is kept on disk, so closing the app — or restarting the
+ *     daemon — does not lose what a session printed. A reader resumes from a
+ *     byte cursor rather than a message index, which means a client that was
+ *     offline for a minute catches up in one request.
+ */
+
+// How much output one session keeps. Past this the oldest bytes are dropped;
+// `trimmed` below tells a reader how much it can never see, so a cursor that
+// has fallen behind is corrected rather than silently serving a gap.
+export const SCROLLBACK_MAX_BYTES = 2 * 1024 * 1024;
+
+// Written to disk at most this often while a session is chatty. A session that
+// exits, or a daemon that shuts down cleanly, flushes immediately regardless.
+const PERSIST_DEBOUNCE_MS = 750;
+
+const DEFAULT_COLS = 120;
+const DEFAULT_ROWS = 32;
+
+/**
+ * Where a session is in its life.
+ *
+ * `orphaned` is the one that only exists because scrollback outlives the
+ * process: it marks a session this daemon inherited from a previous run of
+ * itself. Its output is still readable, but nothing is on the other end of its
+ * stdin, so `write` on it fails rather than appearing to work.
+ */
+export type TerminalState = 'running' | 'exited' | 'orphaned';
+
+export interface TerminalInfo {
+  id: string;
+  title: string;
+  cwd: string;
+  command: string[];
+  cols: number;
+  rows: number;
+  startedAt: string;
+  exitedAt: string | null;
+  exitCode: number | null;
+  state: TerminalState;
+  /** Whether the child got a real pty, or fell back to plain pipes. */
+  pty: boolean;
+  /** Total bytes this session has ever produced — the end of the cursor range. */
+  total: number;
+  /** Bytes dropped off the front of scrollback; the start of the cursor range. */
+  trimmed: number;
+  /** The run this session belongs to, when it was opened on a run's worktree. */
+  runId: string | null;
+}
+
+export interface TerminalReadResult {
+  id: string;
+  /** The cursor this read actually started at, clamped up past `trimmed`. */
+  since: number;
+  total: number;
+  trimmed: number;
+  /** Base64, because a chunk can split a multi-byte sequence or carry control bytes. */
+  data: string;
+  state: TerminalState;
+  exitCode: number | null;
+}
+
+export interface CreateTerminalSpec {
+  cwd: string;
+  /** Defaults to the user's login shell. */
+  command?: string[];
+  title?: string;
+  cols?: number;
+  rows?: number;
+  runId?: string | null;
+  env?: Record<string, string>;
+}
+
+/** The slice of a spawned child this module uses, so a test can supply its own. */
+export interface TerminalProcess {
+  readonly stdout: ReadableStream<Uint8Array>;
+  readonly exited: Promise<number>;
+  write(data: string): void;
+  kill(): void;
+}
+
+export interface SpawnTerminalOptions {
+  command: string[];
+  cwd: string;
+  env: Record<string, string>;
+}
+
+export type TerminalSpawner = (opts: SpawnTerminalOptions) => TerminalProcess;
+
+// What gets written to `sessions.json`: the info rows, without any of the
+// live process state, so a restart can list what came before.
+interface PersistedSessions {
+  sessions: TerminalInfo[];
+}
+
+/**
+ * Quotes one argument for a POSIX shell, so a command with spaces or quotes in
+ * it survives being handed to `script -c` as a single string.
+ *
+ * Single quotes with the `'\''` escape rather than backslashes: inside single
+ * quotes a shell treats every byte literally, which is the only form that is
+ * safe for arbitrary content including newlines and `$`.
+ */
+export function shellQuote(arg: string): string {
+  return `'${arg.replaceAll("'", `'\\''`)}'`;
+}
+
+/**
+ * Wraps `command` so it runs under a pty, or returns it unchanged when no
+ * wrapper is available.
+ *
+ * `script(1)` is the portable way to get a pty without a native addon: it
+ * allocates one, runs the command inside it, and relays both directions
+ * through its own stdio — which is exactly the plumbing a terminal needs. Its
+ * two flavours take their arguments in incompatible orders, hence the split:
+ *
+ *   - util-linux (Linux): `script -qfec <command-string> /dev/null`, where
+ *     `-f` flushes after every write so output arrives as it is produced
+ *     rather than in block-sized lumps.
+ *   - BSD (macOS): `script -q /dev/null <command> <args...>`, which takes the
+ *     command as separate arguments and flushes by default.
+ *
+ * `whichScript` is injected so a test can force either flavour, or none.
+ */
+export function ptyCommand(
+  command: string[],
+  opts: { os?: string; whichScript?: (name: string) => string | null } = {}
+): { command: string[]; pty: boolean } {
+  const which = opts.whichScript ?? ((name: string) => Bun.which(name));
+  if (which('script') === null) return { command, pty: false };
+  const os = opts.os ?? platform();
+  if (os === 'darwin') {
+    return { command: ['script', '-q', '/dev/null', ...command], pty: true };
+  }
+  const joined = command.map(shellQuote).join(' ');
+  return { command: ['script', '-qfec', joined, '/dev/null'], pty: true };
+}
+
+// The shell a session runs when the caller names no command. `$SHELL` is what
+// the person actually uses; the fallback is the one shell POSIX guarantees.
+function defaultShell(env: Record<string, string | undefined>): string[] {
+  const shell = env.SHELL;
+  return [shell !== undefined && shell !== '' ? shell : '/bin/sh'];
+}
+
+function defaultSpawner(opts: SpawnTerminalOptions): TerminalProcess {
+  const proc = Bun.spawn(opts.command, {
+    cwd: opts.cwd,
+    env: opts.env,
+    stdin: 'pipe',
+    stdout: 'pipe',
+    // Merged into stdout: under a pty both are the same device anyway, and a
+    // reader that had to interleave two streams by hand would reorder output
+    // that the terminal itself never reorders.
+    stderr: 'pipe',
+  });
+  return {
+    stdout: proc.stdout,
+    exited: proc.exited,
+    write(data: string) {
+      // Both return promises that resolve once the bytes reach the pipe.
+      // Nothing here can act on that: a keystroke has no reply, and a write
+      // that fails because the child just exited is the ordinary race, which
+      // `exited` records. Awaiting would only serialize keystrokes behind it.
+      void proc.stdin.write(data);
+      void proc.stdin.flush();
+    },
+    kill() {
+      proc.kill();
+    },
+  };
+}
+
+// One session's live state: the row clients see, plus the buffer and process
+// that only exist while this daemon is the one running it.
+interface Session {
+  info: TerminalInfo;
+  // The tail of the output, capped at SCROLLBACK_MAX_BYTES. `info.trimmed` is
+  // kept as `info.total - buffer.length`, so a cursor stays absolute even
+  // though the buffer is not.
+  buffer: Buffer;
+  proc: TerminalProcess | null;
+  persistTimer: ReturnType<typeof setTimeout> | null;
+  dirty: boolean;
+}
+
+export interface TerminalRegistryOptions {
+  spawn?: TerminalSpawner;
+  maxScrollbackBytes?: number;
+  now?: () => Date;
+  /** Called after output lands, so the daemon can nudge attached clients. */
+  onOutput?: (id: string) => void;
+  /** Called when a session exits on its own. */
+  onExit?: (id: string) => void;
+}
+
+export class TerminalRegistry {
+  private readonly sessions = new Map<string, Session>();
+  private readonly spawn: TerminalSpawner;
+  private readonly maxBytes: number;
+  private readonly now: () => Date;
+  private readonly onOutput: (id: string) => void;
+  private readonly onExit: (id: string) => void;
+
+  constructor(
+    private readonly rootDir: string,
+    options: TerminalRegistryOptions = {}
+  ) {
+    this.spawn = options.spawn ?? defaultSpawner;
+    this.maxBytes = options.maxScrollbackBytes ?? SCROLLBACK_MAX_BYTES;
+    this.now = options.now ?? (() => new Date());
+    this.onOutput = options.onOutput ?? (() => {});
+    this.onExit = options.onExit ?? (() => {});
+    this.hydrate();
+  }
+
+  private dir(): string {
+    return terminalsDir(this.rootDir);
+  }
+
+  private indexPath(): string {
+    return join(this.dir(), 'sessions.json');
+  }
+
+  /**
+   * Re-reads what a previous daemon left behind. Every session it finds is
+   * `orphaned` rather than `running` — this process holds no pipe to any of
+   * them — but their scrollback is loaded so the UI can still show what they
+   * printed, which is the whole point of persisting it.
+   */
+  private hydrate(): void {
+    const path = this.indexPath();
+    if (!existsSync(path)) return;
+    let parsed: PersistedSessions;
+    try {
+      parsed = JSON.parse(readFileSync(path, 'utf8')) as PersistedSessions;
+    } catch {
+      // A truncated index is not worth failing a daemon boot over; the
+      // scrollback files are still on disk for a human to read.
+      return;
+    }
+    if (!Array.isArray(parsed.sessions)) return;
+    for (const info of parsed.sessions) {
+      if (typeof info?.id !== 'string') continue;
+      const logPath = terminalScrollbackPath(this.rootDir, info.id);
+      const buffer = existsSync(logPath)
+        ? readFileSync(logPath)
+        : Buffer.alloc(0);
+      this.sessions.set(info.id, {
+        info: {
+          ...info,
+          state: info.state === 'exited' ? 'exited' : 'orphaned',
+          // A session whose process is gone cannot grow, so the cursor range
+          // is pinned to exactly what is on disk.
+          total: info.total,
+          trimmed: Math.max(0, info.total - buffer.length),
+        },
+        buffer,
+        proc: null,
+        persistTimer: null,
+        dirty: false,
+      });
+    }
+  }
+
+  /**
+   * Writes the index and every dirty session's scrollback.
+   *
+   * The index goes through a temp file and a rename so a crash mid-write
+   * leaves the previous index intact rather than a half-written one that
+   * `hydrate` would throw away.
+   */
+  private persist(): void {
+    const dir = this.dir();
+    mkdirSync(dir, { recursive: true });
+    for (const session of this.sessions.values()) {
+      if (!session.dirty) continue;
+      writeFileSync(
+        terminalScrollbackPath(this.rootDir, session.info.id),
+        session.buffer
+      );
+      session.dirty = false;
+    }
+    const body: PersistedSessions = {
+      sessions: [...this.sessions.values()].map((s) => s.info),
+    };
+    const tmp = `${this.indexPath()}.tmp`;
+    writeFileSync(tmp, `${JSON.stringify(body, null, 2)}\n`);
+    renameSync(tmp, this.indexPath());
+  }
+
+  private schedulePersist(session: Session): void {
+    if (session.persistTimer !== null) return;
+    session.persistTimer = setTimeout(() => {
+      session.persistTimer = null;
+      this.persist();
+    }, PERSIST_DEBOUNCE_MS);
+    // A pending flush must never be the reason a daemon stays alive.
+    session.persistTimer.unref?.();
+  }
+
+  private append(session: Session, chunk: Uint8Array): void {
+    session.info.total += chunk.length;
+    const combined = Buffer.concat([session.buffer, Buffer.from(chunk)]);
+    session.buffer =
+      combined.length > this.maxBytes
+        ? combined.subarray(combined.length - this.maxBytes)
+        : combined;
+    session.info.trimmed = session.info.total - session.buffer.length;
+    session.dirty = true;
+    this.schedulePersist(session);
+    this.onOutput(session.info.id);
+  }
+
+  // Drains the child's output into scrollback until the stream ends. Errors
+  // are swallowed deliberately: a stream that breaks because the process died
+  // is the ordinary exit path, and `exited` below is what records it.
+  private async pump(
+    session: Session,
+    stream: ReadableStream<Uint8Array>
+  ): Promise<void> {
+    const reader = stream.getReader();
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value !== undefined && value.length > 0)
+          this.append(session, value);
+      }
+    } catch {
+      // See above.
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  create(spec: CreateTerminalSpec): TerminalInfo {
+    const id = randomUUID();
+    const cols =
+      spec.cols !== undefined && spec.cols > 0 ? spec.cols : DEFAULT_COLS;
+    const rows =
+      spec.rows !== undefined && spec.rows > 0 ? spec.rows : DEFAULT_ROWS;
+    const requested =
+      spec.command !== undefined && spec.command.length > 0
+        ? spec.command
+        : defaultShell(process.env);
+    const wrapped = ptyCommand(requested);
+
+    // `TERM` is what makes a program emit colour and cursor motion at all, and
+    // `COLUMNS`/`LINES` are how a program that cannot ask the pty for its size
+    // learns one — which matters here because `script` gives the pty a fixed
+    // 80x24 and offers no way to resize it (see `resize`).
+    const env: Record<string, string> = {
+      ...(process.env as Record<string, string>),
+      ...spec.env,
+      TERM: 'xterm-256color',
+      COLUMNS: String(cols),
+      LINES: String(rows),
+    };
+
+    const info: TerminalInfo = {
+      id,
+      title: spec.title ?? requested.join(' '),
+      cwd: spec.cwd,
+      command: requested,
+      cols,
+      rows,
+      startedAt: this.now().toISOString(),
+      exitedAt: null,
+      exitCode: null,
+      state: 'running',
+      pty: wrapped.pty,
+      total: 0,
+      trimmed: 0,
+      runId: spec.runId ?? null,
+    };
+
+    const proc = this.spawn({ command: wrapped.command, cwd: spec.cwd, env });
+    const session: Session = {
+      info,
+      buffer: Buffer.alloc(0),
+      proc,
+      persistTimer: null,
+      dirty: true,
+    };
+    this.sessions.set(id, session);
+
+    void this.pump(session, proc.stdout);
+    void proc.exited.then((code) => {
+      session.info.state = 'exited';
+      session.info.exitCode = code;
+      session.info.exitedAt = this.now().toISOString();
+      session.proc = null;
+      session.dirty = true;
+      this.persist();
+      this.onExit(id);
+    });
+
+    this.persist();
+    return { ...info };
+  }
+
+  list(): TerminalInfo[] {
+    return [...this.sessions.values()]
+      .map((s) => ({ ...s.info }))
+      .sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+  }
+
+  get(id: string): TerminalInfo | null {
+    const session = this.sessions.get(id);
+    return session === undefined ? null : { ...session.info };
+  }
+
+  /**
+   * Everything after `since`, as base64.
+   *
+   * A cursor below `trimmed` is not an error — it is a client that fell far
+   * enough behind that the bytes it wanted are gone. It gets the oldest bytes
+   * still held, and `since` in the reply tells it where the gap ended.
+   */
+  read(id: string, since: number): TerminalReadResult | null {
+    const session = this.sessions.get(id);
+    if (session === undefined) return null;
+    const { info, buffer } = session;
+    const from = Math.min(Math.max(since, info.trimmed), info.total);
+    const slice = buffer.subarray(from - info.trimmed);
+    return {
+      id,
+      since: from,
+      total: info.total,
+      trimmed: info.trimmed,
+      data: slice.toString('base64'),
+      state: info.state,
+      exitCode: info.exitCode,
+    };
+  }
+
+  /** Feeds keystrokes to the child. False when nothing is listening. */
+  write(id: string, data: string): boolean {
+    const session = this.sessions.get(id);
+    if (session === undefined || session.proc === null) return false;
+    session.proc.write(data);
+    return true;
+  }
+
+  /**
+   * Records a new viewport size.
+   *
+   * Honest limitation: `script` owns the pty and exposes no way to resize it,
+   * and neither Bun nor Node can issue the `TIOCSWINSZ` ioctl that would do it
+   * directly. So this updates what the session reports and what any future
+   * command inherits through `COLUMNS`/`LINES`, but a program already running
+   * under the pty keeps the size it started with. Programs that read the env
+   * (most line editors, `less`, `git`'s pager) follow along; ones that ask the
+   * pty directly (full-screen curses apps) do not.
+   */
+  resize(id: string, cols: number, rows: number): boolean {
+    const session = this.sessions.get(id);
+    if (session === undefined) return false;
+    if (cols > 0) session.info.cols = cols;
+    if (rows > 0) session.info.rows = rows;
+    session.dirty = true;
+    this.schedulePersist(session);
+    return true;
+  }
+
+  /** Ends the process but keeps the scrollback, so the output stays readable. */
+  close(id: string): boolean {
+    const session = this.sessions.get(id);
+    if (session === undefined) return false;
+    session.proc?.kill();
+    return true;
+  }
+
+  /** Ends the process and forgets it, scrollback included. */
+  remove(id: string): boolean {
+    const session = this.sessions.get(id);
+    if (session === undefined) return false;
+    session.proc?.kill();
+    if (session.persistTimer !== null) clearTimeout(session.persistTimer);
+    this.sessions.delete(id);
+    rmSync(terminalScrollbackPath(this.rootDir, id), { force: true });
+    this.persist();
+    return true;
+  }
+
+  /**
+   * Kills every child and flushes scrollback.
+   *
+   * Sessions stay in the index: the next daemon hydrates them as `orphaned`,
+   * which is how "scrollback survives a restart" actually works.
+   */
+  shutdown(): void {
+    for (const session of this.sessions.values()) {
+      if (session.persistTimer !== null) {
+        clearTimeout(session.persistTimer);
+        session.persistTimer = null;
+      }
+      session.proc?.kill();
+      session.proc = null;
+    }
+    this.persist();
+  }
+}

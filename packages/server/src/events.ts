@@ -54,6 +54,12 @@ export type ServerEvent =
   // granted/denied — refetch the open scope requests.
   | { type: 'scope.requested'; runId: string; requestId: string }
   | { type: 'scope.decided'; runId: string; requestId: string }
+  // A terminal session produced output, or ended. Both carry only the id, on
+  // the same "go refetch" contract as run.changed — a client holds a byte
+  // cursor and pulls the increment from GET /api/terminals/:id/output, so it
+  // never has to trust an event to be delivered exactly once.
+  | { type: 'terminal.output'; terminalId: string }
+  | { type: 'terminal.exited'; terminalId: string }
   // The merge queue's state changed (entry added/removed/advanced) — same
   // "go refetch" contract as run.changed.
   | { type: 'merge-queue.changed' }
