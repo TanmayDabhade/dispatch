@@ -44,7 +44,7 @@ export type ProjectView =
   | 'task'
   | 'new-task';
 
-export type TaskTab = 'details' | 'chat' | 'diff';
+export type TaskTab = 'details' | 'chat' | 'diff' | 'preview';
 
 /** One file/run/task to show the blast radius of — what `ImpactView` fetches
  * and what the two "open in Impact" entry points (Review case panel, Git

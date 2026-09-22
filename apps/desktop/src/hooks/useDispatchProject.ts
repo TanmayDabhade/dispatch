@@ -207,6 +207,12 @@ export interface DispatchProjectData {
   /** The active project's dispatchd port, `undefined` until it resolves — exposed so a view
    * can scope its own query keys (e.g. `useGit`) the same way this hook's queries do. */
   port: number | undefined;
+  /** The daemon's HTTP base, or `null` before one resolves. Exposed for the
+   *  few things that address the daemon directly rather than through
+   *  `client` — a run preview's iframe is one, since a browser frame loads a
+   *  URL and cannot go through the API client at all. Honours the web demo's
+   *  proxy base the same way every API call does. */
+  daemonBaseUrl: string | null;
   portLoading: boolean;
   portError: boolean;
   portErrorDetail: unknown;
@@ -2691,6 +2697,7 @@ export function useDispatchProject(
   return {
     client,
     port,
+    daemonBaseUrl: connection === undefined ? null : daemonBaseUrl(connection),
     portLoading,
     portError,
     portErrorDetail,

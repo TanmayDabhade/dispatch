@@ -6,6 +6,7 @@ import type { TaskDetailPanelProps } from '../components/tasks/detail';
 import { TaskPage } from '../components/tasks/detail';
 import { TaskChatTab } from '../components/tasks/TaskChatTab';
 import { TaskDiffTab } from '../components/tasks/TaskDiffTab';
+import { TaskPreviewTab } from '../components/tasks/TaskPreviewTab';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { ImpactSubjectRef, TaskTab } from '../lib/appNav';
 import { formatShortDate } from '../lib/taskDates';
@@ -23,6 +24,7 @@ const TASK_TABS = [
   { id: 'details', label: 'Details' },
   { id: 'chat', label: 'Chat' },
   { id: 'diff', label: 'Diff' },
+  { id: 'preview', label: 'Preview' },
 ];
 
 export interface TaskViewProps {
@@ -157,6 +159,10 @@ export function TaskView({
                 : undefined
             }
           />
+        </ErrorBoundary>
+      ) : tab === 'preview' ? (
+        <ErrorBoundary label="this tab">
+          <TaskPreviewTab data={data} selectedRun={selectedRun} />
         </ErrorBoundary>
       ) : undefined}
     </TaskPage>
