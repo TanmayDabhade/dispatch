@@ -228,6 +228,11 @@ export interface TerminalRegistryOptions {
 
 export class TerminalRegistry {
   private readonly sessions = new Map<string, Session>();
+  // Set by `shutdown`. A registry that has been torn down must not write
+  // again: output buffered in a killed child's pipe still arrives after the
+  // kill, and re-arming the debounced flush from there would persist once the
+  // daemon had already finished stopping.
+  private closed = false;
   private readonly spawn: TerminalSpawner;
   private readonly maxBytes: number;
   private readonly now: () => Date;
@@ -305,6 +310,7 @@ export class TerminalRegistry {
    * `hydrate` would throw away.
    */
   private persist(): void {
+    if (this.closed) return;
     // Nothing to write and nothing written before: a daemon on a project where
     // no one ever opened a terminal should not leave a directory behind, and
     // `shutdown` runs on every daemon stop. Once an index exists this falls
@@ -329,7 +335,7 @@ export class TerminalRegistry {
   }
 
   private schedulePersist(session: Session): void {
-    if (session.persistTimer !== null) return;
+    if (this.closed || session.persistTimer !== null) return;
     session.persistTimer = setTimeout(() => {
       session.persistTimer = null;
       this.persist();
@@ -566,5 +572,7 @@ export class TerminalRegistry {
       session.proc = null;
     }
     this.persist();
+    // Last, so the flush above still runs; everything after this is refused.
+    this.closed = true;
   }
 }

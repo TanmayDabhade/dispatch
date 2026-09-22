@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -58,6 +64,18 @@ const originalHome = process.env.DISPATCH_HOME;
 // the microtask queue drain before it looks at the scrollback.
 function settle(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 5));
+}
+
+// Total bytes of everything under `dir`, so a test can assert that nothing
+// was written without caring which file would have grown.
+function totalBytesUnder(dir: string): number {
+  if (!existsSync(dir)) return 0;
+  let total = 0;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    total += entry.isDirectory() ? totalBytesUnder(full) : statSync(full).size;
+  }
+  return total;
 }
 
 function decode(base64: string): string {
@@ -284,6 +302,29 @@ describe('TerminalRegistry', () => {
     });
     local.shutdown();
     expect(existsSync(join(home, '.dispatch'))).toBe(false);
+  });
+
+  it('writes nothing once it has been shut down', async () => {
+    // Output buffered in a killed child's pipe still arrives after the kill.
+    // Re-arming the debounced flush from there would persist after the daemon
+    // had already finished stopping.
+    const local = build();
+    const info = local.create({ cwd: root, command: ['bash'] });
+    spawned[0]?.emit('before shutdown');
+    await settle();
+    local.shutdown();
+
+    const log = join(home, '.dispatch', 'runs');
+    const sizeAfterShutdown = totalBytesUnder(log);
+    spawned[0]?.emit('late output after the kill');
+    await settle();
+    // Past the persist debounce, so a re-armed timer would have fired by now.
+    await new Promise((resolve) => setTimeout(resolve, 900));
+
+    expect(totalBytesUnder(log)).toBe(sizeAfterShutdown);
+    expect(decode(local.read(info.id, 0)?.data ?? '')).toContain(
+      'before shutdown'
+    );
   });
 
   it('records an emptied index rather than silently keeping the last session', () => {
