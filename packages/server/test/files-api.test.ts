@@ -18,7 +18,10 @@ function initDispatchGitRepo(): string {
   writeFileSync(join(dir, 'README.md'), '# test repo\n');
   mkdirSync(join(dir, 'src'), { recursive: true });
   writeFileSync(join(dir, 'src', 'index.ts'), 'export const answer = 42;\n');
-  writeFileSync(join(dir, 'src', 'BoardView.tsx'), 'export function BoardView() {}\n');
+  writeFileSync(
+    join(dir, 'src', 'BoardView.tsx'),
+    'export function BoardView() {}\n'
+  );
   // A real PNG header, so binary detection is exercised against actual bytes
   // rather than a string that merely contains a NUL.
   writeFileSync(
@@ -41,7 +44,8 @@ const originalDispatchHome = process.env.DISPATCH_HOME;
 
 function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const headers = new Headers(init?.headers);
-  if (!headers.has('content-type')) headers.set('content-type', 'application/json');
+  if (!headers.has('content-type'))
+    headers.set('content-type', 'application/json');
   return fetch(`${baseUrl}${path}`, { ...init, headers });
 }
 
@@ -69,7 +73,9 @@ describe('GET /api/files/tree', () => {
     const names = body.entries.map((e: { name: string }) => e.name);
     const kinds = body.entries.map((e: { kind: string }) => e.kind);
     // Directories lead, which is what every file tree does.
-    expect(kinds.indexOf('file')).toBeGreaterThan(kinds.lastIndexOf('directory'));
+    expect(kinds.indexOf('file')).toBeGreaterThan(
+      kinds.lastIndexOf('directory')
+    );
     expect(names).toContain('src');
     expect(names).toContain('README.md');
   });
@@ -90,7 +96,9 @@ describe('GET /api/files/tree', () => {
 
 describe('GET /api/files/read', () => {
   it('returns text with its metadata', async () => {
-    const body = await json(await apiFetch('/api/files/read?path=src/index.ts'));
+    const body = await json(
+      await apiFetch('/api/files/read?path=src/index.ts')
+    );
     expect(body.kind).toBe('text');
     expect(body.text).toBe('export const answer = 42;\n');
     expect(body.size).toBeGreaterThan(0);
@@ -114,12 +122,17 @@ describe('POST /api/files/write', () => {
     const saved = await json(
       await apiFetch('/api/files/write', {
         method: 'POST',
-        body: JSON.stringify({ path: 'src/index.ts', text: 'export const answer = 7;\n' }),
+        body: JSON.stringify({
+          path: 'src/index.ts',
+          text: 'export const answer = 7;\n',
+        }),
       })
     );
     expect(saved.path).toBe('src/index.ts');
 
-    const read = await json(await apiFetch('/api/files/read?path=src/index.ts'));
+    const read = await json(
+      await apiFetch('/api/files/read?path=src/index.ts')
+    );
     expect(read.text).toBe('export const answer = 7;\n');
   });
 
@@ -128,7 +141,9 @@ describe('POST /api/files/write', () => {
       method: 'POST',
       body: JSON.stringify({ path: 'a/b/c/new.ts', text: 'hi\n' }),
     });
-    const read = await json(await apiFetch('/api/files/read?path=a/b/c/new.ts'));
+    const read = await json(
+      await apiFetch('/api/files/read?path=a/b/c/new.ts')
+    );
     expect(read.text).toBe('hi\n');
   });
 
@@ -190,7 +205,9 @@ describe('path traversal', () => {
 
   it('refuses to read outside the project', async () => {
     for (const path of escapes) {
-      const res = await apiFetch(`/api/files/read?path=${encodeURIComponent(path)}`);
+      const res = await apiFetch(
+        `/api/files/read?path=${encodeURIComponent(path)}`
+      );
       expect(res.status).toBeGreaterThanOrEqual(400);
       if (res.status === 400) {
         expect((await json(res)).error).toContain('inside the project');
@@ -210,7 +227,9 @@ describe('path traversal', () => {
 
   it('refuses to list outside the project', async () => {
     for (const path of escapes) {
-      const res = await apiFetch(`/api/files/tree?path=${encodeURIComponent(path)}`);
+      const res = await apiFetch(
+        `/api/files/tree?path=${encodeURIComponent(path)}`
+      );
       expect(res.status).toBeGreaterThanOrEqual(400);
     }
   });

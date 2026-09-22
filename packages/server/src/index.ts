@@ -68,6 +68,8 @@ import { LinearSync } from './linear/sync.js';
 import { NoteStore } from './notes.js';
 import { EpicEngine } from './orchestrator/epic.js';
 import { ClaudeExecutor } from './orchestrator/executors/claude.js';
+import { CliExecutor } from './orchestrator/executors/cli.js';
+import { availableCliPresets } from './orchestrator/executors/cliPresets.js';
 import { CodexExecutor } from './orchestrator/executors/codex.js';
 import { FixLoop, FixLoopStore } from './orchestrator/fixLoop.js';
 import { JjManager } from './orchestrator/jj.js';
@@ -294,6 +296,34 @@ const DEFAULT_WEB_DIST_DIR = join(moduleDir, '..', '..', 'web', 'dist');
 export function registerCodexIfInstalled(orchestrator: Orchestrator): void {
   if (Bun.which('codex') === null) return;
   orchestrator.registerExecutor('codex', new CodexExecutor());
+}
+
+/**
+ * Registers every CLI-backed agent this project can dispatch on.
+ *
+ * Two sources, config winning: `executors.<name>.command` in config.yml is an
+ * agent the user declared, and the presets cover well-known agents that are
+ * already on PATH. A configured entry replaces the preset of the same name
+ * outright rather than merging into it — a half-overridden argv would be
+ * nobody's intent.
+ *
+ * `claude` and `codex` are skipped even if named, because both already have a
+ * native executor that does strictly more (approvals, cost, resumable
+ * sessions) and a CLI wrapper would silently replace it with less.
+ */
+export function registerCliExecutors(
+  orchestrator: Orchestrator,
+  rootDir: string
+): void {
+  const configured = loadConfig(rootDir).executors ?? {};
+  const commands = { ...availableCliPresets() };
+  for (const [name, entry] of Object.entries(configured)) {
+    if (entry.command !== undefined) commands[name] = entry.command;
+  }
+  for (const [name, command] of Object.entries(commands)) {
+    if (name === 'claude' || name === 'codex') continue;
+    orchestrator.registerExecutor(name, new CliExecutor({ command }));
+  }
 }
 
 export function resolveStoreBackend(rootDir: string): TaskStoreBackend {
@@ -879,6 +909,7 @@ async function bootServer(
   } else {
     orchestrator.registerExecutor('claude', new ClaudeExecutor());
     registerCodexIfInstalled(orchestrator);
+    registerCliExecutors(orchestrator, rootDir);
   }
   // Questions an agent raised mid-run. A run going terminal drops its own, so
   // the app never shows a card whose answer nobody is listening for.
