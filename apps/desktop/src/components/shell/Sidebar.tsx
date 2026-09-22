@@ -16,6 +16,7 @@ import {
   Shield,
   Sparkles,
   SquarePen,
+  TerminalSquare,
   Waypoints,
 } from 'lucide-react';
 import {
@@ -58,6 +59,7 @@ const WORKSPACE_VIEWS: {
   // Blast radius of a file, run, or task's declared writes.
   { id: 'impact', label: 'Impact', icon: Waypoints },
   { id: 'branches', label: 'Git', icon: GitBranch },
+  { id: 'terminals', label: 'Terminals', icon: TerminalSquare },
   // Every open PR with its gates plus what already landed.
   { id: 'landing', label: 'Landing', icon: GitMerge },
 ];

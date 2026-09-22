@@ -104,6 +104,7 @@ import { PrReviewView } from './views/PrReviewView';
 import { SessionsHubView } from './views/SessionsHubView';
 import { SettingsView } from './views/SettingsView';
 import { TaskView } from './views/TaskView';
+import { TerminalsView } from './views/TerminalsView';
 import { cn } from '@/lib/utils';
 import { PageHeaderShellContext } from '@/ui/ai/page-header';
 import { Button } from '@/ui/button';
@@ -1305,6 +1306,9 @@ function App() {
                                     dispatchNav({ type: 'openImpact', subject })
                                   }
                                 />
+                              )}
+                              {navState.projectView === 'terminals' && (
+                                <TerminalsView data={data} />
                               )}
                               {navState.projectView === 'brain-dump' && (
                                 <BrainDumpView

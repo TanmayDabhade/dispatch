@@ -684,6 +684,11 @@ export type ServerEvent =
   // full snapshot — per-chunk snapshots would be pathologically chatty. Same
   // contract as `run.log`: the payload is the increment.
   | { type: 'merge-queue.log'; runId: string; chunk: string }
+  // A terminal session produced output, or ended. Both carry only the id: a
+  // client holds a byte cursor and pulls the increment, so a dropped event
+  // costs a round trip rather than leaving a gap.
+  | { type: 'terminal.output'; terminalId: string }
+  | { type: 'terminal.exited'; terminalId: string }
   // The queue just finished draining and attempted to push origin's base up
   // to date. Mirrors packages/server/src/events.ts exactly.
   | {

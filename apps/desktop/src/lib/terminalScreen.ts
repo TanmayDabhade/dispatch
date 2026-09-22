@@ -158,10 +158,16 @@ export class TerminalScreen {
   /** Set by an OSC 0/2 sequence — what a shell puts in the window title. */
   title = '';
 
-  constructor(
-    private cols: number = 120,
-    private rows: number = 32
-  ) {}
+  private cols: number;
+  private rows: number;
+
+  // Explicit fields rather than constructor parameter properties: this
+  // package builds with `erasableSyntaxOnly`, which rejects any TypeScript
+  // that has to emit code rather than simply be stripped.
+  constructor(cols = 120, rows = 32) {
+    this.cols = cols;
+    this.rows = rows;
+  }
 
   /** The top of the visible screen, which is what absolute cursor moves are relative to. */
   private screenTop(): number {

@@ -26,6 +26,8 @@ export type ProjectView =
    * both retired pages. */
   | 'inbox'
   | 'brain-dump'
+  /** Shells on the repo or a run's worktree, split any number of ways. */
+  | 'terminals'
   | 'plans'
   /** A single AI task draft's review page — `activeDraftId` says which one. */
   | 'draft'
