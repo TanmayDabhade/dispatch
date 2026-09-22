@@ -188,3 +188,16 @@ export function receiptsDir(rootDir: string): string {
 export function scopeRequestsPath(rootDir: string): string {
   return join(runsDir(rootDir), 'scope-requests.json');
 }
+
+// Where a project's terminal sessions keep their scrollback and index (see
+// terminals.ts). Under `runs/` rather than beside the repo for the same reason
+// transcripts are: this is per-machine scratch a person never diffs, and it
+// has to outlive both the worktree a session was opened on and the daemon
+// process that spawned it.
+export function terminalsDir(rootDir: string): string {
+  return join(runsDir(rootDir), 'terminals');
+}
+
+export function terminalScrollbackPath(rootDir: string, id: string): string {
+  return join(terminalsDir(rootDir), `${id}.log`);
+}

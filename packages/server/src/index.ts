@@ -12,6 +12,7 @@ import {
 } from '@dispatch/core';
 import type {
   CartoMode,
+  ExecutorCommand,
   GitReader,
   ProjectStores,
   TaskStoreBackend,
@@ -31,6 +32,7 @@ import {
 } from './api.js';
 import type { ApiContext, DaemonTokens } from './api.js';
 import { spawnGitSync } from './blockingGit.js';
+import { BrowserRegistry } from './browser/registry.js';
 import { TaskCache } from './cache.js';
 import { ConversationStore } from './conversations.js';
 import {
@@ -68,6 +70,8 @@ import { LinearSync } from './linear/sync.js';
 import { NoteStore } from './notes.js';
 import { EpicEngine } from './orchestrator/epic.js';
 import { ClaudeExecutor } from './orchestrator/executors/claude.js';
+import { CliExecutor } from './orchestrator/executors/cli.js';
+import { availableCliPresets } from './orchestrator/executors/cliPresets.js';
 import { CodexExecutor } from './orchestrator/executors/codex.js';
 import { FixLoop, FixLoopStore } from './orchestrator/fixLoop.js';
 import { JjManager } from './orchestrator/jj.js';
@@ -111,6 +115,7 @@ import {
   defaultGitRunner,
   SyncWorktree,
 } from './sync/worktree.js';
+import { TerminalRegistry } from './terminals.js';
 import { TrackedFilesCache } from './trackedFiles.js';
 import { EventLoopWatchdog } from './watchdog.js';
 import { watchSourceDirs, watchTasks } from './watcher.js';
@@ -293,6 +298,45 @@ const DEFAULT_WEB_DIST_DIR = join(moduleDir, '..', '..', 'web', 'dist');
 export function registerCodexIfInstalled(orchestrator: Orchestrator): void {
   if (Bun.which('codex') === null) return;
   orchestrator.registerExecutor('codex', new CodexExecutor());
+}
+
+/**
+ * Registers every CLI-backed agent this project can dispatch on.
+ *
+ * Two sources, config winning: `executors.<name>.command` in config.yml is an
+ * agent the user declared, and the presets cover well-known agents that are
+ * already on PATH. A configured entry replaces the preset of the same name
+ * outright rather than merging into it — a half-overridden argv would be
+ * nobody's intent.
+ *
+ * `claude` and `codex` are skipped even if named, because both already have a
+ * native executor that does strictly more (approvals, cost, resumable
+ * sessions) and a CLI wrapper would silently replace it with less.
+ */
+export function registerCliExecutors(
+  orchestrator: Orchestrator,
+  rootDir: string
+): void {
+  // Boot must survive a malformed config.yml, the same way the carto and
+  // prWorktreeDir reads below do: a config typo must cost the user their
+  // declared agents, not their daemon. The presets still register, and a
+  // per-request load still surfaces the real error.
+  let configured: Record<string, { command?: ExecutorCommand }> = {};
+  try {
+    configured = loadConfig(rootDir).executors ?? {};
+  } catch (err) {
+    console.error(
+      `dispatchd: could not read executor config, registering presets only: ${(err as Error).message}`
+    );
+  }
+  const commands = { ...availableCliPresets() };
+  for (const [name, entry] of Object.entries(configured)) {
+    if (entry.command !== undefined) commands[name] = entry.command;
+  }
+  for (const [name, command] of Object.entries(commands)) {
+    if (name === 'claude' || name === 'codex') continue;
+    orchestrator.registerExecutor(name, new CliExecutor({ command }));
+  }
 }
 
 export function resolveStoreBackend(rootDir: string): TaskStoreBackend {
@@ -878,6 +922,7 @@ async function bootServer(
   } else {
     orchestrator.registerExecutor('claude', new ClaudeExecutor());
     registerCodexIfInstalled(orchestrator);
+    registerCliExecutors(orchestrator, rootDir);
   }
   // Questions an agent raised mid-run. A run going terminal drops its own, so
   // the app never shows a card whose answer nobody is listening for.
@@ -1240,6 +1285,21 @@ async function bootServer(
   const approvalFloor: ApprovalFloor = (_toolName, input) =>
     floorCheckForToolInput(input) !== null;
 
+  // Chromium instances the daemon drives. Nothing is launched at boot; this
+  // only holds the ones a request asks for, so shutdown can kill them.
+  const browsers = new BrowserRegistry();
+
+  // Shell sessions, hydrated here so scrollback from a previous daemon is
+  // readable the moment the app reconnects. Output is announced rather than
+  // streamed: a client holds a byte cursor and pulls the increment, so a
+  // dropped event costs a round trip and never a gap.
+  const terminals = new TerminalRegistry(rootDir, {
+    onOutput: (terminalId) =>
+      events.broadcast({ type: 'terminal.output', terminalId }),
+    onExit: (terminalId) =>
+      events.broadcast({ type: 'terminal.exited', terminalId }),
+  });
+
   const decisionFeed = new DecisionFeed({
     orchestrator,
     questions,
@@ -1317,6 +1377,8 @@ async function bootServer(
     reviewComments,
     conversations,
     questions,
+    browsers,
+    terminals,
     scopeRequests,
     decisionFeed,
     linearSync,
@@ -1471,6 +1533,11 @@ async function bootServer(
       stopWebhookDelivery();
       stopDecisionFeed();
       stopPolicyEngine();
+      // Kills every child and flushes scrollback; the sessions stay in the
+      // index so the next daemon hydrates them as `orphaned`.
+      terminals.shutdown();
+      // Otherwise every session leaks a Chromium process.
+      browsers.shutdown();
       boardSyncScheduler?.stop();
       // Before stores.close() below, since the exporter reads the database.
       receiptsScheduler?.stop();

@@ -8,6 +8,7 @@ import type {
   ConfigPatch,
   DispatchConfig,
   EscalationStep,
+  ExecutorCommand,
   ExecutorConfig,
   ExecutorPricing,
   FixLoopConfig,
@@ -18,6 +19,7 @@ import type {
   OrchestratorConfig,
   QueueConfig,
   ReceiptsConfig,
+  RemoteConfig,
   RepoDigestConfig,
   VerifyConfig,
 } from './configTypes.js';
@@ -114,6 +116,7 @@ const DEFAULTS: DispatchConfig = {
   orchestrator: { ...DEFAULT_ORCHESTRATOR },
   models: { ...DEFAULT_MODELS },
   executors: {},
+  remotes: {},
   linear: { ...DEFAULT_LINEAR, statusMap: { ...DEFAULT_LINEAR.statusMap } },
   fixLoop: cloneFixLoop(DEFAULT_FIX_LOOP),
   carto: { ...DEFAULT_CARTO },
@@ -420,6 +423,114 @@ function parseExecutorPricing(
   };
 }
 
+// Validates one `executors.<name>.command` block: the argv a CLI-backed agent
+// is spawned with, plus optional environment. An empty argv is rejected rather
+// than defaulted — a command block with nothing to run is a typo, and silently
+// ignoring it would make the executor register and then fail at dispatch.
+function parseExecutorCommand(
+  name: string,
+  raw: unknown,
+  prefix: string
+): ExecutorCommand {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(
+      `${prefix}: executors.${name}.command must be an object`
+    );
+  }
+  const entry = raw as Record<string, unknown>;
+  for (const key of Object.keys(entry)) {
+    if (key !== 'run' && key !== 'env') {
+      throw new ConfigError(
+        `${prefix}: unknown executors.${name}.command key "${key}" (expected run|env)`
+      );
+    }
+  }
+  const { run, env } = entry;
+  if (
+    !Array.isArray(run) ||
+    run.length === 0 ||
+    !run.every((part) => typeof part === 'string')
+  ) {
+    throw new ConfigError(
+      `${prefix}: executors.${name}.command.run must be a non-empty list of strings`
+    );
+  }
+  if (env !== undefined) {
+    if (typeof env !== 'object' || env === null || Array.isArray(env)) {
+      throw new ConfigError(
+        `${prefix}: executors.${name}.command.env must be an object`
+      );
+    }
+    for (const [key, value] of Object.entries(env)) {
+      if (typeof value !== 'string') {
+        throw new ConfigError(
+          `${prefix}: executors.${name}.command.env.${key} must be a string`
+        );
+      }
+    }
+  }
+  return {
+    run,
+    ...(env === undefined ? {} : { env: env as Record<string, string> }),
+  };
+}
+
+// Validates the optional `remotes:` block. Every field is checked by name so a
+// typo (`hostname:` for `host:`) fails the load with the key that was wrong,
+// rather than silently producing a remote that cannot connect.
+function parseRemotesConfig(raw: unknown): Record<string, RemoteConfig> {
+  if (raw === undefined) return {};
+  const prefix = 'invalid .dispatch/config.yml';
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(`${prefix}: remotes must be an object`);
+  }
+  const result: Record<string, RemoteConfig> = {};
+  for (const [name, entry] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      throw new ConfigError(`${prefix}: remotes.${name} must be an object`);
+    }
+    const value = entry as Record<string, unknown>;
+    for (const key of Object.keys(value)) {
+      if (!['host', 'user', 'port', 'path', 'identityFile'].includes(key)) {
+        throw new ConfigError(
+          `${prefix}: unknown remotes.${name} key "${key}" (expected host|user|port|path|identityFile)`
+        );
+      }
+    }
+    if (typeof value.host !== 'string' || value.host.trim() === '') {
+      throw new ConfigError(`${prefix}: remotes.${name}.host is required`);
+    }
+    for (const key of ['user', 'path', 'identityFile'] as const) {
+      if (value[key] !== undefined && typeof value[key] !== 'string') {
+        throw new ConfigError(
+          `${prefix}: remotes.${name}.${key} must be a string`
+        );
+      }
+    }
+    if (
+      value.port !== undefined &&
+      (typeof value.port !== 'number' ||
+        !Number.isInteger(value.port) ||
+        value.port <= 0)
+    ) {
+      throw new ConfigError(
+        `${prefix}: remotes.${name}.port must be a positive integer`
+      );
+    }
+    // Every field has already been narrowed by the checks above, so these read
+    // without casts.
+    const { user, port, path, identityFile } = value;
+    result[name] = {
+      host: value.host.trim(),
+      ...(typeof user === 'string' ? { user } : {}),
+      ...(typeof port === 'number' ? { port } : {}),
+      ...(typeof path === 'string' ? { path } : {}),
+      ...(typeof identityFile === 'string' ? { identityFile } : {}),
+    };
+  }
+  return result;
+}
+
 // Validates the optional `executors:` block, same contract as
 // parseOrchestratorConfig: absent means none configured.
 function parseExecutorsConfig(raw: unknown): Record<string, ExecutorConfig> {
@@ -436,15 +547,16 @@ function parseExecutorsConfig(raw: unknown): Record<string, ExecutorConfig> {
       );
     }
     for (const key of Object.keys(entry)) {
-      if (key !== 'models' && key !== 'pricing') {
+      if (key !== 'models' && key !== 'pricing' && key !== 'command') {
         throw new ConfigError(
-          `${prefix}: unknown executors.${name} key "${key}" (expected models|pricing)`
+          `${prefix}: unknown executors.${name} key "${key}" (expected models|pricing|command)`
         );
       }
     }
-    const { models, pricing } = entry as {
+    const { models, pricing, command } = entry as {
       models?: unknown;
       pricing?: unknown;
+      command?: unknown;
     };
     result[name] = {
       models:
@@ -452,6 +564,9 @@ function parseExecutorsConfig(raw: unknown): Record<string, ExecutorConfig> {
       ...(pricing === undefined
         ? {}
         : { pricing: parseExecutorPricing(name, pricing, prefix) }),
+      ...(command === undefined
+        ? {}
+        : { command: parseExecutorCommand(name, command, prefix) }),
     };
   }
   return result;
@@ -935,6 +1050,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
       orchestrator: { ...DEFAULTS.orchestrator },
       models: { ...DEFAULTS.models },
       executors: {},
+      remotes: {},
       linear: {
         ...DEFAULTS.linear,
         statusMap: { ...DEFAULTS.linear.statusMap },
@@ -1020,6 +1136,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
     orchestrator: parseOrchestratorConfig(raw.orchestrator),
     models: parseModelConfig(raw.models),
     executors: parseExecutorsConfig(raw.executors),
+    remotes: parseRemotesConfig(raw.remotes),
     linear: parseLinearConfig(raw.linear),
     fixLoop: parseFixLoopConfig(raw.fixLoop),
     verify: parseVerifyConfig(raw.verify),

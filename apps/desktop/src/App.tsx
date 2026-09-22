@@ -90,7 +90,9 @@ import { AllAgentsView } from './views/AllAgentsView';
 import { BoardView } from './views/BoardView';
 import { BrainDumpView } from './views/BrainDumpView';
 import { BranchesView } from './views/BranchesView';
+import { DesignView } from './views/DesignView';
 import { DraftView } from './views/DraftView';
+import { FilesView } from './views/FilesView';
 import { GalleryView } from './views/GalleryView';
 import { GetStartedView } from './views/GetStartedView';
 import { ImpactView } from './views/ImpactView';
@@ -104,6 +106,7 @@ import { PrReviewView } from './views/PrReviewView';
 import { SessionsHubView } from './views/SessionsHubView';
 import { SettingsView } from './views/SettingsView';
 import { TaskView } from './views/TaskView';
+import { TerminalsView } from './views/TerminalsView';
 import { cn } from '@/lib/utils';
 import { PageHeaderShellContext } from '@/ui/ai/page-header';
 import { Button } from '@/ui/button';
@@ -1305,6 +1308,15 @@ function App() {
                                     dispatchNav({ type: 'openImpact', subject })
                                   }
                                 />
+                              )}
+                              {navState.projectView === 'design' && (
+                                <DesignView data={data} />
+                              )}
+                              {navState.projectView === 'files' && (
+                                <FilesView data={data} />
+                              )}
+                              {navState.projectView === 'terminals' && (
+                                <TerminalsView data={data} />
                               )}
                               {navState.projectView === 'brain-dump' && (
                                 <BrainDumpView

@@ -83,6 +83,8 @@ export interface DispatchConfig {
    *  `executorModels`). `loadConfig` always populates it; optional only so
    *  hand-built config literals (test fixtures) stay valid. */
   executors?: Record<string, ExecutorConfig>;
+  /** Machines reachable over ssh — see RemoteConfig. Absent means none. */
+  remotes?: Record<string, RemoteConfig>;
   linear: LinearConfig;
   fixLoop: FixLoopConfig;
   /** How to run this project for a `verify` run to exercise it. Absent means
@@ -372,9 +374,52 @@ export interface ExecutorPricing {
   output: number;
 }
 
+/**
+ * How to run an agent that is just a command-line program.
+ *
+ * Dispatch speaks two agents' protocols natively (Claude's SDK, Codex's app
+ * server). Everything else — and there are dozens — is a CLI that takes a
+ * prompt and prints to stdout, which is enough to run inside a worktree and
+ * review afterwards. Declaring one here is what makes it dispatchable without
+ * a code change.
+ *
+ * `run` is the argv, with two placeholders substituted before spawn:
+ * `{prompt}` and `{model}`. An entry containing a placeholder is replaced
+ * wholesale, so `--model={model}` and a bare `{model}` both work. When `run`
+ * has no `{prompt}`, the prompt is written to the process's stdin instead,
+ * which is what the agents that read a prompt from a pipe expect.
+ */
+export interface ExecutorCommand {
+  run: string[];
+  /** Extra environment for the child, merged over the daemon's own. */
+  env?: Record<string, string>;
+}
+
+/**
+ * A machine Dispatch can reach over ssh.
+ *
+ * Only what ssh itself needs, plus the checkout to work in. Everything else —
+ * keys, jump hosts, multiplexing — belongs in the user's own `~/.ssh/config`,
+ * which ssh already reads and which is where anyone maintaining a fleet
+ * already keeps it. Re-declaring that here would be a second place to keep in
+ * step with the first.
+ */
+export interface RemoteConfig {
+  /** Hostname or an alias from the user's ssh config. */
+  host: string;
+  user?: string;
+  port?: number;
+  /** The checkout on that machine; commands run here. */
+  path?: string;
+  /** Passed as `ssh -i`. Prefer an ssh-config `IdentityFile` where possible. */
+  identityFile?: string;
+}
+
 export interface ExecutorConfig {
   models: ExecutorModels;
   pricing?: ExecutorPricing;
+  /** Present only for CLI-backed agents; the built-in executors ignore it. */
+  command?: ExecutorCommand;
 }
 
 export const EXECUTOR_PRICING_FIELDS: readonly (keyof ExecutorPricing)[] = [

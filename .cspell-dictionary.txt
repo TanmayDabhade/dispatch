@@ -81,6 +81,7 @@ deadbeefcafe
 deadbeefdeadbeef
 deadcode
 debouncer
+DECCKM
 dedup
 dedup'd
 dedups
@@ -242,6 +243,7 @@ METACHARS
 misdescribe
 mktemp
 modelcontextprotocol
+mojibake
 monkeyc
 moonrepo
 moonx
@@ -250,6 +252,7 @@ musleabihf
 myconstant
 napi
 ncarto
+neighbour
 neighbours
 neutralised
 neutralises
@@ -262,6 +265,7 @@ nodelib
 nopath
 normalises
 Norte
+nosniff
 nosuch
 NOSYSTEM
 notekind
@@ -273,6 +277,7 @@ octocat
 Okafor
 Omnara
 oneline
+ONLCR
 opencode
 openharmony
 opping
@@ -310,10 +315,14 @@ Priya
 prototools
 PRRC
 PRRT
+ptys
 puppeted
+pycache
+qfec
 qified
 quansync
 Queueable
+qwen
 RAII
 Railpack
 railwayignore
@@ -357,6 +366,7 @@ repolled
 reqwest
 reranks
 rescan
+rescanned
 rescanning
 rescans
 reskin
@@ -400,6 +410,7 @@ Sidechain
 sindresorhus
 singularised
 sisteransi
+sixel
 skus
 smol
 soule
@@ -429,12 +440,14 @@ syncable
 syncer
 syncer's
 syncers
+syscalls
 tailwindlabs
 taskfile
 taskless
 taskview
 tauri
 Tauri's
+tcgetattr
 Terragon
 TESTKEY
 testuser
@@ -538,6 +551,7 @@ uppercased
 upserts
 urgentish
 urgncy
+venv
 VIEWBOX
 vinxi
 virtualisation

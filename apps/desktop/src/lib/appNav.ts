@@ -26,6 +26,12 @@ export type ProjectView =
    * both retired pages. */
   | 'inbox'
   | 'brain-dump'
+  /** Point at an element in a live browser and hand it to an agent. */
+  | 'design'
+  /** Browse and edit the checkout, with previews and quick open. */
+  | 'files'
+  /** Shells on the repo or a run's worktree, split any number of ways. */
+  | 'terminals'
   | 'plans'
   /** A single AI task draft's review page — `activeDraftId` says which one. */
   | 'draft'

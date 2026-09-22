@@ -56,6 +56,8 @@ describe('loadConfig', () => {
       },
       models: DEFAULT_MODELS,
       executors: {},
+      // No machines reachable over ssh until a remotes: block adds some.
+      remotes: {},
       linear: DEFAULT_LINEAR,
       fixLoop: DEFAULT_FIX_LOOP,
       carto: DEFAULT_CARTO,

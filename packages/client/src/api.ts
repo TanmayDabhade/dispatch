@@ -684,6 +684,11 @@ export type ServerEvent =
   // full snapshot — per-chunk snapshots would be pathologically chatty. Same
   // contract as `run.log`: the payload is the increment.
   | { type: 'merge-queue.log'; runId: string; chunk: string }
+  // A terminal session produced output, or ended. Both carry only the id: a
+  // client holds a byte cursor and pulls the increment, so a dropped event
+  // costs a round trip rather than leaving a gap.
+  | { type: 'terminal.output'; terminalId: string }
+  | { type: 'terminal.exited'; terminalId: string }
   // The queue just finished draining and attempted to push origin's base up
   // to date. Mirrors packages/server/src/events.ts exactly.
   | {
@@ -1833,6 +1838,15 @@ function reviewTargetPath(reviewTarget: ReviewTarget): string {
 // Pure helper (no fetch involved) so the query-string shape is unit
 // testable without a network layer: `?` + params when any filter is set, ''
 // otherwise, in the same status/kind/parent order the server accepts.
+// The `path` (+ optional `runId`) query every /api/files route takes. One
+// builder so a scope is never half-applied — a tree request that forgot the
+// run would silently browse the main checkout instead.
+function workspaceQuery(path: string, scope: WorkspaceScope): string {
+  const params = new URLSearchParams({ path });
+  if (scope.runId != null) params.set('runId', scope.runId);
+  return params.toString();
+}
+
 export function taskQueryString(filter: TaskFilter = {}): string {
   const params = new URLSearchParams();
   if (filter.status !== undefined) params.set('status', filter.status);
@@ -1961,6 +1975,143 @@ export function connectEvents(
     socket?.close();
   };
 }
+
+/**
+ * A shell session the daemon holds open — see packages/server/src/terminals.ts.
+ *
+ * `total` and `trimmed` bound the byte cursor a reader holds: everything
+ * between them is still in scrollback, anything below `trimmed` has aged out.
+ */
+export interface TerminalInfo {
+  id: string;
+  title: string;
+  cwd: string;
+  command: string[];
+  cols: number;
+  rows: number;
+  startedAt: string;
+  exitedAt: string | null;
+  exitCode: number | null;
+  /** `orphaned` is a session this daemon inherited from a previous process:
+   * its output is readable, but nothing is listening on its stdin. */
+  state: 'running' | 'exited' | 'orphaned';
+  pty: boolean;
+  total: number;
+  trimmed: number;
+  runId: string | null;
+}
+
+export interface TerminalOutput {
+  id: string;
+  /** Where this read actually began, clamped forward past `trimmed`. */
+  since: number;
+  total: number;
+  trimmed: number;
+  /** Base64 — output is bytes, not text, and a chunk can split a code point. */
+  data: string;
+  state: TerminalInfo['state'];
+  exitCode: number | null;
+  /** The cursor to pass to the next read. */
+  next: number;
+  /** True when the read hit its size cap and more is already waiting. */
+  more: boolean;
+}
+
+export interface CreateTerminalInput {
+  /** A run, to open on its worktree. Takes precedence over `cwd`. */
+  runId?: string;
+  /** A path inside the project or one of its worktrees; defaults to the root. */
+  cwd?: string;
+  /** Defaults to the user's login shell. */
+  command?: string[];
+  title?: string;
+  cols?: number;
+  rows?: number;
+}
+
+/** One entry in a directory listing. `path` is relative to the scope's base. */
+export interface WorkspaceEntry {
+  name: string;
+  path: string;
+  kind: 'file' | 'directory';
+  size: number;
+  modifiedAt: string | null;
+}
+
+export interface WorkspaceTree {
+  path: string;
+  runId: string | null;
+  entries: WorkspaceEntry[];
+}
+
+/**
+ * A file the editor opened.
+ *
+ * `kind` is why there may be no text: `binary` and `too-large` are facts about
+ * the file that the UI renders, not errors — both arrive with a 200.
+ */
+export interface WorkspaceFile {
+  path: string;
+  runId: string | null;
+  size: number;
+  modifiedAt: string;
+  mime: string;
+  /** How the preview pane should render it, when it cannot be edited as text. */
+  preview: 'image' | 'pdf' | 'video' | 'audio' | 'none';
+  kind: 'text' | 'binary' | 'too-large';
+  text: string | null;
+}
+
+export interface WorkspaceSearchHit {
+  path: string;
+  score: number;
+  /** Indices in `path` that matched, for highlighting. */
+  positions: number[];
+}
+
+export interface WorkspaceSearchResult {
+  runId: string | null;
+  query: string;
+  /** How many files were considered, so a UI can say "12 of 4,300". */
+  total: number;
+  results: WorkspaceSearchHit[];
+}
+
+/** Which checkout a file request is against: a run's worktree, or the repo. */
+export interface WorkspaceScope {
+  runId?: string | null;
+}
+
+/** A Chromium the daemon is driving — see packages/server/src/browser. */
+export interface BrowserInfo {
+  id: string;
+  url: string;
+  headless: boolean;
+  startedAt: string;
+  /** True while Design Mode is armed and waiting for a click. */
+  picking: boolean;
+}
+
+/** What Design Mode captured: enough to tell an agent which thing is meant. */
+export interface PickedElement {
+  selector: string;
+  tagName: string;
+  id: string | null;
+  className: string | null;
+  text: string;
+  outerHTML: string;
+  /** True when the markup was cut at the capture limit. */
+  outerHTMLTruncated: boolean;
+  styles: Record<string, string>;
+  rect: { x: number; y: number; width: number; height: number };
+  devicePixelRatio: number;
+  url: string;
+}
+
+export type PickOutcome =
+  | { state: 'picked'; element: PickedElement; screenshot: string }
+  | { state: 'cancelled' }
+  | { state: 'waiting' };
 
 // Bound client shape returned by `createApiClient` — every method already
 // carries `baseUrl`, so callers never repeat it.
@@ -2528,6 +2679,59 @@ export interface ApiClient {
   // `GET /api/impact?subject=<kind>&id=<id>`.
   getImpact(subject: ImpactSubjectKind, id: string): Promise<ImpactResponse>;
   /** The `/ws` URL, token included — it is a credential, so never render or log it. */
+  /** One directory's children, for a lazily expanded tree. */
+  fetchWorkspaceTree(
+    path: string,
+    scope?: WorkspaceScope
+  ): Promise<WorkspaceTree>;
+  fetchWorkspaceFile(
+    path: string,
+    scope?: WorkspaceScope
+  ): Promise<WorkspaceFile>;
+  saveWorkspaceFile(
+    path: string,
+    text: string,
+    scope?: WorkspaceScope
+  ): Promise<{ path: string; size: number; modifiedAt: string }>;
+  /** A URL the browser can put straight in an `img` or `embed` tag. */
+  workspaceFileUrl(path: string, scope?: WorkspaceScope): string;
+  /** Quick open: fuzzy filename search, gitignore-aware. */
+  searchWorkspace(
+    query: string,
+    scope?: WorkspaceScope & { limit?: number }
+  ): Promise<WorkspaceSearchResult>;
+  /** Open a Chromium the daemon drives. Headed unless `headless` is set. */
+  launchBrowser(opts?: {
+    url?: string;
+    headless?: boolean;
+    width?: number;
+    height?: number;
+  }): Promise<BrowserInfo>;
+  listBrowsers(): Promise<BrowserInfo[]>;
+  closeBrowser(id: string): Promise<void>;
+  navigateBrowser(id: string, url: string): Promise<BrowserInfo>;
+  browserClick(id: string, selector: string): Promise<void>;
+  browserFill(id: string, selector: string, value: string): Promise<void>;
+  browserEvaluate(id: string, expression: string): Promise<{ value: unknown }>;
+  /** A base64 PNG of the page. */
+  browserScreenshot(id: string): Promise<{ screenshot: string }>;
+  /** Arms Design Mode: the next click in the page is captured, not delivered. */
+  browserStartPick(id: string): Promise<{ picking: boolean }>;
+  /** Polled while a pick is armed. */
+  browserPickResult(id: string): Promise<PickOutcome>;
+  /** Every shell session this daemon knows about, oldest first. */
+  fetchTerminals(): Promise<TerminalInfo[]>;
+  fetchTerminal(id: string): Promise<TerminalInfo>;
+  createTerminal(input?: CreateTerminalInput): Promise<TerminalInfo>;
+  /** Scrollback after `since`; pass back the reply's `next` to resume. */
+  fetchTerminalOutput(id: string, since: number): Promise<TerminalOutput>;
+  /** Keystrokes, verbatim — the caller encodes its own control sequences. */
+  sendTerminalInput(id: string, data: string): Promise<void>;
+  resizeTerminal(id: string, cols: number, rows: number): Promise<TerminalInfo>;
+  /** Ends the process, keeping the scrollback readable. */
+  closeTerminal(id: string): Promise<void>;
+  /** Ends the process and forgets the session, scrollback included. */
+  removeTerminal(id: string): Promise<void>;
   wsUrl(): string;
   connectEvents(
     onChange: () => void,
@@ -3154,6 +3358,98 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         target,
         `/api/impact?${new URLSearchParams({ subject, id }).toString()}`
       ),
+    fetchWorkspaceTree: (path, scope = {}) =>
+      request(target, `/api/files/tree?${workspaceQuery(path, scope)}`),
+    fetchWorkspaceFile: (path, scope = {}) =>
+      request(target, `/api/files/read?${workspaceQuery(path, scope)}`),
+    saveWorkspaceFile: (path, text, scope = {}) =>
+      request(target, '/api/files/write', {
+        method: 'POST',
+        ...jsonBody({
+          path,
+          text,
+          ...(scope.runId == null ? {} : { runId: scope.runId }),
+        }),
+      }),
+    workspaceFileUrl: (path, scope = {}) =>
+      `${baseUrl}/api/files/raw?${workspaceQuery(path, scope)}`,
+    searchWorkspace: (query, scope = {}) => {
+      const params = new URLSearchParams({ q: query });
+      if (scope.runId != null) params.set('runId', scope.runId);
+      if (scope.limit !== undefined) params.set('limit', String(scope.limit));
+      return request(target, `/api/files/search?${params.toString()}`);
+    },
+    launchBrowser: (opts = {}) =>
+      request(target, '/api/browser', { method: 'POST', ...jsonBody(opts) }),
+    listBrowsers: () => request(target, '/api/browser'),
+    closeBrowser: async (id) => {
+      await request(target, `/api/browser/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+    },
+    navigateBrowser: (id, url) =>
+      request(target, `/api/browser/${encodeURIComponent(id)}/navigate`, {
+        method: 'POST',
+        ...jsonBody({ url }),
+      }),
+    browserClick: async (id, selector) => {
+      await request(target, `/api/browser/${encodeURIComponent(id)}/click`, {
+        method: 'POST',
+        ...jsonBody({ selector }),
+      });
+    },
+    browserFill: async (id, selector, value) => {
+      await request(target, `/api/browser/${encodeURIComponent(id)}/fill`, {
+        method: 'POST',
+        ...jsonBody({ selector, value }),
+      });
+    },
+    browserEvaluate: (id, expression) =>
+      request(target, `/api/browser/${encodeURIComponent(id)}/evaluate`, {
+        method: 'POST',
+        ...jsonBody({ expression }),
+      }),
+    browserScreenshot: (id) =>
+      request(target, `/api/browser/${encodeURIComponent(id)}/screenshot`),
+    browserStartPick: (id) =>
+      request(target, `/api/browser/${encodeURIComponent(id)}/pick`, {
+        method: 'POST',
+        ...jsonBody({}),
+      }),
+    browserPickResult: (id) =>
+      request(target, `/api/browser/${encodeURIComponent(id)}/pick`),
+    fetchTerminals: () => request(target, '/api/terminals'),
+    fetchTerminal: (id) =>
+      request(target, `/api/terminals/${encodeURIComponent(id)}`),
+    createTerminal: (input = {}) =>
+      request(target, '/api/terminals', { method: 'POST', ...jsonBody(input) }),
+    fetchTerminalOutput: (id, since) =>
+      request(
+        target,
+        `/api/terminals/${encodeURIComponent(id)}/output?since=${since}`
+      ),
+    sendTerminalInput: async (id, data) => {
+      await request(target, `/api/terminals/${encodeURIComponent(id)}/input`, {
+        method: 'POST',
+        ...jsonBody({ data }),
+      });
+    },
+    resizeTerminal: (id, cols, rows) =>
+      request(target, `/api/terminals/${encodeURIComponent(id)}/resize`, {
+        method: 'POST',
+        ...jsonBody({ cols, rows }),
+      }),
+    closeTerminal: async (id) => {
+      await request(target, `/api/terminals/${encodeURIComponent(id)}/close`, {
+        method: 'POST',
+        ...jsonBody({}),
+      });
+    },
+    removeTerminal: async (id) => {
+      await request(target, `/api/terminals/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+    },
     wsUrl: () => wsUrl(baseUrl, target.token),
     connectEvents: (onChange, options) =>
       connectEvents(baseUrl, onChange, { token: target.token, ...options }),

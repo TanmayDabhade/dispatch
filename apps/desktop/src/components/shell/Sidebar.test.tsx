@@ -69,6 +69,9 @@ test('the exported view order is the ⌘N order App.tsx indexes into', () => {
     'board',
     'impact',
     'branches',
+    'files',
+    'design',
+    'terminals',
     'landing',
   ]);
   expect(PROJECT_NAV_VIEWS.map((v) => v.label)).toEqual([
@@ -79,6 +82,9 @@ test('the exported view order is the ⌘N order App.tsx indexes into', () => {
     'Tasks',
     'Impact',
     'Git',
+    'Files',
+    'Design',
+    'Terminals',
     'Landing',
   ]);
 });
@@ -95,6 +101,9 @@ test('sections come in Linear order: fixed top group, then Workspace, Fleet, Liv
     'board',
     'impact',
     'branches',
+    'files',
+    'design',
+    'terminals',
     'landing',
     'all-agents',
     'sessions',
