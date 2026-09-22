@@ -306,6 +306,20 @@ describe('remote terminals', () => {
     expect(info.title).toBe('box');
   });
 
+  it('runs a named command on the remote instead of a login shell', async () => {
+    // Passing a command alongside a remote must not be silently dropped.
+    writeRemotesConfig('remotes:\n  box:\n    host: build-box\n');
+    const info = await json(
+      await apiFetch('/api/terminals', {
+        method: 'POST',
+        body: JSON.stringify({ remote: 'box', command: ['pnpm', 'test'] }),
+      })
+    );
+    expect(info.command[0]).toBe('ssh');
+    expect(info.command.join(' ')).toContain("'pnpm' 'test'");
+    expect(info.title).toContain('pnpm test');
+  });
+
   it('marks a local session as not remote', async () => {
     const info = await json(
       await apiFetch('/api/terminals', {

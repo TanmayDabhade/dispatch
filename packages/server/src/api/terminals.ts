@@ -1,7 +1,12 @@
 import { loadConfig } from '@dispatch/core';
 
 import type { ApiContext } from '../api.js';
-import { resolveRemote, sshShell, UnknownRemoteError } from '../remote/ssh.js';
+import {
+  resolveRemote,
+  sshCommand,
+  sshShell,
+  UnknownRemoteError,
+} from '../remote/ssh.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 import { isDirectory, resolveWorkspacePath } from './workspacePaths.js';
 
@@ -117,6 +122,18 @@ export async function createTerminal(
       }
       throw err;
     }
+    // A named command runs on the remote; without one the session is an
+    // interactive login shell. Both go through ssh with a pty, so a
+    // long-running command is as attachable as a shell is.
+    const argv =
+      command.command === undefined
+        ? sshShell(remote, ...(cwd === undefined ? [] : [{ cwd }]))
+        : sshCommand(
+            remote,
+            command.command,
+            ...(cwd === undefined ? [] : [{ cwd }])
+          );
+    const where = cwd === undefined ? '' : `:${cwd}`;
     return jsonResponse(
       ctx.terminals.create({
         // The local process's own working directory is irrelevant for an ssh
@@ -125,8 +142,12 @@ export async function createTerminal(
         cwd: ctx.rootDir,
         remote: body.remote,
         runId: null,
-        command: sshShell(remote, ...(cwd === undefined ? [] : [{ cwd }])),
-        title: title ?? `${body.remote}${cwd === undefined ? '' : `:${cwd}`}`,
+        command: argv,
+        title:
+          title ??
+          (command.command === undefined
+            ? `${body.remote}${where}`
+            : `${body.remote}${where} ${command.command.join(' ')}`),
         ...dimensions,
       }),
       201
