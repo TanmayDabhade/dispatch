@@ -8,6 +8,7 @@ import type {
   ConfigPatch,
   DispatchConfig,
   EscalationStep,
+  ExecutorCommand,
   ExecutorConfig,
   ExecutorPricing,
   FixLoopConfig,
@@ -420,6 +421,58 @@ function parseExecutorPricing(
   };
 }
 
+// Validates one `executors.<name>.command` block: the argv a CLI-backed agent
+// is spawned with, plus optional environment. An empty argv is rejected rather
+// than defaulted — a command block with nothing to run is a typo, and silently
+// ignoring it would make the executor register and then fail at dispatch.
+function parseExecutorCommand(
+  name: string,
+  raw: unknown,
+  prefix: string
+): ExecutorCommand {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(
+      `${prefix}: executors.${name}.command must be an object`
+    );
+  }
+  const entry = raw as Record<string, unknown>;
+  for (const key of Object.keys(entry)) {
+    if (key !== 'run' && key !== 'env') {
+      throw new ConfigError(
+        `${prefix}: unknown executors.${name}.command key "${key}" (expected run|env)`
+      );
+    }
+  }
+  const { run, env } = entry;
+  if (
+    !Array.isArray(run) ||
+    run.length === 0 ||
+    !run.every((part) => typeof part === 'string')
+  ) {
+    throw new ConfigError(
+      `${prefix}: executors.${name}.command.run must be a non-empty list of strings`
+    );
+  }
+  if (env !== undefined) {
+    if (typeof env !== 'object' || env === null || Array.isArray(env)) {
+      throw new ConfigError(
+        `${prefix}: executors.${name}.command.env must be an object`
+      );
+    }
+    for (const [key, value] of Object.entries(env)) {
+      if (typeof value !== 'string') {
+        throw new ConfigError(
+          `${prefix}: executors.${name}.command.env.${key} must be a string`
+        );
+      }
+    }
+  }
+  return {
+    run,
+    ...(env === undefined ? {} : { env: env as Record<string, string> }),
+  };
+}
+
 // Validates the optional `executors:` block, same contract as
 // parseOrchestratorConfig: absent means none configured.
 function parseExecutorsConfig(raw: unknown): Record<string, ExecutorConfig> {
@@ -436,15 +489,16 @@ function parseExecutorsConfig(raw: unknown): Record<string, ExecutorConfig> {
       );
     }
     for (const key of Object.keys(entry)) {
-      if (key !== 'models' && key !== 'pricing') {
+      if (key !== 'models' && key !== 'pricing' && key !== 'command') {
         throw new ConfigError(
-          `${prefix}: unknown executors.${name} key "${key}" (expected models|pricing)`
+          `${prefix}: unknown executors.${name} key "${key}" (expected models|pricing|command)`
         );
       }
     }
-    const { models, pricing } = entry as {
+    const { models, pricing, command } = entry as {
       models?: unknown;
       pricing?: unknown;
+      command?: unknown;
     };
     result[name] = {
       models:
@@ -452,6 +506,9 @@ function parseExecutorsConfig(raw: unknown): Record<string, ExecutorConfig> {
       ...(pricing === undefined
         ? {}
         : { pricing: parseExecutorPricing(name, pricing, prefix) }),
+      ...(command === undefined
+        ? {}
+        : { command: parseExecutorCommand(name, command, prefix) }),
     };
   }
   return result;

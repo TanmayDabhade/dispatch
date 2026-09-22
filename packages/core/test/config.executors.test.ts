@@ -135,3 +135,71 @@ describe('executors config', () => {
     ).toThrow(ConfigError);
   });
 });
+
+// The `command` block: what makes an arbitrary CLI agent dispatchable without
+// a code change. See ExecutorCommand in configTypes.ts.
+describe('executors.<name>.command', () => {
+  it('parses an argv and environment', () => {
+    const cfg = loadConfig(
+      root(
+        "executors:\n  gemini:\n    command:\n      run: [gemini, '-p', '{prompt}']\n      env:\n        GEMINI_PROFILE: work\n"
+      )
+    );
+    expect(cfg.executors?.gemini?.command).toEqual({
+      run: ['gemini', '-p', '{prompt}'],
+      env: { GEMINI_PROFILE: 'work' },
+    });
+  });
+
+  it('allows a command with no models block', () => {
+    // A CLI agent often has nothing to say about model roles.
+    const cfg = loadConfig(
+      root('executors:\n  aider:\n    command:\n      run: [aider]\n')
+    );
+    expect(cfg.executors?.aider?.models).toEqual({});
+    expect(cfg.executors?.aider?.command?.run).toEqual(['aider']);
+  });
+
+  it('leaves command absent when it is not configured', () => {
+    const cfg = loadConfig(
+      root('executors:\n  codex:\n    models:\n      execute: gpt-5.5\n')
+    );
+    expect(cfg.executors?.codex?.command).toBeUndefined();
+  });
+
+  it('rejects an empty argv rather than defaulting it', () => {
+    // A command block with nothing to run is a typo; ignoring it would let the
+    // executor register and then fail at dispatch.
+    expect(() =>
+      loadConfig(root('executors:\n  x:\n    command:\n      run: []\n'))
+    ).toThrow(ConfigError);
+  });
+
+  it('rejects a non-list argv', () => {
+    expect(() =>
+      loadConfig(
+        root("executors:\n  x:\n    command:\n      run: 'gemini -p'\n")
+      )
+    ).toThrow(ConfigError);
+  });
+
+  it('rejects an unknown key inside command', () => {
+    expect(() =>
+      loadConfig(
+        root(
+          'executors:\n  x:\n    command:\n      run: [x]\n      shell: true\n'
+        )
+      )
+    ).toThrow(ConfigError);
+  });
+
+  it('rejects non-string environment values', () => {
+    expect(() =>
+      loadConfig(
+        root(
+          'executors:\n  x:\n    command:\n      run: [x]\n      env:\n        PORT: 3000\n'
+        )
+      )
+    ).toThrow(ConfigError);
+  });
+});

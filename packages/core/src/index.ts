@@ -234,6 +234,7 @@ export type {
   ConfigPatch,
   DispatchConfig,
   EscalationStep,
+  ExecutorCommand,
   ExecutorConfig,
   ExecutorModels,
   ExecutorPricing,

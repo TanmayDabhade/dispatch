@@ -372,9 +372,32 @@ export interface ExecutorPricing {
   output: number;
 }
 
+/**
+ * How to run an agent that is just a command-line program.
+ *
+ * Dispatch speaks two agents' protocols natively (Claude's SDK, Codex's app
+ * server). Everything else — and there are dozens — is a CLI that takes a
+ * prompt and prints to stdout, which is enough to run inside a worktree and
+ * review afterwards. Declaring one here is what makes it dispatchable without
+ * a code change.
+ *
+ * `run` is the argv, with two placeholders substituted before spawn:
+ * `{prompt}` and `{model}`. An entry containing a placeholder is replaced
+ * wholesale, so `--model={model}` and a bare `{model}` both work. When `run`
+ * has no `{prompt}`, the prompt is written to the process's stdin instead,
+ * which is what the agents that read a prompt from a pipe expect.
+ */
+export interface ExecutorCommand {
+  run: string[];
+  /** Extra environment for the child, merged over the daemon's own. */
+  env?: Record<string, string>;
+}
+
 export interface ExecutorConfig {
   models: ExecutorModels;
   pricing?: ExecutorPricing;
+  /** Present only for CLI-backed agents; the built-in executors ignore it. */
+  command?: ExecutorCommand;
 }
 
 export const EXECUTOR_PRICING_FIELDS: readonly (keyof ExecutorPricing)[] = [
