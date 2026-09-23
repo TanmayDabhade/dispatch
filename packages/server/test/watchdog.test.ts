@@ -155,4 +155,37 @@ describe('EventLoopWatchdog', () => {
     await tick();
     expect(reports).toEqual([]);
   });
+
+  // Every watchdog in the process shares one worker thread, so stopping one
+  // must end only its own subscription.
+  it('keeps reporting for a watchdog when another one on the same worker stops', async () => {
+    const reports: StallReport[] = [];
+    const stopped: StallReport[] = [];
+    const other = new EventLoopWatchdog({
+      thresholdMs: 150,
+      heartbeatMs: 20,
+      checkMs: 20,
+      quiet: true,
+      onStall: (report) => stopped.push(report),
+    });
+    watchdog = new EventLoopWatchdog({
+      thresholdMs: 150,
+      heartbeatMs: 20,
+      checkMs: 20,
+      quiet: true,
+      onStall: (report) => reports.push(report),
+    });
+    other.start();
+    watchdog.start();
+    await tick();
+    await tick();
+    other.stop();
+
+    blockEventLoop(400);
+    await tick();
+    await tick();
+
+    expect(reports.length).toBeGreaterThanOrEqual(1);
+    expect(stopped).toEqual([]);
+  });
 });

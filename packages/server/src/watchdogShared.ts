@@ -10,8 +10,11 @@ export const LABEL_OFFSET = 16;
 export const LABEL_BYTES = 256;
 export const SHARED_BUFFER_BYTES = LABEL_OFFSET + LABEL_BYTES;
 
+// One worker thread serves every watchdog in the process (see watchdog.ts), so
+// each command and report names the watchdog it belongs to by `id`.
 export interface WatchdogWorkerInit {
   type: 'start';
+  id: number;
   buffer: SharedArrayBuffer;
   thresholdMs: number;
   checkMs: number;
@@ -19,17 +22,18 @@ export interface WatchdogWorkerInit {
   quiet: boolean;
 }
 
-// The `stop` command is sent by stop(): clear the worker's timer before the
-// thread is terminated.
-export type WatchdogCommand = WatchdogWorkerInit | { type: 'stop' };
+// The `stop` command is sent by stop(): clear that watchdog's timer. The
+// thread itself stays up for the next watchdog.
+export type WatchdogCommand = WatchdogWorkerInit | { type: 'stop'; id: number };
 
 export type WatchdogReport =
   // The worker received its init and is polling: the module resolved and
   // the thread is up, which a compiled binary missing the worker entry
   // never reaches.
-  | { type: 'ready' }
+  | { type: 'ready'; id: number }
   | {
       type: 'stall-ended';
+      id: number;
       stalledMs: number;
       section: string;
     };
