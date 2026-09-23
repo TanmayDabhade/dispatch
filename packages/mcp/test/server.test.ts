@@ -1,4 +1,4 @@
-import { TaskStore } from '@dispatch/core';
+import { FileCommentStore, TaskStore } from '@dispatch/core';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -49,7 +49,7 @@ describe('server identity', () => {
     expect(server.server.constructor.name).toBe('Server');
   });
 
-  it('lists all five task tools plus run_list, agent_message, message_user, ask_user, request_scope, dispatch_note, record_decision, record_evidence, and record_mutation', async () => {
+  it('lists all six task tools plus run_list, agent_message, message_user, ask_user, request_scope, dispatch_note, record_decision, record_evidence, and record_mutation', async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       'agent_message',
@@ -62,6 +62,7 @@ describe('server identity', () => {
       'request_scope',
       'run_list',
       'task_comment',
+      'task_comments',
       'task_get',
       'task_list',
       'task_next',
@@ -478,5 +479,40 @@ describe('onboarding resource', () => {
     const content = contents[0] as { mimeType?: string; text?: string };
     expect(content.mimeType).toBe('text/markdown');
     expect(content.text).toBe(ONBOARDING_MARKDOWN);
+  });
+});
+
+describe('task_comments', () => {
+  beforeEach(() => {
+    TaskStore.init(root);
+  });
+
+  it('lists a task thread from the file store, oldest first', async () => {
+    const doc = new TaskStore(root).create({ title: 'Discuss me' });
+    const comments = new FileCommentStore(root);
+    const first = comments.add(
+      { taskId: doc.meta.id, author: 'human:wyat', body: 'first' },
+      '2026-01-01T00:00:00.000Z'
+    );
+    comments.add(
+      {
+        taskId: doc.meta.id,
+        author: 'human:ada',
+        body: 'reply',
+        parentId: first.id,
+      },
+      '2026-01-02T00:00:00.000Z'
+    );
+    const result = (await client.callTool({
+      name: 'task_comments',
+      arguments: { id: doc.meta.id },
+    })) as ToolCallResult;
+    expect(result.isError).toBeUndefined();
+    const listed = result.structuredContent!.comments as {
+      body: string;
+      parentId: string | null;
+    }[];
+    expect(listed.map((c) => c.body)).toEqual(['first', 'reply']);
+    expect(listed[1].parentId).toBe(first.id);
   });
 });

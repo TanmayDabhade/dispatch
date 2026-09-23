@@ -1,6 +1,12 @@
 export const CORE_VERSION = '0.24.0';
 export * from './status.js';
 export * from './kinds.js';
+export * from './comments.js';
+export {
+  FileCommentStore,
+  generateCommentId,
+  SqliteCommentStore,
+} from './commentStore.js';
 export * from './types.js';
 export {
   ATTACHMENT_MAX_BYTES,

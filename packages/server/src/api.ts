@@ -13,6 +13,7 @@ import {
   updateConfig,
 } from '@dispatch/core';
 import type {
+  CommentStorePort,
   ConfigPatch,
   CreateInput,
   DispatchConfig,
@@ -50,6 +51,12 @@ import {
   startBrowserPick,
 } from './api/browser.js';
 import { humanActor } from './api/caller.js';
+import {
+  addComment,
+  deleteComment,
+  listComments,
+  updateComment,
+} from './api/comments.js';
 import { fanoutTask } from './api/fanout.js';
 import {
   listDirectory,
@@ -248,6 +255,9 @@ export interface ApiContext {
   inboxStore: InboxStore;
   findingStore: FindingStorePort;
   ledgerStore: LedgerStorePort;
+  // Task comments on whichever backend the project uses; absent (a test
+  // context) falls back to the file store.
+  commentStore?: CommentStorePort;
   reviewRunner: ReviewRunner;
   verificationRunner: VerificationRunner;
   fixLoop: FixLoop;
@@ -5255,6 +5265,20 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await amendTask(req, ctx, segments[1]);
+      }
+      if (segments.length === 3 && segments[2] === 'comments') {
+        if (method === 'GET') return listComments(ctx, segments[1]);
+        if (method === 'POST') {
+          return await addComment(req, ctx, segments[1]);
+        }
+      }
+      if (segments.length === 4 && segments[2] === 'comments') {
+        if (method === 'PATCH') {
+          return await updateComment(req, ctx, segments[1], segments[3]);
+        }
+        if (method === 'DELETE') {
+          return deleteComment(ctx, segments[1], segments[3]);
+        }
       }
       if (segments.length === 3 && segments[2] === 'attachments') {
         if (method === 'GET') return listTaskAttachments(ctx, segments[1]);

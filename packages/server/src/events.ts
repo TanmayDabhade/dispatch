@@ -21,6 +21,9 @@ export type ServerEvent =
   // `ids`, when set, names every task the change touched, so a client can
   // refetch just those; absent means "anything may have changed".
   | { type: 'task.changed'; ids?: string[] }
+  // A task's comments changed: added, edited or removed (with replies).
+  // Carries the ids so a client patches its thread instead of refetching.
+  | { type: 'comment.changed'; taskId: string; commentIds: string[] }
   | { type: 'hello'; version: string }
   | { type: 'run.changed' }
   | { type: 'run.log'; runId: string; entry: NormalizedEntry }

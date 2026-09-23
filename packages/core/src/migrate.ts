@@ -263,6 +263,20 @@ function countFixLoops(rootDir: string): number {
   return taskIds.size;
 }
 
+// Comments across every task's `.dispatch/comments/<id>.jsonl`.
+function countComments(rootDir: string): number {
+  const dir = join(rootDir, DISPATCH_DIR, 'comments');
+  if (!existsSync(dir)) return 0;
+  let count = 0;
+  for (const file of readdirSync(dir)) {
+    if (!file.endsWith('.jsonl')) continue;
+    for (const line of readFileSync(join(dir, file), 'utf8').split('\n')) {
+      if (line.trim() !== '') count += 1;
+    }
+  }
+  return count;
+}
+
 // Notes are a single JSON array, whole-file rewritten on every mutation.
 function countNotes(rootDir: string): number {
   const file = join(rootDir, DISPATCH_DIR, 'notes.json');
@@ -313,6 +327,11 @@ export function retainedSources(rootDir: string): RetainedSource[] {
       found: countInboxItems(rootDir),
       reason:
         'inboxes are per-actor markdown, still file-backed on both backends',
+    },
+    {
+      source: `${DISPATCH_DIR}/comments`,
+      found: countComments(rootDir),
+      reason: 'task comments are not imported into the database yet',
     },
     {
       source: '~/.dispatch/runs/<project>/*.jsonl',

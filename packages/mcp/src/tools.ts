@@ -3,6 +3,7 @@ import {
   ASSIGNEES,
   canonicalStatus,
   ConfigError,
+  FileCommentStore,
   KINDS,
   loadConfig,
   PRIORITIES,
@@ -13,7 +14,7 @@ import {
   TaskStore,
   untrustedInline,
 } from '@dispatch/core';
-import type { ListSafeError, TaskDoc } from '@dispatch/core';
+import type { ListSafeError, TaskComment, TaskDoc } from '@dispatch/core';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { basename } from 'node:path';
 import { z } from 'zod';
@@ -513,6 +514,24 @@ async function taskList(
     tasks: docs.map(toSummary),
     problems: formatProblems(errors),
   });
+}
+
+// A task's first-class comment thread (people's discussion, distinct from the
+// Activity log task_comment appends to), oldest first.
+async function taskComments(rootDir: string, id: string): Promise<ToolOutcome> {
+  const route = await resolveStoreRoute(rootDir);
+  if (route.via === 'refused') return toolError(route.message);
+  if (route.via === 'daemon') {
+    const comments = await daemonRequest<TaskComment[]>(
+      route.daemon,
+      `/api/tasks/${encodeURIComponent(id)}/comments`
+    );
+    return toolResult({ comments });
+  }
+  if (requireStore(rootDir).get(id) === null) {
+    return toolError(`task not found: ${id}`);
+  }
+  return toolResult({ comments: new FileCommentStore(rootDir).list(id) });
 }
 
 async function taskGet(rootDir: string, id: string): Promise<ToolOutcome> {
@@ -1568,6 +1587,32 @@ export function registerDispatchTools(
       outputSchema: { meta: z.object(taskMetaShape) },
     },
     ({ id, text }) => taskComment(rootDir, { id, text })
+  );
+
+  server.registerTool(
+    'task_comments',
+    {
+      title: "Read a task's comments",
+      description:
+        "List a task's comment thread (what people said about it), oldest " +
+        'first. Replies carry the parentId of the comment they answer.',
+      inputSchema: { id: z.string() },
+      outputSchema: {
+        comments: z.array(
+          z.object({
+            id: z.string(),
+            taskId: z.string(),
+            author: z.string(),
+            body: z.string(),
+            created: z.string(),
+            updated: z.string(),
+            parentId: z.string().nullable(),
+            external: z.string().nullable(),
+          })
+        ),
+      },
+    },
+    ({ id }) => wrapAsync(() => taskComments(rootDir, id))
   );
 
   server.registerTool(

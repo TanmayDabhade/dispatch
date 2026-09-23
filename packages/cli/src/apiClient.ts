@@ -1,9 +1,11 @@
 import type {
   CommandEvidence,
+  CommentPatch,
   CreateInput,
   Finding,
   LedgerEntry,
   MutationEvidence,
+  TaskComment,
   TaskDoc,
   UpdatePatch,
 } from '@dispatch/core';
@@ -287,6 +289,7 @@ interface EpicSessionOptions {
 // `--watch` acts on — deliberately partial; any other event is ignored.
 export type ServerEvent =
   | { type: 'task.changed'; ids?: string[] }
+  | { type: 'comment.changed'; taskId: string; commentIds: string[] }
   | { type: 'hello'; version: string }
   | { type: 'run.changed' }
   | { type: 'run.log'; runId: string; entry: NormalizedEntry }
@@ -424,6 +427,26 @@ export interface TaskApiClient {
   getTask(id: string): Promise<TaskDoc>;
   createTask(input: CreateInput): Promise<TaskDoc>;
   updateTask(id: string, patch: UpdatePatch): Promise<TaskDoc>;
+  /** `GET /api/tasks/:id/comments`, oldest first. */
+  listComments(id: string): Promise<TaskComment[]>;
+  /** `POST /api/tasks/:id/comments`; `author` defaults to the caller. */
+  addComment(
+    id: string,
+    input: {
+      body: string;
+      parentId?: string | null;
+      external?: string | null;
+      author?: string;
+      created?: string;
+    }
+  ): Promise<TaskComment>;
+  updateComment(
+    id: string,
+    commentId: string,
+    patch: CommentPatch
+  ): Promise<TaskComment>;
+  /** Removes the comment and its replies. */
+  deleteComment(id: string, commentId: string): Promise<{ removed: string[] }>;
   /**
    * `GET /api/health`, reduced to what doctor reports: `problems` are records
    * the daemon's last cache rebuild could not read (they never appear in
@@ -486,6 +509,26 @@ export function createTaskApiClient(
         ...jsonBody(patch),
         method: 'PATCH',
       }),
+    listComments: (id) =>
+      request(target, `/api/tasks/${encodeURIComponent(id)}/comments`),
+    addComment: (id, input) =>
+      request(
+        target,
+        `/api/tasks/${encodeURIComponent(id)}/comments`,
+        jsonBody(input)
+      ),
+    updateComment: (id, commentId, patch) =>
+      request(
+        target,
+        `/api/tasks/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`,
+        { ...jsonBody(patch), method: 'PATCH' }
+      ),
+    deleteComment: (id, commentId) =>
+      request(
+        target,
+        `/api/tasks/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`,
+        { method: 'DELETE' }
+      ),
   };
 }
 

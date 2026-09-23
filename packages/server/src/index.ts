@@ -1,5 +1,6 @@
 import {
   ActorContext,
+  FileCommentStore,
   formatMigrationReport,
   generateSyncedTaskId,
   hasLegacyState,
@@ -15,6 +16,7 @@ import {
 } from '@dispatch/core';
 import type {
   CartoMode,
+  CommentStorePort,
   ExecutorCommand,
   GitReader,
   ProjectStores,
@@ -1140,6 +1142,9 @@ async function bootServer(
   // task merged. One instance, shared by everything that reads findings.
   const findingStore: FindingStorePort =
     stores.records?.findings ?? new FindingStore(rootDir);
+  // Task comments: the database's table, or `.dispatch/comments/` on files.
+  const commentStore: CommentStorePort =
+    stores.records?.comments ?? new FileCommentStore(rootDir);
 
   // The reverse-dependency map ReviewRunner scopes reviews with. Carto backs
   // it when available; the built-in scanner is the fallback. Source changes
@@ -1722,6 +1727,7 @@ async function bootServer(
     inboxTriage,
     findingStore,
     ledgerStore,
+    commentStore,
     reviewRunner,
     verificationRunner,
     fixLoop,

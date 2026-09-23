@@ -326,6 +326,20 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
 );
 CREATE INDEX IF NOT EXISTS ledger_epic_idx ON ledger_entries (epic_id);
 
+-- Task comments (comments.ts). A new table needs no version bump: the DDL
+-- creates it on any database that lacks it.
+CREATE TABLE IF NOT EXISTS comments (
+  id        TEXT PRIMARY KEY,
+  task_id   TEXT NOT NULL,
+  author    TEXT NOT NULL,
+  body      TEXT NOT NULL,
+  created   TEXT NOT NULL,
+  updated   TEXT NOT NULL,
+  parent_id TEXT,
+  external  TEXT
+);
+CREATE INDEX IF NOT EXISTS comments_task_idx ON comments (task_id, created);
+
 CREATE TABLE IF NOT EXISTS evidence (
   run_id      TEXT NOT NULL,
   seq         INTEGER NOT NULL,

@@ -1,5 +1,6 @@
 import type {
   CommandEvidence,
+  CommentPatch,
   ConfigPatch,
   CreateInput,
   DispatchConfig,
@@ -12,6 +13,7 @@ import type {
   ModelConfig,
   MutationEvidence,
   Priority,
+  TaskComment,
   TaskDoc,
   TaskListItem,
   TaskRisk,
@@ -20,6 +22,8 @@ import type {
 // Re-exported (not just imported) so a consumer of this package can name
 // these types directly, the same way it already can with `ApiClient`.
 export type {
+  CommentPatch,
+  TaskComment,
   Finding,
   FindingRecommendation,
   FindingSeverity,
@@ -625,6 +629,16 @@ export interface CreateLedgerInput {
   appliesTo?: string[];
 }
 
+// Mirrors POST /api/tasks/:id/comments's body. `author` defaults to the
+// caller; a sync passes it (and `created`) to import someone else's comment.
+export interface NewCommentInput {
+  body: string;
+  parentId?: string | null;
+  external?: string | null;
+  author?: string;
+  created?: string;
+}
+
 // Mirrors POST /api/tasks/:id/amend's body — a correction to a task's spec,
 // what changes and why, recorded in the task's `## Amendments` section.
 export interface AmendTaskInput {
@@ -663,6 +677,8 @@ export type ServerEvent =
   // `ids`, when set, names every task the change touched; absent means
   // "anything may have changed" — refetch the list.
   | { type: 'task.changed'; ids?: string[] }
+  // A task's comments changed; patch that thread, never the board.
+  | { type: 'comment.changed'; taskId: string; commentIds: string[] }
   | { type: 'hello'; version: string }
   | { type: 'run.changed' }
   | { type: 'run.log'; runId: string; entry: NormalizedEntry }
@@ -2262,6 +2278,19 @@ export interface ApiClient {
   /** Whether this daemon's machine has the blob (a HEAD), so Tauri can ask
    * before handing the path to the OS. */
   hasTaskAttachment(id: string, name: string): Promise<boolean>;
+  /** A task's comment thread, oldest first. */
+  fetchTaskComments(id: string): Promise<TaskComment[]>;
+  addTaskComment(id: string, input: NewCommentInput): Promise<TaskComment>;
+  updateTaskComment(
+    id: string,
+    commentId: string,
+    patch: CommentPatch
+  ): Promise<TaskComment>;
+  /** Removes the comment and its replies; resolves with every removed id. */
+  deleteTaskComment(
+    id: string,
+    commentId: string
+  ): Promise<{ removed: string[] }>;
   /** Turns a sentence into filter clauses the Tasks page applies as chips. */
   aiFilterTasks(sentence: string): Promise<AiTaskFilterResult>;
   // Starts a background planner turn and returns immediately with a `running`
@@ -2913,6 +2942,25 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
         ...jsonBody(input),
       }),
+    fetchTaskComments: (id) =>
+      request(target, `/api/tasks/${encodeURIComponent(id)}/comments`),
+    addTaskComment: (id, input) =>
+      request(target, `/api/tasks/${encodeURIComponent(id)}/comments`, {
+        method: 'POST',
+        ...jsonBody(input),
+      }),
+    updateTaskComment: (id, commentId, patch) =>
+      request(
+        target,
+        `/api/tasks/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`,
+        { method: 'PATCH', ...jsonBody(patch) }
+      ),
+    deleteTaskComment: (id, commentId) =>
+      request(
+        target,
+        `/api/tasks/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`,
+        { method: 'DELETE' }
+      ),
     uploadTaskAttachments: (id, files) => {
       const form = new FormData();
       for (const file of files) form.append('files', file, file.name);
