@@ -1,6 +1,7 @@
 import type {
   AgentSessionMeta,
   ApiClient,
+  AuthTier,
   ConfirmResult,
   DraftRecord,
   EpicProgress,
@@ -220,6 +221,11 @@ export interface DispatchProjectData {
   /** This window's own ActorRef (`human:<handle>`), or `null` until the daemon
    *  has said. While null, nothing is treated as a teammate's. */
   me: string | null;
+  /** The tier the daemon says this window's credential carries, or `null`
+   *  until it has said. Read from `/api/whoami` rather than inferred from which
+   *  token is held, because in team-local mode a decide-tier teammate holds an
+   *  "app token" too. */
+  myTier: AuthTier | null;
   portLoading: boolean;
   portError: boolean;
   portErrorDetail: unknown;
@@ -1328,6 +1334,32 @@ export function useDispatchProject(
             void queryClient.invalidateQueries({
               queryKey: overseerKeyPrefix(port),
             });
+            // Presence too, and for a reason of its own: the daemon announces
+            // this socket's arrival before the socket joins the event bus, so
+            // the one event saying "you are here now" never reaches the window
+            // it is about. A presence fetch that raced ahead of the upgrade
+            // would otherwise leave a teammate seeing a room without
+            // themselves — and the stack hidden — until someone else moved.
+            //
+            // Invalidating is not enough on its own when that fetch is the
+            // query's first and still in flight: react-query then hands back
+            // the in-flight promise instead of restarting (it only cancels a
+            // query that already has data), so the stale answer lands. In that
+            // case, invalidate again once it has — the second fetch leaves
+            // after this socket is registered. Seen 1 in 12 in a browser.
+            const presence = queryClient.getQueryState(presenceQueryKey);
+            const firstFetchInFlight =
+              presence?.fetchStatus === 'fetching' &&
+              presence.data === undefined;
+            void queryClient
+              .invalidateQueries({ queryKey: presenceQueryKey })
+              .then(() =>
+                firstFetchInFlight
+                  ? queryClient.invalidateQueries({
+                      queryKey: presenceQueryKey,
+                    })
+                  : undefined
+              );
           } else if (event.type === 'presence.changed') {
             void queryClient.invalidateQueries({ queryKey: presenceQueryKey });
           } else if (event.type === 'run.changed') {
@@ -2735,6 +2767,7 @@ export function useDispatchProject(
     daemonBaseUrl: connection === undefined ? null : daemonBaseUrl(connection),
     presence: presence ?? [],
     me: whoami?.ref ?? null,
+    myTier: whoami?.tier ?? null,
     portLoading,
     portError,
     portErrorDetail,

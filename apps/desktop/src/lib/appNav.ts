@@ -72,6 +72,7 @@ export type GlobalView =
  * `Connect Linear` and the status strip's gear both land on Integrations. */
 export type SettingsPage =
   | 'general'
+  | 'team'
   | 'autonomy'
   | 'agents'
   | 'integrations'

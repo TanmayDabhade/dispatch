@@ -124,6 +124,17 @@ test('sections come in Linear order: fixed top group, then Work, Runs, Code, Liv
   expect(screen.queryByRole('button', { name: /^Settings/ })).toBeNull();
 });
 
+test('a teammate below operator is not shown the host-only rows', () => {
+  mount(true, { hideHostViews: true });
+  const rows = navRows();
+  // A shell and a browser carrying the host's cookies are operator-tier; the
+  // rest of Code (reading files, git history, impact) stays.
+  expect(rows).not.toContain('terminals');
+  expect(rows).not.toContain('design');
+  expect(rows).toContain('files');
+  expect(rows).toContain('branches');
+});
+
 test('the top strip holds the switcher plus search and new-task icon buttons', () => {
   mount(true);
   expect(screen.getByText('dispatch')).toBeTruthy();

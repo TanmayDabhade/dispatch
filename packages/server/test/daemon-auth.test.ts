@@ -489,7 +489,7 @@ describe('GET /api/whoami', () => {
     const asApp = await json<{ handle: string; ref: string; tier: string }>(
       await rawFetch(`${baseUrl}/api/whoami`, { headers: auth(appToken) })
     );
-    expect(asApp.tier).toBe('decide');
+    expect(asApp.tier).toBe('operator');
     expect(asApp.ref).toBe(`human:${asApp.handle}`);
 
     const asAgent = await json<{ handle: string; tier: string }>(

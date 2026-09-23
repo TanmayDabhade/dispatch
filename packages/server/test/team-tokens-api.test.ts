@@ -133,7 +133,7 @@ describe('team tokens', () => {
     ).toBe(403);
     expect(
       (
-        await rawFetch(`${baseUrl}/api/team/tokens/ada/request`, {
+        await rawFetch(`${baseUrl}/api/team/tokens/ada`, {
           method: 'DELETE',
           headers: headers(agent),
         })
@@ -172,7 +172,7 @@ describe('team tokens', () => {
     ).json()) as {
       token: string;
     };
-    const del = await rawFetch(`${baseUrl}/api/team/tokens/ada/request`, {
+    const del = await rawFetch(`${baseUrl}/api/team/tokens/ada`, {
       method: 'DELETE',
       headers: headers(handle.tokens.appToken),
     });
@@ -184,7 +184,7 @@ describe('team tokens', () => {
   });
 
   it('revoking nothing is a visible 404, not a silent success', async () => {
-    const res = await rawFetch(`${baseUrl}/api/team/tokens/nobody/request`, {
+    const res = await rawFetch(`${baseUrl}/api/team/tokens/nobody`, {
       method: 'DELETE',
       headers: headers(handle.tokens.appToken),
     });
@@ -199,5 +199,271 @@ describe('team tokens', () => {
   it('rejects an unknown tier', async () => {
     const res = await invite({ email: 'ada@example.com', tier: 'admin' });
     expect(res.status).toBe(400);
+  });
+});
+
+describe('the tier ladder', () => {
+  async function issued(body: object, token?: string): Promise<string> {
+    const res = await invite(body, token);
+    expect(res.status).toBe(201);
+    return ((await res.json()) as { token: string }).token;
+  }
+
+  function get(path: string, token: string) {
+    return rawFetch(`${baseUrl}${path}`, { headers: headers(token) });
+  }
+
+  function post(path: string, token: string, body: object = {}) {
+    return rawFetch(`${baseUrl}${path}`, {
+      method: 'POST',
+      headers: headers(token),
+      body: JSON.stringify(body),
+    });
+  }
+
+  it('the app token is the operator and can reach every rung', async () => {
+    const me = await get('/api/whoami', handle.tokens.appToken);
+    expect(((await me.json()) as { tier: string }).tier).toBe('operator');
+    expect((await get('/api/terminals', handle.tokens.appToken)).status).toBe(
+      200
+    );
+  });
+
+  it('decide can approve but not open a shell, drive the browser or change the checkout', async () => {
+    const lead = await issued({ email: 'grace@example.com', tier: 'decide' });
+
+    // Above request: the team routes are decide-tier.
+    expect((await get('/api/team/tokens', lead)).status).toBe(200);
+
+    // Not operator: every one of these acts on the host as its owner.
+    for (const res of [
+      await get('/api/terminals', lead),
+      await get('/api/browser', lead),
+      await post('/api/files/write', lead, { path: 'x', text: 'y' }),
+      await post('/api/git/stage', lead, { paths: ['README.md'] }),
+      await post('/api/git/push', lead),
+    ]) {
+      expect(res.status).toBe(403);
+      // The refusal says what was missing and how to get it.
+      expect((await res.json()) as { error: string }).toEqual(
+        expect.objectContaining({
+          error: expect.stringContaining('needs the operator tier'),
+        })
+      );
+    }
+  });
+
+  it('a teammate issued operator reaches the host routes', async () => {
+    const ops = await issued({ email: 'linus@example.com', tier: 'operator' });
+    expect((await get('/api/terminals', ops)).status).toBe(200);
+  });
+
+  it('request tier no longer changes the checkout, but still reads it', async () => {
+    const agent = handle.tokens.agentToken;
+    expect((await post('/api/git/stage', agent, { paths: ['x'] })).status).toBe(
+      403
+    );
+    expect(
+      (await post('/api/git/discard', agent, { paths: ['x'] })).status
+    ).toBe(403);
+    expect((await get('/api/git/status', agent)).status).toBe(200);
+  });
+
+  it('nobody hands out more than they hold', async () => {
+    const lead = await issued({ email: 'grace@example.com', tier: 'decide' });
+
+    // A decide-tier lead can invite reviewers at their own level or below…
+    expect((await invite({ email: 'ada@example.com' }, lead)).status).toBe(201);
+    expect(
+      (await invite({ email: 'mary@example.com', tier: 'decide' }, lead)).status
+    ).toBe(201);
+    // …but minting an operator token would be a shell by another name.
+    expect(
+      (await invite({ email: 'eve@example.com', tier: 'operator' }, lead))
+        .status
+    ).toBe(403);
+  });
+
+  it('nor replaces or revokes a token above their own tier', async () => {
+    const ops = await issued({ email: 'linus@example.com', tier: 'operator' });
+    const lead = await issued({ email: 'grace@example.com', tier: 'decide' });
+
+    // Re-inviting replaces the old token, so downgrading Linus is revoking
+    // his operator token by another route.
+    expect((await invite({ handle: 'linus' }, lead)).status).toBe(403);
+    const del = await rawFetch(`${baseUrl}/api/team/tokens/linus`, {
+      method: 'DELETE',
+      headers: headers(lead),
+    });
+    expect(del.status).toBe(403);
+
+    // Linus is untouched.
+    expect((await get('/api/whoami', ops)).status).toBe(200);
+  });
+});
+
+describe('browser sessions', () => {
+  async function tokenFor(body: object): Promise<string> {
+    const res = await invite(body);
+    return ((await res.json()) as { token: string }).token;
+  }
+
+  function signIn(token: string, extra: Record<string, string> = {}) {
+    return rawFetch(`${baseUrl}/api/session`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...extra },
+      body: JSON.stringify({ token }),
+    });
+  }
+
+  function withCookie(cookie: string, site = 'same-origin') {
+    return { cookie, 'sec-fetch-site': site };
+  }
+
+  /** `name=value` from a Set-Cookie header, as a browser would send it back. */
+  function cookieFrom(res: Response): string {
+    const set = res.headers.get('set-cookie') ?? '';
+    return set.split(';')[0];
+  }
+
+  it('trades a token for an HttpOnly cookie that then authenticates', async () => {
+    const token = await tokenFor({ email: 'ada@example.com' });
+    const res = await signIn(token);
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { handle: string }).handle).toBe('ada');
+    const set = res.headers.get('set-cookie') ?? '';
+    expect(set).toContain('HttpOnly');
+    expect(set).toContain('SameSite=Strict');
+
+    const me = await rawFetch(`${baseUrl}/api/whoami`, {
+      headers: withCookie(cookieFrom(res)),
+    });
+    expect(me.status).toBe(200);
+    expect(((await me.json()) as { handle: string }).handle).toBe('ada');
+  });
+
+  it('the cookie does nothing from another site', async () => {
+    const cookie = cookieFrom(
+      await signIn(await tokenFor({ email: 'ada@example.com' }))
+    );
+    const me = await rawFetch(`${baseUrl}/api/whoami`, {
+      headers: withCookie(cookie, 'cross-site'),
+    });
+    expect(me.status).toBe(401);
+  });
+
+  it('a bad token gets no cookie', async () => {
+    const res = await signIn('not-a-token');
+    expect(res.status).toBe(401);
+    expect(res.headers.get('set-cookie')).toBeNull();
+  });
+
+  it('a page on another origin cannot sign anyone in', async () => {
+    const token = await tokenFor({ email: 'ada@example.com' });
+    const res = await signIn(token, { origin: 'http://evil.example' });
+    expect(res.status).toBe(403);
+  });
+
+  it('revoking the token ends every session it opened', async () => {
+    const cookie = cookieFrom(
+      await signIn(await tokenFor({ email: 'ada@example.com' }))
+    );
+    await rawFetch(`${baseUrl}/api/team/tokens/ada`, {
+      method: 'DELETE',
+      headers: headers(handle.tokens.appToken),
+    });
+    const me = await rawFetch(`${baseUrl}/api/whoami`, {
+      headers: withCookie(cookie),
+    });
+    expect(me.status).toBe(401);
+  });
+
+  it('signing out clears the cookie', async () => {
+    const res = await rawFetch(`${baseUrl}/api/session`, {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('set-cookie')).toContain('Max-Age=0');
+  });
+
+  it('an expired token is refused with the date and who to ask', async () => {
+    // Issued straight on the registry, since the API floors expiry at a day.
+    const token = handle.tokens.registry.issue('ada', 'request', {
+      expiresAt: new Date('2020-01-01T00:00:00Z'),
+    });
+    const res = await rawFetch(`${baseUrl}/api/whoami`, {
+      headers: headers(token),
+    });
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as { code: string; error: string };
+    expect(body.code).toBe('auth_token_expired');
+    expect(body.error).toContain('2020-01-01');
+    expect(body.error).toContain('dispatch team invite ada');
+  });
+});
+
+describe('invite expiry', () => {
+  function expiresAtOf(body: object) {
+    return invite(body).then(
+      async (res) =>
+        [
+          res.status,
+          ((await res.json()) as { expiresAt?: string | null }).expiresAt,
+        ] as const
+    );
+  }
+
+  it('defaults to ninety days', async () => {
+    const [status, expiresAt] = await expiresAtOf({ email: 'ada@example.com' });
+    expect(status).toBe(201);
+    const days = (Date.parse(expiresAt ?? '') - Date.now()) / 86_400_000;
+    expect(days).toBeGreaterThan(89.9);
+    expect(days).toBeLessThan(90.1);
+  });
+
+  it('takes a number of days, or null for never', async () => {
+    const [, week] = await expiresAtOf({
+      email: 'ada@example.com',
+      expiresInDays: 7,
+    });
+    expect((Date.parse(week ?? '') - Date.now()) / 86_400_000).toBeCloseTo(
+      7,
+      1
+    );
+    const [, never] = await expiresAtOf({
+      email: 'grace@example.com',
+      expiresInDays: null,
+    });
+    expect(never).toBeNull();
+  });
+
+  it('refuses a nonsense expiry rather than guessing', async () => {
+    for (const expiresInDays of [0, -3, 1.5, '30', 10_000]) {
+      const res = await invite({ email: 'ada@example.com', expiresInDays });
+      expect(res.status).toBe(400);
+    }
+  });
+
+  it('shows expiry and last use when listing, never the token', async () => {
+    const token = (
+      (await (await invite({ email: 'ada@example.com' })).json()) as {
+        token: string;
+      }
+    ).token;
+    await rawFetch(`${baseUrl}/api/whoami`, { headers: headers(token) });
+    const list = (await (
+      await rawFetch(`${baseUrl}/api/team/tokens`, {
+        headers: headers(handle.tokens.appToken),
+      })
+    ).json()) as {
+      handle: string;
+      expiresAt: string | null;
+      lastUsedAt: string | null;
+    }[];
+    const ada = list.find((e) => e.handle === 'ada');
+    expect(ada?.expiresAt).not.toBeNull();
+    expect(ada?.lastUsedAt).not.toBeNull();
+    expect(JSON.stringify(list)).not.toContain(token);
   });
 });

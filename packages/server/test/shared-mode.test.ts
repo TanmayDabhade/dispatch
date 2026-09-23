@@ -204,4 +204,47 @@ describe('team-local mode', () => {
       expect(((await me.json()) as { handle: string }).handle).toBe('ada');
     }
   );
+
+  it.skipIf(LAN_ADDRESS === undefined)(
+    'a teammate’s session cookie opens the event socket from the daemon’s own page',
+    async () => {
+      await boot('0.0.0.0');
+      const origin = `http://${LAN_ADDRESS}:${handle.port}`;
+      const issued = await rawFetch(
+        `http://127.0.0.1:${handle.port}/api/team/tokens`,
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${handle.tokens.appToken}`,
+          },
+          body: JSON.stringify({ email: 'ada@example.com' }),
+        }
+      );
+      const { token } = (await issued.json()) as { token: string };
+      const signedIn = await rawFetch(`${origin}/api/session`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin },
+        body: JSON.stringify({ token }),
+      });
+      const cookie = (signedIn.headers.get('set-cookie') ?? '').split(';')[0];
+
+      // No token in the URL: the upgrade is authenticated by the cookie alone,
+      // as a browser tab on the daemon's page would send it.
+      const opened = (from: string) =>
+        new Promise<'open' | 'refused'>((resolve) => {
+          const ws = new WebSocket(`ws://${LAN_ADDRESS}:${handle.port}/ws`, {
+            headers: { cookie, origin: from },
+          } as unknown as string[]);
+          ws.onopen = () => {
+            ws.close();
+            resolve('open');
+          };
+          ws.onerror = () => resolve('refused');
+        });
+      expect(await opened(origin)).toBe('open');
+      // The same cookie from a local dev server's page is not the teammate.
+      expect(await opened(`http://127.0.0.1:5173`)).toBe('refused');
+    }
+  );
 });

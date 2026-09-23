@@ -1,4 +1,4 @@
-import type { RunMeta } from '@dispatch/client';
+import type { AuthTier, RunMeta } from '@dispatch/client';
 
 import { isTerminalRunState } from './runState';
 
@@ -17,6 +17,10 @@ export interface DaemonConnection {
   agentToken: string | null;
   /** Full API base URL override; when set, port is ignored. Set by the web demo. */
   baseUrl?: string | null;
+  /** Set only on a team-local page: the credential is an HttpOnly session
+   *  cookie this code cannot see, so both token fields are null and this says
+   *  what the cookie is good for. */
+  session?: { tier: AuthTier };
 }
 
 /** The HTTP base for this daemon: the web demo's injected proxy URL, or the
@@ -56,6 +60,14 @@ export function resolveDaemonAuth(
   connection: DaemonConnection | undefined
 ): DaemonAuth {
   if (connection === undefined) return { token: undefined, canDecide: false };
+  // A cookie-authenticated teammate: no token to present, since the browser
+  // attaches the cookie itself.
+  if (connection.session !== undefined) {
+    return {
+      token: undefined,
+      canDecide: connection.session.tier !== 'request',
+    };
+  }
   if (connection.appToken !== null && connection.appToken !== '') {
     return { token: connection.appToken, canDecide: true };
   }

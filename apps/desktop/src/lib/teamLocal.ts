@@ -1,3 +1,5 @@
+import type { AuthTier } from '@dispatch/client';
+
 // Team-local mode, on the page side: a teammate's browser tab on a daemon
 // someone else runs (see packages/server/src/shared.ts).
 //
@@ -21,16 +23,20 @@ export function injectedSharedConfig(): SharedConfig | undefined {
   return typeof root === 'string' ? { root } : undefined;
 }
 
-/** A teammate's own credential on a team-local daemon, and what it resolved to
- *  when they signed in. */
-export interface TeamCredential {
-  token: string;
+/** Who a teammate signed in as on a team-local daemon, and at what tier.
+ *
+ *  Deliberately no token. The token went to the daemon once, at sign-in, and
+ *  came back as an HttpOnly session cookie the browser sends on its own — see
+ *  packages/server/src/session.ts. What is kept here is only what the page
+ *  needs to draw itself before the daemon has answered, and none of it is a
+ *  credential. */
+export interface TeamSession {
   handle: string;
-  tier: 'request' | 'decide';
+  tier: AuthTier;
 }
 
 // Per origin, so signing in to one team's daemon never leaks into another's.
-const TEAM_CREDENTIAL_KEY = 'dispatch:team-credential';
+const TEAM_SESSION_KEY = 'dispatch:team-session';
 
 /** True when this page was served by a daemon in team-local mode. */
 export function isTeamLocalPage(): boolean {
@@ -40,34 +46,56 @@ export function isTeamLocalPage(): boolean {
   return !inTauri && injectedSharedConfig() !== undefined;
 }
 
-/** The signed-in teammate's credential, or null. Storage can throw (private
- *  windows, blocked site data), which reads as not signed in rather than a
- *  crash — the sign-in screen is always a safe place to land. */
-export function readTeamCredential(): TeamCredential | null {
+/** The signed-in teammate, or null. Storage can throw (private windows,
+ *  blocked site data), which reads as not signed in rather than a crash —
+ *  the sign-in screen is always a safe place to land. */
+export function readTeamSession(): TeamSession | null {
   try {
-    const raw = window.localStorage.getItem(TEAM_CREDENTIAL_KEY);
+    const raw = window.localStorage.getItem(TEAM_SESSION_KEY);
     if (raw === null) return null;
-    const parsed = JSON.parse(raw) as Partial<TeamCredential>;
-    return typeof parsed.token === 'string' &&
-      typeof parsed.handle === 'string' &&
-      (parsed.tier === 'request' || parsed.tier === 'decide')
-      ? { token: parsed.token, handle: parsed.handle, tier: parsed.tier }
+    const parsed = JSON.parse(raw) as Partial<TeamSession>;
+    return typeof parsed.handle === 'string' &&
+      (parsed.tier === 'request' ||
+        parsed.tier === 'decide' ||
+        parsed.tier === 'operator')
+      ? { handle: parsed.handle, tier: parsed.tier }
       : null;
   } catch {
     return null;
   }
 }
 
-export function saveTeamCredential(credential: TeamCredential): void {
-  window.localStorage.setItem(TEAM_CREDENTIAL_KEY, JSON.stringify(credential));
+export function saveTeamSession(session: TeamSession): void {
+  // Spelled out field by field so nothing a caller happens to carry — a token,
+  // above all — is ever written through.
+  window.localStorage.setItem(
+    TEAM_SESSION_KEY,
+    JSON.stringify({ handle: session.handle, tier: session.tier })
+  );
 }
 
-/** Forgets the credential — signing out, or a token the daemon stopped
- *  accepting because it was revoked. */
-export function clearTeamCredential(): void {
+/** Forgets the session in this tab — signing out, or a token the daemon
+ *  stopped accepting because it was revoked or expired. */
+export function clearTeamSession(): void {
   try {
-    window.localStorage.removeItem(TEAM_CREDENTIAL_KEY);
+    window.localStorage.removeItem(TEAM_SESSION_KEY);
   } catch {
     // Nothing stored is the outcome we wanted.
+  }
+}
+
+/** Ends the session: the daemon clears the cookie, this tab forgets who it
+ *  was, and the page reloads onto the sign-in screen. */
+export async function signOutOfTeam(
+  fetchImpl: typeof fetch = fetch
+): Promise<void> {
+  try {
+    await fetchImpl('/api/session', {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+    });
+  } finally {
+    clearTeamSession();
+    window.location.reload();
   }
 }

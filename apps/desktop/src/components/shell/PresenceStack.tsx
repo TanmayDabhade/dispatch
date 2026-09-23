@@ -5,6 +5,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
 interface PresenceStackProps {
   presence: PresenceEntry[];
+  /** A task's title by id, so the tooltip can say what someone has open in
+   *  words rather than an id. Absent, the id is shown. */
+  taskTitle?: (id: string) => string | undefined;
   className?: string;
 }
 
@@ -23,9 +26,12 @@ export function initialsFor(handle: string): string {
   return letters.toUpperCase();
 }
 
-/** One line of tooltip per person: who, since when, and what they are
- *  running — the three questions someone hovering the stack is asking. */
-export function presenceLine(entry: PresenceEntry): string {
+/** One line of tooltip per person: who, since when, what they are running,
+ *  and what they have open — what someone hovering the stack is asking. */
+export function presenceLine(
+  entry: PresenceEntry,
+  taskTitle: (id: string) => string | undefined = () => undefined
+): string {
   const since = new Date(entry.since).toLocaleTimeString([], {
     hour: '2-digit',
     minute: '2-digit',
@@ -34,7 +40,11 @@ export function presenceLine(entry: PresenceEntry): string {
     entry.runs.length === 0
       ? 'not running anything'
       : `running ${entry.runs.length} ${entry.runs.length === 1 ? 'agent' : 'agents'}`;
-  return `${entry.handle} — here since ${since}, ${running}`;
+  const viewing =
+    entry.viewing === null
+      ? ''
+      : `, viewing ${taskTitle(entry.viewing) ?? entry.viewing}`;
+  return `${entry.handle} — here since ${since}, ${running}${viewing}`;
 }
 
 /**
@@ -44,7 +54,11 @@ export function presenceLine(entry: PresenceEntry): string {
  * project, and a lone chip reading "you are here" is noise; the stack earns
  * its place the moment a teammate connects with their own token.
  */
-export function PresenceStack({ presence, className }: PresenceStackProps) {
+export function PresenceStack({
+  presence,
+  taskTitle,
+  className,
+}: PresenceStackProps) {
   if (presence.length < 2) return null;
   const shown = presence.slice(0, MAX_SHOWN);
   const hidden = presence.length - shown.length;
@@ -91,10 +105,60 @@ export function PresenceStack({ presence, className }: PresenceStackProps) {
       <TooltipContent side="top">
         <ul className="flex flex-col gap-0.5">
           {presence.map((entry) => (
-            <li key={entry.handle}>{presenceLine(entry)}</li>
+            <li key={entry.handle}>{presenceLine(entry, taskTitle)}</li>
           ))}
         </ul>
       </TooltipContent>
+    </Tooltip>
+  );
+}
+
+interface AlsoViewingProps {
+  /** Everyone else with this task open — the caller leaves out this window's
+   *  own person. */
+  viewers: PresenceEntry[];
+}
+
+/**
+ * Who else has this task open, as initials in the task header. The question
+ * it answers is "am I about to trip over someone" — two people editing one
+ * task's body, or both about to dispatch it — so it shows only when the
+ * answer is yes.
+ */
+export function AlsoViewing({ viewers }: AlsoViewingProps) {
+  if (viewers.length === 0) return null;
+  const names = viewers.map((v) => v.handle);
+  const sentence =
+    names.length === 1
+      ? `${names[0]} also has this open`
+      : `${names.slice(0, -1).join(', ')} and ${names.at(-1)} also have this open`;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            data-slot="also-viewing"
+            tabIndex={0}
+            role="group"
+            aria-label={sentence}
+            className="focus-visible:ring-ring flex items-center rounded-full outline-none focus-visible:ring-2"
+          />
+        }
+      >
+        {viewers.slice(0, MAX_SHOWN).map((v, i) => (
+          <span
+            key={v.handle}
+            aria-hidden
+            className={cn(
+              'bg-surface-quaternary border-border-chip flex size-5 items-center justify-center rounded-full border text-[9px] font-medium',
+              i > 0 && 'ml-0.5'
+            )}
+          >
+            {initialsFor(v.handle)}
+          </span>
+        ))}
+      </TooltipTrigger>
+      <TooltipContent side="bottom">{sentence}</TooltipContent>
     </Tooltip>
   );
 }

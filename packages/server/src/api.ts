@@ -193,9 +193,16 @@ import {
 import type { AddCommentInput, ReviewComment } from './reviewComments.js';
 import type { ReviewTarget } from './reviewTarget.js';
 import { redactSecretUrls } from './secretUrls.js';
+import {
+  clearedSessionCookie,
+  sessionCookie,
+  sessionToken,
+} from './session.js';
 import type { SyncResult } from './sync/boardSyncer.js';
 import type { BoardSyncScheduler } from './sync/scheduler.js';
 import type { TerminalRegistry } from './terminals.js';
+import type { AuthTier } from './tiers.js';
+import { tierAllows } from './tiers.js';
 import type { TrackedFilesCache } from './trackedFiles.js';
 import type { WatchdogStatus } from './watchdog.js';
 
@@ -318,6 +325,9 @@ export interface ApiContext {
   /** The daemon's own network origins in team-local mode, empty otherwise.
    *  The same Set instance the HTTP layer fills once the port is bound. */
   ownOrigins: ReadonlySet<string>;
+  /** Origins a session cookie is honoured from — ownOrigins plus this
+   *  daemon's own loopback origin. See session.ts. */
+  sessionOrigins: ReadonlySet<string>;
   /** Whether this daemon is bound beyond loopback — see shared.ts. */
   shared: boolean;
   /** Who made the request being handled, when their credential resolved.
@@ -4175,9 +4185,6 @@ export interface DaemonTokens extends DaemonTokenPair {
   registry: TokenRegistry;
 }
 
-/** `request` covers everything the daemon does; `decide` adds adjudication. */
-export type AuthTier = 'request' | 'decide';
-
 export function mintDaemonTokens(): DaemonTokenPair {
   return {
     agentToken: randomBytes(32).toString('hex'),
@@ -4185,74 +4192,131 @@ export function mintDaemonTokens(): DaemonTokenPair {
   };
 }
 
-// Path segments (after `/api/`) of every route that records an adjudication,
-// where `*` matches one segment. The check runs once in handleApi, so a new
-// decision-class route is an entry here rather than another call site.
-const DECIDE_TIER_ROUTES: ReadonlyArray<{
+// Every route that needs more than the request tier, by path segments after
+// `/api/` (`*` matches one segment). The check runs once in handleApi, so a new
+// privileged route is an entry here rather than another call site. See
+// tiers.ts for what each tier means.
+const ELEVATED_ROUTES: ReadonlyArray<{
   method: string;
   segments: readonly string[];
+  tier: Exclude<AuthTier, 'request'>;
 }> = [
-  { method: 'POST', segments: ['runs', '*', 'scope-requests', '*', 'decide'] },
-  // Confirming a overseer's queued mutating action is the human gate the whole
-  // overseer design hangs on — an agent token approving it would let the model
-  // approve its own mutations.
-  { method: 'POST', segments: ['overseer', '*', 'actions', '*', 'confirm'] },
-  // Allowing a built-in tool call the overseer is parked on is the same gate
-  // for the same reason: the model must not be able to wave its own Bash
-  // call through with the agent token.
-  { method: 'POST', segments: ['overseer', '*', 'approvals', '*'] },
-  // A run's tool-approval gate is an adjudication like the two above: with
-  // it on the request tier, any agent holding the on-disk agent token could
-  // wave its own parked tool call through.
-  { method: 'POST', segments: ['runs', '*', 'approval'] },
-  // A terminal is arbitrary command execution in the project's checkout, so
-  // the whole family sits above the agent token. On the request tier, any
-  // agent holding the on-disk token could open a shell and walk straight
-  // around the scope, floor and approval gates the rest of this file enforces
-  // — reading output is listed too, since scrollback carries whatever the
-  // human typed into it, credentials included.
-  // Writing a file straight to disk bypasses the orchestrator, which is what
-  // holds a run's edits to the task's declared `writes` and records them.
-  // Reads stay on the request tier with the rest of the read surface.
-  { method: 'POST', segments: ['files', 'write'] },
-  // `evaluate` runs arbitrary JavaScript in a browser carrying the user's own
-  // session cookies, which is at least the authority a shell has. The whole
-  // family stays above the agent token for that reason.
-  { method: 'GET', segments: ['browser'] },
-  { method: 'POST', segments: ['browser'] },
-  { method: 'GET', segments: ['browser', '*'] },
-  { method: 'DELETE', segments: ['browser', '*'] },
-  { method: 'POST', segments: ['browser', '*', 'navigate'] },
-  { method: 'POST', segments: ['browser', '*', 'click'] },
-  { method: 'POST', segments: ['browser', '*', 'fill'] },
-  { method: 'GET', segments: ['browser', '*', 'text'] },
-  { method: 'POST', segments: ['browser', '*', 'evaluate'] },
-  { method: 'GET', segments: ['browser', '*', 'screenshot'] },
-  { method: 'POST', segments: ['browser', '*', 'pick'] },
-  { method: 'GET', segments: ['browser', '*', 'pick'] },
-  { method: 'GET', segments: ['terminals'] },
-  { method: 'POST', segments: ['terminals'] },
-  { method: 'GET', segments: ['terminals', '*'] },
-  { method: 'DELETE', segments: ['terminals', '*'] },
-  { method: 'GET', segments: ['terminals', '*', 'output'] },
-  { method: 'POST', segments: ['terminals', '*', 'input'] },
-  { method: 'POST', segments: ['terminals', '*', 'resize'] },
-  { method: 'POST', segments: ['terminals', '*', 'close'] },
+  // ---- decide: adjudication -------------------------------------------------
+  {
+    method: 'POST',
+    segments: ['runs', '*', 'scope-requests', '*', 'decide'],
+    tier: 'decide',
+  },
+  // Confirming an assistant's queued mutating action is the human gate the
+  // whole assistant design hangs on — an agent token approving it would let
+  // the model approve its own mutations.
+  {
+    method: 'POST',
+    segments: ['overseer', '*', 'actions', '*', 'confirm'],
+    tier: 'decide',
+  },
+  // Allowing a built-in tool call the assistant is parked on is the same gate
+  // for the same reason: the model must not be able to wave its own Bash call
+  // through with the agent token.
+  {
+    method: 'POST',
+    segments: ['overseer', '*', 'approvals', '*'],
+    tier: 'decide',
+  },
+  // A run's tool-approval gate is an adjudication like the two above: with it
+  // on the request tier, any agent holding the on-disk agent token could wave
+  // its own parked tool call through.
+  { method: 'POST', segments: ['runs', '*', 'approval'], tier: 'decide' },
   // Starting a preview runs a command out of the run's own worktree — a
   // worktree the agent just wrote to, including its package.json. On the
   // request tier an agent holding the on-disk agent token could use this to
   // execute code of its own choosing in the daemon's process group, outside
   // the sandbox its run was given. Stopping one is paired with it so the
-  // control surface is not half-privileged.
-  { method: 'POST', segments: ['runs', '*', 'preview'] },
-  { method: 'DELETE', segments: ['runs', '*', 'preview'] },
+  // control surface is not half-privileged. Decide rather than operator: it
+  // runs the project's own dev command, which a reviewer needs to look at a
+  // run, not a command of the caller's choosing.
+  { method: 'POST', segments: ['runs', '*', 'preview'], tier: 'decide' },
+  { method: 'DELETE', segments: ['runs', '*', 'preview'], tier: 'decide' },
   // Handing out a credential is an adjudication: on the request tier an agent
   // holding the on-disk agent token could mint itself a second identity, and
-  // listing holders tells it whose to go looking for.
-  { method: 'GET', segments: ['team', 'tokens'] },
-  { method: 'POST', segments: ['team', 'tokens'] },
-  { method: 'DELETE', segments: ['team', 'tokens', '*', '*'] },
+  // listing holders tells it whose to go looking for. api/team.ts further
+  // caps what a caller may issue or revoke at their own tier.
+  { method: 'GET', segments: ['team', 'tokens'], tier: 'decide' },
+  // Where the daemon is reachable is only useful to someone handing out a
+  // token, and it names the operator's network addresses.
+  { method: 'GET', segments: ['team', 'address'], tier: 'decide' },
+  { method: 'POST', segments: ['team', 'tokens'], tier: 'decide' },
+  { method: 'DELETE', segments: ['team', 'tokens', '*'], tier: 'decide' },
+
+  // ---- operator: acting on the host machine as its owner --------------------
+  // Writing a file straight to disk bypasses the orchestrator, which is what
+  // holds a run's edits to the task's declared `writes` and records them.
+  // Reads stay on the request tier with the rest of the read surface.
+  { method: 'POST', segments: ['files', 'write'], tier: 'operator' },
+  // `evaluate` runs arbitrary JavaScript in a browser carrying the user's own
+  // session cookies, which is at least the authority a shell has. The whole
+  // family stays together for that reason.
+  { method: 'GET', segments: ['browser'], tier: 'operator' },
+  { method: 'POST', segments: ['browser'], tier: 'operator' },
+  { method: 'GET', segments: ['browser', '*'], tier: 'operator' },
+  { method: 'DELETE', segments: ['browser', '*'], tier: 'operator' },
+  { method: 'POST', segments: ['browser', '*', 'navigate'], tier: 'operator' },
+  { method: 'POST', segments: ['browser', '*', 'click'], tier: 'operator' },
+  { method: 'POST', segments: ['browser', '*', 'fill'], tier: 'operator' },
+  { method: 'GET', segments: ['browser', '*', 'text'], tier: 'operator' },
+  { method: 'POST', segments: ['browser', '*', 'evaluate'], tier: 'operator' },
+  { method: 'GET', segments: ['browser', '*', 'screenshot'], tier: 'operator' },
+  { method: 'POST', segments: ['browser', '*', 'pick'], tier: 'operator' },
+  { method: 'GET', segments: ['browser', '*', 'pick'], tier: 'operator' },
+  // A terminal is arbitrary command execution in the project's checkout, so
+  // the whole family sits here. On a lower tier, any holder could open a shell
+  // and walk straight around the scope, floor and approval gates the rest of
+  // this file enforces — reading output is listed too, since scrollback
+  // carries whatever the human typed into it, credentials included.
+  { method: 'GET', segments: ['terminals'], tier: 'operator' },
+  { method: 'POST', segments: ['terminals'], tier: 'operator' },
+  { method: 'GET', segments: ['terminals', '*'], tier: 'operator' },
+  { method: 'DELETE', segments: ['terminals', '*'], tier: 'operator' },
+  { method: 'GET', segments: ['terminals', '*', 'output'], tier: 'operator' },
+  { method: 'POST', segments: ['terminals', '*', 'input'], tier: 'operator' },
+  { method: 'POST', segments: ['terminals', '*', 'resize'], tier: 'operator' },
+  { method: 'POST', segments: ['terminals', '*', 'close'], tier: 'operator' },
+  // Git operations that change the operator's own checkout or push with their
+  // credentials. On a shared daemon these would otherwise let any invited
+  // teammate discard someone's uncommitted work or push to their remote.
+  // Reads, `fetch` (refs only, never the working tree) and drafting a commit
+  // message stay on the request tier. Only the desktop app calls these — the
+  // CLI and the agents' MCP tools never do — and the app holds the app token.
+  ...(
+    [
+      'stage',
+      'unstage',
+      'stage-hunk',
+      'unstage-hunk',
+      'discard',
+      'commit',
+      'checkout',
+      'branch',
+      'stash',
+      'pull',
+      'push',
+      'cherry-pick',
+      'revert',
+    ] as const
+  ).map((op) => ({
+    method: 'POST',
+    segments: ['git', op],
+    tier: 'operator' as const,
+  })),
+  { method: 'DELETE', segments: ['git', 'branch', '*'], tier: 'operator' },
+  { method: 'POST', segments: ['git', 'stash', 'pop'], tier: 'operator' },
+  { method: 'POST', segments: ['git', 'stash', 'drop'], tier: 'operator' },
 ];
+
+// A task id as the board mints them (`t-` or `e-` and a hex tag), with room
+// for a longer tag. Only a shape check: focus names a task someone has open,
+// and a task that does not exist is harmless there.
+const TASK_ID_SHAPE = /^[a-z]-[0-9a-z]{1,64}$/;
 
 function matchesRoute(
   pattern: readonly string[],
@@ -4280,23 +4344,32 @@ function requiredTier(
   ) {
     return null;
   }
-  for (const route of DECIDE_TIER_ROUTES) {
+  // Signing in is how a browser gets a credential, so it cannot require one;
+  // it checks the token in its body itself. Signing out only clears a cookie.
+  if (
+    (method === 'POST' || method === 'DELETE') &&
+    segments.length === 1 &&
+    segments[0] === 'session'
+  ) {
+    return null;
+  }
+  for (const route of ELEVATED_ROUTES) {
     if (route.method === method && matchesRoute(route.segments, segments)) {
-      return 'decide';
+      return route.tier;
     }
   }
   return 'request';
 }
 
-// Who the presented token speaks for, or null if it matches nothing. The
-// comparison itself moved to TokenRegistry (see identity.ts), which is now the
-// one place a credential is checked — the tiers it returns for the built-in
-// pair are exactly what this function returned before.
-function resolveCaller(
-  presented: string | null,
-  tokens: DaemonTokens
-): TokenIdentity | null {
-  return tokens.registry.resolve(presented);
+/** The credential a request presents: a bearer header, or failing that a
+ *  team-local session cookie sent from the daemon's own page (session.ts). The
+ *  header wins so the CLI, MCP and desktop app are never affected by a stray
+ *  cookie. */
+function presentedCredential(
+  req: Request,
+  sessionOrigins: ReadonlySet<string>
+): string | null {
+  return bearerToken(req) ?? sessionToken(req, sessionOrigins);
 }
 
 /** The bearer token on a request, or null when the header is absent or malformed. */
@@ -4316,11 +4389,18 @@ const INVALID_TOKEN_MESSAGE =
   'daemon token not recognized: it belongs to a different or restarted daemon. ' +
   'Re-read `agentToken` from ~/.dispatch/daemons/<key>.json.';
 
-const WRONG_TIER_MESSAGE =
-  'this route needs the daemon app token, which is never written to disk. Pass ' +
-  'it with --token or DISPATCH_APP_TOKEN, taking the value from the ' +
-  'DISPATCH_APP_TOKEN line the daemon prints at startup; restart the daemon if ' +
-  'you no longer have it.';
+/** Why a valid credential was turned away, naming the tier it lacked. The
+ *  operator's own fix (the app token) and a teammate's (ask for a higher
+ *  tier) are different, so both are spelled out. */
+function wrongTierMessage(required: AuthTier, held: AuthTier): string {
+  return (
+    `this route needs the ${required} tier and this credential carries ` +
+    `${held}. On your own machine, pass the daemon app token with --token or ` +
+    'DISPATCH_APP_TOKEN (the DISPATCH_APP_TOKEN line the daemon prints at ' +
+    'startup; restart the daemon if you no longer have it). As a teammate, ask ' +
+    `whoever runs the daemon for \`dispatch team invite <you> --tier ${required}\`.`
+  );
+}
 
 function authErrorResponse(
   status: number,
@@ -4346,12 +4426,24 @@ export function rejectUnauthorized(
   if (presented === null) {
     return authErrorResponse(401, MISSING_TOKEN_MESSAGE, 'auth_missing_token');
   }
-  const caller = resolveCaller(presented, tokens);
+  const found = tokens.registry.lookup(presented);
+  if (found.kind === 'expired') {
+    return authErrorResponse(
+      401,
+      `this token for ${found.handle} expired on ${found.expiredAt}. Ask whoever runs the daemon to invite you again (\`dispatch team invite ${found.handle}\`).`,
+      'auth_token_expired'
+    );
+  }
+  const caller = found.kind === 'valid' ? found.identity : null;
   if (caller === null) {
     return authErrorResponse(401, INVALID_TOKEN_MESSAGE, 'auth_invalid_token');
   }
-  if (required === 'decide' && caller.tier !== 'decide') {
-    return authErrorResponse(403, WRONG_TIER_MESSAGE, 'auth_insufficient_tier');
+  if (!tierAllows(caller.tier, required)) {
+    return authErrorResponse(
+      403,
+      wrongTierMessage(required, caller.tier),
+      'auth_insufficient_tier'
+    );
   }
   return null;
 }
@@ -4370,16 +4462,22 @@ export async function handleApi(
   const untrusted = rejectUntrustedOrigin(req, daemonCtx.ownOrigins);
   if (untrusted !== null) return untrusted;
 
+  const presented = presentedCredential(req, daemonCtx.sessionOrigins);
   const tier = requiredTier(method, segments);
   if (tier !== null) {
-    const unauthorized = rejectUnauthorized(req, daemonCtx.tokens, tier);
+    const unauthorized = rejectUnauthorized(
+      req,
+      daemonCtx.tokens,
+      tier,
+      presented
+    );
     if (unauthorized !== null) return unauthorized;
   }
 
   // Every handler below sees who made this request. A shallow copy per
   // request, so the daemon-wide context is never mutated with one caller's
   // identity and a concurrent request can never read someone else's.
-  const caller = daemonCtx.tokens.registry.resolve(bearerToken(req));
+  const caller = daemonCtx.tokens.registry.resolve(presented);
   const ctx: ApiContext =
     caller === null ? daemonCtx : { ...daemonCtx, caller };
 
@@ -4431,8 +4529,8 @@ export async function handleApi(
       if (segments.length === 2 && method === 'POST') {
         return await issueTeamToken(req, ctx);
       }
-      if (segments.length === 4 && method === 'DELETE') {
-        return revokeTeamToken(ctx, segments[2], segments[3]);
+      if (segments.length === 3 && method === 'DELETE') {
+        return revokeTeamToken(ctx, segments[2]);
       }
     }
 
@@ -4455,18 +4553,91 @@ export async function handleApi(
       );
     }
 
+    // POST /api/presence/focus — which task this person has open, or null
+    // when they close it. Request tier, like the rest of the board: it says
+    // where someone is looking, which the board they can read already shows.
+    if (
+      segments[0] === 'presence' &&
+      segments[1] === 'focus' &&
+      segments.length === 2 &&
+      method === 'POST'
+    ) {
+      const parsed = await readJsonBody(req);
+      if (!parsed.ok) return parsed.response;
+      const taskId = (parsed.value as { taskId?: unknown }).taskId;
+      if (
+        taskId !== null &&
+        (typeof taskId !== 'string' || !TASK_ID_SHAPE.test(taskId))
+      ) {
+        return errorResponse(400, 'expected { taskId: string | null }');
+      }
+      if (ctx.caller === undefined) {
+        return errorResponse(401, 'credential resolves to no one');
+      }
+      if (ctx.presence.setFocus(ctx.caller.handle, taskId)) {
+        ctx.events.broadcast({ type: 'presence.changed' });
+      }
+      return jsonResponse({ ok: true });
+    }
+
+    // GET /api/team/address — where teammates reach this daemon, for the
+    // Team page to put beside a freshly issued token. Empty on loopback, which
+    // is the page's cue to explain `--host 0.0.0.0` instead.
+    if (
+      segments[0] === 'team' &&
+      segments[1] === 'address' &&
+      segments.length === 2 &&
+      method === 'GET'
+    ) {
+      return jsonResponse({
+        shared: ctx.shared,
+        origins: [...ctx.ownOrigins].sort(),
+      });
+    }
+
     // GET /api/whoami — who the presented credential speaks for. The one
     // endpoint that exists purely because tokens now name people: presence,
     // claims and attribution all need a caller to be identifiable before they
     // can mean anything, and this is how a client checks that it is.
     if (segments[0] === 'whoami' && segments.length === 1 && method === 'GET') {
-      const caller = ctx.tokens.registry.resolve(bearerToken(req));
-      // requiredTier already rejected an unusable credential, so a null here
-      // would be a bug rather than an unauthenticated caller.
-      if (caller === null) {
+      // requiredTier already rejected an unusable credential, so a missing
+      // caller here would be a bug rather than an unauthenticated one.
+      if (ctx.caller === undefined) {
         return errorResponse(401, 'credential resolves to no one');
       }
-      return jsonResponse(caller);
+      return jsonResponse(ctx.caller);
+    }
+
+    // POST /api/session — a teammate's browser trades the token it was given
+    // for an HttpOnly session cookie, so the page never has to hold it.
+    // DELETE clears it. Both sit behind rejectUntrustedOrigin above, so a
+    // page on another origin can neither sign someone in nor out.
+    if (segments[0] === 'session' && segments.length === 1) {
+      if (method === 'DELETE') {
+        const res = jsonResponse({ ok: true });
+        res.headers.set('set-cookie', clearedSessionCookie(req));
+        return res;
+      }
+      if (method === 'POST') {
+        const parsed = await readJsonBody(req);
+        if (!parsed.ok) return parsed.response;
+        const token = (parsed.value as { token?: unknown }).token;
+        if (typeof token !== 'string' || token === '') {
+          return errorResponse(400, 'expected { token }');
+        }
+        const unauthorized = rejectUnauthorized(
+          req,
+          ctx.tokens,
+          'request',
+          token
+        );
+        if (unauthorized !== null) return unauthorized;
+        const who = ctx.tokens.registry.resolve(token);
+        if (who === null) return errorResponse(401, 'token not recognized');
+        const res = jsonResponse(who);
+        res.headers.set('set-cookie', sessionCookie(req, token));
+        return res;
+      }
     }
 
     if (segments[0] === 'config' && segments.length === 1 && method === 'GET') {

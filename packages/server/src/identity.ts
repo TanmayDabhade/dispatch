@@ -8,7 +8,8 @@ import {
 } from 'node:fs';
 import { dirname } from 'node:path';
 
-import type { AuthTier } from './api.js';
+import type { AuthTier } from './tiers.js';
+import { isAuthTier } from './tiers.js';
 
 // Who is on the other end of a request, not just what they may do.
 //
@@ -41,6 +42,11 @@ export interface PersistedToken {
   /** Hex sha256 of the token. */
   hash: string;
   issuedAt: string;
+  /** When it stops working, or null for never. Absent on files written
+   *  before expiry existed, which reads as never. */
+  expiresAt?: string | null;
+  /** The last time it authenticated a request, to the nearest persist. */
+  lastUsedAt?: string | null;
 }
 
 /** Where issued teammate tokens survive a restart. Injected so tests use
@@ -56,6 +62,11 @@ interface Entry extends TokenIdentity {
    *  as the operator, so today's single-user behaviour is unchanged. */
   builtIn: boolean;
   issuedAt: string | null;
+  expiresAt: string | null;
+  lastUsedAt: string | null;
+  /** `lastUsedAt` as of the last write to the store, so a token in constant
+   *  use is written back every LAST_USED_PERSIST_MS rather than per request. */
+  persistedLastUsedAt: string | null;
 }
 
 /** What a caller may safely be shown about who holds credentials: never a
@@ -65,7 +76,24 @@ export interface IssuedTokenSummary {
   tier: AuthTier;
   builtIn: boolean;
   issuedAt: string | null;
+  expiresAt: string | null;
+  lastUsedAt: string | null;
+  expired: boolean;
 }
+
+/** What a presented token turned out to be: someone, a credential that has
+ *  run out, or nothing at all. Kept apart so a 401 can say "expired on …"
+ *  instead of "not recognized" to the person whose token merely aged out. */
+export type TokenLookup =
+  | { kind: 'valid'; identity: TokenIdentity }
+  | { kind: 'expired'; handle: string; expiredAt: string }
+  | { kind: 'unknown' };
+
+// How stale a persisted last-used time may get. Recording use is a write to
+// disk, and a busy teammate authenticates many times a second (every fetch,
+// every socket); fifteen minutes is fine-grained enough to answer "has anyone
+// used this token lately" without turning reads into writes.
+const LAST_USED_PERSIST_MS = 15 * 60 * 1000;
 
 function sha256(value: string): Buffer {
   return createHash('sha256').update(value, 'utf8').digest();
@@ -76,6 +104,17 @@ function sha256(value: string): Buffer {
  *  handle pattern. */
 function humanRef(handle: string): string {
   return `human:${handle}`;
+}
+
+/** Whether a stored expiry can be enforced. An unparseable one is dropped
+ *  with its token rather than read as "never" — a hand-edited or corrupted
+ *  file must fail closed, not hand out a credential with no end date. */
+function validExpiry(value: unknown): boolean {
+  return (
+    value === undefined ||
+    value === null ||
+    (typeof value === 'string' && !Number.isNaN(Date.parse(value)))
+  );
 }
 
 /** A TokenStore over one JSON file, written 0600 because even hashes are
@@ -94,10 +133,10 @@ export function fileTokenStore(path: string): TokenStore {
             typeof t === 'object' &&
             t !== null &&
             typeof (t as PersistedToken).handle === 'string' &&
-            ((t as PersistedToken).tier === 'request' ||
-              (t as PersistedToken).tier === 'decide') &&
+            isAuthTier((t as PersistedToken).tier) &&
             typeof (t as PersistedToken).hash === 'string' &&
-            /^[0-9a-f]{64}$/.test((t as PersistedToken).hash)
+            /^[0-9a-f]{64}$/.test((t as PersistedToken).hash) &&
+            validExpiry((t as PersistedToken).expiresAt)
         );
       } catch {
         console.error(
@@ -140,18 +179,23 @@ export class TokenRegistry {
   constructor(
     builtIn: { agentToken: string; appToken: string },
     operatorHandle: string,
-    private readonly store: TokenStore = MEMORY_ONLY
+    private readonly store: TokenStore = MEMORY_ONLY,
+    private readonly clock: () => Date = () => new Date()
   ) {
     // Highest tier first, so the app token still wins if the two were ever
-    // the same string — the pre-existing behaviour, kept on purpose.
+    // the same string — the pre-existing behaviour, kept on purpose. The app
+    // token is `operator`: it only ever reaches the person at this machine.
     this.entries.push(
       {
         hash: sha256(builtIn.appToken),
         handle: operatorHandle,
         ref: humanRef(operatorHandle),
-        tier: 'decide',
+        tier: 'operator',
         builtIn: true,
         issuedAt: null,
+        expiresAt: null,
+        lastUsedAt: null,
+        persistedLastUsedAt: null,
       },
       {
         hash: sha256(builtIn.agentToken),
@@ -160,6 +204,9 @@ export class TokenRegistry {
         tier: 'request',
         builtIn: true,
         issuedAt: null,
+        expiresAt: null,
+        lastUsedAt: null,
+        persistedLastUsedAt: null,
       }
     );
     for (const t of store.load()) {
@@ -170,30 +217,75 @@ export class TokenRegistry {
         tier: t.tier,
         builtIn: false,
         issuedAt: t.issuedAt,
+        expiresAt: t.expiresAt ?? null,
+        lastUsedAt: t.lastUsedAt ?? null,
+        persistedLastUsedAt: t.lastUsedAt ?? null,
       });
     }
   }
 
-  /** Who this token speaks for, or null when it matches nothing. */
+  /** Who this token speaks for, or null when it matches nothing or has
+   *  expired. Records the use, which is what `list` reports as last used. */
   resolve(presented: string | null): TokenIdentity | null {
-    if (presented === null || presented === '') return null;
+    const found = this.lookup(presented);
+    return found.kind === 'valid' ? found.identity : null;
+  }
+
+  /** `resolve`, but saying why a token that matched was still turned away. */
+  lookup(presented: string | null): TokenLookup {
+    if (presented === null || presented === '') return { kind: 'unknown' };
     const digest = sha256(presented);
-    for (const entry of this.entries) {
-      if (timingSafeEqual(digest, entry.hash)) {
-        return { handle: entry.handle, ref: entry.ref, tier: entry.tier };
-      }
+    const entry = this.entries.find((e) => timingSafeEqual(digest, e.hash));
+    if (entry === undefined) return { kind: 'unknown' };
+    const now = this.clock();
+    if (
+      entry.expiresAt !== null &&
+      now.getTime() >= Date.parse(entry.expiresAt)
+    ) {
+      return {
+        kind: 'expired',
+        handle: entry.handle,
+        expiredAt: entry.expiresAt,
+      };
     }
-    return null;
+    if (!entry.builtIn) this.recordUse(entry, now);
+    return {
+      kind: 'valid',
+      identity: { handle: entry.handle, ref: entry.ref, tier: entry.tier },
+    };
+  }
+
+  /** Notes a use in memory, and writes it through when the stored value has
+   *  fallen more than LAST_USED_PERSIST_MS behind. */
+  private recordUse(entry: Entry, now: Date): void {
+    entry.lastUsedAt = now.toISOString();
+    const persisted =
+      entry.persistedLastUsedAt === null
+        ? null
+        : Date.parse(entry.persistedLastUsedAt);
+    if (
+      persisted === null ||
+      now.getTime() - persisted >= LAST_USED_PERSIST_MS
+    ) {
+      this.persist();
+    }
   }
 
   /**
    * Mints a credential for one teammate and returns it — the only time the
-   * token value exists outside its owner's hands. Re-issuing for a handle and
-   * tier that already has one replaces it, so a teammate whose laptop was lost
-   * is re-credentialed rather than accumulating live tokens.
+   * token value exists outside its owner's hands.
+   *
+   * One token per person: issuing replaces whatever that handle held, at any
+   * tier. Raising or lowering someone's tier is then just inviting them again,
+   * and a teammate whose laptop was lost is re-credentialed rather than left
+   * with a forgotten second token still live at their old tier.
    */
-  issue(handle: string, tier: AuthTier, now: Date = new Date()): string {
-    this.drop(handle, tier);
+  issue(
+    handle: string,
+    tier: AuthTier,
+    options: { expiresAt?: Date | null } = {}
+  ): string {
+    this.drop(handle);
     const token = randomBytes(32).toString('hex');
     this.entries.push({
       hash: sha256(token),
@@ -201,7 +293,10 @@ export class TokenRegistry {
       ref: humanRef(handle),
       tier,
       builtIn: false,
-      issuedAt: now.toISOString(),
+      issuedAt: this.clock().toISOString(),
+      expiresAt: options.expiresAt?.toISOString() ?? null,
+      lastUsedAt: null,
+      persistedLastUsedAt: null,
     });
     this.persist();
     return token;
@@ -214,42 +309,59 @@ export class TokenRegistry {
    * credentials, and dropping them would lock the operator out of the process
    * running on their machine with no way back in short of a restart.
    */
-  revoke(handle: string, tier: AuthTier): boolean {
-    const dropped = this.drop(handle, tier);
+  revoke(handle: string): boolean {
+    const dropped = this.drop(handle);
     if (dropped) this.persist();
     return dropped;
   }
 
   /** Who currently holds credentials, without the credentials. */
   list(): IssuedTokenSummary[] {
-    return this.entries.map(({ handle, tier, builtIn, issuedAt }) => ({
-      handle,
-      tier,
-      builtIn,
-      issuedAt,
+    const now = this.clock().getTime();
+    return this.entries.map((e) => ({
+      handle: e.handle,
+      tier: e.tier,
+      builtIn: e.builtIn,
+      issuedAt: e.issuedAt,
+      expiresAt: e.expiresAt,
+      lastUsedAt: e.lastUsedAt,
+      expired: e.expiresAt !== null && now >= Date.parse(e.expiresAt),
     }));
   }
 
-  private drop(handle: string, tier: AuthTier): boolean {
-    const at = this.entries.findIndex(
-      (e) => !e.builtIn && e.handle === handle && e.tier === tier
+  /** The tier a teammate's issued token carries, or null when they hold
+   *  none. The built-in pair is not counted: it is the operator's, and never
+   *  replaced or revoked. */
+  issuedTier(handle: string): AuthTier | null {
+    return (
+      this.entries.find((e) => !e.builtIn && e.handle === handle)?.tier ?? null
     );
-    if (at === -1) return false;
-    this.entries.splice(at, 1);
-    return true;
+  }
+
+  /** Drops every issued token a handle holds. A file written before tokens
+   *  were one per person can carry several; all of them go. */
+  private drop(handle: string): boolean {
+    const before = this.entries.length;
+    for (let i = this.entries.length - 1; i >= 0; i--) {
+      const e = this.entries[i];
+      if (!e.builtIn && e.handle === handle) this.entries.splice(i, 1);
+    }
+    return this.entries.length !== before;
   }
 
   /** Writes the issued (never the built-in) entries back as hashes. */
   private persist(): void {
+    const issued = this.entries.filter((e) => !e.builtIn);
     this.store.save(
-      this.entries
-        .filter((e) => !e.builtIn)
-        .map((e) => ({
-          handle: e.handle,
-          tier: e.tier,
-          hash: e.hash.toString('hex'),
-          issuedAt: e.issuedAt ?? new Date(0).toISOString(),
-        }))
+      issued.map((e) => ({
+        handle: e.handle,
+        tier: e.tier,
+        hash: e.hash.toString('hex'),
+        issuedAt: e.issuedAt ?? new Date(0).toISOString(),
+        expiresAt: e.expiresAt,
+        lastUsedAt: e.lastUsedAt,
+      }))
     );
+    for (const e of issued) e.persistedLastUsedAt = e.lastUsedAt;
   }
 }

@@ -128,3 +128,46 @@ it('everyone else hears someone arrive and leave', async () => {
       watcher.events.filter((e) => e === 'presence.changed').length > before
   );
 });
+
+it('says which task each person has open, and forgets it when they leave', async () => {
+  const { ws, events } = await connect(ada);
+  const focus = (taskId: string | null) =>
+    rawFetch(`${baseUrl}/api/presence/focus`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${ada}`,
+      },
+      body: JSON.stringify({ taskId }),
+    });
+
+  expect((await focus('t-abc123')).status).toBe(200);
+  const viewing = async () =>
+    (
+      (await presence()) as unknown as {
+        handle: string;
+        viewing: string | null;
+      }[]
+    ).find((p) => p.handle === 'ada')?.viewing;
+  expect(await viewing()).toBe('t-abc123');
+  // Everyone else's stack updates off the same event as a connection.
+  await until(async () => events.includes('presence.changed'));
+
+  expect((await focus('../../etc')).status).toBe(400);
+
+  ws.close();
+  await until(async () => (await presence()).length === 0);
+  await connect(ada);
+  expect(await viewing()).toBeNull();
+});
+
+it('the team address is decide-tier and empty on loopback', async () => {
+  const asAgent = await rawFetch(`${baseUrl}/api/team/address`, {
+    headers: { authorization: `Bearer ${handle.tokens.agentToken}` },
+  });
+  expect(asAgent.status).toBe(403);
+  const asOperator = await rawFetch(`${baseUrl}/api/team/address`, {
+    headers: { authorization: `Bearer ${handle.tokens.appToken}` },
+  });
+  expect(await asOperator.json()).toEqual({ shared: false, origins: [] });
+});

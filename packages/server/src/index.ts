@@ -112,8 +112,13 @@ import {
 import type { ApprovalFloor } from './policyEngine.js';
 import { PresenceTracker } from './presence.js';
 import { PreviewSupervisor } from './preview.js';
+import {
+  previewRequestHeaders,
+  previewResponseHeaders,
+} from './previewHeaders.js';
 import { isReceiptEvent, ReceiptsScheduler } from './receipts/scheduler.js';
 import { ReviewCommentStore } from './reviewComments.js';
+import { sessionOrigins, sessionToken } from './session.js';
 import type { SharedPageConfig } from './shared.js';
 import { bindModeFor, isLoopbackAddress, ownOrigins } from './shared.js';
 import { readProjectBackend, writeProjectBackend } from './storage.js';
@@ -524,28 +529,6 @@ interface SocketData {
 // a full interval late.
 const PREVIEW_SWEEP_INTERVAL_MS = 30_000;
 
-// Hop-by-hop headers, which belong to one connection and must not be
-// forwarded to or from an upstream (RFC 9110 7.6.1). Forwarding
-// `connection`/`upgrade` in particular makes Bun's fetch reject the request.
-const HOP_BY_HOP = new Set([
-  'connection',
-  'keep-alive',
-  'proxy-authenticate',
-  'proxy-authorization',
-  'te',
-  'trailer',
-  'transfer-encoding',
-  'upgrade',
-]);
-
-function withoutHopByHop(headers: Headers): Headers {
-  const copy = new Headers();
-  headers.forEach((value, key) => {
-    if (!HOP_BY_HOP.has(key.toLowerCase())) copy.append(key, value);
-  });
-  return copy;
-}
-
 /**
  * Proxies `/preview/<runId>/...` to that run's dev server.
  *
@@ -587,7 +570,7 @@ async function proxyPreview(
   try {
     const upstream = await fetch(target, {
       method: req.method,
-      headers: withoutHopByHop(req.headers),
+      headers: previewRequestHeaders(req.headers),
       body: req.body,
       redirect: 'manual',
       // A dev server streams; buffering here would break hot reload's
@@ -597,7 +580,7 @@ async function proxyPreview(
     return new Response(upstream.body, {
       status: upstream.status,
       statusText: upstream.statusText,
-      headers: withoutHopByHop(upstream.headers),
+      headers: previewResponseHeaders(upstream.headers),
     });
   } catch {
     // The dev server died between the readiness probe and this request.
@@ -791,6 +774,9 @@ async function bootServer(
   // Filled once the port is bound; empty in loopback mode, where nothing but
   // this machine's own origins is ever trusted.
   const ownOriginSet = new Set<string>();
+  // Where a session cookie may come from: the above plus this daemon's own
+  // loopback origin, exact port. Filled after bind too — see session.ts.
+  const sessionOriginSet = new Set<string>();
   // Which bundle to serve. Team-local mode needs the desktop app's build: it
   // is the one with a sign-in screen, where the frozen @dispatch/web UI
   // expects an injected token that shared mode will never inject. With no
@@ -1606,6 +1592,7 @@ async function bootServer(
     previews,
     presence: presenceTracker,
     ownOrigins: ownOriginSet,
+    sessionOrigins: sessionOriginSet,
     shared,
   };
 
@@ -1660,8 +1647,13 @@ async function bootServer(
           );
         }
         // The browser WebSocket API cannot set request headers, so this is the
-        // one route that also takes the token as a query parameter.
-        const wsToken = bearerToken(req) ?? url.searchParams.get('token');
+        // one route that also takes the token as a query parameter. A
+        // teammate's page has neither — its credential is the session cookie,
+        // which the upgrade carries like any same-origin request.
+        const wsToken =
+          bearerToken(req) ??
+          url.searchParams.get('token') ??
+          sessionToken(req, sessionOriginSet);
         const unauthorized = rejectUnauthorized(
           req,
           tokens,
@@ -1814,6 +1806,9 @@ async function bootServer(
     console.log(
       `dispatchd: team-local mode — teammates open ${[...ownOriginSet].join(' or ')} and sign in with a token from \`dispatch team invite\``
     );
+  }
+  for (const origin of sessionOrigins(port, ownOriginSet)) {
+    sessionOriginSet.add(origin);
   }
 
   if (shouldWriteDaemonFile) {

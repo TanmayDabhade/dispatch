@@ -2,12 +2,12 @@ import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 
 import {
-  clearTeamCredential,
+  clearTeamSession,
   isTeamLocalPage,
-  readTeamCredential,
-  saveTeamCredential,
+  readTeamSession,
+  saveTeamSession,
 } from '../../lib/teamLocal';
-import { SignInView, verifyTeamToken } from '../../views/SignInView';
+import { checkTeamSession, SignInView } from '../../views/SignInView';
 import { Spinner } from '@/ui/spinner';
 
 interface TeamLocalGateProps {
@@ -33,32 +33,27 @@ type GateState = 'checking' | 'signed-in' | 'signed-out';
 
 function TeamLocalSignIn({ children }: TeamLocalGateProps) {
   const [state, setState] = useState<GateState>(() =>
-    readTeamCredential() === null ? 'signed-out' : 'checking'
+    readTeamSession() === null ? 'signed-out' : 'checking'
   );
   const [notice, setNotice] = useState<string | null>(null);
 
-  // A stored credential is re-checked on every load rather than trusted: a
-  // token revoked since last time should land its holder on the sign-in
-  // screen with a reason, not in an app where every request quietly 401s.
+  // A stored session is re-checked on every load rather than trusted: a
+  // token revoked or expired since last time should land its holder on the
+  // sign-in screen with a reason, not in an app where every request 401s.
   useEffect(() => {
     if (state !== 'checking') return;
-    const stored = readTeamCredential();
-    if (stored === null) {
-      setState('signed-out');
-      return;
-    }
     let cancelled = false;
-    verifyTeamToken(window.location.origin, stored.token)
+    checkTeamSession(window.location.origin)
       .then((fresh) => {
         if (cancelled) return;
-        // Re-saved so a tier changed since sign-in (re-invited with --decide)
-        // is what the app sees.
-        saveTeamCredential(fresh);
+        // Re-saved so a tier changed since sign-in (re-invited with another
+        // --tier) is what the app sees.
+        saveTeamSession(fresh);
         setState('signed-in');
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        clearTeamCredential();
+        clearTeamSession();
         setNotice(err instanceof Error ? err.message : String(err));
         setState('signed-out');
       });
