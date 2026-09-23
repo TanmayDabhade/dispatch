@@ -6,6 +6,7 @@ import { DaemonSection } from '../components/settings/DaemonSection';
 import { DiffsSection } from '../components/settings/DiffsSection';
 import { GeneralSection } from '../components/settings/GeneralSection';
 import { IntegrationsSection } from '../components/settings/IntegrationsSection';
+import { LicenseSection } from '../components/settings/LicenseSection';
 import { NotificationsSection } from '../components/settings/NotificationsSection';
 import { PolicySection } from '../components/settings/PolicySection';
 import { TeamSection } from '../components/settings/TeamSection';
@@ -45,6 +46,7 @@ type SaveState =
 const SETTINGS_PAGES: { id: SettingsPage; label: string }[] = [
   { id: 'general', label: 'General' },
   { id: 'team', label: 'Team' },
+  { id: 'license', label: 'License' },
   { id: 'autonomy', label: 'Autonomy' },
   { id: 'agents', label: 'Agents' },
   { id: 'integrations', label: 'Integrations' },
@@ -201,6 +203,7 @@ export function SettingsView({
               <GeneralSection config={data.config} onSave={save} />
             )}
             {page === 'team' && <TeamSection data={data} />}
+            {page === 'license' && <LicenseSection data={data} />}
             {page === 'autonomy' && data.config !== null && (
               <PolicySection
                 config={data.config}

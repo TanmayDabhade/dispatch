@@ -20,7 +20,8 @@ const EXPECTED: Record<string, string> = {
   '@dispatch/client': 'MIT',
   '@dispatch/cli': 'MIT',
   '@dispatch/mcp': 'MIT',
-  '@dispatch/server': 'FSL-1.1-ALv2',
+  // The daemon is FSL, except its team features (see LICENSED_DIRS).
+  '@dispatch/server': 'FSL-1.1-ALv2 AND Elastic-2.0',
   '@dispatch/tokens': 'FSL-1.1-ALv2',
   '@dispatch/ui': 'FSL-1.1-ALv2',
   '@dispatch/web': 'FSL-1.1-ALv2',
@@ -28,6 +29,15 @@ const EXPECTED: Record<string, string> = {
   '@dispatch/sandbox': 'FSL-1.1-ALv2',
   '@dispatch/desktop': 'FSL-1.1-ALv2',
   '@dispatch/site': 'FSL-1.1-ALv2',
+};
+
+// Folders inside a package under a license of their own — the GitLab `ee/`
+// pattern. Each needs its own LICENSE with that license's text, and its
+// package's "license" expression must name it. Team features are Elastic
+// License 2.0: free up to three people, a license key beyond (LICENSING.md).
+const LICENSED_DIRS: Record<string, string> = {
+  'packages/server/src/team': 'Elastic-2.0',
+  'packages/server/test/team': 'Elastic-2.0',
 };
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -79,9 +89,19 @@ function isFslLicense(text: string): boolean {
   );
 }
 
+// True when the text is the Elastic License 2.0, license-key clause and all
+// — the clause the seat limit rests on.
+function isElasticLicense(text: string): boolean {
+  return (
+    text.includes('Elastic License 2.0') &&
+    text.includes('circumvent the license key functionality')
+  );
+}
+
 const LICENSE_VALIDATORS: Record<string, (text: string) => boolean> = {
   MIT: isMitLicense,
   'FSL-1.1-ALv2': isFslLicense,
+  'Elastic-2.0': isElasticLicense,
 };
 
 const problems: string[] = [];
@@ -118,9 +138,41 @@ for (const dir of findPackageDirs()) {
     continue;
   }
 
-  const validate = LICENSE_VALIDATORS[expected];
+  // A compound expression ("A AND B"): the package's own LICENSE carries the
+  // first, and LICENSED_DIRS says where the others apply.
+  const [packageLicense] = expected.split(' AND ');
+  const validate = LICENSE_VALIDATORS[packageLicense];
   if (validate !== undefined && !validate(readFileSync(licenseFile, 'utf8'))) {
-    problems.push(`${label}: LICENSE file does not match "${expected}" text.`);
+    problems.push(
+      `${label}: LICENSE file does not match "${packageLicense}" text.`
+    );
+  }
+}
+
+for (const [dirLabel, license] of Object.entries(LICENSED_DIRS)) {
+  const dir = join(repoRoot, dirLabel);
+  const licenseFile = join(dir, 'LICENSE');
+  if (!existsSync(licenseFile)) {
+    problems.push(`${dirLabel}: missing its ${license} LICENSE file.`);
+    continue;
+  }
+  const validate = LICENSE_VALIDATORS[license];
+  if (validate !== undefined && !validate(readFileSync(licenseFile, 'utf8'))) {
+    problems.push(
+      `${dirLabel}: LICENSE file does not match "${license}" text.`
+    );
+  }
+  const owner = findPackageDirs().find((pkgDir) =>
+    dir.startsWith(`${pkgDir}/`)
+  );
+  const declared = owner === undefined ? null : readPackageJson(owner).license;
+  if (
+    typeof declared !== 'string' ||
+    !declared.split(' AND ').includes(license)
+  ) {
+    problems.push(
+      `${dirLabel}: its package's "license" must include "${license}" (e.g. "FSL-1.1-ALv2 AND ${license}").`
+    );
   }
 }
 

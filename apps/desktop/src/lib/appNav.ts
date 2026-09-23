@@ -73,6 +73,7 @@ export type GlobalView =
 export type SettingsPage =
   | 'general'
   | 'team'
+  | 'license'
   | 'autonomy'
   | 'agents'
   | 'integrations'

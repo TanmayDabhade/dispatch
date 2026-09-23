@@ -47,6 +47,8 @@ function makeClient(getPlan: ApiClient['getPlan']): ApiClient {
     revokeTeamToken: () => Promise.reject(new Error('not used')),
     getSyncStatus: () => Promise.reject(new Error('not used')),
     syncNow: () => Promise.reject(new Error('not used')),
+    getLicense: () => Promise.reject(new Error('not used')),
+    installLicense: () => Promise.reject(new Error('not used')),
   };
 }
 

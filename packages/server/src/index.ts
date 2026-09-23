@@ -23,7 +23,7 @@ import type {
   TaskStorePort,
 } from '@dispatch/core';
 import { existsSync } from 'node:fs';
-import { networkInterfaces, userInfo } from 'node:os';
+import { networkInterfaces } from 'node:os';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -38,10 +38,6 @@ import {
 } from './api.js';
 import type { ApiContext, DaemonTokenPair, DaemonTokens } from './api.js';
 import { spawnGitSync } from './blockingGit.js';
-import { SyncLedger } from './boardSync/ledger.js';
-import { resolvePushTarget, SyncRepo } from './boardSync/repo.js';
-import { BoardSyncService } from './boardSync/service.js';
-import { SyncedTaskStore } from './boardSync/syncedStore.js';
 import { BrowserRegistry } from './browser/registry.js';
 import { TaskCache } from './cache.js';
 import { ConversationStore } from './conversations.js';
@@ -62,7 +58,8 @@ import { FindingStore } from './findings.js';
 import type { FindingStorePort } from './findings.js';
 import { floorCheckForToolInput } from './floor.js';
 import { GitRepo } from './git/commands.js';
-import { fileTokenStore, TokenRegistry } from './identity.js';
+import { resolvePushTarget } from './gitTarget.js';
+import { TokenRegistry } from './identity.js';
 import { InboxStore } from './inbox.js';
 import type { InboxClusterer } from './inboxClusterer.js';
 import { createJudgmentClient } from './judgments/client.js';
@@ -91,11 +88,7 @@ import { Orchestrator } from './orchestrator/orchestrator.js';
 import { OverseerManager } from './orchestrator/overseer.js';
 import { ClaudeOverseer } from './orchestrator/overseers/claude.js';
 import { OverseerToolRegistry } from './orchestrator/overseerTools.js';
-import {
-  boardSyncDir,
-  scopeRequestsPath,
-  teamTokensPath,
-} from './orchestrator/paths.js';
+import { boardSyncDir, scopeRequestsPath } from './orchestrator/paths.js';
 import { PlanManager } from './orchestrator/plan.js';
 import { ClaudePlanner } from './orchestrator/planners/claude.js';
 import type { CommandRunner } from './orchestrator/pr.js';
@@ -140,6 +133,12 @@ import {
   defaultGitRunner,
   SyncWorktree,
 } from './sync/worktree.js';
+import { SyncLedger } from './team/boardSync/ledger.js';
+import { SyncRepo } from './team/boardSync/repo.js';
+import { BoardSyncService } from './team/boardSync/service.js';
+import { SyncedTaskStore } from './team/boardSync/syncedStore.js';
+import type { Team } from './team/index.js';
+import { createTeam, syncSeats } from './team/index.js';
 import { TerminalRegistry } from './terminals.js';
 import { TrackedFilesCache } from './trackedFiles.js';
 import { EventLoopWatchdog } from './watchdog.js';
@@ -153,6 +152,9 @@ export interface ServerHandle {
   // Minted at boot unless the caller supplied them. bin.ts prints `appToken`
   // on stdout; nothing else may log or persist either value.
   tokens: DaemonTokens;
+  // Teammates' credentials and the license (team/). Exposed so a test can
+  // issue a teammate a token without going through the API.
+  team: Team;
   // Exposed for introspection/tests; its own 60s auto-refresh timer and
   // blocked-retry timer are started/stopped by startServer itself below.
   mergeQueue: MergeQueue;
@@ -843,13 +845,17 @@ async function bootServer(
   // supplied (a harness presetting the decide-tier token); the registry is
   // built from whichever pair is actually in use, so a preset token is
   // attributed rather than resolving to nobody.
+  // Teammates' tokens and the license come from the team module (team/,
+  // Elastic License 2.0); the registry asks it about any token that is not
+  // one of the daemon's own two.
   const tokenPair = opts.tokens ?? mintDaemonTokens();
+  const team = createTeam(rootDir);
   const tokens: DaemonTokens = {
     ...tokenPair,
     registry: new TokenRegistry(
       tokenPair,
       actorContext.member.handle,
-      fileTokenStore(teamTokensPath(rootDir))
+      team.teammates
     ),
   };
 
@@ -868,7 +874,7 @@ async function bootServer(
   // Attaching there instead would boot a daemon whose every write fails with
   // "no dispatch database for <root>".
   const backend = opts.storeBackend ?? resolveStoreBackend(rootDir);
-  // Board sync (boardSync/) is read once, here: it decides how ids are minted
+  // Board sync (team/boardSync/) is read once, here: it decides how ids are minted
   // and which store everything below is handed, and both have to hold for the
   // life of the process. Turning it on or off takes a restart. Only the
   // database backend syncs this way — a file-backed board already travels in
@@ -922,7 +928,11 @@ async function bootServer(
       ? null
       : new SyncLedger(
           join(boardSyncDir(rootDir), 'state.db'),
-          userInfo().username
+          // The person's Dispatch handle (git email → team.yml), the same one
+          // every write is attributed to — not the OS login, which two
+          // people on stock cloud machines share and one person can have
+          // two of. The license counts sync seats by it.
+          actorContext.member.handle
         );
   const syncedStore =
     syncLedger === null || !(stores.tasks instanceof SqliteTaskStore)
@@ -1050,6 +1060,7 @@ async function bootServer(
         remote: remoteUrl,
         branch: syncConfig.branch,
         intervalMs: syncConfig.intervalSec * 1000,
+        ...syncSeats(team),
         // A teammate's change lands like a local edit: the cache is rebuilt
         // and every client told, so boards refresh without anyone reloading.
         onBoardChanged: () => {
@@ -1721,6 +1732,7 @@ async function bootServer(
     previews,
     previewGateway,
     boardSync,
+    team,
     presence: presenceTracker,
     ownOrigins: ownOriginSet,
     sessionOrigins: sessionOriginSet,
@@ -1941,6 +1953,7 @@ async function bootServer(
     port,
     ...(tlsPort === undefined ? {} : { tlsPort }),
     tokens,
+    team,
     mergeQueue,
     orchestrator,
     prManager,

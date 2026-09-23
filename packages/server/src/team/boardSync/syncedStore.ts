@@ -1,7 +1,5 @@
 import type {
   Amendment,
-  ApplyResult,
-  BoardOp,
   CreateInput,
   ListFilter,
   ListSafeResult,
@@ -10,8 +8,9 @@ import type {
   TaskStorePort,
   UpdatePatch,
 } from '@dispatch/core';
-import { applyOp, diffTask, recordLocal } from '@dispatch/core';
 
+import type { ApplyResult, BoardOp } from './engine.js';
+import { applyOp, diffTask, recordLocal } from './engine.js';
 import type { SyncLedger } from './ledger.js';
 
 /**

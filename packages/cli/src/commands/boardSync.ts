@@ -19,6 +19,7 @@ export function describeSync(status: SyncStatus): string[] {
       ? 'Not synced yet.'
       : `Last synced ${status.lastSyncAt}.`,
   ];
+  if (status.paused !== null) lines.push(status.paused);
   if (status.lastError !== null) {
     lines.push(`The remote could not be reached: ${status.lastError}`);
     lines.push(

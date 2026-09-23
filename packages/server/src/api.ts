@@ -88,7 +88,6 @@ import {
   listScopeRequests,
   requestScope,
 } from './api/scopeRequests.js';
-import { issueTeamToken, listTeamTokens, revokeTeamToken } from './api/team.js';
 import {
   closeTerminal,
   createTerminal,
@@ -98,7 +97,6 @@ import {
   writeTerminalInput,
 } from './api/terminals.js';
 import { getTaskVerification, startTaskVerification } from './api/verify.js';
-import type { BoardSyncService } from './boardSync/service.js';
 import type { BrowserRegistry } from './browser/registry.js';
 import type { TaskCache } from './cache.js';
 import type { ConversationStore } from './conversations.js';
@@ -202,6 +200,15 @@ import {
 } from './session.js';
 import type { SyncResult } from './sync/boardSyncer.js';
 import type { BoardSyncScheduler } from './sync/scheduler.js';
+import type { BoardSyncService } from './team/boardSync/service.js';
+import type { Team } from './team/index.js';
+import {
+  getLicense,
+  installLicense,
+  issueTeamToken,
+  listTeamTokens,
+  revokeTeamToken,
+} from './team/routes.js';
 import type { TerminalRegistry } from './terminals.js';
 import type { AuthTier } from './tiers.js';
 import { tierAllows } from './tiers.js';
@@ -324,8 +331,11 @@ export interface ApiContext {
   previews: PreviewSupervisor;
   /** Teammates' way into previews, in team-local mode; null on loopback. */
   previewGateway: PreviewGateway | null;
-  /** Board sync between replicas (boardSync/); null when it is off. */
+  /** Board sync between replicas (team/boardSync/); null when it is off. */
   boardSync: BoardSyncService | null;
+  /** Teammates' credentials and the license that says how many people may
+   *  use this project together — team/, under the Elastic License 2.0. */
+  team: Team;
   /** Who is connected right now; see presence.ts. */
   presence: PresenceTracker;
   /** The daemon's own network origins in team-local mode, empty otherwise.
@@ -4261,7 +4271,7 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   { method: 'DELETE', segments: ['runs', '*', 'preview'], tier: 'decide' },
   // Handing out a credential is an adjudication: on the request tier an agent
   // holding the on-disk agent token could mint itself a second identity, and
-  // listing holders tells it whose to go looking for. api/team.ts further
+  // listing holders tells it whose to go looking for. team/routes.ts further
   // caps what a caller may issue or revoke at their own tier.
   { method: 'GET', segments: ['team', 'tokens'], tier: 'decide' },
   // Where the daemon is reachable is only useful to someone handing out a
@@ -4269,6 +4279,9 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   { method: 'GET', segments: ['team', 'address'], tier: 'decide' },
   { method: 'POST', segments: ['team', 'tokens'], tier: 'decide' },
   { method: 'DELETE', segments: ['team', 'tokens', '*'], tier: 'decide' },
+  // Installing a license key changes who may sign in to this machine's
+  // daemon at all — the owner's call, like the rest of the operator tier.
+  { method: 'PUT', segments: ['license'], tier: 'operator' },
 
   // ---- operator: acting on the host machine as its owner --------------------
   // Writing a file straight to disk bypasses the orchestrator, which is what
@@ -4456,6 +4469,11 @@ export function rejectUnauthorized(
       'auth_token_expired'
     );
   }
+  if (found.kind === 'refused') {
+    // A real teammate, just one more than the license covers: say so, so the
+    // person can ask for a seat instead of doubting their token.
+    return authErrorResponse(403, found.reason, 'seat_limit');
+  }
   const caller = found.kind === 'valid' ? found.identity : null;
   if (caller === null) {
     return authErrorResponse(401, INVALID_TOKEN_MESSAGE, 'auth_invalid_token');
@@ -4554,6 +4572,13 @@ export async function handleApi(
       if (segments.length === 3 && method === 'DELETE') {
         return revokeTeamToken(ctx, segments[2]);
       }
+    }
+
+    // GET /api/license — how many people may use this project together and
+    // how many already do; PUT installs a key (team/license.ts).
+    if (segments.length === 1 && segments[0] === 'license') {
+      if (method === 'GET') return getLicense(ctx);
+      if (method === 'PUT') return await installLicense(req, ctx);
     }
 
     // GET /api/presence — who is here and what they are running. Derived on

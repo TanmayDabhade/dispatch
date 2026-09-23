@@ -1,5 +1,5 @@
-import { newTaskDoc } from './store.js';
-import type { TaskDoc, TaskMeta } from './types.js';
+import type { TaskDoc, TaskMeta } from '@dispatch/core';
+import { newTaskDoc } from '@dispatch/core';
 
 // The merge half of board sync: what a change to a task looks like on the
 // wire, and how a replica folds someone else's changes into its own board.
@@ -397,7 +397,7 @@ function newestClock(state: MergeState, task: string): string | undefined {
 
 /** The task exactly as this replica's state describes it — the same on every
  *  replica that has seen the same changes. */
-export function assembleFromState(id: string, state: MergeState): TaskDoc {
+function assembleFromState(id: string, state: MergeState): TaskDoc {
   const fields: Record<string, unknown> = {};
   for (const [key, held] of Object.entries(state.fields(id))) {
     fields[key] = held.value;

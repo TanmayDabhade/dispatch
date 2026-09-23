@@ -1,15 +1,6 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-} from 'node:fs';
-import { dirname } from 'node:path';
+import { createHash, timingSafeEqual } from 'node:crypto';
 
 import type { AuthTier } from './tiers.js';
-import { isAuthTier } from './tiers.js';
 
 // Who is on the other end of a request, not just what they may do.
 //
@@ -33,40 +24,10 @@ export interface TokenIdentity {
   tier: AuthTier;
 }
 
-/** One issued teammate credential as it is kept on disk: a hash, never the
- *  token. A copied or leaked file then grants nothing — a sha256 of 32 random
- *  bytes cannot be walked back to the bytes. */
-export interface PersistedToken {
-  handle: string;
-  tier: AuthTier;
-  /** Hex sha256 of the token. */
-  hash: string;
-  issuedAt: string;
-  /** When it stops working, or null for never. Absent on files written
-   *  before expiry existed, which reads as never. */
-  expiresAt?: string | null;
-  /** The last time it authenticated a request, to the nearest persist. */
-  lastUsedAt?: string | null;
-}
-
-/** Where issued teammate tokens survive a restart. Injected so tests use
- *  memory; the daemon uses `fileTokenStore`. */
-export interface TokenStore {
-  load: () => PersistedToken[];
-  save: (tokens: PersistedToken[]) => void;
-}
-
-interface Entry extends TokenIdentity {
+// One of the two tokens the daemon mints at startup. They authenticate as the
+// operator, so a solo project behaves exactly as it always has.
+interface BuiltInEntry extends TokenIdentity {
   hash: Buffer;
-  /** True for the two tokens the daemon mints at startup. They authenticate
-   *  as the operator, so today's single-user behaviour is unchanged. */
-  builtIn: boolean;
-  issuedAt: string | null;
-  expiresAt: string | null;
-  lastUsedAt: string | null;
-  /** `lastUsedAt` as of the last write to the store, so a token in constant
-   *  use is written back every LAST_USED_PERSIST_MS rather than per request. */
-  persistedLastUsedAt: string | null;
 }
 
 /** What a caller may safely be shown about who holds credentials: never a
@@ -87,145 +48,78 @@ export interface IssuedTokenSummary {
 export type TokenLookup =
   | { kind: 'valid'; identity: TokenIdentity }
   | { kind: 'expired'; handle: string; expiredAt: string }
+  /** A real credential the project's license does not cover right now —
+   *  more teammates hold tokens than it has seats for. */
+  | { kind: 'refused'; handle: string; reason: string }
   | { kind: 'unknown' };
 
-// How stale a persisted last-used time may get. Recording use is a write to
-// disk, and a busy teammate authenticates many times a second (every fetch,
-// every socket); fifteen minutes is fine-grained enough to answer "has anyone
-// used this token lately" without turning reads into writes.
-const LAST_USED_PERSIST_MS = 15 * 60 * 1000;
+/**
+ * Credentials beyond the built-in pair: the teammates a project has issued
+ * tokens to. Supplied by the team module (team/, Elastic License 2.0), which
+ * issues them and decides whether the license covers each one; the registry
+ * only asks.
+ */
+export interface CredentialSource {
+  /** What a presented token is, given its sha256. */
+  lookup: (digest: Buffer) => TokenLookup;
+  /** Who holds issued credentials, never the credentials. */
+  list: () => IssuedTokenSummary[];
+}
 
-function sha256(value: string): Buffer {
+/** A token's sha256 — the only form a credential is ever kept in. */
+export function sha256(value: string): Buffer {
   return createHash('sha256').update(value, 'utf8').digest();
 }
 
 /** The ActorRef a human handle renders as. Duplicated from core's actor.ts
  *  rather than imported for one string, the same way team.ts duplicates the
  *  handle pattern. */
-function humanRef(handle: string): string {
+export function humanRef(handle: string): string {
   return `human:${handle}`;
 }
-
-/** Whether a stored expiry can be enforced. An unparseable one is dropped
- *  with its token rather than read as "never" — a hand-edited or corrupted
- *  file must fail closed, not hand out a credential with no end date. */
-function validExpiry(value: unknown): boolean {
-  return (
-    value === undefined ||
-    value === null ||
-    (typeof value === 'string' && !Number.isNaN(Date.parse(value)))
-  );
-}
-
-/** A TokenStore over one JSON file, written 0600 because even hashes are
- *  nobody else's business. A missing or unreadable file loads as empty: the
- *  worst outcome is that teammates must be issued fresh tokens, never that
- *  the daemon refuses to boot. */
-export function fileTokenStore(path: string): TokenStore {
-  return {
-    load: () => {
-      if (!existsSync(path)) return [];
-      try {
-        const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
-        if (!Array.isArray(parsed)) return [];
-        return parsed.filter(
-          (t): t is PersistedToken =>
-            typeof t === 'object' &&
-            t !== null &&
-            typeof (t as PersistedToken).handle === 'string' &&
-            isAuthTier((t as PersistedToken).tier) &&
-            typeof (t as PersistedToken).hash === 'string' &&
-            /^[0-9a-f]{64}$/.test((t as PersistedToken).hash) &&
-            validExpiry((t as PersistedToken).expiresAt)
-        );
-      } catch {
-        console.error(
-          `dispatchd: ignoring unreadable team token file ${path}; issue teammates fresh tokens`
-        );
-        return [];
-      }
-    },
-    save: (tokens) => {
-      mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, JSON.stringify(tokens, null, 2), { mode: 0o600 });
-      try {
-        chmodSync(path, 0o600);
-      } catch {
-        // A filesystem without POSIX modes is not a reason to fail the write.
-      }
-    },
-  };
-}
-
-/** A store that keeps nothing — the default, so a registry built without one
- *  (tests, a harness) never touches disk. */
-const MEMORY_ONLY: TokenStore = { load: () => [], save: () => {} };
 
 /**
  * Every credential this daemon accepts, and who each one speaks for.
  *
- * Seeded with the two built-in tokens, both attributed to the operator — the
- * person whose machine this daemon runs on — so a solo project behaves exactly
- * as it did before. Additional tokens are issued per teammate, which is what
- * lets one shared daemon tell two humans apart.
+ * The two built-in tokens are both attributed to the operator — the person
+ * whose machine this daemon runs on — so a solo project behaves exactly as it
+ * did before. Anything else presented is asked of `teammates`, when the team
+ * module supplies one: that is what lets one shared daemon tell two humans
+ * apart.
  *
  * Every entry is held as a hash and compared hash-to-hash, so the comparison
- * is constant-length whatever was presented and no raw teammate token exists
- * anywhere after the moment it is issued.
+ * is constant-length whatever was presented and no raw token is kept.
  */
 export class TokenRegistry {
-  private readonly entries: Entry[] = [];
+  private readonly builtIn: BuiltInEntry[];
 
   constructor(
-    builtIn: { agentToken: string; appToken: string },
+    pair: { agentToken: string; appToken: string },
     operatorHandle: string,
-    private readonly store: TokenStore = MEMORY_ONLY,
-    private readonly clock: () => Date = () => new Date()
+    private readonly teammates: CredentialSource | null = null
   ) {
     // Highest tier first, so the app token still wins if the two were ever
     // the same string — the pre-existing behaviour, kept on purpose. The app
     // token is `operator`: it only ever reaches the person at this machine.
-    this.entries.push(
+    const ref = humanRef(operatorHandle);
+    this.builtIn = [
       {
-        hash: sha256(builtIn.appToken),
+        hash: sha256(pair.appToken),
         handle: operatorHandle,
-        ref: humanRef(operatorHandle),
+        ref,
         tier: 'operator',
-        builtIn: true,
-        issuedAt: null,
-        expiresAt: null,
-        lastUsedAt: null,
-        persistedLastUsedAt: null,
       },
       {
-        hash: sha256(builtIn.agentToken),
+        hash: sha256(pair.agentToken),
         handle: operatorHandle,
-        ref: humanRef(operatorHandle),
+        ref,
         tier: 'request',
-        builtIn: true,
-        issuedAt: null,
-        expiresAt: null,
-        lastUsedAt: null,
-        persistedLastUsedAt: null,
-      }
-    );
-    for (const t of store.load()) {
-      this.entries.push({
-        hash: Buffer.from(t.hash, 'hex'),
-        handle: t.handle,
-        ref: humanRef(t.handle),
-        tier: t.tier,
-        builtIn: false,
-        issuedAt: t.issuedAt,
-        expiresAt: t.expiresAt ?? null,
-        lastUsedAt: t.lastUsedAt ?? null,
-        persistedLastUsedAt: t.lastUsedAt ?? null,
-      });
-    }
+      },
+    ];
   }
 
-  /** Who this token speaks for, or null when it matches nothing or has
-   *  expired. Records the use, which is what `list` reports as last used. */
+  /** Who this token speaks for, or null when it matches nothing, has
+   *  expired, or is not covered by the license. */
   resolve(presented: string | null): TokenIdentity | null {
     const found = this.lookup(presented);
     return found.kind === 'valid' ? found.identity : null;
@@ -235,133 +129,29 @@ export class TokenRegistry {
   lookup(presented: string | null): TokenLookup {
     if (presented === null || presented === '') return { kind: 'unknown' };
     const digest = sha256(presented);
-    const entry = this.entries.find((e) => timingSafeEqual(digest, e.hash));
-    if (entry === undefined) return { kind: 'unknown' };
-    const now = this.clock();
-    if (
-      entry.expiresAt !== null &&
-      now.getTime() >= Date.parse(entry.expiresAt)
-    ) {
+    const own = this.builtIn.find((e) => timingSafeEqual(digest, e.hash));
+    if (own !== undefined) {
       return {
-        kind: 'expired',
-        handle: entry.handle,
-        expiredAt: entry.expiresAt,
+        kind: 'valid',
+        identity: { handle: own.handle, ref: own.ref, tier: own.tier },
       };
     }
-    if (!entry.builtIn) this.recordUse(entry, now);
-    return {
-      kind: 'valid',
-      identity: { handle: entry.handle, ref: entry.ref, tier: entry.tier },
-    };
-  }
-
-  /** Notes a use in memory, and writes it through when the stored value has
-   *  fallen more than LAST_USED_PERSIST_MS behind. */
-  private recordUse(entry: Entry, now: Date): void {
-    entry.lastUsedAt = now.toISOString();
-    const persisted =
-      entry.persistedLastUsedAt === null
-        ? null
-        : Date.parse(entry.persistedLastUsedAt);
-    if (
-      persisted === null ||
-      now.getTime() - persisted >= LAST_USED_PERSIST_MS
-    ) {
-      this.persist();
-    }
-  }
-
-  /**
-   * Mints a credential for one teammate and returns it — the only time the
-   * token value exists outside its owner's hands.
-   *
-   * One token per person: issuing replaces whatever that handle held, at any
-   * tier. Raising or lowering someone's tier is then just inviting them again,
-   * and a teammate whose laptop was lost is re-credentialed rather than left
-   * with a forgotten second token still live at their old tier.
-   */
-  issue(
-    handle: string,
-    tier: AuthTier,
-    options: { expiresAt?: Date | null } = {}
-  ): string {
-    this.drop(handle);
-    const token = randomBytes(32).toString('hex');
-    this.entries.push({
-      hash: sha256(token),
-      handle,
-      ref: humanRef(handle),
-      tier,
-      builtIn: false,
-      issuedAt: this.clock().toISOString(),
-      expiresAt: options.expiresAt?.toISOString() ?? null,
-      lastUsedAt: null,
-      persistedLastUsedAt: null,
-    });
-    this.persist();
-    return token;
-  }
-
-  /**
-   * Drops an issued credential. Returns whether one was there.
-   *
-   * The built-in pair is never revocable: they are this daemon's own
-   * credentials, and dropping them would lock the operator out of the process
-   * running on their machine with no way back in short of a restart.
-   */
-  revoke(handle: string): boolean {
-    const dropped = this.drop(handle);
-    if (dropped) this.persist();
-    return dropped;
+    return this.teammates?.lookup(digest) ?? { kind: 'unknown' };
   }
 
   /** Who currently holds credentials, without the credentials. */
   list(): IssuedTokenSummary[] {
-    const now = this.clock().getTime();
-    return this.entries.map((e) => ({
-      handle: e.handle,
-      tier: e.tier,
-      builtIn: e.builtIn,
-      issuedAt: e.issuedAt,
-      expiresAt: e.expiresAt,
-      lastUsedAt: e.lastUsedAt,
-      expired: e.expiresAt !== null && now >= Date.parse(e.expiresAt),
-    }));
-  }
-
-  /** The tier a teammate's issued token carries, or null when they hold
-   *  none. The built-in pair is not counted: it is the operator's, and never
-   *  replaced or revoked. */
-  issuedTier(handle: string): AuthTier | null {
-    return (
-      this.entries.find((e) => !e.builtIn && e.handle === handle)?.tier ?? null
-    );
-  }
-
-  /** Drops every issued token a handle holds. A file written before tokens
-   *  were one per person can carry several; all of them go. */
-  private drop(handle: string): boolean {
-    const before = this.entries.length;
-    for (let i = this.entries.length - 1; i >= 0; i--) {
-      const e = this.entries[i];
-      if (!e.builtIn && e.handle === handle) this.entries.splice(i, 1);
-    }
-    return this.entries.length !== before;
-  }
-
-  /** Writes the issued (never the built-in) entries back as hashes. */
-  private persist(): void {
-    const issued = this.entries.filter((e) => !e.builtIn);
-    this.store.save(
-      issued.map((e) => ({
+    return [
+      ...this.builtIn.map((e) => ({
         handle: e.handle,
         tier: e.tier,
-        hash: e.hash.toString('hex'),
-        issuedAt: e.issuedAt ?? new Date(0).toISOString(),
-        expiresAt: e.expiresAt,
-        lastUsedAt: e.lastUsedAt,
-      }))
-    );
-    for (const e of issued) e.persistedLastUsedAt = e.lastUsedAt;
+        builtIn: true,
+        issuedAt: null,
+        expiresAt: null,
+        lastUsedAt: null,
+        expired: false,
+      })),
+      ...(this.teammates?.list() ?? []),
+    ];
   }
 }

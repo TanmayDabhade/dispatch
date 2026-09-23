@@ -1,6 +1,8 @@
+import type { TaskDoc, UpdatePatch } from '@dispatch/core';
+import { applyUpdatePatch, newTaskDoc } from '@dispatch/core';
 import { describe, expect, test } from 'bun:test';
 
-import type { BoardOp, MergeState } from '../src/boardSync.js';
+import type { BoardOp, MergeState } from '../../src/team/boardSync/engine.js';
 import {
   applyOp,
   diffTask,
@@ -8,10 +10,7 @@ import {
   memoryMergeState,
   recordLocal,
   taskFields,
-} from '../src/boardSync.js';
-import { applyUpdatePatch, newTaskDoc } from '../src/store.js';
-import type { UpdatePatch } from '../src/store.js';
-import type { TaskDoc } from '../src/types.js';
+} from '../../src/team/boardSync/engine.js';
 
 // One replica as the sync layer sees it: a board, what it knows about how the
 // board got that way, a clock, and the log of changes it made itself.

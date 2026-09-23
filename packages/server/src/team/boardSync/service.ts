@@ -1,7 +1,7 @@
-import type { BoardOp } from '@dispatch/core';
-
+import type { BoardOp } from './engine.js';
 import type { SyncLedger, SyncProblem } from './ledger.js';
 import type { SyncRepo } from './repo.js';
+import { personOf } from './repo.js';
 import type { SyncedTaskStore } from './syncedStore.js';
 
 // When board sync runs, and what it reports. One pass: write this replica's
@@ -10,6 +10,12 @@ import type { SyncedTaskStore } from './syncedStore.js';
 // push) and on an interval otherwise, so a teammate's change arrives without
 // anyone here doing anything. Never two at once: a pass that is asked for
 // while one runs is run straight after it.
+//
+// Licensed under the Elastic License 2.0 (../LICENSE). A board is shared by
+// as many people as the license covers, earliest first: the first people to
+// sync keep syncing with each other, and someone past the seats pauses —
+// nothing of theirs is pushed, nobody applies theirs, and nothing is deleted,
+// so adding seats later picks everything up where it stopped.
 
 /** What `GET /api/board-sync` reports. */
 export interface SyncStatus {
@@ -26,6 +32,12 @@ export interface SyncStatus {
   /** Changes from others applied since the daemon started. */
   applied: number;
   problems: SyncProblem[];
+  /** People sharing the branch, and how many the license covers. */
+  people: number;
+  seats: number;
+  /** Why this machine is not syncing although the remote is fine: it is
+   *  past the license's seats. Null while it syncs. */
+  paused: string | null;
 }
 
 interface ServiceOptions {
@@ -38,6 +50,10 @@ interface ServiceOptions {
   /** Called when a pass changed the board, so the daemon can rebuild its
    *  cache and tell every client — the same as a local edit does. */
   onBoardChanged: () => void;
+  /** How many people the license covers, asked on every pass. */
+  seats: () => number;
+  /** The sentence to pause with when this machine is past the seats. */
+  seatMessage: (seats: number) => string;
   debounceMs?: number;
   now?: () => Date;
 }
@@ -45,6 +61,8 @@ interface ServiceOptions {
 export class BoardSyncService {
   private lastSyncAt: string | null = null;
   private lastError: string | null = null;
+  private paused: string | null = null;
+  private people = 0;
   private applied = 0;
   private running: Promise<void> | null = null;
   private again = false;
@@ -111,6 +129,9 @@ export class BoardSyncService {
       pending: this.opts.ledger.outbox().length,
       applied: this.applied,
       problems: this.opts.ledger.problems(),
+      people: this.people,
+      seats: this.opts.seats(),
+      paused: this.paused,
     };
   }
 
@@ -120,8 +141,18 @@ export class BoardSyncService {
       this.ready ??= repo.ensure();
       await this.ready;
 
-      // 1. This replica's new changes, into its own log.
+      // 0. Whether the license covers this machine's owner, by the branch as
+      // last seen. Past the seats, nothing goes out and nothing comes in.
       const outbox = ledger.outbox();
+      const seats = this.opts.seats();
+      if (!this.covered(seats, outbox[0]?.hlc).has(this.me())) {
+        this.paused = this.opts.seatMessage(seats);
+        this.lastSyncAt = (this.opts.now?.() ?? new Date()).toISOString();
+        return;
+      }
+      this.paused = null;
+
+      // 1. This replica's new changes, into its own log.
       if (outbox.length > 0) {
         await repo.write(outbox);
         ledger.sent(outbox.at(-1)?.seq ?? 0);
@@ -134,8 +165,13 @@ export class BoardSyncService {
       // 3. Fold theirs in, oldest first across every replica — the order
       // does not change the result (see core's boardSync.ts), but applying
       // in clock order means each task is rewritten fewer times.
+      // Only from people the license covers, now that the exchange has
+      // shown everyone on the branch; the rest keep their place (their
+      // cursors do not move) for when there are seats for them.
+      const covered = this.covered(seats);
       const incoming = repo
         .readOthers((replica) => ledger.cursor(replica))
+        .filter((op) => covered.has(personOf(op.replica)))
         .sort((a, b) => (a.hlc < b.hlc ? -1 : a.hlc > b.hlc ? 1 : 0));
       const changed = this.apply(incoming);
       this.lastSyncAt = (this.opts.now?.() ?? new Date()).toISOString();
@@ -143,6 +179,32 @@ export class BoardSyncService {
     } catch (err) {
       this.lastError = err instanceof Error ? err.message : String(err);
     }
+  }
+
+  private me(): string {
+    return personOf(this.opts.ledger.replica);
+  }
+
+  /**
+   * The people the license covers: everyone on the branch plus this
+   * machine's owner, earliest first change first, as many as there are
+   * seats. `pendingHlc` is this machine's first unsent change, which is its
+   * place in line when nothing of its own is on the branch yet.
+   */
+  private covered(seats: number, pendingHlc?: string): Set<string> {
+    const people = this.opts.repo.people();
+    const me = this.me();
+    if (!people.has(me)) {
+      // Nothing of ours pushed yet: we join the line now, at the back.
+      people.set(me, pendingHlc ?? '\uffff');
+    }
+    this.people = people.size;
+    return new Set(
+      [...people.entries()]
+        .sort((a, b) => (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0))
+        .slice(0, seats)
+        .map(([person]) => person)
+    );
   }
 
   // Applies changes and advances each replica's cursor, all or nothing per

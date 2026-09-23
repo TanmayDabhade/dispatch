@@ -109,6 +109,7 @@ test('the nav lists every page under a Project heading, and the page title is th
   expect(navRows().map((row) => row.textContent)).toEqual([
     'General',
     'Team',
+    'License',
     'Autonomy',
     'Agents',
     'Integrations',

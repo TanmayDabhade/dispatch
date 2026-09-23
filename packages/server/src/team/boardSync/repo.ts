@@ -1,5 +1,3 @@
-import type { BoardOp } from '@dispatch/core';
-import { absoluteGitLocation } from '@dispatch/core';
 import {
   appendFileSync,
   existsSync,
@@ -10,7 +8,8 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 
-import type { AsyncGitRunner } from '../sync/worktree.js';
+import type { AsyncGitRunner } from '../../sync/worktree.js';
+import type { BoardOp } from './engine.js';
 
 // The git half of board sync: a clone of one branch, where every replica keeps
 // an append-only log of the changes it made, `ops/<replica>.jsonl`.
@@ -146,8 +145,9 @@ export class SyncRepo {
     return { pushed: false, offline: 'the remote kept rejecting the push' };
   }
 
-  // Fetch and merge the remote branch. Null on success, or why it failed.
-  private async pull(): Promise<string | null> {
+  /** Fetches and merges the remote branch. Null on success, or why it
+   *  failed. */
+  async pull(): Promise<string | null> {
     const fetched = await this.run(['fetch', '-q', 'origin', this.branch]);
     if (!fetched.ok) {
       // A branch nobody has pushed yet is not an error: this push creates it.
@@ -169,6 +169,35 @@ export class SyncRepo {
       return `could not merge the sync branch: ${merged.out}`;
     }
     return null;
+  }
+
+  /**
+   * Everyone whose changes are on the branch, by person, with the clock of
+   * their earliest change — which is their place in line for a seat. A
+   * replica's log is append-only, so its first line is its earliest.
+   */
+  people(): Map<string, string> {
+    const dir = join(this.dir, OPS_DIR);
+    const people = new Map<string, string>();
+    if (!existsSync(dir)) return people;
+    for (const file of readdirSync(dir)) {
+      if (!file.endsWith('.jsonl')) continue;
+      const replica = file.slice(0, -'.jsonl'.length);
+      const first = readFileSync(join(dir, file), 'utf8')
+        .split('\n')
+        .find((line) => line.trim() !== '');
+      if (first === undefined) continue;
+      let hlc: string;
+      try {
+        hlc = (JSON.parse(first) as BoardOp).hlc;
+      } catch {
+        continue;
+      }
+      const person = personOf(replica);
+      const seen = people.get(person);
+      if (seen === undefined || hlc < seen) people.set(person, hlc);
+    }
+    return people;
   }
 
   /** Every other replica's changes past where this one has read to. */
@@ -199,31 +228,11 @@ export class SyncRepo {
   }
 }
 
-/** A push target as the config names it: one of the project's remotes by
- *  name, or a repository of its own. */
-export interface PushTarget {
-  remote?: string;
-  repo?: string;
-}
-
 /**
- * The location a push target points at, in a form git reads the same from
- * any directory: `repo` itself, or the URL of the project's `remote`. Null
- * when the remote is not one this project has.
- *
- * A relative path — `repo: ../board.git`, or an `origin` added as one — is
- * made absolute against the project root, where the person meant it (see
- * absoluteGitLocation).
+ * The person a replica belongs to. A replica id is the owner's handle and
+ * eight hex characters for the machine (ledger.ts), so one person syncing
+ * from a laptop and a desktop is one person, not two.
  */
-export async function resolvePushTarget(
-  rootDir: string,
-  target: PushTarget,
-  git: AsyncGitRunner
-): Promise<string | null> {
-  if (target.repo !== undefined)
-    return absoluteGitLocation(rootDir, target.repo);
-  if (target.remote === undefined) return null;
-  const res = await git(rootDir, ['remote', 'get-url', target.remote]);
-  if (res.status !== 0) return null;
-  return absoluteGitLocation(rootDir, res.stdout.trim());
+export function personOf(replica: string): string {
+  return replica.replace(/-[0-9a-f]{8}$/, '');
 }

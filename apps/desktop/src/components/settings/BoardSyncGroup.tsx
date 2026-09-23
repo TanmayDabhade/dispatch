@@ -97,6 +97,11 @@ export function BoardSyncGroup({ data }: BoardSyncGroupProps) {
           </Button>
         }
       >
+        {status.paused !== null && (
+          <SettingsHint className="text-(--state-waiting-fg)">
+            {status.paused}
+          </SettingsHint>
+        )}
         {status.lastError !== null && (
           <SettingsHint className="text-(--state-waiting-fg)">
             The remote could not be reached: {status.lastError}. Work carries on

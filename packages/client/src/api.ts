@@ -1556,7 +1556,7 @@ export interface IssuedTeamToken {
 }
 
 /** Board sync's state — mirrors SyncStatus in
- *  packages/server/src/boardSync/service.ts. */
+ *  packages/server/src/team/boardSync/service.ts. */
 export type BoardSyncStatus =
   | { enabled: false }
   | {
@@ -1569,7 +1569,25 @@ export type BoardSyncStatus =
       pending: number;
       applied: number;
       problems: { task: string; message: string; at: string }[];
+      /** People sharing the branch, and how many the license covers. */
+      people: number;
+      seats: number;
+      /** Why this machine is paused though the remote is fine — it is past
+       *  the license's seats — or null while it syncs. */
+      paused: string | null;
     };
+
+/** The plan a project runs on: how many people may use it together, and
+ *  how many do. Mirrors licenseView in packages/server/src/team/routes.ts. */
+export interface LicenseStatus {
+  kind: 'free' | 'licensed' | 'expired' | 'invalid';
+  seats: number;
+  used: number;
+  org: string | null;
+  expiresAt: string | null;
+  /** Why an installed key was not accepted, for `invalid`. */
+  reason: string | null;
+}
 
 /** Where teammates reach this daemon. `origins` is empty unless it is bound
  *  beyond loopback. */
@@ -2328,6 +2346,11 @@ export interface ApiClient {
   fetchBoardSyncStatus(): Promise<BoardSyncStatus>;
   /** Runs a board sync pass and answers with the state after it. */
   syncBoardNow(): Promise<BoardSyncStatus>;
+  /** The plan this project runs on, and how many seats are in use. */
+  fetchLicense(): Promise<LicenseStatus>;
+  /** Installs a license key. Rejects with the reason when it does not
+   *  verify; the key already installed stays. */
+  installLicense(key: string): Promise<LicenseStatus>;
   /** Who this client's credential speaks for. */
   fetchWhoami(): Promise<{
     handle: string;
@@ -3017,6 +3040,12 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     fetchBoardSyncStatus: () => request(target, '/api/board-sync'),
     syncBoardNow: () =>
       request(target, '/api/board-sync/now', { method: 'POST' }),
+    fetchLicense: () => request(target, '/api/license'),
+    installLicense: (key) =>
+      request(target, '/api/license', {
+        method: 'PUT',
+        body: JSON.stringify({ key }),
+      }),
     fetchWhoami: () => request(target, '/api/whoami'),
     fetchRunPreview: (runId) => request(target, `/api/runs/${runId}/preview`),
     startRunPreview: (runId) =>

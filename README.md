@@ -217,6 +217,12 @@ A daemon is yours by default: it binds `127.0.0.1` and nothing else can reach
 it. Team-local mode lets teammates on your network use the same board from a
 browser, each as themselves.
 
+Dispatch is free for up to three people working together, with every feature —
+on a shared daemon or a synced board. More than that needs a license key:
+install one under **Settings → License** or with `dispatch license set <key>`,
+and `dispatch license` shows how many seats are in use. The team features are
+under the Elastic License 2.0; see [LICENSING.md](LICENSING.md).
+
     moonx desktop:build                     # the bundle teammates are served
     dispatch serve --host 0.0.0.0           # prints the address to share
     dispatch team invite ada@example.com    # prints Ada's token, once

@@ -9,7 +9,17 @@ daemon-owned DB with git receipts", building on
 `docs/archive/design/lovable-direction.md`).
 
 Status: **direction decided, design draft.** The source-of-truth question is
-settled (§3); §8 lists what remains open. Nothing below is implemented.
+settled (§3); §8 lists what remains open.
+
+> **Update 2026-09-23.** The team tier no longer waits on a server. Teammates'
+> tokens on a shared host, and board sync between teammates' own daemons over
+> git, now ship in this repo under the Elastic License 2.0
+> (`packages/server/src/team/`), free for up to three people and license-keyed
+> beyond that — see `LICENSING.md`, "The team tier, plainly". That reverses the
+> 2026-08-23 decision in §6 that multiplayer never ships inside the client: the
+> reason for it was that FSL code can be used internally for free, and ELv2
+> closes that by protecting the license key. A hosted server (§2, §7) remains
+> the way to add a web dashboard and hosted sync on top.
 
 ## 1. Why tasks leave markdown
 

@@ -122,6 +122,7 @@ export type {
   AuthTier,
   BoardSyncStatus,
   IssuedTeamToken,
+  LicenseStatus,
   TeamAddress,
   TeamTokenHolder,
   RunMeta,
