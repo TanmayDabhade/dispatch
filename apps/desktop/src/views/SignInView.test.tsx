@@ -42,14 +42,14 @@ describe('signInWithToken', () => {
     expect(JSON.parse(init.body as string)).toEqual({ token: 'tok-2' });
   });
 
-  test('a revoked or mistyped token fails with a sentence, not a status code', async () => {
-    await expect(
-      signInWithToken('http://x', 'nope', answering(401))
-    ).rejects.toThrow('not recognised');
+  test('a revoked or mistyped token fails with a sentence, not a status code', () => {
+    expect(signInWithToken('http://x', 'nope', answering(401))).rejects.toThrow(
+      'not recognised'
+    );
   });
 
-  test('an expired token says so, in the daemon’s own words', async () => {
-    await expect(
+  test('an expired token says so, in the daemon’s own words', () => {
+    expect(
       signInWithToken(
         'http://x',
         'old',
@@ -61,10 +61,10 @@ describe('signInWithToken', () => {
     ).rejects.toThrow('expired on 2026-01-01');
   });
 
-  test('a daemon error says so', async () => {
-    await expect(
-      signInWithToken('http://x', 'tok', answering(503))
-    ).rejects.toThrow('503');
+  test('a daemon error says so', () => {
+    expect(signInWithToken('http://x', 'tok', answering(503))).rejects.toThrow(
+      '503'
+    );
   });
 });
 
