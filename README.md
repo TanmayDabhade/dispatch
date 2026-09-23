@@ -228,17 +228,28 @@ is running; the Inbox badge counts only what is yours to answer, with teammates'
 asks under **Teammates**; and the dispatch dialog warns, by name, before you
 start work on files someone else's live run has claimed.
 
-    dispatch team invite ada --decide       # let Ada approve and merge too
+    dispatch team invite ada --tier decide  # let Ada approve, too
     dispatch team tokens                    # who holds a credential
     dispatch team revoke ada                # her token stops working at once
 
+Each teammate holds one token at one tier, and each tier includes the ones below
+it:
+
+| Tier       | Adds                                                                                      |
+| ---------- | ----------------------------------------------------------------------------------------- |
+| `request`  | The board, dispatching runs, reviewing and merging them, reading files                    |
+| `decide`   | Approving tool calls and assistant actions, scope decisions, previews, inviting teammates |
+| `operator` | Terminals, the driven browser, writing files, and git on this checkout — all as you       |
+
+A new teammate gets `request`. Grant `operator` only to someone you would hand a
+shell on this machine, because that is what it is. Nobody can grant, replace or
+revoke a tier above their own, so a `decide` lead can invite reviewers but not
+mint a shell. Inviting someone again replaces their token, which is also how you
+change their tier.
+
 Tokens are stored only as hashes, outside the repo, and are shown once — lose
-one and issue a new one, which replaces it. A new teammate gets the `request`
-tier (drive the board, dispatch, review) until you grant `decide`. Grant it only
-to someone you would hand a shell on this machine: besides approvals and merges,
-`decide` opens terminals, drives the browser and writes files directly, all as
-you. Every `team` command needs the daemon's app token (`--token` or
-`DISPATCH_APP_TOKEN`).
+one and issue a new one. Every `team` command needs the daemon's app token
+(`--token` or `DISPATCH_APP_TOKEN`), or a teammate token at `decide` or above.
 
 What changes when the daemon is shared, and why:
 

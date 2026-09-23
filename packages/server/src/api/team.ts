@@ -9,16 +9,35 @@ import {
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import type { ApiContext, AuthTier } from '../api.js';
+import type { ApiContext } from '../api.js';
+import type { AuthTier } from '../tiers.js';
+import { AUTH_TIERS, isAuthTier, tierAllows } from '../tiers.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 
 // Issuing credentials to teammates: the step that turns one person's daemon
 // into one a team can share. Every route here is decide-tier (see
-// DECIDE_TIER_ROUTES) — handing out a credential is an adjudication, and an
+// ELEVATED_ROUTES) — handing out a credential is an adjudication, and an
 // agent holding the on-disk agent token must not be able to mint itself a
 // second identity.
+//
+// On top of that, nobody hands out more than they hold: a decide-tier lead can
+// invite reviewers but cannot mint an operator token, which would be a shell on
+// the host by another name. The same cap applies to revoking, so a lead cannot
+// lock the operator's own teammate-issued operator tokens out either.
 
-const TIERS: readonly string[] = ['request', 'decide'];
+const INVALID_TIER = `invalid tier: expected one of ${AUTH_TIERS.map((t) => `'${t}'`).join(', ')}`;
+
+/** Refuses a tier the caller does not hold themselves, or null to proceed.
+ *  The caller is always set here — handleApi resolved it before routing to a
+ *  decide-tier route — so a missing one is treated as holding nothing. */
+function exceedsCaller(ctx: ApiContext, tier: AuthTier): Response | null {
+  const held = ctx.caller?.tier ?? 'request';
+  if (tierAllows(held, tier)) return null;
+  return errorResponse(
+    403,
+    `you hold the ${held} tier and cannot grant or revoke ${tier}; ask whoever runs this daemon`
+  );
+}
 
 function teamFile(rootDir: string): string {
   return join(rootDir, DISPATCH_DIR, 'team.yml');
@@ -73,9 +92,9 @@ export async function issueTeamToken(
   };
 
   const tier = body.tier ?? 'request';
-  if (typeof tier !== 'string' || !TIERS.includes(tier)) {
-    return errorResponse(400, "invalid tier: expected 'request' or 'decide'");
-  }
+  if (!isAuthTier(tier)) return errorResponse(400, INVALID_TIER);
+  const refused = exceedsCaller(ctx, tier);
+  if (refused !== null) return refused;
 
   const roster = readRoster(ctx.rootDir);
   if (!roster.ok) {
@@ -114,23 +133,27 @@ export async function issueTeamToken(
     return errorResponse(400, 'expected { handle } or { email }');
   }
 
-  const token = ctx.tokens.registry.issue(handle, tier as AuthTier);
+  // Issuing replaces what they held, so replacing an operator token is as
+  // privileged as revoking one.
+  const current = ctx.tokens.registry.issuedTier(handle);
+  if (current !== null) {
+    const replacing = exceedsCaller(ctx, current);
+    if (replacing !== null) return replacing;
+  }
+  const token = ctx.tokens.registry.issue(handle, tier);
   return jsonResponse({ handle, tier, token }, 201);
 }
 
-// DELETE /api/team/tokens/:handle/:tier — revoke one. 404 rather than a
-// silent 200 when there was nothing to revoke, so a typo in a handle is
-// visible instead of reading as success.
-export function revokeTeamToken(
-  ctx: ApiContext,
-  handle: string,
-  tier: string
-): Response {
-  if (!TIERS.includes(tier)) {
-    return errorResponse(400, "invalid tier: expected 'request' or 'decide'");
+// DELETE /api/team/tokens/:handle — revoke whatever that teammate holds. 404
+// rather than a silent 200 when there was nothing to revoke, so a typo in a
+// handle is visible instead of reading as success.
+export function revokeTeamToken(ctx: ApiContext, handle: string): Response {
+  const current = ctx.tokens.registry.issuedTier(handle);
+  if (current === null) {
+    return errorResponse(404, `no issued token for "${handle}"`);
   }
-  const revoked = ctx.tokens.registry.revoke(handle, tier as AuthTier);
-  return revoked
-    ? jsonResponse({ ok: true })
-    : errorResponse(404, `no issued ${tier} token for "${handle}"`);
+  const refused = exceedsCaller(ctx, current);
+  if (refused !== null) return refused;
+  ctx.tokens.registry.revoke(handle);
+  return jsonResponse({ ok: true, tier: current });
 }

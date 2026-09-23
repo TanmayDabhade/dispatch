@@ -1,15 +1,24 @@
 import type { Command } from 'commander';
 
+import type { TeamTier } from '../apiClient.js';
 import { createApiClient } from '../apiClient.js';
 import type { CliContext } from '../context.js';
 import { CliError } from '../context.js';
 import { formatTable } from '../output.js';
 import { attachToRunningDaemon, resolveAppToken } from './appToken.js';
 
-type Tier = 'request' | 'decide';
+const TIERS: readonly TeamTier[] = ['request', 'decide', 'operator'];
 
-function tierFrom(decide: boolean | undefined): Tier {
-  return decide === true ? 'decide' : 'request';
+/** `--tier` as typed, checked here so a typo fails before the daemon is
+ *  asked, with the choices spelled out. */
+function tierFrom(value: string | undefined): TeamTier {
+  const tier = value ?? 'request';
+  if (!(TIERS as readonly string[]).includes(tier)) {
+    throw new CliError(
+      `unknown tier "${tier}": use request, decide or operator`
+    );
+  }
+  return tier as TeamTier;
 }
 
 /**
@@ -39,8 +48,8 @@ export function registerTeamCommands(program: Command, ctx: CliContext): void {
     )
     .option('--name <displayName>', 'display name for a new roster entry')
     .option(
-      '--decide',
-      'grant the decide tier: approvals, merges, and terminals, browser and file writes on this machine'
+      '--tier <tier>',
+      'request (default: board, dispatch, review, merge), decide (+ approvals, scope decisions, previews, invites) or operator (+ terminals, browser, file writes and git on this machine)'
     )
     .option('--token <token>', 'the daemon app token (or DISPATCH_APP_TOKEN)')
     .option('--json')
@@ -49,7 +58,7 @@ export function registerTeamCommands(program: Command, ctx: CliContext): void {
         who: string,
         opts: {
           name?: string;
-          decide?: boolean;
+          tier?: string;
           token?: string;
           json?: boolean;
         }
@@ -59,7 +68,7 @@ export function registerTeamCommands(program: Command, ctx: CliContext): void {
           opts.token,
           'dispatch team invite'
         );
-        const tier = tierFrom(opts.decide);
+        const tier = tierFrom(opts.tier);
         const issued = await client.issueTeamToken(
           who.includes('@')
             ? { email: who, displayName: opts.name, tier }
@@ -113,24 +122,20 @@ export function registerTeamCommands(program: Command, ctx: CliContext): void {
   team
     .command('revoke <handle>')
     .description("Revoke a teammate's token; it stops working immediately")
-    .option('--decide', 'revoke their decide-tier token instead')
     .option('--token <token>', 'the daemon app token (or DISPATCH_APP_TOKEN)')
-    .action(
-      async (handle: string, opts: { decide?: boolean; token?: string }) => {
-        const client = await decideClient(
-          ctx,
-          opts.token,
-          'dispatch team revoke'
+    .action(async (handle: string, opts: { token?: string }) => {
+      const client = await decideClient(
+        ctx,
+        opts.token,
+        'dispatch team revoke'
+      );
+      try {
+        await client.revokeTeamToken(handle);
+      } catch (err) {
+        throw new CliError(
+          `could not revoke ${handle}'s token: ${(err as Error).message}`
         );
-        const tier = tierFrom(opts.decide);
-        try {
-          await client.revokeTeamToken(handle, tier);
-        } catch (err) {
-          throw new CliError(
-            `could not revoke ${handle}'s ${tier} token: ${(err as Error).message}`
-          );
-        }
-        ctx.log(`revoked ${handle}'s ${tier} token`);
       }
-    );
+      ctx.log(`revoked ${handle}'s token`);
+    });
 }

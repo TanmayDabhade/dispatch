@@ -119,6 +119,7 @@ export type {
   RunDetail,
   RunKind,
   PresenceEntry,
+  AuthTier,
   RunMeta,
   RunPreview,
   RunPreviewReason,

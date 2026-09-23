@@ -68,6 +68,10 @@ describe('team credential storage', () => {
       tier: 'decide',
     });
 
+    // The top rung reads back too, not just the two that existed first.
+    saveTeamCredential({ token: 't', handle: 'linus', tier: 'operator' });
+    expect(readTeamCredential()?.tier).toBe('operator');
+
     window.localStorage.setItem(
       'dispatch:team-credential',
       JSON.stringify({ token: 't', handle: 'ada', tier: 'admin' })

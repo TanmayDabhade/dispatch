@@ -8,7 +8,8 @@ import {
 } from 'node:fs';
 import { dirname } from 'node:path';
 
-import type { AuthTier } from './api.js';
+import type { AuthTier } from './tiers.js';
+import { isAuthTier } from './tiers.js';
 
 // Who is on the other end of a request, not just what they may do.
 //
@@ -94,8 +95,7 @@ export function fileTokenStore(path: string): TokenStore {
             typeof t === 'object' &&
             t !== null &&
             typeof (t as PersistedToken).handle === 'string' &&
-            ((t as PersistedToken).tier === 'request' ||
-              (t as PersistedToken).tier === 'decide') &&
+            isAuthTier((t as PersistedToken).tier) &&
             typeof (t as PersistedToken).hash === 'string' &&
             /^[0-9a-f]{64}$/.test((t as PersistedToken).hash)
         );
@@ -143,13 +143,14 @@ export class TokenRegistry {
     private readonly store: TokenStore = MEMORY_ONLY
   ) {
     // Highest tier first, so the app token still wins if the two were ever
-    // the same string — the pre-existing behaviour, kept on purpose.
+    // the same string — the pre-existing behaviour, kept on purpose. The app
+    // token is `operator`: it only ever reaches the person at this machine.
     this.entries.push(
       {
         hash: sha256(builtIn.appToken),
         handle: operatorHandle,
         ref: humanRef(operatorHandle),
-        tier: 'decide',
+        tier: 'operator',
         builtIn: true,
         issuedAt: null,
       },
@@ -188,12 +189,15 @@ export class TokenRegistry {
 
   /**
    * Mints a credential for one teammate and returns it — the only time the
-   * token value exists outside its owner's hands. Re-issuing for a handle and
-   * tier that already has one replaces it, so a teammate whose laptop was lost
-   * is re-credentialed rather than accumulating live tokens.
+   * token value exists outside its owner's hands.
+   *
+   * One token per person: issuing replaces whatever that handle held, at any
+   * tier. Raising or lowering someone's tier is then just inviting them again,
+   * and a teammate whose laptop was lost is re-credentialed rather than left
+   * with a forgotten second token still live at their old tier.
    */
   issue(handle: string, tier: AuthTier, now: Date = new Date()): string {
-    this.drop(handle, tier);
+    this.drop(handle);
     const token = randomBytes(32).toString('hex');
     this.entries.push({
       hash: sha256(token),
@@ -214,8 +218,8 @@ export class TokenRegistry {
    * credentials, and dropping them would lock the operator out of the process
    * running on their machine with no way back in short of a restart.
    */
-  revoke(handle: string, tier: AuthTier): boolean {
-    const dropped = this.drop(handle, tier);
+  revoke(handle: string): boolean {
+    const dropped = this.drop(handle);
     if (dropped) this.persist();
     return dropped;
   }
@@ -230,13 +234,24 @@ export class TokenRegistry {
     }));
   }
 
-  private drop(handle: string, tier: AuthTier): boolean {
-    const at = this.entries.findIndex(
-      (e) => !e.builtIn && e.handle === handle && e.tier === tier
+  /** The tier a teammate's issued token carries, or null when they hold
+   *  none. The built-in pair is not counted: it is the operator's, and never
+   *  replaced or revoked. */
+  issuedTier(handle: string): AuthTier | null {
+    return (
+      this.entries.find((e) => !e.builtIn && e.handle === handle)?.tier ?? null
     );
-    if (at === -1) return false;
-    this.entries.splice(at, 1);
-    return true;
+  }
+
+  /** Drops every issued token a handle holds. A file written before tokens
+   *  were one per person can carry several; all of them go. */
+  private drop(handle: string): boolean {
+    const before = this.entries.length;
+    for (let i = this.entries.length - 1; i >= 0; i--) {
+      const e = this.entries[i];
+      if (!e.builtIn && e.handle === handle) this.entries.splice(i, 1);
+    }
+    return this.entries.length !== before;
   }
 
   /** Writes the issued (never the built-in) entries back as hashes. */

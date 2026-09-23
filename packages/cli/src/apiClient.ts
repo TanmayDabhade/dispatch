@@ -646,17 +646,21 @@ export interface ApiClient {
     email?: string;
     handle?: string;
     displayName?: string;
-    tier?: 'request' | 'decide';
+    tier?: TeamTier;
   }): Promise<IssuedTeamToken>;
   listTeamTokens(): Promise<TeamTokenHolder[]>;
-  revokeTeamToken(handle: string, tier: 'request' | 'decide'): Promise<void>;
+  /** Revokes whatever token the handle holds; one per person. */
+  revokeTeamToken(handle: string): Promise<void>;
 }
+
+/** Mirrors AuthTier in packages/server/src/tiers.ts. */
+export type TeamTier = 'request' | 'decide' | 'operator';
 
 /** A freshly issued teammate credential — the only response that ever carries
  *  one. Mirrors issueTeamToken in packages/server/src/api/team.ts. */
 interface IssuedTeamToken {
   handle: string;
-  tier: 'request' | 'decide';
+  tier: TeamTier;
   token: string;
 }
 
@@ -664,7 +668,7 @@ interface IssuedTeamToken {
  *  packages/server/src/identity.ts. */
 interface TeamTokenHolder {
   handle: string;
-  tier: 'request' | 'decide';
+  tier: TeamTier;
   builtIn: boolean;
   issuedAt: string | null;
 }
@@ -795,12 +799,10 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
     issueTeamToken: (input) =>
       request(target, '/api/team/tokens', jsonBody(input)),
     listTeamTokens: () => request(target, '/api/team/tokens'),
-    revokeTeamToken: async (handle, tier) => {
-      await request(
-        target,
-        `/api/team/tokens/${encodeURIComponent(handle)}/${tier}`,
-        { method: 'DELETE' }
-      );
+    revokeTeamToken: async (handle) => {
+      await request(target, `/api/team/tokens/${encodeURIComponent(handle)}`, {
+        method: 'DELETE',
+      });
     },
   };
 }

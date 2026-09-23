@@ -1516,6 +1516,10 @@ export interface LandingRow {
   checklist?: { passed: number; total: number; weak: string[] };
 }
 
+/** What a credential may do, lowest first; each tier includes the ones
+ *  before it. Mirrors packages/server/src/tiers.ts. */
+export type AuthTier = 'request' | 'decide' | 'operator';
+
 /** One person connected to this daemon — mirrors PresenceEntry in
  * packages/server/src/presence.ts. */
 export interface PresenceEntry {
@@ -2256,7 +2260,7 @@ export interface ApiClient {
   fetchWhoami(): Promise<{
     handle: string;
     ref: string;
-    tier: 'request' | 'decide';
+    tier: AuthTier;
   }>;
   fetchRunPreview(runId: string): Promise<RunPreviewResult>;
   /** Starts this run's dev server if it has none. Decide-tier: it runs a

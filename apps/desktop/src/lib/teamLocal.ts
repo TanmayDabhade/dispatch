@@ -1,3 +1,5 @@
+import type { AuthTier } from '@dispatch/client';
+
 // Team-local mode, on the page side: a teammate's browser tab on a daemon
 // someone else runs (see packages/server/src/shared.ts).
 //
@@ -26,7 +28,7 @@ export function injectedSharedConfig(): SharedConfig | undefined {
 export interface TeamCredential {
   token: string;
   handle: string;
-  tier: 'request' | 'decide';
+  tier: AuthTier;
 }
 
 // Per origin, so signing in to one team's daemon never leaks into another's.
@@ -50,7 +52,9 @@ export function readTeamCredential(): TeamCredential | null {
     const parsed = JSON.parse(raw) as Partial<TeamCredential>;
     return typeof parsed.token === 'string' &&
       typeof parsed.handle === 'string' &&
-      (parsed.tier === 'request' || parsed.tier === 'decide')
+      (parsed.tier === 'request' ||
+        parsed.tier === 'decide' ||
+        parsed.tier === 'operator')
       ? { token: parsed.token, handle: parsed.handle, tier: parsed.tier }
       : null;
   } catch {

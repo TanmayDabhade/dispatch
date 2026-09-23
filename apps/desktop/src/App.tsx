@@ -84,6 +84,7 @@ import {
   listRegisteredProjects,
   touchProjectOpened,
 } from './lib/tauri';
+import { isTeamLocalPage } from './lib/teamLocal';
 import { checkForUpdate, installUpdateAndRelaunch } from './lib/updater';
 import { applyZoomFactor, loadZoomFactor, stepZoomFactor } from './lib/zoom';
 import { AllAgentsView } from './views/AllAgentsView';
@@ -984,6 +985,9 @@ function App() {
                   >
                     <Sidebar
                       hasActiveProject={activeProject !== null}
+                      hideHostViews={
+                        isTeamLocalPage() && data.myTier !== 'operator'
+                      }
                       section={navState.section}
                       projectView={navState.projectView}
                       globalView={navState.globalView}

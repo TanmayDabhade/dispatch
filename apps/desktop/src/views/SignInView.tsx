@@ -1,3 +1,4 @@
+import type { AuthTier } from '@dispatch/client';
 import { KeyRound } from 'lucide-react';
 import { useState } from 'react';
 
@@ -41,10 +42,7 @@ export async function verifyTeamToken(
       `The daemon answered ${res.status}. Try again in a moment.`
     );
   }
-  const who = (await res.json()) as {
-    handle: string;
-    tier: 'request' | 'decide';
-  };
+  const who = (await res.json()) as { handle: string; tier: AuthTier };
   return { token, handle: who.handle, tier: who.tier };
 }
 

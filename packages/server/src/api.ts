@@ -196,6 +196,8 @@ import { redactSecretUrls } from './secretUrls.js';
 import type { SyncResult } from './sync/boardSyncer.js';
 import type { BoardSyncScheduler } from './sync/scheduler.js';
 import type { TerminalRegistry } from './terminals.js';
+import type { AuthTier } from './tiers.js';
+import { tierAllows } from './tiers.js';
 import type { TrackedFilesCache } from './trackedFiles.js';
 import type { WatchdogStatus } from './watchdog.js';
 
@@ -4175,9 +4177,6 @@ export interface DaemonTokens extends DaemonTokenPair {
   registry: TokenRegistry;
 }
 
-/** `request` covers everything the daemon does; `decide` adds adjudication. */
-export type AuthTier = 'request' | 'decide';
-
 export function mintDaemonTokens(): DaemonTokenPair {
   return {
     agentToken: randomBytes(32).toString('hex'),
@@ -4185,73 +4184,122 @@ export function mintDaemonTokens(): DaemonTokenPair {
   };
 }
 
-// Path segments (after `/api/`) of every route that records an adjudication,
-// where `*` matches one segment. The check runs once in handleApi, so a new
-// decision-class route is an entry here rather than another call site.
-const DECIDE_TIER_ROUTES: ReadonlyArray<{
+// Every route that needs more than the request tier, by path segments after
+// `/api/` (`*` matches one segment). The check runs once in handleApi, so a new
+// privileged route is an entry here rather than another call site. See
+// tiers.ts for what each tier means.
+const ELEVATED_ROUTES: ReadonlyArray<{
   method: string;
   segments: readonly string[];
+  tier: Exclude<AuthTier, 'request'>;
 }> = [
-  { method: 'POST', segments: ['runs', '*', 'scope-requests', '*', 'decide'] },
-  // Confirming a overseer's queued mutating action is the human gate the whole
-  // overseer design hangs on — an agent token approving it would let the model
-  // approve its own mutations.
-  { method: 'POST', segments: ['overseer', '*', 'actions', '*', 'confirm'] },
-  // Allowing a built-in tool call the overseer is parked on is the same gate
-  // for the same reason: the model must not be able to wave its own Bash
-  // call through with the agent token.
-  { method: 'POST', segments: ['overseer', '*', 'approvals', '*'] },
-  // A run's tool-approval gate is an adjudication like the two above: with
-  // it on the request tier, any agent holding the on-disk agent token could
-  // wave its own parked tool call through.
-  { method: 'POST', segments: ['runs', '*', 'approval'] },
-  // A terminal is arbitrary command execution in the project's checkout, so
-  // the whole family sits above the agent token. On the request tier, any
-  // agent holding the on-disk token could open a shell and walk straight
-  // around the scope, floor and approval gates the rest of this file enforces
-  // — reading output is listed too, since scrollback carries whatever the
-  // human typed into it, credentials included.
-  // Writing a file straight to disk bypasses the orchestrator, which is what
-  // holds a run's edits to the task's declared `writes` and records them.
-  // Reads stay on the request tier with the rest of the read surface.
-  { method: 'POST', segments: ['files', 'write'] },
-  // `evaluate` runs arbitrary JavaScript in a browser carrying the user's own
-  // session cookies, which is at least the authority a shell has. The whole
-  // family stays above the agent token for that reason.
-  { method: 'GET', segments: ['browser'] },
-  { method: 'POST', segments: ['browser'] },
-  { method: 'GET', segments: ['browser', '*'] },
-  { method: 'DELETE', segments: ['browser', '*'] },
-  { method: 'POST', segments: ['browser', '*', 'navigate'] },
-  { method: 'POST', segments: ['browser', '*', 'click'] },
-  { method: 'POST', segments: ['browser', '*', 'fill'] },
-  { method: 'GET', segments: ['browser', '*', 'text'] },
-  { method: 'POST', segments: ['browser', '*', 'evaluate'] },
-  { method: 'GET', segments: ['browser', '*', 'screenshot'] },
-  { method: 'POST', segments: ['browser', '*', 'pick'] },
-  { method: 'GET', segments: ['browser', '*', 'pick'] },
-  { method: 'GET', segments: ['terminals'] },
-  { method: 'POST', segments: ['terminals'] },
-  { method: 'GET', segments: ['terminals', '*'] },
-  { method: 'DELETE', segments: ['terminals', '*'] },
-  { method: 'GET', segments: ['terminals', '*', 'output'] },
-  { method: 'POST', segments: ['terminals', '*', 'input'] },
-  { method: 'POST', segments: ['terminals', '*', 'resize'] },
-  { method: 'POST', segments: ['terminals', '*', 'close'] },
+  // ---- decide: adjudication -------------------------------------------------
+  {
+    method: 'POST',
+    segments: ['runs', '*', 'scope-requests', '*', 'decide'],
+    tier: 'decide',
+  },
+  // Confirming an assistant's queued mutating action is the human gate the
+  // whole assistant design hangs on — an agent token approving it would let
+  // the model approve its own mutations.
+  {
+    method: 'POST',
+    segments: ['overseer', '*', 'actions', '*', 'confirm'],
+    tier: 'decide',
+  },
+  // Allowing a built-in tool call the assistant is parked on is the same gate
+  // for the same reason: the model must not be able to wave its own Bash call
+  // through with the agent token.
+  {
+    method: 'POST',
+    segments: ['overseer', '*', 'approvals', '*'],
+    tier: 'decide',
+  },
+  // A run's tool-approval gate is an adjudication like the two above: with it
+  // on the request tier, any agent holding the on-disk agent token could wave
+  // its own parked tool call through.
+  { method: 'POST', segments: ['runs', '*', 'approval'], tier: 'decide' },
   // Starting a preview runs a command out of the run's own worktree — a
   // worktree the agent just wrote to, including its package.json. On the
   // request tier an agent holding the on-disk agent token could use this to
   // execute code of its own choosing in the daemon's process group, outside
   // the sandbox its run was given. Stopping one is paired with it so the
-  // control surface is not half-privileged.
-  { method: 'POST', segments: ['runs', '*', 'preview'] },
-  { method: 'DELETE', segments: ['runs', '*', 'preview'] },
+  // control surface is not half-privileged. Decide rather than operator: it
+  // runs the project's own dev command, which a reviewer needs to look at a
+  // run, not a command of the caller's choosing.
+  { method: 'POST', segments: ['runs', '*', 'preview'], tier: 'decide' },
+  { method: 'DELETE', segments: ['runs', '*', 'preview'], tier: 'decide' },
   // Handing out a credential is an adjudication: on the request tier an agent
   // holding the on-disk agent token could mint itself a second identity, and
-  // listing holders tells it whose to go looking for.
-  { method: 'GET', segments: ['team', 'tokens'] },
-  { method: 'POST', segments: ['team', 'tokens'] },
-  { method: 'DELETE', segments: ['team', 'tokens', '*', '*'] },
+  // listing holders tells it whose to go looking for. api/team.ts further
+  // caps what a caller may issue or revoke at their own tier.
+  { method: 'GET', segments: ['team', 'tokens'], tier: 'decide' },
+  { method: 'POST', segments: ['team', 'tokens'], tier: 'decide' },
+  { method: 'DELETE', segments: ['team', 'tokens', '*'], tier: 'decide' },
+
+  // ---- operator: acting on the host machine as its owner --------------------
+  // Writing a file straight to disk bypasses the orchestrator, which is what
+  // holds a run's edits to the task's declared `writes` and records them.
+  // Reads stay on the request tier with the rest of the read surface.
+  { method: 'POST', segments: ['files', 'write'], tier: 'operator' },
+  // `evaluate` runs arbitrary JavaScript in a browser carrying the user's own
+  // session cookies, which is at least the authority a shell has. The whole
+  // family stays together for that reason.
+  { method: 'GET', segments: ['browser'], tier: 'operator' },
+  { method: 'POST', segments: ['browser'], tier: 'operator' },
+  { method: 'GET', segments: ['browser', '*'], tier: 'operator' },
+  { method: 'DELETE', segments: ['browser', '*'], tier: 'operator' },
+  { method: 'POST', segments: ['browser', '*', 'navigate'], tier: 'operator' },
+  { method: 'POST', segments: ['browser', '*', 'click'], tier: 'operator' },
+  { method: 'POST', segments: ['browser', '*', 'fill'], tier: 'operator' },
+  { method: 'GET', segments: ['browser', '*', 'text'], tier: 'operator' },
+  { method: 'POST', segments: ['browser', '*', 'evaluate'], tier: 'operator' },
+  { method: 'GET', segments: ['browser', '*', 'screenshot'], tier: 'operator' },
+  { method: 'POST', segments: ['browser', '*', 'pick'], tier: 'operator' },
+  { method: 'GET', segments: ['browser', '*', 'pick'], tier: 'operator' },
+  // A terminal is arbitrary command execution in the project's checkout, so
+  // the whole family sits here. On a lower tier, any holder could open a shell
+  // and walk straight around the scope, floor and approval gates the rest of
+  // this file enforces — reading output is listed too, since scrollback
+  // carries whatever the human typed into it, credentials included.
+  { method: 'GET', segments: ['terminals'], tier: 'operator' },
+  { method: 'POST', segments: ['terminals'], tier: 'operator' },
+  { method: 'GET', segments: ['terminals', '*'], tier: 'operator' },
+  { method: 'DELETE', segments: ['terminals', '*'], tier: 'operator' },
+  { method: 'GET', segments: ['terminals', '*', 'output'], tier: 'operator' },
+  { method: 'POST', segments: ['terminals', '*', 'input'], tier: 'operator' },
+  { method: 'POST', segments: ['terminals', '*', 'resize'], tier: 'operator' },
+  { method: 'POST', segments: ['terminals', '*', 'close'], tier: 'operator' },
+  // Git operations that change the operator's own checkout or push with their
+  // credentials. On a shared daemon these would otherwise let any invited
+  // teammate discard someone's uncommitted work or push to their remote.
+  // Reads, `fetch` (refs only, never the working tree) and drafting a commit
+  // message stay on the request tier. Only the desktop app calls these — the
+  // CLI and the agents' MCP tools never do — and the app holds the app token.
+  ...(
+    [
+      'stage',
+      'unstage',
+      'stage-hunk',
+      'unstage-hunk',
+      'discard',
+      'commit',
+      'checkout',
+      'branch',
+      'stash',
+      'pull',
+      'push',
+      'cherry-pick',
+      'revert',
+    ] as const
+  ).map((op) => ({
+    method: 'POST',
+    segments: ['git', op],
+    tier: 'operator' as const,
+  })),
+  { method: 'DELETE', segments: ['git', 'branch', '*'], tier: 'operator' },
+  { method: 'POST', segments: ['git', 'stash', 'pop'], tier: 'operator' },
+  { method: 'POST', segments: ['git', 'stash', 'drop'], tier: 'operator' },
 ];
 
 function matchesRoute(
@@ -4280,9 +4328,9 @@ function requiredTier(
   ) {
     return null;
   }
-  for (const route of DECIDE_TIER_ROUTES) {
+  for (const route of ELEVATED_ROUTES) {
     if (route.method === method && matchesRoute(route.segments, segments)) {
-      return 'decide';
+      return route.tier;
     }
   }
   return 'request';
@@ -4316,11 +4364,18 @@ const INVALID_TOKEN_MESSAGE =
   'daemon token not recognized: it belongs to a different or restarted daemon. ' +
   'Re-read `agentToken` from ~/.dispatch/daemons/<key>.json.';
 
-const WRONG_TIER_MESSAGE =
-  'this route needs the daemon app token, which is never written to disk. Pass ' +
-  'it with --token or DISPATCH_APP_TOKEN, taking the value from the ' +
-  'DISPATCH_APP_TOKEN line the daemon prints at startup; restart the daemon if ' +
-  'you no longer have it.';
+/** Why a valid credential was turned away, naming the tier it lacked. The
+ *  operator's own fix (the app token) and a teammate's (ask for a higher
+ *  tier) are different, so both are spelled out. */
+function wrongTierMessage(required: AuthTier, held: AuthTier): string {
+  return (
+    `this route needs the ${required} tier and this credential carries ` +
+    `${held}. On your own machine, pass the daemon app token with --token or ` +
+    'DISPATCH_APP_TOKEN (the DISPATCH_APP_TOKEN line the daemon prints at ' +
+    'startup; restart the daemon if you no longer have it). As a teammate, ask ' +
+    `whoever runs the daemon for \`dispatch team invite <you> --tier ${required}\`.`
+  );
+}
 
 function authErrorResponse(
   status: number,
@@ -4350,8 +4405,12 @@ export function rejectUnauthorized(
   if (caller === null) {
     return authErrorResponse(401, INVALID_TOKEN_MESSAGE, 'auth_invalid_token');
   }
-  if (required === 'decide' && caller.tier !== 'decide') {
-    return authErrorResponse(403, WRONG_TIER_MESSAGE, 'auth_insufficient_tier');
+  if (!tierAllows(caller.tier, required)) {
+    return authErrorResponse(
+      403,
+      wrongTierMessage(required, caller.tier),
+      'auth_insufficient_tier'
+    );
   }
   return null;
 }
@@ -4431,8 +4490,8 @@ export async function handleApi(
       if (segments.length === 2 && method === 'POST') {
         return await issueTeamToken(req, ctx);
       }
-      if (segments.length === 4 && method === 'DELETE') {
-        return revokeTeamToken(ctx, segments[2], segments[3]);
+      if (segments.length === 3 && method === 'DELETE') {
+        return revokeTeamToken(ctx, segments[2]);
       }
     }
 

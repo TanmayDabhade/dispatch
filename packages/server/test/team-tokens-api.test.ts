@@ -133,7 +133,7 @@ describe('team tokens', () => {
     ).toBe(403);
     expect(
       (
-        await rawFetch(`${baseUrl}/api/team/tokens/ada/request`, {
+        await rawFetch(`${baseUrl}/api/team/tokens/ada`, {
           method: 'DELETE',
           headers: headers(agent),
         })
@@ -172,7 +172,7 @@ describe('team tokens', () => {
     ).json()) as {
       token: string;
     };
-    const del = await rawFetch(`${baseUrl}/api/team/tokens/ada/request`, {
+    const del = await rawFetch(`${baseUrl}/api/team/tokens/ada`, {
       method: 'DELETE',
       headers: headers(handle.tokens.appToken),
     });
@@ -184,7 +184,7 @@ describe('team tokens', () => {
   });
 
   it('revoking nothing is a visible 404, not a silent success', async () => {
-    const res = await rawFetch(`${baseUrl}/api/team/tokens/nobody/request`, {
+    const res = await rawFetch(`${baseUrl}/api/team/tokens/nobody`, {
       method: 'DELETE',
       headers: headers(handle.tokens.appToken),
     });
@@ -199,5 +199,105 @@ describe('team tokens', () => {
   it('rejects an unknown tier', async () => {
     const res = await invite({ email: 'ada@example.com', tier: 'admin' });
     expect(res.status).toBe(400);
+  });
+});
+
+describe('the tier ladder', () => {
+  async function issued(body: object, token?: string): Promise<string> {
+    const res = await invite(body, token);
+    expect(res.status).toBe(201);
+    return ((await res.json()) as { token: string }).token;
+  }
+
+  function get(path: string, token: string) {
+    return rawFetch(`${baseUrl}${path}`, { headers: headers(token) });
+  }
+
+  function post(path: string, token: string, body: object = {}) {
+    return rawFetch(`${baseUrl}${path}`, {
+      method: 'POST',
+      headers: headers(token),
+      body: JSON.stringify(body),
+    });
+  }
+
+  it('the app token is the operator and can reach every rung', async () => {
+    const me = await get('/api/whoami', handle.tokens.appToken);
+    expect(((await me.json()) as { tier: string }).tier).toBe('operator');
+    expect((await get('/api/terminals', handle.tokens.appToken)).status).toBe(
+      200
+    );
+  });
+
+  it('decide can approve but not open a shell, drive the browser or change the checkout', async () => {
+    const lead = await issued({ email: 'grace@example.com', tier: 'decide' });
+
+    // Above request: the team routes are decide-tier.
+    expect((await get('/api/team/tokens', lead)).status).toBe(200);
+
+    // Not operator: every one of these acts on the host as its owner.
+    for (const res of [
+      await get('/api/terminals', lead),
+      await get('/api/browser', lead),
+      await post('/api/files/write', lead, { path: 'x', text: 'y' }),
+      await post('/api/git/stage', lead, { paths: ['README.md'] }),
+      await post('/api/git/push', lead),
+    ]) {
+      expect(res.status).toBe(403);
+      // The refusal says what was missing and how to get it.
+      expect((await res.json()) as { error: string }).toEqual(
+        expect.objectContaining({
+          error: expect.stringContaining('needs the operator tier'),
+        })
+      );
+    }
+  });
+
+  it('a teammate issued operator reaches the host routes', async () => {
+    const ops = await issued({ email: 'linus@example.com', tier: 'operator' });
+    expect((await get('/api/terminals', ops)).status).toBe(200);
+  });
+
+  it('request tier no longer changes the checkout, but still reads it', async () => {
+    const agent = handle.tokens.agentToken;
+    expect((await post('/api/git/stage', agent, { paths: ['x'] })).status).toBe(
+      403
+    );
+    expect(
+      (await post('/api/git/discard', agent, { paths: ['x'] })).status
+    ).toBe(403);
+    expect((await get('/api/git/status', agent)).status).toBe(200);
+  });
+
+  it('nobody hands out more than they hold', async () => {
+    const lead = await issued({ email: 'grace@example.com', tier: 'decide' });
+
+    // A decide-tier lead can invite reviewers at their own level or below…
+    expect((await invite({ email: 'ada@example.com' }, lead)).status).toBe(201);
+    expect(
+      (await invite({ email: 'mary@example.com', tier: 'decide' }, lead)).status
+    ).toBe(201);
+    // …but minting an operator token would be a shell by another name.
+    expect(
+      (await invite({ email: 'eve@example.com', tier: 'operator' }, lead))
+        .status
+    ).toBe(403);
+  });
+
+  it('nor replaces or revokes a token above their own tier', async () => {
+    const ops = await issued({ email: 'linus@example.com', tier: 'operator' });
+    const lead = await issued({ email: 'grace@example.com', tier: 'decide' });
+
+    // Re-inviting replaces the old token, so downgrading Linus is revoking
+    // his operator token by another route.
+    expect((await invite({ handle: 'linus' }, lead)).status).toBe(403);
+    const del = await rawFetch(`${baseUrl}/api/team/tokens/linus`, {
+      method: 'DELETE',
+      headers: headers(lead),
+    });
+    expect(del.status).toBe(403);
+
+    // Linus is untouched.
+    expect((await get('/api/whoami', ops)).status).toBe(200);
   });
 });

@@ -13,7 +13,7 @@ import { isDirectory, resolveWorkspacePath } from './workspacePaths.js';
 // The routes under /api/terminals — create a shell session, read its output
 // from a byte cursor, type into it, resize it, close it.
 //
-// Every one of these sits on the `decide` tier (see DECIDE_TIER_ROUTES in
+// Every one of these sits on the `operator` tier (see ELEVATED_ROUTES in
 // api.ts). That is not incidental: a terminal is arbitrary command execution,
 // so putting it on the `request` tier would hand every agent holding the
 // on-disk agent token a way around the scope, floor and approval machinery

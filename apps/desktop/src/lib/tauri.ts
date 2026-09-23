@@ -159,8 +159,8 @@ export function ensureDispatchd(root: string): Promise<DaemonConnection> {
     }
     // Team-local mode: the page came from the daemon, so the daemon is this
     // page's own origin, and the credential is the teammate's own. Only a
-    // decide-tier credential is offered as the app token, so the Approve
-    // buttons show for exactly the people who can press them.
+    // credential above the request tier is offered as the app token, so the
+    // Approve buttons show for exactly the people who can press them.
     if (injectedSharedConfig() !== undefined) {
       const credential = readTeamCredential();
       if (credential === null) {
@@ -169,7 +169,7 @@ export function ensureDispatchd(root: string): Promise<DaemonConnection> {
       return Promise.resolve({
         port: 0,
         agentToken: credential.token,
-        appToken: credential.tier === 'decide' ? credential.token : null,
+        appToken: credential.tier === 'request' ? null : credential.token,
         baseUrl: window.location.origin,
       });
     }

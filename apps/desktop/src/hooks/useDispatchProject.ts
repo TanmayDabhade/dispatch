@@ -1,6 +1,7 @@
 import type {
   AgentSessionMeta,
   ApiClient,
+  AuthTier,
   ConfirmResult,
   DraftRecord,
   EpicProgress,
@@ -220,6 +221,11 @@ export interface DispatchProjectData {
   /** This window's own ActorRef (`human:<handle>`), or `null` until the daemon
    *  has said. While null, nothing is treated as a teammate's. */
   me: string | null;
+  /** The tier the daemon says this window's credential carries, or `null`
+   *  until it has said. Read from `/api/whoami` rather than inferred from which
+   *  token is held, because in team-local mode a decide-tier teammate holds an
+   *  "app token" too. */
+  myTier: AuthTier | null;
   portLoading: boolean;
   portError: boolean;
   portErrorDetail: unknown;
@@ -2735,6 +2741,7 @@ export function useDispatchProject(
     daemonBaseUrl: connection === undefined ? null : daemonBaseUrl(connection),
     presence: presence ?? [],
     me: whoami?.ref ?? null,
+    myTier: whoami?.tier ?? null,
     portLoading,
     portError,
     portErrorDetail,

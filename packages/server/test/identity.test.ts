@@ -28,11 +28,12 @@ describe('TokenRegistry', () => {
   test('the built-in pair keeps its tiers and now names the operator', () => {
     const reg = registry();
 
-    // Behaviour that must not change: app token decides, agent token requests.
+    // The app token sits at the top of the ladder — it only ever reaches the
+    // person at this machine — and the agent token stays at the bottom.
     expect(reg.resolve('app-bbb')).toEqual({
       handle: 'wyat',
       ref: 'human:wyat',
-      tier: 'decide',
+      tier: 'operator',
     });
     expect(reg.resolve('agent-aaa')).toEqual({
       handle: 'wyat',
@@ -67,10 +68,26 @@ describe('TokenRegistry', () => {
     const reg = registry();
 
     const requester = reg.issue('ada', 'request');
-    const decider = reg.issue('ada', 'decide');
+    const decider = reg.issue('grace', 'decide');
+    const operator = reg.issue('linus', 'operator');
 
     expect(reg.resolve(requester)?.tier).toBe('request');
     expect(reg.resolve(decider)?.tier).toBe('decide');
+    expect(reg.resolve(operator)?.tier).toBe('operator');
+  });
+
+  test('one token per person: a new tier replaces the old token', () => {
+    const reg = registry();
+    const asRequester = reg.issue('ada', 'request');
+
+    const asDecider = reg.issue('ada', 'decide');
+
+    // Promoting someone must not leave their old token live at the old tier,
+    // where a later `revoke ada` would be expected to have killed it.
+    expect(reg.resolve(asRequester)).toBeNull();
+    expect(reg.resolve(asDecider)?.tier).toBe('decide');
+    expect(reg.issuedTier('ada')).toBe('decide');
+    expect(reg.list().filter((e) => !e.builtIn)).toHaveLength(1);
   });
 
   test('re-issuing replaces the old credential rather than adding one', () => {
@@ -90,10 +107,11 @@ describe('TokenRegistry', () => {
     const reg = registry();
     const ada = reg.issue('ada', 'request');
 
-    expect(reg.revoke('ada', 'request')).toBe(true);
+    expect(reg.revoke('ada')).toBe(true);
     expect(reg.resolve(ada)).toBeNull();
+    expect(reg.issuedTier('ada')).toBeNull();
     // Revoking again is false, not an error.
-    expect(reg.revoke('ada', 'request')).toBe(false);
+    expect(reg.revoke('ada')).toBe(false);
   });
 
   test('the built-in pair cannot be revoked', () => {
@@ -101,8 +119,9 @@ describe('TokenRegistry', () => {
 
     // Dropping them would lock the operator out of the daemon running on
     // their own machine, with no way back short of a restart.
-    expect(reg.revoke('wyat', 'decide')).toBe(false);
-    expect(reg.resolve('app-bbb')?.tier).toBe('decide');
+    expect(reg.revoke('wyat')).toBe(false);
+    expect(reg.resolve('app-bbb')?.tier).toBe('operator');
+    expect(reg.issuedTier('wyat')).toBeNull();
   });
 
   test('listing holders never discloses the credentials', () => {
@@ -154,10 +173,22 @@ describe('TokenRegistry', () => {
     const { store } = memoryStore();
     const first = new TokenRegistry(BUILT_IN, 'wyat', store);
     const ada = first.issue('ada', 'request');
-    first.revoke('ada', 'request');
+    first.revoke('ada');
 
     const second = new TokenRegistry(BUILT_IN, 'wyat', store);
     expect(second.resolve(ada)).toBeNull();
+  });
+  test('a file from before one-token-per-person is revoked whole', () => {
+    // Written by a daemon that keyed tokens on handle and tier together, so
+    // Ada could hold one of each.
+    const { store } = memoryStore([
+      { handle: 'ada', tier: 'request', hash: 'a'.repeat(64), issuedAt: 'x' },
+      { handle: 'ada', tier: 'decide', hash: 'b'.repeat(64), issuedAt: 'x' },
+    ]);
+    const reg = new TokenRegistry(BUILT_IN, 'wyat', store);
+
+    expect(reg.revoke('ada')).toBe(true);
+    expect(reg.list().filter((e) => e.handle === 'ada')).toHaveLength(0);
   });
 });
 

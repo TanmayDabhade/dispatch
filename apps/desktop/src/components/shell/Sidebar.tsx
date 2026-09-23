@@ -66,6 +66,11 @@ const WORK_VIEWS: ViewRow<ProjectView>[] = [
 /** Code: the repository itself, rather than the work being done to it — its
  *  history, its files, a shell on it, the running app, and what a change would
  *  touch. */
+/** Code rows that act on the host machine as the person running the daemon —
+ *  a shell, and a browser carrying their cookies. The daemon holds both to the
+ *  operator tier, so a teammate below it is not shown doors that only 403. */
+const HOST_VIEWS: ReadonlySet<ProjectView> = new Set(['terminals', 'design']);
+
 const CODE_VIEWS: ViewRow<ProjectView>[] = [
   { id: 'branches', label: 'Git', icon: GitBranch },
   { id: 'files', label: 'Files', icon: FileCode2 },
@@ -250,6 +255,10 @@ export function useTrafficLightInset(): boolean {
 
 interface SidebarProps {
   hasActiveProject: boolean;
+  /** True for a teammate on a team-local daemon whose credential is below the
+   *  operator tier: Terminals and Design are left out of the rail. Never set
+   *  for the person running the daemon. */
+  hideHostViews?: boolean;
   section: 'project' | 'global';
   projectView: ProjectView;
   globalView: GlobalView;
@@ -303,6 +312,7 @@ interface SidebarProps {
  */
 export function Sidebar({
   hasActiveProject,
+  hideHostViews = false,
   section,
   projectView,
   globalView,
@@ -417,7 +427,9 @@ export function Sidebar({
     collapsible: true,
     collapsed: sections.collapsed('code'),
     onToggle: () => sections.toggle('code'),
-    items: CODE_VIEWS.map(rowFor),
+    items: CODE_VIEWS.filter(
+      (view) => !(hideHostViews && HOST_VIEWS.has(view.id))
+    ).map(rowFor),
   };
 
   const favoritesSection: SidebarNavSection | null =
