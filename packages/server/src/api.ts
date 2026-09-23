@@ -5,6 +5,7 @@ import {
   ConfigError,
   describeValue,
   getSection,
+  isDoneStatus,
   isValidAssignee,
   loadConfig,
   PRIORITIES,
@@ -199,6 +200,7 @@ import {
   sessionCookie,
   sessionToken,
 } from './session.js';
+import { statusModelFor } from './statuses.js';
 import type { SyncResult } from './sync/boardSyncer.js';
 import type { BoardSyncScheduler } from './sync/scheduler.js';
 import type { BoardSyncService } from './team/boardSync/service.js';
@@ -583,6 +585,8 @@ async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
   // sync importing someone else's issue).
   const doc = ctx.store.create({
     ...input,
+    // Omitted, a task starts in the project's ready role.
+    status: input.status ?? statusModelFor(ctx.rootDir).roles.ready,
     creator: input.creator ?? humanActor(ctx),
   });
   ctx.cache.rebuild(ctx.store);
@@ -768,7 +772,7 @@ async function createRun(
   const task = ctx.store.get(taskId);
   if (
     task !== null &&
-    (task.meta.status === 'landed' || task.meta.status === 'dropped')
+    isDoneStatus(task.meta.status, statusModelFor(ctx.rootDir))
   ) {
     return errorResponse(409, `cannot dispatch a ${task.meta.status} task`);
   }
@@ -1173,16 +1177,26 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
   // (updateConfig), so only their outer shape is checked here.
   if ('statuses' in body) {
     const { statuses } = body;
-    if (
-      !Array.isArray(statuses) ||
-      statuses.some((s) => typeof s !== 'string' || s.trim() === '')
-    ) {
+    // Entries are bare names or `{ name, type?, color? }`; core validates
+    // the type and color.
+    const nameOf = (s: unknown): string | null => {
+      const name =
+        typeof s === 'string'
+          ? s
+          : typeof s === 'object' && s !== null
+            ? (s as { name?: unknown }).name
+            : null;
+      return typeof name === 'string' && name.trim() !== ''
+        ? name.trim()
+        : null;
+    };
+    if (!Array.isArray(statuses) || statuses.some((s) => nameOf(s) === null)) {
       return errorResponse(400, 'statuses must be a list of names');
     }
     // A status some task still has cannot go: the task would sit in a
     // column the board no longer draws, and its file would fail to load
     // against the new list.
-    const kept = new Set(statuses.map((s) => canonicalStatus(s.trim())));
+    const kept = new Set(statuses.map((s) => canonicalStatus(nameOf(s) ?? '')));
     const stranded = new Map<string, number>();
     for (const task of ctx.store.list()) {
       const status = canonicalStatus(task.meta.status);
@@ -1199,7 +1213,15 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
         `cannot remove ${which}: move those tasks to another status first`
       );
     }
-    patch.statuses = statuses as string[];
+    patch.statuses = statuses as ConfigPatch['statuses'];
+  }
+  if ('statusRoles' in body) {
+    const roles = body.statusRoles;
+    if (roles !== null && (typeof roles !== 'object' || Array.isArray(roles))) {
+      return errorResponse(400, 'statusRoles must be an object or null');
+    }
+    // Core checks every role names a configured status before writing.
+    patch.statusRoles = roles as ConfigPatch['statusRoles'];
   }
   if ('verifySteps' in body) {
     const steps = body.verifySteps;
@@ -4215,7 +4237,7 @@ async function clusterInbox(ctx: ApiContext): Promise<Response> {
 // task could not be judged). Stale tasks are judged here, on demand, so the
 // reading is as fresh as the text it describes.
 async function getReadyTasks(ctx: ApiContext): Promise<Response> {
-  const ready = ctx.cache.ready();
+  const ready = ctx.cache.ready(statusModelFor(ctx.rootDir));
   const readings = await readinessFor(
     ctx.judgments,
     ready,

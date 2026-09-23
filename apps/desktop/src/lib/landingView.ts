@@ -8,6 +8,8 @@ import type {
 } from '@dispatch/client';
 import { isContainerKind } from '@dispatch/core/browser';
 
+import { isStatusCompleted } from './statusModel';
+
 /** The Landing view's read model over `LandingSnapshot`. Zero React — happy-dom
  * can't exercise the table reliably, so filter/group/label logic lives here. */
 
@@ -326,7 +328,9 @@ export function landedFromTasks(
   cap = 30
 ): LandedTaskRow[] {
   return tasks
-    .filter((t) => t.meta.status === 'landed' && !isContainerKind(t.meta.kind))
+    .filter(
+      (t) => isStatusCompleted(t.meta.status) && !isContainerKind(t.meta.kind)
+    )
     .sort((a, b) => b.meta.updated.localeCompare(a.meta.updated))
     .slice(0, cap)
     .map((t) => ({

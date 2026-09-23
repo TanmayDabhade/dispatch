@@ -24,6 +24,7 @@ import {
   spendTone,
   waveSteps,
 } from '../../lib/epicSession';
+import { isStatusCompleted } from '../../lib/statusModel';
 import { IconButton } from '@/ui/ai/icon-button';
 import { LabelPill, PillButton } from '@/ui/ai/pill';
 import { ProgressGlyph } from '@/ui/chrome';
@@ -244,7 +245,7 @@ export function FanoutControls({
         Land
       </PillButton>
     );
-  } else if (epic.meta.status === 'landed' || count?.total === 0) {
+  } else if (isStatusCompleted(epic.meta.status) || count?.total === 0) {
     // Nothing to send: a landed epic is done, and an empty milestone would open a dialog
     // whose confirm is disabled.
     controls = null;

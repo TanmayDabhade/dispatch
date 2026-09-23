@@ -1,9 +1,13 @@
 import {
   canonicalStatus,
+  DEFAULT_STATUS_MODEL,
+  hasStatusRole,
+  isCompletedStatus,
   isDoneStatus,
   isSatisfiedForDispatchStatus,
+  isUnstartedStatus,
 } from '@dispatch/core';
-import type { TaskDoc } from '@dispatch/core';
+import type { StatusModel, TaskDoc } from '@dispatch/core';
 
 import type { FixLoopState } from './fixLoop.js';
 import type { RunMeta } from './types.js';
@@ -79,6 +83,8 @@ export interface ChildPhaseInput {
   unsatisfiedBlockers: string[];
   /** Whether core's `dispatchableTasks` over the full set includes the task. */
   dispatchable: boolean;
+  /** The project's status model; the built-in one when omitted. */
+  statuses?: StatusModel;
 }
 
 export interface ChildPhase {
@@ -112,11 +118,17 @@ function withRun(
  */
 export function deriveChildPhase(input: ChildPhaseInput): ChildPhase {
   const { task, liveRun, latestRun, fixLoop } = input;
+  const model = input.statuses ?? DEFAULT_STATUS_MODEL;
   const status = canonicalStatus(task.meta.status);
-  if (isDoneStatus(status)) {
-    return withRun(input, status === 'landed' ? 'landed' : 'dropped');
+  const inReview = hasStatusRole(status, 'review', model);
+  const inLanding = hasStatusRole(status, 'landing', model);
+  if (isDoneStatus(status, model)) {
+    return withRun(
+      input,
+      isCompletedStatus(status, model) ? 'landed' : 'dropped'
+    );
   }
-  if (status === 'landing') return withRun(input, 'landing');
+  if (inLanding) return withRun(input, 'landing');
   if (
     input.blockedReason !== null ||
     task.meta.labels.includes(BLOCKED_LABEL)
@@ -143,13 +155,13 @@ export function deriveChildPhase(input: ChildPhaseInput): ChildPhase {
   if (
     latestRun !== null &&
     (latestRun.state === 'failed' || latestRun.state === 'interrupted-dirty') &&
-    status !== 'review' &&
-    status !== 'landing'
+    !inReview &&
+    !inLanding
   ) {
     return withRun(input, 'failed', latestRun.error);
   }
-  if (status === 'review') return withRun(input, 'needs-review');
-  if (status === 'ready') {
+  if (inReview) return withRun(input, 'needs-review');
+  if (isUnstartedStatus(status, model)) {
     if (task.meta.risk === 'critical') return withRun(input, 'held');
     if (input.unsatisfiedBlockers.length > 0) {
       return withRun(
@@ -243,12 +255,14 @@ export function summarizeWaves(children: EpicProgressChild[]): EpicWave[] {
  *  core's `dispatchableTasks`). */
 export function unsatisfiedBlockersOf(
   task: TaskDoc,
-  lookup: (id: string) => TaskDoc | null
+  lookup: (id: string) => TaskDoc | null,
+  model: StatusModel = DEFAULT_STATUS_MODEL
 ): string[] {
   return task.meta.blockedBy.filter((id) => {
     const blocker = lookup(id);
     return (
-      blocker !== null && !isSatisfiedForDispatchStatus(blocker.meta.status)
+      blocker !== null &&
+      !isSatisfiedForDispatchStatus(blocker.meta.status, model)
     );
   });
 }

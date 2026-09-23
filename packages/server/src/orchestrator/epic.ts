@@ -1,7 +1,9 @@
 import {
   claimConflictsWithWrites,
   dispatchableTasks,
+  hasStatusRole,
   isContainerKind,
+  isUnstartedStatus,
   loadConfig,
   schedulableBatch,
 } from '@dispatch/core';
@@ -11,6 +13,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
 import type { FindingStorePort } from '../findings.js';
+import { statusModelFor } from '../statuses.js';
 import {
   deriveChildPhase,
   deriveSpend,
@@ -435,6 +438,7 @@ export class EpicEngine {
   // any child.
   progress(epicId: string): EpicProgress {
     this.requireEpic(epicId);
+    const statuses = statusModelFor(this.ctx.rootDir);
     const children = this.childrenOf(epicId);
     const childIds = new Set(children.map((c) => c.meta.id));
     // Newest first, so the first run seen per task is its latest.
@@ -451,9 +455,10 @@ export class EpicEngine {
       }
     }
     const dispatchable = new Set(
-      dispatchableTasks(this.ctx.cache.query({ includeArchived: true })).map(
-        (t) => t.meta.id
-      )
+      dispatchableTasks(
+        this.ctx.cache.query({ includeArchived: true }),
+        statuses
+      ).map((t) => t.meta.id)
     );
     const waves = deriveWaves(children);
     const session = this.sessions.get(epicId);
@@ -466,10 +471,13 @@ export class EpicEngine {
         latestRun,
         fixLoop: this.fixLoop?.get(id) ?? null,
         blockedReason: this.ctx.orchestrator.blockedFindingReason(id),
-        unsatisfiedBlockers: unsatisfiedBlockersOf(task, (blockerId) =>
-          this.ctx.store.get(blockerId)
+        unsatisfiedBlockers: unsatisfiedBlockersOf(
+          task,
+          (blockerId) => this.ctx.store.get(blockerId),
+          statuses
         ),
         dispatchable: dispatchable.has(id),
+        statuses,
       });
       return {
         id,
@@ -759,7 +767,8 @@ export class EpicEngine {
     // childIds now includes archived children (see childrenOf); dispatchability
     // must exclude them explicitly rather than rely on childrenOf's filtering.
     const ready = dispatchableTasks(
-      this.ctx.cache.query({ includeArchived: true })
+      this.ctx.cache.query({ includeArchived: true }),
+      statusModelFor(this.ctx.rootDir)
     ).filter(
       (t) =>
         childIds.has(t.meta.id) &&
@@ -872,9 +881,12 @@ export class EpicEngine {
   private isEpicComplete(epicId: string): boolean {
     const children = this.childrenOf(epicId);
     if (children.length === 0) return false;
+    const statuses = statusModelFor(this.ctx.rootDir);
     if (
       children.some(
-        (c) => c.meta.status === 'ready' || c.meta.status === 'working'
+        (c) =>
+          isUnstartedStatus(c.meta.status, statuses) ||
+          hasStatusRole(c.meta.status, 'dispatched', statuses)
       )
     ) {
       return false;

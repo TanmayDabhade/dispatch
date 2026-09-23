@@ -31,6 +31,7 @@ import {
   milestoneHealthPill,
 } from '../lib/milestoneRisk';
 import { isMilestoneFinished } from '../lib/milestoneRollup';
+import { isStatusCompleted, isStatusDone } from '../lib/statusModel';
 import {
   DEFAULT_TASKS_DISPLAY,
   type TasksDisplayPrefs,
@@ -373,9 +374,7 @@ export function MilestonesView({
     >
       {groups.map((group) => {
         const children = group.rows.map((r) => r.doc);
-        const done = children.filter(
-          (t) => t.meta.status === 'landed' || t.meta.status === 'dropped'
-        ).length;
+        const done = children.filter((t) => isStatusDone(t.meta.status)).length;
         const finished = isMilestoneFinished(children);
         const status = deriveMilestoneStatus(
           children,
@@ -392,16 +391,14 @@ export function MilestonesView({
         // so the button never leads a 409 it could have predicted.
         const progressTotal = progress?.children.length ?? 0;
         const progressDone =
-          progress?.children.filter(
-            (c) => c.status === 'landed' || c.status === 'dropped'
-          ).length ?? 0;
+          progress?.children.filter((c) => isStatusDone(c.status)).length ?? 0;
         const landable =
           epic !== undefined &&
           session?.state !== 'active' &&
           session?.state !== 'paused' &&
           progressTotal > 0 &&
           progressDone === progressTotal &&
-          epic.meta.status !== 'landed';
+          !isStatusCompleted(epic.meta.status);
         return (
           <div key={group.key} data-group-key={group.key}>
             <GroupHeader

@@ -7,6 +7,7 @@ import {
   loadConfig,
   PRIORITIES,
   readyTasks,
+  statusModelOf,
   TASK_RISKS,
   TaskParseError,
   TaskStore,
@@ -706,7 +707,7 @@ async function taskNext(rootDir: string): Promise<ToolOutcome> {
     // happened to be running.
     // The FULL set, archived included — readyTasks drops archived candidates
     // itself but needs them present to resolve blockers (see graph.ts).
-    tasks: readyTasks(docs).map(toSummary),
+    tasks: readyTasks(docs, statusModelOf(loadConfig(rootDir))).map(toSummary),
     problems: formatProblems(errors),
   });
 }

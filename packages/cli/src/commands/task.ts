@@ -8,6 +8,7 @@ import {
   readProjectBackend,
   readyTasks,
   serializeTaskFile,
+  statusModelOf,
   TaskStore,
 } from '@dispatch/core';
 import type {
@@ -390,7 +391,10 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
             // tasks from its own results, but needs them present to resolve
             // blockers. Filtering them out here made archiving an unfinished
             // blocker spring everything it was blocking.
-            readyTasks(route.store.list());
+            readyTasks(
+              route.store.list(),
+              statusModelOf(loadConfig(route.store.rootDir))
+            );
       if (opts.json === true) {
         ctx.log(JSON.stringify(ready, null, 2));
         return;

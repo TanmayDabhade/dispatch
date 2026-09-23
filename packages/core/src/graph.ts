@@ -1,7 +1,13 @@
 // This module must stay free of node:* imports — it is exported as the
 // browser-safe '@dispatch/core/graph' subpath consumed by the desktop webview.
 import { isContainer, parentIdsOf } from './kinds.js';
-import { isDoneStatus, isSatisfiedForDispatchStatus } from './status.js';
+import {
+  DEFAULT_STATUS_MODEL,
+  isDoneStatus,
+  isSatisfiedForDispatchStatus,
+  isUnstartedStatus,
+} from './status.js';
+import type { StatusModel } from './status.js';
 import type { Priority, TaskDoc, TaskListItem } from './types.js';
 
 export const PRIORITY_ORDER: Record<Priority, number> = {
@@ -12,16 +18,22 @@ export const PRIORITY_ORDER: Record<Priority, number> = {
   none: 4,
 };
 
-export function isDone(t: TaskListItem): boolean {
-  return isDoneStatus(t.meta.status);
+export function isDone(
+  t: TaskListItem,
+  model: StatusModel = DEFAULT_STATUS_MODEL
+): boolean {
+  return isDoneStatus(t.meta.status, model);
 }
 
 /**
  * Whether a blocker no longer holds up *dispatching* its dependents — see
  * `isSatisfiedForDispatchStatus` in status.ts for the reasoning.
  */
-export function isSatisfiedForDispatch(t: TaskListItem): boolean {
-  return isSatisfiedForDispatchStatus(t.meta.status);
+export function isSatisfiedForDispatch(
+  t: TaskListItem,
+  model: StatusModel = DEFAULT_STATUS_MODEL
+): boolean {
+  return isSatisfiedForDispatchStatus(t.meta.status, model);
 }
 
 /**
@@ -34,7 +46,8 @@ export function isSatisfiedForDispatch(t: TaskListItem): boolean {
  */
 function filterAndSortByReadiness(
   tasks: TaskDoc[],
-  isSatisfied: (t: TaskDoc) => boolean
+  isSatisfied: (t: TaskDoc) => boolean,
+  model: StatusModel
 ): TaskDoc[] {
   // `byId` is the blocker-resolution set and MUST be built from everything
   // passed in, archived included, because an unresolvable blocker id counts as
@@ -49,7 +62,8 @@ function filterAndSortByReadiness(
   return (
     tasks
       .filter((t) => !isContainer(t.meta, parentIds))
-      .filter((t) => t.meta.status === 'ready')
+      // The ready queue is every unstarted status, not a name.
+      .filter((t) => isUnstartedStatus(t.meta.status, model))
       // Archived tasks are excluded HERE, as candidates, not by the caller —
       // that is the whole point of the note above. An archived task is never
       // ready work, but it is still a real blocker.
@@ -83,8 +97,15 @@ function filterAndSortByReadiness(
  * badge, and merge-queue ordering all mean by "ready", and none of those
  * should start calling a task with an unmerged blocker ready.
  */
-export function dispatchableTasks(tasks: TaskDoc[]): TaskDoc[] {
-  return filterAndSortByReadiness(tasks, isSatisfiedForDispatch);
+export function dispatchableTasks(
+  tasks: TaskDoc[],
+  model: StatusModel = DEFAULT_STATUS_MODEL
+): TaskDoc[] {
+  return filterAndSortByReadiness(
+    tasks,
+    (t) => isSatisfiedForDispatch(t, model),
+    model
+  );
 }
 
 /**
@@ -96,8 +117,11 @@ export function dispatchableTasks(tasks: TaskDoc[]): TaskDoc[] {
  * the results itself. Pre-filtering them out removes them from blocker
  * resolution too, which reads as "blocker satisfied".
  */
-export function readyTasks(tasks: TaskDoc[]): TaskDoc[] {
-  return filterAndSortByReadiness(tasks, isDone);
+export function readyTasks(
+  tasks: TaskDoc[],
+  model: StatusModel = DEFAULT_STATUS_MODEL
+): TaskDoc[] {
+  return filterAndSortByReadiness(tasks, (t) => isDone(t, model), model);
 }
 
 /**

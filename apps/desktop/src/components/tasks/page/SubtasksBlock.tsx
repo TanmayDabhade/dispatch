@@ -5,6 +5,7 @@ import { useState } from 'react';
 
 import { colorForLabel } from '../../../lib/labelColor';
 import { isTerminalRunState } from '../../../lib/runState';
+import { isStatusDone } from '../../../lib/statusModel';
 import { formatShortDate } from '../../../lib/taskDates';
 import { RunStatePill } from '../../runs/RunStatePill';
 import { useShellActions } from '../../shell/ShellActionsContext';
@@ -20,7 +21,7 @@ import { ProgressGlyph } from '@/ui/chrome';
 /** Whether a sub-task counts as done for the `◔ n/m` glyph: landed, or dropped (it needs
  * nothing more from anyone). */
 function isFinished(doc: TaskListItem): boolean {
-  return doc.meta.status === 'landed' || doc.meta.status === 'dropped';
+  return isStatusDone(doc.meta.status);
 }
 
 // The `▾ Sub-tasks ◔ 1/3` block under the description: a 12px/500 header with a collapse

@@ -13,6 +13,7 @@ import type {
   UpdatePatch,
 } from '@dispatch/core/browser';
 import {
+  hasStatusRole,
   isContainer,
   parentIdsOf,
   parseExternal,
@@ -61,6 +62,7 @@ import {
 import { modelLabel, MODELS, readDefaultModel } from '../../../lib/models';
 import { notePatch } from '../../../lib/noteDraft';
 import { isTerminalRunState } from '../../../lib/runState';
+import { activeStatusModel, isStatusCanceled } from '../../../lib/statusModel';
 import { parseTaskSections } from '../../../lib/taskDisplay';
 import {
   enrichDraftFromPlan,
@@ -606,8 +608,8 @@ export function TaskPage({
           </DropdownMenuItem>
           <DropdownMenuItem
             variant="destructive"
-            disabled={doc.meta.status === 'dropped'}
-            onClick={() => void changeStatus('dropped')}
+            disabled={isStatusCanceled(doc.meta.status)}
+            onClick={() => void changeStatus(activeStatusModel().roles.dropped)}
           >
             <Ban />
             Drop
@@ -738,7 +740,9 @@ export function TaskPage({
         )}
         {hasOpenRun && run !== undefined && (
           <PillButton onClick={() => onOpenSession(run.id)}>
-            {doc.meta.status === 'review' ? 'Review run' : 'View run'}
+            {hasStatusRole(doc.meta.status, 'review', activeStatusModel())
+              ? 'Review run'
+              : 'View run'}
           </PillButton>
         )}
         {isEpic && (

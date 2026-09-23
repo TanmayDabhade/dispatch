@@ -1,5 +1,7 @@
 import type { TaskListItem } from '@dispatch/core/browser';
 
+import { isStatusDone } from './statusModel';
+
 // Mirrors packages/web/src/taskGraph.ts's `isTerminal`/`computeBlockedIds` —
 // display-only blocked-badge logic duplicated here rather than pulled from
 // @dispatch/client, since it never touches the network (unlike the
@@ -8,7 +10,7 @@ import type { TaskListItem } from '@dispatch/core/browser';
 // start — that stays server-side via GET /api/tasks/ready, whose result
 // flows into TasksPanel's readyIds.
 function isTerminal(doc: TaskListItem): boolean {
-  return doc.meta.status === 'landed' || doc.meta.status === 'dropped';
+  return isStatusDone(doc.meta.status);
 }
 
 /** Ids of every task that lists at least one blocker id resolving to a non-terminal task.

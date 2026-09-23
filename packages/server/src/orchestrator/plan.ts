@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
+import { statusModelFor } from '../statuses.js';
 import type {
   PlannedTask,
   Planner,
@@ -633,13 +634,15 @@ export class PlanManager {
       );
     }
     const proposal = validatePlanProposal(rawProposal);
+    // The status a plan's work starts in: the ready role, whatever its name.
+    const readyStatus = statusModelFor(this.ctx.rootDir).roles.ready;
 
     let epicId: string | undefined;
     if (proposal.epic !== undefined) {
       const epicDoc = this.ctx.store.create({
         title: proposal.epic.title,
         kind: 'milestone',
-        status: 'ready',
+        status: readyStatus,
         description: proposal.epic.description,
       });
       epicId = epicDoc.meta.id;
@@ -653,7 +656,7 @@ export class PlanManager {
         this.ctx.store.create({
           title: task.title,
           kind: 'task',
-          status: 'ready',
+          status: readyStatus,
           description: buildTaskDescription(task),
           parent: epicId ?? null,
           priority: task.priority,

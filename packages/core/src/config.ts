@@ -46,6 +46,7 @@ import {
   MODEL_ROLES,
   NOTIFICATION_KINDS,
 } from './configTypes.js';
+import { describeValue } from './describe.js';
 import type { PolicyConfig, PolicyGate, PolicyGateMode } from './policy.js';
 import {
   DEFAULT_POLICY,
@@ -61,7 +62,14 @@ import {
   isQueueWeight,
   QUEUE_FACTOR_KEYS,
 } from './scoring.js';
-import { canonicalStatus } from './status.js';
+import {
+  canonicalStatus,
+  DEFAULT_STATUS_ROLES,
+  defaultStatusType,
+  STATUS_ROLE_KEYS,
+  STATUS_TYPES,
+} from './status.js';
+import type { StatusDefinition, StatusRoles, StatusType } from './status.js';
 import { DISPATCH_DIR } from './store.js';
 import { STATUSES } from './types.js';
 
@@ -1207,6 +1215,106 @@ function parseQueueConfig(raw: unknown): QueueConfig {
   }
 }
 
+/**
+ * Validates `statuses:`, whose entries are bare names or `{ name, type?,
+ * color? }`. Old files list pre-rename names; canonicalize and dedupe.
+ * `statusDefinitions` is only set when some entry is typed or colored, so an
+ * untyped list reads exactly as it always has.
+ */
+function parseStatuses(raw: unknown): {
+  statuses: string[];
+  statusDefinitions?: StatusDefinition[];
+} {
+  if (raw === undefined) return { statuses: [...DEFAULTS.statuses] };
+  const invalid = new ConfigError(
+    'invalid .dispatch/config.yml: statuses must be a list of names or { name, type, color } entries'
+  );
+  if (!Array.isArray(raw)) throw invalid;
+  const definitions = new Map<string, StatusDefinition>();
+  let typed = false;
+  for (const entry of raw as unknown[]) {
+    if (typeof entry === 'string') {
+      const name = canonicalStatus(entry);
+      if (!definitions.has(name)) {
+        definitions.set(name, {
+          name,
+          type: defaultStatusType(name),
+          color: null,
+        });
+      }
+      continue;
+    }
+    if (typeof entry !== 'object' || entry === null) throw invalid;
+    const { name, type, color } = entry as Record<string, unknown>;
+    if (typeof name !== 'string' || name.trim() === '') throw invalid;
+    if (
+      type !== undefined &&
+      !(STATUS_TYPES as readonly unknown[]).includes(type)
+    ) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: status ${name} has type ${describeValue(type)} (expected ${STATUS_TYPES.join('|')})`
+      );
+    }
+    if (color !== undefined && color !== null && typeof color !== 'string') {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: status ${name} color must be a string`
+      );
+    }
+    typed = true;
+    const canonical = canonicalStatus(name.trim());
+    if (definitions.has(canonical)) continue;
+    definitions.set(canonical, {
+      name: canonical,
+      type: (type as StatusType | undefined) ?? defaultStatusType(canonical),
+      color: color ?? null,
+    });
+  }
+  const statusDefinitions = [...definitions.values()];
+  return {
+    statuses: statusDefinitions.map((d) => d.name),
+    ...(typed ? { statusDefinitions } : {}),
+  };
+}
+
+/**
+ * Validates `statusRoles:`. Keys merge over the defaults; every configured
+ * role must name a configured status (`landing` may be null).
+ */
+function parseStatusRoles(
+  raw: unknown,
+  statuses: string[]
+): StatusRoles | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: statusRoles must be a map'
+    );
+  }
+  const roles: StatusRoles = { ...DEFAULT_STATUS_ROLES };
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!(STATUS_ROLE_KEYS as readonly string[]).includes(key)) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: unknown statusRoles key ${key} (expected ${STATUS_ROLE_KEYS.join('|')})`
+      );
+    }
+    if (key === 'landing' && value === null) {
+      roles.landing = null;
+      continue;
+    }
+    if (
+      typeof value !== 'string' ||
+      !statuses.includes(canonicalStatus(value))
+    ) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: statusRoles.${key} must name a configured status`
+      );
+    }
+    roles[key as Exclude<keyof StatusRoles, 'landing'>] =
+      canonicalStatus(value);
+  }
+  return roles;
+}
+
 export function loadConfig(rootDir: string): DispatchConfig {
   const path = join(rootDir, DISPATCH_DIR, 'config.yml');
   if (!existsSync(path)) {
@@ -1272,15 +1380,11 @@ function parseConfig(parsed: unknown): DispatchConfig {
       }
     }
   }
-  if (
-    raw.statuses !== undefined &&
-    (!Array.isArray(raw.statuses) ||
-      raw.statuses.some((s) => typeof s !== 'string'))
-  ) {
-    throw new ConfigError(
-      'invalid .dispatch/config.yml: statuses must be an array of strings'
-    );
-  }
+  const statusBlock = parseStatuses(raw.statuses);
+  const statusRoles = parseStatusRoles(
+    (parsed as { statusRoles?: unknown } | null)?.statusRoles,
+    statusBlock.statuses
+  );
   if (raw.autoCommit !== undefined && typeof raw.autoCommit !== 'boolean') {
     throw new ConfigError(
       'invalid .dispatch/config.yml: autoCommit must be a boolean'
@@ -1303,11 +1407,8 @@ function parseConfig(parsed: unknown): DispatchConfig {
     );
   }
   return {
-    // Old config files list the pre-rename names; canonicalize (and dedupe,
-    // in case a file lists both an old name and its successor) on load.
-    statuses: [
-      ...new Set((raw.statuses ?? DEFAULTS.statuses).map(canonicalStatus)),
-    ],
+    ...statusBlock,
+    ...(statusRoles === undefined ? {} : { statusRoles }),
     autoCommit: raw.autoCommit ?? DEFAULTS.autoCommit,
     verifyCommand: raw.verifyCommand,
     verifySteps: raw.verifySteps,
@@ -1463,8 +1564,20 @@ function applyBlockPatches(doc: YAML.Document, patch: ConfigPatch): void {
   if (patch.statuses !== undefined) {
     doc.set(
       'statuses',
-      patch.statuses.map((status) => status.trim())
+      patch.statuses.map((status) =>
+        typeof status === 'string'
+          ? status.trim()
+          : {
+              name: status.name.trim(),
+              ...(status.type === undefined ? {} : { type: status.type }),
+              ...(status.color == null ? {} : { color: status.color }),
+            }
+      )
     );
+  }
+  if (patch.statusRoles !== undefined) {
+    if (patch.statusRoles === null) doc.delete('statusRoles');
+    else doc.set('statusRoles', { ...patch.statusRoles });
   }
   if (patch.verifySteps !== undefined) {
     if (patch.verifySteps === null || patch.verifySteps.length === 0) {

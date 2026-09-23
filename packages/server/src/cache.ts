@@ -6,6 +6,7 @@ import {
 } from '@dispatch/core';
 import type {
   ListSafeError,
+  StatusModel,
   TaskDoc,
   TaskListItem,
   TaskMeta,
@@ -187,11 +188,11 @@ export class TaskCache {
   // Graph logic (blockers, priority ordering) stays in core's readyTasks — the
   // cache only supplies the current doc set, never reimplements the graph
   // rules in SQL.
-  ready(): TaskDoc[] {
+  ready(model?: StatusModel): TaskDoc[] {
     // includeArchived, deliberately: readyTasks excludes archived tasks from
     // its results but resolves blockers against whatever it is given, so the
     // default archived-excluding query made an archived blocker read as
     // satisfied and sprang its dependents.
-    return readyTasks(this.query({ includeArchived: true }));
+    return readyTasks(this.query({ includeArchived: true }), model);
   }
 }

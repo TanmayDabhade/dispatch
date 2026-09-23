@@ -6,7 +6,7 @@ import {
 } from '@dispatch/core/browser';
 
 import { statusColor } from '../components/tasks/StatusIcon';
-import { rollupMilestoneStatus } from './milestoneRollup';
+import { isMilestoneFinished, rollupMilestoneStatus } from './milestoneRollup';
 import { colorForEpic } from './projectColor';
 import {
   assigneeLabel,
@@ -296,7 +296,7 @@ function byEpic(
 }
 
 function isFinishedBucket(b: Bucket): boolean {
-  return b.tasks.length > 0 && rollupMilestoneStatus(b.tasks) === 'landed';
+  return isMilestoneFinished(b.tasks);
 }
 
 // Agents first, then people by handle, then unassigned.

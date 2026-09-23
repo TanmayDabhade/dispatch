@@ -40,7 +40,11 @@ import type {
   TaskListItem,
   UpdatePatch,
 } from '@dispatch/core/browser';
-import { isContainer, parentIdsOf } from '@dispatch/core/browser';
+import {
+  isContainer,
+  parentIdsOf,
+  statusModelOf,
+} from '@dispatch/core/browser';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
@@ -77,6 +81,7 @@ import { notify, setNotificationKinds } from '../lib/notifications';
 import type { PendingApproval } from '../lib/pendingApprovals';
 import { mergePendingApprovals } from '../lib/pendingApprovals';
 import { isTerminalRunState, runSurveyNotice } from '../lib/runState';
+import { setActiveStatusModel } from '../lib/statusModel';
 import type { TaskAttention } from '../lib/taskAttention';
 import { deriveTaskAttentionById } from '../lib/taskAttention';
 import { computeBlockedIds } from '../lib/taskGraph';
@@ -883,6 +888,7 @@ export function useDispatchProject(
   // still loading, rather than carrying the previous project's toggles over.
   useEffect(() => {
     setNotificationKinds(config?.notifications.kinds ?? null);
+    setActiveStatusModel(config === undefined ? null : statusModelOf(config));
   }, [config]);
   // The sync chip's data source — refetched only on mount and on the
   // `board.sync` WS event below (see the effect's invalidation), not polled.

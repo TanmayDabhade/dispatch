@@ -1,11 +1,13 @@
 import type { RunMeta } from '@dispatch/client';
 import type { TaskListItem } from '@dispatch/core/browser';
 
+import { isStatusDone } from './statusModel';
+
 // Mirrors mergeQueue.ts's isDone-based checks server-side: a task counts as
 // resolved once it's done OR cancelled — the same semantics enqueueReady's
 // own-task guard and nextEligible's blocker check both use.
 function isTaskDone(task: TaskListItem): boolean {
-  return task.meta.status === 'landed' || task.meta.status === 'dropped';
+  return isStatusDone(task.meta.status);
 }
 
 /**

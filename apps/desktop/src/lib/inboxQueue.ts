@@ -13,6 +13,7 @@ import { buildFeed } from './controlRoom';
 import type { FeedState } from './feedState';
 import { FEED_STATE_LABEL, isUrgentState } from './feedState';
 import type { InboxEntry } from './inbox';
+import { isStatusDone } from './statusModel';
 import { parseTaskSections } from './taskDisplay';
 
 /** Everything `buildFeed` needs that the Inbox actually varies on — the Inbox is the
@@ -146,7 +147,7 @@ function collectReadyToLand(input: InboxInput): FeedRowModel[] {
     if (queuedRunIds.has(run.id)) continue;
     const task = taskById.get(run.taskId);
     const status = task?.meta.status;
-    if (status === 'landed' || status === 'dropped') continue;
+    if (status !== undefined && isStatusDone(status)) continue;
     const seen = newestByTask.get(run.taskId);
     if (seen === undefined || run.createdAt > seen.createdAt) {
       newestByTask.set(run.taskId, run);

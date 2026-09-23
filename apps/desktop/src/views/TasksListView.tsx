@@ -41,6 +41,7 @@ import {
   visibleRowIds,
 } from '../lib/listGrouping';
 import { colorForEpic } from '../lib/projectColor';
+import { activeStatusModel } from '../lib/statusModel';
 import { assigneeLabel, priorityLabel, statusLabel } from '../lib/taskDisplay';
 import {
   DEFAULT_TASKS_DISPLAY,
@@ -649,7 +650,10 @@ export function TasksListView({
                   <ContextMenuItem
                     variant="destructive"
                     onClick={() =>
-                      void data.moveTaskStatus(menuDoc.meta.id, 'dropped')
+                      void data.moveTaskStatus(
+                        menuDoc.meta.id,
+                        activeStatusModel().roles.dropped
+                      )
                     }
                   >
                     <Ban />

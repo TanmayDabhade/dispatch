@@ -10,6 +10,7 @@ import {
 } from '../../lib/epicConcurrency';
 import type { WorkEpicOptions } from '../../lib/epicSession';
 import { rollupMilestoneStatus } from '../../lib/milestoneRollup';
+import { isStatusCompleted, isStatusDone } from '../../lib/statusModel';
 import { FanoutControls, sessionIdle } from '../milestones/FanoutControls';
 import { EpicDagModal } from './EpicDagModal';
 import { statusColor, StatusIcon } from './StatusIcon';
@@ -101,9 +102,7 @@ export function EpicLaneHeader({
   const paused = session?.state === 'paused';
 
   const doneCount =
-    progress?.children.filter(
-      (c) => c.status === 'landed' || c.status === 'dropped'
-    ).length ?? 0;
+    progress?.children.filter((c) => isStatusDone(c.status)).length ?? 0;
   const totalCount = progress?.children.length ?? 0;
   const liveCount = progress?.liveRuns.length ?? 0;
   // Same "finished" rule the server's land validation applies (every child done or
@@ -116,7 +115,7 @@ export function EpicLaneHeader({
     !paused &&
     totalCount > 0 &&
     doneCount === totalCount &&
-    epic.meta.status !== 'landed';
+    !isStatusCompleted(epic.meta.status);
   const rollup = epic !== null ? rollupMilestoneStatus(childTasks) : null;
 
   return (

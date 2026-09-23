@@ -2,7 +2,10 @@ import {
   DISPATCH_DIR,
   executorModels,
   generateRunId,
+  hasStatusRole,
+  isCompletedStatus,
   isContainerKind,
+  isDoneStatus,
   loadConfig,
   nextSubagentStatus,
   slugify,
@@ -11,7 +14,7 @@ import {
   TaskStore,
   usesIntegrationBranch,
 } from '@dispatch/core';
-import type { SubagentStatus } from '@dispatch/core';
+import type { StatusModel, SubagentStatus } from '@dispatch/core';
 import type {
   ActorContext,
   CommandEvidence,
@@ -44,6 +47,7 @@ import { judgeRunModel } from '../judgments/modelTier.js';
 import type { RunModelChoice } from '../judgments/modelTier.js';
 import { LedgerStore } from '../ledger.js';
 import type { LedgerStorePort } from '../ledger.js';
+import { statusModelFor } from '../statuses.js';
 import { dirSizeBytes } from './dirSize.js';
 import {
   EPIC_BRANCH_PREFIX,
@@ -431,6 +435,12 @@ export class Orchestrator {
   // unsubscribe function. This is the clean, push-based seam the epic engine
   // uses to know when a concurrency slot has freed up instead of polling
   // run state on a timer.
+  // The project's status types and lifecycle roles, read per use so a config
+  // edit applies without a restart.
+  private statuses(): StatusModel {
+    return statusModelFor(this.ctx.rootDir);
+  }
+
   onRunTerminal(callback: (meta: RunMeta) => void): () => void {
     this.terminalHooks.push(callback);
     return () => {
@@ -757,7 +767,7 @@ export class Orchestrator {
     this.ctx.store.update(
       taskId,
       {
-        status: 'working',
+        status: this.statuses().roles.dispatched,
         appendActivity: `${now} dispatched (${executorName}, branch ${branch})`,
         activityActor: opts.actor ?? this.ctx.actorContext?.humanRef,
       },
@@ -958,7 +968,7 @@ export class Orchestrator {
       this.ctx.store.update(
         meta.taskId,
         {
-          status: 'landed',
+          status: this.statuses().roles.landed,
           archivedAt: now,
           appendActivity: `${now} [run ${runId}] review of ${derivedFrom} finished; task retired`,
           // Mechanical cleanup, not an action anyone asked for by name.
@@ -1033,7 +1043,12 @@ export class Orchestrator {
     const parents: string[] = [];
     for (const blockerId of task.meta.blockedBy) {
       const blocker = this.ctx.store.get(blockerId);
-      if (blocker === null || blocker.meta.status !== 'review') continue;
+      if (
+        blocker === null ||
+        !hasStatusRole(blocker.meta.status, 'review', this.statuses())
+      ) {
+        continue;
+      }
       const branch = this.branchForTask(blockerId);
       if (branch !== null) parents.push(branch);
     }
@@ -1989,7 +2004,7 @@ export class Orchestrator {
       return 'task could not be read';
     }
     if (task === null) return 'task no longer exists';
-    if (task.meta.status === 'landed' || task.meta.status === 'dropped') {
+    if (isDoneStatus(task.meta.status, this.statuses())) {
       return `task is ${task.meta.status}`;
     }
     return null;
@@ -2403,7 +2418,10 @@ export class Orchestrator {
         this.ctx.store.update(
           meta.taskId,
           {
-            ...(taskStatus === 'landed' ? {} : { status: 'ready' }),
+            ...(taskStatus !== undefined &&
+            isCompletedStatus(taskStatus, this.statuses())
+              ? {}
+              : { status: this.statuses().roles.ready }),
             appendActivity: `${now} run ${runId} discarded`,
             activityActor: actor,
           },
@@ -2566,7 +2584,7 @@ export class Orchestrator {
     this.ctx.store.update(
       meta.taskId,
       {
-        status: 'landed',
+        status: this.statuses().roles.landed,
         appendActivity: `${now} run ${runId} merged via PR (${meta.prUrl ?? 'unknown url'})`,
         // The PR poller noticed GitHub reports it merged — whoever actually
         // merged it did so on GitHub, outside anything dispatch can see.
@@ -2612,7 +2630,7 @@ export class Orchestrator {
     this.ctx.store.update(
       meta.taskId,
       {
-        status: 'landed',
+        status: this.statuses().roles.landed,
         appendActivity: `${now} run ${runId} merged outside dispatch (branch ${meta.branch} landed on ${meta.baseBranch})`,
         // Whoever ran the merge did so in a plain git checkout, outside
         // anything dispatch can attribute.
@@ -2842,7 +2860,7 @@ export class Orchestrator {
     this.ctx.store.update(
       meta.taskId,
       {
-        status: 'landed',
+        status: this.statuses().roles.landed,
         appendActivity: `${now} run ${meta.id} merged into ${meta.baseBranch}`,
         activityActor: actor,
       },
@@ -2914,7 +2932,7 @@ export class Orchestrator {
     this.ctx.store.update(
       meta.taskId,
       {
-        status: 'landed',
+        status: this.statuses().roles.landed,
         appendActivity: `${now} run ${meta.id} merged into ${meta.baseBranch}`,
         activityActor: actor,
       },
@@ -2965,7 +2983,7 @@ export class Orchestrator {
    */
   epicLandStatus(epicId: string): EpicLandStatus {
     const epic = this.requireEpicDoc(epicId);
-    if (epic.meta.status === 'landed') {
+    if (isCompletedStatus(epic.meta.status, this.statuses())) {
       throw new OrchestratorConflictError(`epic has already landed: ${epicId}`);
     }
     const branch = epicBranchName(epicId);
@@ -2979,7 +2997,7 @@ export class Orchestrator {
       .query({ parent: epicId, includeArchived: true })
       .filter((t) => !isContainerKind(t.meta.kind));
     const unfinished = children.filter(
-      (c) => c.meta.status !== 'landed' && c.meta.status !== 'dropped'
+      (c) => !isDoneStatus(c.meta.status, this.statuses())
     );
     if (unfinished.length > 0) {
       const named = unfinished
@@ -3090,7 +3108,7 @@ export class Orchestrator {
     this.ctx.store.update(
       epicId,
       {
-        status: 'landed',
+        status: this.statuses().roles.landed,
         appendActivity: `${now} [epic] landed on ${base}${
           hasChanges ? '' : ' (no commits to merge)'
         }`,
@@ -3143,12 +3161,15 @@ export class Orchestrator {
       );
       this.worktrees.removeBranchRef(branch);
     }
-    if (epic !== null && epic.meta.status !== 'landed') {
+    if (
+      epic !== null &&
+      !isCompletedStatus(epic.meta.status, this.statuses())
+    ) {
       const now = new Date().toISOString();
       this.ctx.store.update(
         epicId,
         {
-          status: 'landed',
+          status: this.statuses().roles.landed,
           appendActivity: `${now} [epic] landed via PR (${prUrl})`,
           // Whoever merged did so on GitHub, outside anything dispatch can
           // attribute — same rule as markRunMergedViaPr.
@@ -3739,7 +3760,10 @@ export class Orchestrator {
   // eligible — never un-archives one that already was.
   reconcileArchives(): number {
     if (!this.worktrees.hasOriginRemote()) return 0;
-    const doneTasks = this.ctx.cache.query({ status: 'landed' });
+    const model = this.statuses();
+    const doneTasks = this.ctx.cache
+      .query()
+      .filter((t) => isCompletedStatus(t.meta.status, model));
     if (doneTasks.length === 0) return 0;
     // Newest merged run per task, scanned once against registry.list()'s own
     // most-recent-first order — mirrors newestRunByBranch()'s same shape. Safe
@@ -3982,7 +4006,10 @@ export class Orchestrator {
         appendActivity: `${now} ${activityNote}`,
         activityActor: 'none',
       };
-      if (task.meta.status === 'working') patch.status = 'review';
+      const model = this.statuses();
+      if (hasStatusRole(task.meta.status, 'dispatched', model)) {
+        patch.status = model.roles.review;
+      }
       this.ctx.store.update(meta.taskId, patch, now);
       this.ctx.cache.rebuild(this.ctx.store);
       this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
@@ -4506,7 +4533,10 @@ export class Orchestrator {
         // daemon right now.
         activityActor: this.ctx.actorContext?.agentRef(meta.executor),
       };
-      if (task.meta.status === 'working') patch.status = 'review';
+      const model = this.statuses();
+      if (hasStatusRole(task.meta.status, 'dispatched', model)) {
+        patch.status = model.roles.review;
+      }
       this.ctx.store.update(meta.taskId, patch, now);
       this.ctx.cache.rebuild(this.ctx.store);
       this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
@@ -4629,7 +4659,7 @@ export class Orchestrator {
     this.ctx.store.update(
       oldMeta.taskId,
       {
-        status: 'working',
+        status: this.statuses().roles.dispatched,
         appendActivity: `${now} requested changes (run ${runId}): ${text}${substitutionNote}`,
         activityActor: actor,
       },
@@ -4814,7 +4844,7 @@ export class Orchestrator {
     this.ctx.store.update(
       meta.taskId,
       {
-        status: 'working',
+        status: this.statuses().roles.dispatched,
         appendActivity: `${now} ${how} (run ${newRunId})${sessionNote}${substitutionNote}${carriedNote}`,
         // Left unattributed on the auto path: no person asked for this one, and
         // crediting the daemon's operator would misreport who acted.

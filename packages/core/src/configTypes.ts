@@ -3,6 +3,7 @@ import type { PolicyConfig, PolicyGate, PolicyGateMode } from './policy.js';
 import { DEFAULT_POLICY } from './policy.js';
 import type { QueueWeights } from './scoring.js';
 import { DEFAULT_QUEUE_WEIGHTS } from './scoring.js';
+import type { StatusDefinition, StatusRoles } from './status.js';
 
 // The browser-safe half of the config module: shapes and defaults with no
 // filesystem access, so the desktop webview can import them.
@@ -160,8 +161,20 @@ export interface VerifyStep {
   command: string;
 }
 
+/** A `statuses:` entry as written: a bare name, or a name with a type/color. */
+export type StatusEntryInput =
+  | string
+  | { name: string; type?: StatusDefinition['type']; color?: string | null };
+
 export interface DispatchConfig {
+  /** Status names in board order (always populated). */
   statuses: string[];
+  /** Typed statuses, parallel to `statuses`. Set by loadConfig when any
+   *  entry is typed; read through `statusModelOf`, which fills defaults. */
+  statusDefinitions?: StatusDefinition[];
+  /** Which status each lifecycle event writes. Absent means the defaults;
+   *  read through `statusModelOf`. */
+  statusRoles?: StatusRoles;
   autoCommit: boolean;
   verifyCommand?: string;
   /** Verify as named steps rather than one opaque command, so a failure names
@@ -597,7 +610,9 @@ export interface ConfigPatch {
   // patched document is then validated whole (updateConfig), so none of
   // these can write something the loader would refuse.
   /** The board's statuses, in order, replacing the list. */
-  statuses?: string[];
+  statuses?: StatusEntryInput[];
+  /** Replaces `statusRoles`; null removes it (defaults apply again). */
+  statusRoles?: StatusRoles | null;
   /** Named verify gates, replacing the list; null or empty removes it. */
   verifySteps?: VerifyStep[] | null;
   /** Per remote name: a config sets it, null removes it. */
