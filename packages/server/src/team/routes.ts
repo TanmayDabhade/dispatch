@@ -10,12 +10,16 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { ApiContext } from '../api.js';
+import { errorResponse, jsonResponse, readJsonBody } from '../api/http.js';
 import type { AuthTier } from '../tiers.js';
 import { AUTH_TIERS, isAuthTier, tierAllows } from '../tiers.js';
-import { errorResponse, jsonResponse, readJsonBody } from './http.js';
+import type { LicenseState } from './license.js';
+import { SeatLimitError } from './teammates.js';
 
 // Issuing credentials to teammates: the step that turns one person's daemon
-// into one a team can share. Every route here is decide-tier (see
+// into one a team can share, and the license that says how many teammates
+// that may be. Licensed under the Elastic License 2.0 (./LICENSE).
+// Every route here is decide-tier (see
 // ELEVATED_ROUTES) — handing out a credential is an adjudication, and an
 // agent holding the on-disk agent token must not be able to mint itself a
 // second identity.
@@ -94,7 +98,8 @@ function readRoster(
   }
 }
 
-// GET /api/team/tokens — who holds credentials, never the credentials.
+// GET /api/team/tokens — who holds credentials, never the credentials. The
+// operator's built-in pair comes first, from the daemon's own registry.
 export function listTeamTokens(ctx: ApiContext): Response {
   return jsonResponse(ctx.tokens.registry.list());
 }
@@ -173,14 +178,24 @@ export async function issueTeamToken(
 
   // Issuing replaces what they held, so replacing an operator token is as
   // privileged as revoking one.
-  const current = ctx.tokens.registry.issuedTier(handle);
+  const current = ctx.team.teammates.issuedTier(handle);
   if (current !== null) {
     const replacing = exceedsCaller(ctx, current);
     if (replacing !== null) return replacing;
   }
-  const token = ctx.tokens.registry.issue(handle, tier, {
-    expiresAt: expiry.expiresAt,
-  });
+  let token: string;
+  try {
+    token = ctx.team.teammates.issue(handle, tier, {
+      expiresAt: expiry.expiresAt,
+    });
+  } catch (err) {
+    if (!(err instanceof SeatLimitError)) throw err;
+    // 402: the request is fine, and a seat is what it takes.
+    return jsonResponse(
+      { error: err.message, code: 'seat_limit', seats: err.seats },
+      402
+    );
+  }
   return jsonResponse(
     {
       handle,
@@ -196,12 +211,58 @@ export async function issueTeamToken(
 // rather than a silent 200 when there was nothing to revoke, so a typo in a
 // handle is visible instead of reading as success.
 export function revokeTeamToken(ctx: ApiContext, handle: string): Response {
-  const current = ctx.tokens.registry.issuedTier(handle);
+  const current = ctx.team.teammates.issuedTier(handle);
   if (current === null) {
     return errorResponse(404, `no issued token for "${handle}"`);
   }
   const refused = exceedsCaller(ctx, current);
   if (refused !== null) return refused;
-  ctx.tokens.registry.revoke(handle);
+  ctx.team.teammates.revoke(handle);
   return jsonResponse({ ok: true, tier: current });
+}
+
+/** What Settings → License shows: the plan, and who it covers. Never the
+ *  key itself, which is the licensee's to keep. */
+function licenseView(ctx: ApiContext, state: LicenseState) {
+  return {
+    kind: state.kind,
+    seats: state.seats,
+    used: ctx.team.teammates.peopleWithAccess(),
+    org: 'license' in state ? state.license.org : null,
+    expiresAt: 'license' in state ? state.license.expiresAt : null,
+    reason: state.kind === 'invalid' ? state.reason : null,
+  };
+}
+
+// GET /api/license
+export function getLicense(ctx: ApiContext): Response {
+  return jsonResponse(licenseView(ctx, ctx.team.license.state()));
+}
+
+// PUT /api/license — install a key. One that does not verify is refused with
+// why, and the key already installed stays.
+export async function installLicense(
+  req: Request,
+  ctx: ApiContext
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const { key } = parsed.value as { key?: unknown };
+  if (typeof key !== 'string' || key.trim() === '') {
+    return errorResponse(400, 'expected { key }');
+  }
+  const next = ctx.team.license.install(key);
+  if (next.kind === 'expired') {
+    return errorResponse(
+      400,
+      `that key for ${next.license.org} expired on ${next.license.expiresAt?.slice(0, 10)}`
+    );
+  }
+  if (next.kind !== 'licensed') {
+    return errorResponse(
+      400,
+      `that is not a license key this build accepts: ${next.kind === 'invalid' ? next.reason : 'unreadable'}`
+    );
+  }
+  return jsonResponse(licenseView(ctx, next));
 }

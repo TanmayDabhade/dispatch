@@ -658,9 +658,13 @@ export interface ApiClient {
   getSyncStatus(): Promise<SyncStatus>;
   /** Runs a sync pass and answers with the state after it. */
   syncNow(): Promise<SyncStatus>;
+  /** The plan the project runs on, and how many seats are in use. */
+  getLicense(): Promise<LicenseStatus>;
+  /** Installs a license key (operator tier). */
+  installLicense(key: string): Promise<LicenseStatus>;
 }
 
-/** Mirrors SyncStatus in packages/server/src/boardSync/service.ts. */
+/** Mirrors SyncStatus in packages/server/src/team/boardSync/service.ts. */
 export type SyncStatus =
   | { enabled: false }
   | {
@@ -673,13 +677,26 @@ export type SyncStatus =
       pending: number;
       applied: number;
       problems: { task: string; message: string; at: string }[];
+      people: number;
+      seats: number;
+      paused: string | null;
     };
+
+/** Mirrors licenseView in packages/server/src/team/routes.ts. */
+export interface LicenseStatus {
+  kind: 'free' | 'licensed' | 'expired' | 'invalid';
+  seats: number;
+  used: number;
+  org: string | null;
+  expiresAt: string | null;
+  reason: string | null;
+}
 
 /** Mirrors AuthTier in packages/server/src/tiers.ts. */
 export type TeamTier = 'request' | 'decide' | 'operator';
 
 /** A freshly issued teammate credential — the only response that ever carries
- *  one. Mirrors issueTeamToken in packages/server/src/api/team.ts. */
+ *  one. Mirrors issueTeamToken in packages/server/src/team/routes.ts. */
 interface IssuedTeamToken {
   handle: string;
   tier: TeamTier;
@@ -827,6 +844,12 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
     listTeamTokens: () => request(target, '/api/team/tokens'),
     getSyncStatus: () => request(target, '/api/board-sync'),
     syncNow: () => request(target, '/api/board-sync/now', { method: 'POST' }),
+    getLicense: () => request(target, '/api/license'),
+    installLicense: (key) =>
+      request(target, '/api/license', {
+        ...jsonBody({ key }),
+        method: 'PUT',
+      }),
     revokeTeamToken: async (handle) => {
       await request(target, `/api/team/tokens/${encodeURIComponent(handle)}`, {
         method: 'DELETE',

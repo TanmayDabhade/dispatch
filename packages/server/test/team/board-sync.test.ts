@@ -3,10 +3,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
-import type { ServerHandle } from '../src/index.js';
-import { startServer } from '../src/index.js';
-import { runGitSync } from './orchestrator/helpers.js';
-import { rawFetch } from './testAuth.js';
+import type { ServerHandle } from '../../src/index.js';
+import { startServer } from '../../src/index.js';
+import { runGitSync } from '../orchestrator/helpers.js';
+import { rawFetch } from '../testAuth.js';
+import { licensedManager } from './licenseKeys.js';
 
 // Board sync end to end: real daemons, each with its own project checkout
 // and its own database, exchanging changes through a real git remote — a bare
@@ -254,6 +255,64 @@ describe('board sync', () => {
     await grace.sync();
     expect((await grace.get(id))?.meta.title).toBe('Made before the move');
   });
+
+  it('past the free plan, the fourth person pauses and the first three sync on', async () => {
+    const first = [
+      await teammate('ada'),
+      await teammate('grace'),
+      await teammate('linus'),
+    ];
+    const ids: string[] = [];
+    for (const who of first) {
+      ids.push(await who.create(`From ${ids.length}`));
+      await who.sync();
+    }
+    for (const who of first) await who.sync();
+
+    // Barbara is the fourth person on the branch: paused, told why, and her
+    // work stays on her machine rather than reaching anyone.
+    const barbara = await teammate('barbara');
+    const hers = await barbara.create('Made while paused');
+    const status = (await barbara.sync()).body as {
+      paused: string | null;
+      people: number;
+      seats: number;
+    };
+    expect(status.paused).toContain('free plan covers 3');
+    expect(status.seats).toBe(3);
+    expect(await barbara.get(ids[0])).toBeNull();
+    for (const who of first) await who.sync();
+    expect(await first[0].get(hers)).toBeNull();
+
+    // The three still share everything with each other.
+    const later = await first[2].create('Still syncing');
+    await first[2].sync();
+    await first[0].sync();
+    expect((await first[0].get(later))?.meta.title).toBe('Still syncing');
+    expect(((await first[0].sync()).body as { paused: unknown }).paused).toBe(
+      null
+    );
+
+    // A machine that pushes anyway — its own license check says yes, the
+    // others' say no — still does not get onto their boards.
+    barbara.handle.team.license = licensedManager(5);
+    expect(((await barbara.sync()).body as { paused: unknown }).paused).toBe(
+      null
+    );
+    for (const who of first) await who.sync();
+    expect(await first[0].get(hers)).toBeNull();
+
+    // Seats for four: Barbara joins with her work intact, nothing redone.
+    for (const who of [...first, barbara]) {
+      who.handle.team.license = licensedManager(5);
+    }
+    expect(((await barbara.sync()).body as { paused: unknown }).paused).toBe(
+      null
+    );
+    await first[0].sync();
+    expect((await first[0].get(hers))?.meta.title).toBe('Made while paused');
+    expect((await barbara.get(ids[0]))?.meta.title).toBe('From 0');
+  }, 60_000);
 
   it('a new machine with an empty database gets the whole board', async () => {
     const ada = await teammate('ada');

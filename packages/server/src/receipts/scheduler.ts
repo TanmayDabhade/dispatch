@@ -1,9 +1,9 @@
 import type { ActorContext, ProjectStores } from '@dispatch/core';
 import { DEFAULT_RECEIPTS_BRANCH, loadConfig } from '@dispatch/core';
 
-import type { PushTarget } from '../boardSync/repo.js';
-import { resolvePushTarget } from '../boardSync/repo.js';
 import type { EventBus, ServerEvent } from '../events.js';
+import type { PushTarget } from '../gitTarget.js';
+import { resolvePushTarget } from '../gitTarget.js';
 import type { AsyncGitRunner, GitRunner } from '../sync/worktree.js';
 import { defaultAsyncGitRunner } from '../sync/worktree.js';
 import { markBlockingSection } from '../watchdog.js';

@@ -330,16 +330,3 @@ export {
   TEAM_GITATTRIBUTES_LINE,
   writeGitAttributes,
 } from './mergeDriverSetup.js';
-export type {
-  ApplyResult,
-  BoardOp,
-  HeldField,
-  MergeState,
-} from './boardSync.js';
-export {
-  applyOp,
-  assembleFromState,
-  diffTask,
-  HybridClock,
-  recordLocal,
-} from './boardSync.js';

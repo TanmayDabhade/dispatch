@@ -33,6 +33,9 @@ const on: BoardSyncStatus = {
   pending: 0,
   applied: 3,
   problems: [],
+  people: 2,
+  seats: 3,
+  paused: null,
 };
 
 test('off, it says how to turn it on', async () => {
@@ -73,4 +76,16 @@ test('syncedWhen reads the states a person sees', () => {
   expect(syncedWhen({ enabled: false })).toBe('Off');
   expect(syncedWhen({ ...on, lastSyncAt: null })).toBe('Not synced yet');
   expect(syncedWhen(on)).toMatch(/^Synced /);
+});
+
+test('past the seats it says it is paused, not that the remote is down', async () => {
+  mount({
+    ...on,
+    paused:
+      'Board sync is paused on this machine: more people share this board than the license covers (the free plan covers 3).',
+  });
+  expect(
+    await screen.findByText(/Board sync is paused on this machine/)
+  ).toBeTruthy();
+  expect(screen.queryByText(/could not be reached/)).toBeNull();
 });

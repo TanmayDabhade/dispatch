@@ -3,7 +3,8 @@
 Dispatch is open core. This file is the plain-language map of what is licensed
 how, and why. The legal texts are the per-package `LICENSE` files and the root
 [`LICENSE`](LICENSE); where this summary and a license text disagree, the
-license text wins. Decided 2026-08-23.
+license text wins. Decided 2026-08-23; the team tier moved into this repo, under
+the Elastic License 2.0, on 2026-09-23.
 
 ## The split
 
@@ -11,7 +12,7 @@ license text wins. Decided 2026-08-23.
 | ------------------------------------------------------------------------------------------ | ---------------------------------------- |
 | `packages/core`, `packages/client`, `packages/cli`, `packages/mcp`                         | MIT                                      |
 | Everything else in this repo (desktop app, `dispatchd` + orchestrator, web/ui, demo, site) | FSL-1.1-ALv2 ([root `LICENSE`](LICENSE)) |
-| The team server                                                                            | Commercial, separate private repo        |
+| Team features: `packages/server/src/team/` and `packages/server/test/team/`                | Elastic-2.0 (their own `LICENSE` files)  |
 
 Three tiers, one rule each:
 
@@ -26,11 +27,42 @@ Three tiers, one rule each:
   (`FSL-1.1-ALv2`): read, build, modify, self-host, and redistribute for any
   purpose except shipping a competing product or service — and **each release
   converts to Apache-2.0 two years after it ships**, irrevocably.
-- **Commercial — the team tier.** Team features (accounts, presence, claims,
-  shared run visibility, web dashboard, audit) live in the team server, which is
-  a paid service — hosted by us or self-hosted under a commercial license — and
-  is not in this repo. The paid boundary is the server, not license checks in
-  this code. See `docs/TEAM-SERVER.md`.
+- **Elastic License 2.0 — the team tier.** What lets more than one person use
+  Dispatch together lives in `packages/server/src/team/`: teammates' tokens on a
+  shared host, board sync between teammates' own machines, and the license key
+  that says how many people that may be. Free for up to **three people** with
+  every feature; more needs a license key. ELv2 allows use, modification and
+  redistribution, but not moving, disabling or circumventing the license key,
+  and not offering the software as a hosted service — the two things the FSL's
+  "internal use" grant could not rule out, which is why this code is not FSL.
+  See "The team tier, plainly" below.
+
+## The team tier, plainly
+
+- **Who counts.** A person is a Dispatch handle (git email → `team.yml`). On a
+  shared host: the operator plus everyone holding a live invite. On a synced
+  board: everyone whose changes are on the sync branch, however many machines
+  each uses.
+- **At the limit.** A fourth invite is refused with the reason (HTTP 402,
+  `seat_limit`). If more people hold invites than there are seats — a license
+  lapsed, a file edited by hand — the people invited first keep working and the
+  rest are told why at sign-in. On a synced board the first people to sync keep
+  syncing; anyone past the seats pauses, keeps working locally, and catches up
+  when seats are added. Nothing is deleted either way.
+- **The key.** An Ed25519-signed `dispatch1.…` string carrying the organization,
+  seats and expiry, checked on the machine against the public key in
+  `team/license.ts` — no phone-home. Install it in Settings → License,
+  `dispatch license set <key>`, `$DISPATCH_HOME/.dispatch/license.key`, or the
+  `DISPATCH_LICENSE` environment variable. An expired or invalid key reads as
+  the free plan with the reason; it never locks anyone out.
+- **Issuing keys.** `bun scripts/license-keygen.ts <path>` once, to make the
+  signing key pair (paste the printed public key into `LICENSE_PUBLIC_KEY`);
+  `bun scripts/license-issue.ts --key <path> --org … --seats … [--expires …]`
+  per customer. The private key never goes in this repo.
+- **What stays FSL.** Everything a person working alone uses, plus the plumbing
+  that does nothing without a second person's credential: the permission tiers,
+  HTTPS, browser sign-in, presence, teammate previews, the receipt log and its
+  push and restore.
 
 ## Fine print, stated plainly
 
@@ -47,10 +79,10 @@ Three tiers, one rule each:
   integration packages are MIT; the app is source-available and becomes Apache
   2.0 two years after each release."
 - **Contributions require a CLA.** Outside PRs are welcome on any part of the
-  repo, but code here may move across the license boundary (including into the
-  commercial server), so we need a contributor license agreement — CLA Assistant
-  on the repo, signed once per contributor. DCO is not enough: it proves
-  provenance but does not permit relicensing.
+  repo, but code here may move across the license boundary (as the team tier
+  did, from FSL to ELv2), so we need a contributor license agreement — CLA
+  Assistant on the repo, signed once per contributor. DCO is not enough: it
+  proves provenance but does not permit relicensing.
 - **The name.** "Dispatch" the mark is claimed by the project regardless of what
   the licenses permit you to do with the code. A fork must not present itself as
   Dispatch.

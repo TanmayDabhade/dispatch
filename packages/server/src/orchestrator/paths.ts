@@ -199,7 +199,7 @@ export function boardSyncDir(rootDir: string): string {
 
 /**
  * Where issued teammate tokens live across a restart — as sha256 hashes, never
- * the tokens (see identity.ts). Beside the receipt log under `projects/`, and
+ * the tokens (see team/teammates.ts). Beside the receipt log under `projects/`, and
  * outside the repo for the obvious reason: a credential file must never be
  * one `git add -A` away from a commit.
  */
@@ -233,4 +233,13 @@ export function terminalsDir(rootDir: string): string {
 
 export function terminalScrollbackPath(rootDir: string, id: string): string {
   return join(terminalsDir(rootDir), `${id}.log`);
+}
+
+/**
+ * Where a license key is installed (team/license.ts): one per machine rather
+ * than per project, since a key belongs to whoever bought it, not to a
+ * checkout.
+ */
+export function licenseKeyPath(): string {
+  return join(dispatchHome(), '.dispatch', 'license.key');
 }

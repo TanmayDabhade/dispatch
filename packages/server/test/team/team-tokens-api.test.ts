@@ -4,10 +4,12 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { ServerHandle } from '../src/index.js';
-import { startServer } from '../src/index.js';
-import { runGitSync } from './orchestrator/helpers.js';
-import { rawFetch } from './testAuth.js';
+import type { ServerHandle } from '../../src/index.js';
+import { startServer } from '../../src/index.js';
+import { LicenseManager } from '../../src/team/license.js';
+import { runGitSync } from '../orchestrator/helpers.js';
+import { rawFetch } from '../testAuth.js';
+import { licensedManager, licenseFor, testKeys } from './licenseKeys.js';
 
 // The invite flow end to end through a real daemon: issue a teammate a
 // credential, use it, see it attributed, revoke it — and that none of it is
@@ -36,6 +38,10 @@ beforeEach(async () => {
   root = initRepo();
   TaskStore.init(root);
   handle = await startServer({ rootDir: root, port: 0, webDistDir: null });
+  // These tests are about tiers and tokens, and invite more people than the
+  // free plan's three; the seat limit itself is tested below, on the free
+  // plan, and in teammates.test.ts.
+  handle.team.license = licensedManager(50);
   baseUrl = `http://127.0.0.1:${handle.port}`;
 });
 
@@ -389,7 +395,7 @@ describe('browser sessions', () => {
 
   it('an expired token is refused with the date and who to ask', async () => {
     // Issued straight on the registry, since the API floors expiry at a day.
-    const token = handle.tokens.registry.issue('ada', 'request', {
+    const token = handle.team.teammates.issue('ada', 'request', {
       expiresAt: new Date('2020-01-01T00:00:00Z'),
     });
     const res = await rawFetch(`${baseUrl}/api/whoami`, {
@@ -465,5 +471,102 @@ describe('invite expiry', () => {
     expect(ada?.expiresAt).not.toBeNull();
     expect(ada?.lastUsedAt).not.toBeNull();
     expect(JSON.stringify(list)).not.toContain(token);
+  });
+});
+
+describe('seats over the API', () => {
+  let keys: { publicKey: string; privateKey: string };
+
+  beforeEach(() => {
+    // The free plan, in a daemon that trusts a test signing key.
+    keys = testKeys();
+    handle.team.license = new LicenseManager({
+      path: join(fakeHome, 'license.key'),
+      publicKey: keys.publicKey,
+    });
+  });
+
+  async function license(token = handle.tokens.appToken) {
+    const res = await rawFetch(`${baseUrl}/api/license`, {
+      headers: headers(token),
+    });
+    return (await res.json()) as Record<string, unknown>;
+  }
+
+  async function install(key: string, token = handle.tokens.appToken) {
+    return rawFetch(`${baseUrl}/api/license`, {
+      method: 'PUT',
+      headers: headers(token),
+      body: JSON.stringify({ key }),
+    });
+  }
+
+  it('the free plan fits three people, and a fourth is told why', async () => {
+    expect(await license()).toMatchObject({ kind: 'free', seats: 3, used: 1 });
+    expect((await invite({ email: 'ada@example.com' })).status).toBe(201);
+    expect((await invite({ email: 'grace@example.com' })).status).toBe(201);
+
+    const refused = await invite({ email: 'linus@example.com' });
+    expect(refused.status).toBe(402);
+    const body = (await refused.json()) as { code: string; error: string };
+    expect(body.code).toBe('seat_limit');
+    expect(body.error).toContain('free plan covers 3 people');
+    expect(await license()).toMatchObject({ used: 3 });
+  });
+
+  it('a license key adds seats at once, and only the owner installs one', async () => {
+    const lead = (
+      (await (
+        await invite({ email: 'ada@example.com', tier: 'decide' })
+      ).json()) as { token: string }
+    ).token;
+    await invite({ email: 'grace@example.com' });
+    const key = licenseFor(keys.privateKey, { org: 'Acme', seats: 5 });
+
+    // A decide-tier lead runs the project; buying for it is the owner's call,
+    // and the agent token is nowhere near either.
+    expect((await install(key, lead)).status).toBe(403);
+    expect((await install(key, handle.tokens.agentToken)).status).toBe(403);
+    expect(await license()).toMatchObject({ kind: 'free' });
+
+    expect((await install(key)).status).toBe(200);
+    expect(await license()).toMatchObject({
+      kind: 'licensed',
+      org: 'Acme',
+      seats: 5,
+      used: 3,
+    });
+    expect((await invite({ email: 'linus@example.com' })).status).toBe(201);
+  });
+
+  it('a key signed by anyone else is refused, and the plan stays as it was', async () => {
+    const forged = licenseFor(testKeys().privateKey, { seats: 500 });
+    const res = await install(forged);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain(
+      'signature does not match'
+    );
+    expect(await license()).toMatchObject({ kind: 'free', seats: 3 });
+  });
+
+  it('a teammate past the seats is refused at the door, with the reason', async () => {
+    // Four people hold tokens under a five-seat license…
+    handle.team.license.install(licenseFor(keys.privateKey, { seats: 5 }));
+    const tokens: string[] = [];
+    for (const email of ['a1@x.com', 'a2@x.com', 'a3@x.com']) {
+      const res = await invite({ email });
+      tokens.push(((await res.json()) as { token: string }).token);
+    }
+    // …then it is gone: the earliest two keep working, the third is told.
+    rmSync(join(fakeHome, 'license.key'));
+    const whoami = (token: string) =>
+      rawFetch(`${baseUrl}/api/tasks`, { headers: headers(token) });
+    expect((await whoami(tokens[0])).status).toBe(200);
+    expect((await whoami(tokens[1])).status).toBe(200);
+    const refused = await whoami(tokens[2]);
+    expect(refused.status).toBe(403);
+    expect(((await refused.json()) as { code: string }).code).toBe(
+      'seat_limit'
+    );
   });
 });

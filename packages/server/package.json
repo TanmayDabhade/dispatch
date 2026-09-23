@@ -2,7 +2,7 @@
   "name": "@dispatch/server",
   "version": "0.24.0",
   "private": true,
-  "license": "FSL-1.1-ALv2",
+  "license": "FSL-1.1-ALv2 AND Elastic-2.0",
   "bin": {
     "dispatchd": "./src/bin.ts"
   },
