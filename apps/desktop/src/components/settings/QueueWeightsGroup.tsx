@@ -16,12 +16,12 @@ interface Props {
 export function QueueWeightsGroup({ config, onSave }: Props) {
   const result = queueWeights(config);
   const hint =
-    'How much each factor counts when ready tasks are ranked. 0 leaves one out; the ranking is a weighted average, so only the proportions matter.';
+    'How much each factor counts when choosing which ready task runs next. Only the proportions matter; 0 ignores a factor.';
   if ('error' in result) {
     return (
-      <SettingsGroup title="What runs next" hint={hint}>
+      <SettingsGroup title="Task ranking" hint={hint} keywords="queue weights">
         <SettingsRow
-          title="The weights in config.yml could not be read"
+          title="The ranking in config.yml couldn't be read"
           subtitle={result.error}
         />
       </SettingsGroup>
@@ -29,7 +29,11 @@ export function QueueWeightsGroup({ config, onSave }: Props) {
   }
   const { weights } = result;
   return (
-    <SettingsGroup title="What runs next" hint={hint}>
+    <SettingsGroup
+      title="Task ranking"
+      hint={hint}
+      keywords="queue weights priority"
+    >
       {QUEUE_FACTORS.map((factor) => (
         <NumberSetting
           key={factor.key}

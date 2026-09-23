@@ -212,8 +212,8 @@ aliases, `executors.<name>.models` overlays them per executor, and
 composer picker is left on Default; an unset role sends none, so the model's own
 default holds, and a run records its effort in `RunMeta` so a resume keeps it.
 Only the Claude executor, overseer and planner act on it. Fix and verify runs
-follow the executor that wrote the work; review runs use the project default. Both
-executors share the Dispatch and carto MCP wiring in
+follow the executor that wrote the work; review runs use the project default.
+Both executors share the Dispatch and carto MCP wiring in
 `orchestrator/dispatchMcp.ts`.
 
 Codex caveats: it reports token usage but no dollar cost unless

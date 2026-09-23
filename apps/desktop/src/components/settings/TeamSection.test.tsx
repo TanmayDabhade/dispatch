@@ -77,9 +77,8 @@ describe('holderDates', () => {
 describe('TeamSection', () => {
   test('below decide, it says who to ask instead of offering controls', () => {
     mount({ myTier: 'request', client: teamClient([]) as never });
-    expect(
-      screen.getByText('Inviting and removing people needs the decide tier')
-    ).toBeTruthy();
+    expect(screen.getByText('Inviting people')).toBeTruthy();
+    expect(screen.getByText(/Needs Can approve access/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Invite/ })).toBeNull();
   });
 
@@ -151,7 +150,9 @@ describe('TeamSection', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: /Invite/ }));
     await waitFor(() =>
-      expect(screen.getByText(/only answers on this machine/)).toBeTruthy()
+      expect(
+        screen.getByText(/only accepts connections from this machine/)
+      ).toBeTruthy()
     );
   });
 

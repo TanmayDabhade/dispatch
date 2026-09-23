@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 
-import { SettingsHint, SettingsRow } from './SettingsGroup';
+import { OPERATOR_ONLY, SettingsRow } from './SettingsGroup';
 import { Switch } from '@/ui/ai/switch';
 import { Input } from '@/ui/input';
 import {
@@ -22,20 +22,18 @@ interface FieldBase {
   id: string;
   title: string;
   subtitle?: ReactNode;
-  /** Shown instead of the control when the caller may not change this — the
-   *  operator-tier settings, for a teammate below it. */
+  /** Extra words search should find this setting by. */
+  keywords?: string;
+  /** Set when the caller may not change this (the operator-tier settings, for
+   *  a teammate below it): the value shows read-only beside a lock. */
   locked?: string;
-}
-
-/** Why a setting is read-only here, where the control would be. */
-function Locked({ reason }: { reason: string }) {
-  return <SettingsHint>{reason}</SettingsHint>;
 }
 
 export function TextSetting({
   id,
   title,
   subtitle,
+  keywords,
   locked,
   value,
   placeholder,
@@ -51,12 +49,16 @@ export function TextSetting({
   const [draft, setDraft] = useState(value ?? '');
   useEffect(() => setDraft(value ?? ''), [value]);
   return (
-    <SettingsRow title={title} subtitle={subtitle} htmlFor={id} stacked>
+    <SettingsRow
+      title={title}
+      subtitle={subtitle}
+      keywords={keywords}
+      locked={locked !== undefined}
+      htmlFor={id}
+      stacked
+    >
       {locked !== undefined ? (
-        <>
-          <p className="font-mono text-[13px]">{value ?? '—'}</p>
-          <Locked reason={locked} />
-        </>
+        <p className="font-mono text-[13px]">{value ?? '—'}</p>
       ) : (
         <Input
           id={id}
@@ -80,11 +82,13 @@ export function NumberSetting({
   id,
   title,
   subtitle,
+  keywords,
   locked,
   value,
   min = 1,
   integer = true,
   suffix,
+  placeholder,
   allowEmpty = false,
   onSave,
 }: FieldBase & {
@@ -92,6 +96,7 @@ export function NumberSetting({
   min?: number;
   integer?: boolean;
   suffix?: string;
+  placeholder?: string;
   /** Whether emptying the field is allowed, saving `null` (the default). */
   allowEmpty?: boolean;
   onSave: (next: number | null) => void;
@@ -103,6 +108,8 @@ export function NumberSetting({
     <SettingsRow
       title={title}
       subtitle={subtitle}
+      keywords={keywords}
+      locked={locked !== undefined}
       htmlFor={id}
       control={
         locked !== undefined ? (
@@ -113,6 +120,7 @@ export function NumberSetting({
               id={id}
               value={draft}
               inputMode="decimal"
+              placeholder={placeholder}
               className="w-24 text-right tabular-nums"
               onChange={(e) => setDraft(e.target.value)}
               onBlur={() => {
@@ -141,9 +149,7 @@ export function NumberSetting({
           </span>
         )
       }
-    >
-      {locked !== undefined && <Locked reason={locked} />}
-    </SettingsRow>
+    />
   );
 }
 
@@ -151,6 +157,7 @@ export function SwitchSetting({
   id,
   title,
   subtitle,
+  keywords,
   locked,
   checked,
   onSave,
@@ -159,6 +166,8 @@ export function SwitchSetting({
     <SettingsRow
       title={title}
       subtitle={subtitle}
+      keywords={keywords}
+      locked={locked !== undefined}
       htmlFor={id}
       control={
         <Switch
@@ -168,9 +177,7 @@ export function SwitchSetting({
           onCheckedChange={onSave}
         />
       }
-    >
-      {locked !== undefined && <Locked reason={locked} />}
-    </SettingsRow>
+    />
   );
 }
 
@@ -178,6 +185,7 @@ export function ChoiceSetting<T extends string>({
   id,
   title,
   subtitle,
+  keywords,
   locked,
   value,
   choices,
@@ -191,6 +199,8 @@ export function ChoiceSetting<T extends string>({
     <SettingsRow
       title={title}
       subtitle={subtitle}
+      keywords={keywords}
+      locked={locked !== undefined}
       htmlFor={id}
       control={
         <Select
@@ -210,12 +220,8 @@ export function ChoiceSetting<T extends string>({
           </SelectContent>
         </Select>
       }
-    >
-      {locked !== undefined && <Locked reason={locked} />}
-    </SettingsRow>
+    />
   );
 }
 
-/** The note an operator-only setting carries for anyone below that tier. */
-export const OPERATOR_ONLY =
-  'Only whoever runs this daemon can change this: it runs a command on their machine or sends its data elsewhere.';
+export { OPERATOR_ONLY };

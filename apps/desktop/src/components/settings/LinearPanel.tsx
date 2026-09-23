@@ -51,8 +51,9 @@ function LinearIntervalRow({
   useEffect(() => setDraft(String(value)), [value]);
   return (
     <SettingsRow
-      title="Poll interval"
-      subtitle="Seconds between sync passes, minimum 30."
+      title="Check for changes every"
+      subtitle="At least 30 seconds."
+      keywords="poll interval"
       htmlFor="linear-poll-interval"
       control={
         <Input
@@ -237,8 +238,9 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
   return (
     <>
       <SettingsGroup
-        title="Linear"
-        hint="Keeps this project’s tasks and one Linear team in step. Issues in the team become tasks here and tasks created here become issues there; a task’s status change moves the issue to the matching workflow state, and the reverse, using the status map below. Sync runs on the interval you pick and only carries what changed since the last one — Import brings the team’s existing backlog across once. The API key stays in ~/.dispatch/credentials.json, never in the repo."
+        title="Connection"
+        hint="Issues in the chosen team and tasks here stay in step, statuses included. Your API key is stored on this machine, never in the repo."
+        keywords="linear api key team"
       >
         {linearStatus.keySource !== 'project' && (
           <SettingsRow
@@ -385,9 +387,8 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
 
             <PanelRow>
               <SettingsHint>
-                Labels sync in from Linear, but a label you add or remove here
-                does not push back out yet — edit labels on the Linear side for
-                now.
+                Labels come in from Linear but don&rsquo;t go back out yet, so
+                change labels in Linear for now.
               </SettingsHint>
             </PanelRow>
           </>
@@ -397,7 +398,8 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
       {linearStatus.connected && teamChosen && (
         <SettingsGroup
           title="Status mapping"
-          hint={`${String(completeness.mapped)} of ${String(completeness.total)} mapped.`}
+          hint={`Which Linear state each column matches. ${String(completeness.mapped)} of ${String(completeness.total)} mapped.`}
+          keywords="workflow states columns"
         >
           {data.linearStatesError !== null && (
             <FetchFailureRow
@@ -422,10 +424,10 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
       )}
 
       {linearStatus.connected && (
-        <SettingsGroup title="Sync">
+        <SettingsGroup title="Sync" keywords="linear import">
           <SettingsRow
             title="Import from Linear"
-            subtitle="Sync only moves what changes after a task is linked — it never bulk-imports the backlog on its own. Import brings down every issue in this team that has no matching task yet."
+            subtitle="Sync only carries changes to linked tasks. Import brings in every issue in the team that isn't here yet."
             control={
               <PillButton
                 disabled={importing || !configured}

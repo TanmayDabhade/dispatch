@@ -2,8 +2,9 @@ import type { ConfigPatch } from '@dispatch/core/browser';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
-import { AgentsMoreGroups, argvFromLines } from './AgentsMoreGroups';
+import { argvFromLines, CliAgents } from './AgentsMoreGroups';
 import {
+  BoardSyncSettings,
   DaemonConfigGroups,
   ownRepoPatch,
   receiptsPlacePatch,
@@ -12,7 +13,7 @@ import {
 import { OPERATOR_ONLY } from './fields';
 import { testConfig as config } from './fixtures.test-helper';
 import { PreviewsSection } from './PreviewsSection';
-import { moved, ProjectGroups } from './ProjectGroups';
+import { moved, StatusesGroup, VerifyStepsList } from './ProjectGroups';
 import { QueueWeightsGroup } from './QueueWeightsGroup';
 import {
   describeRemote,
@@ -41,7 +42,7 @@ function type(label: string, value: string) {
 test('previews: the dev command saves on blur', () => {
   const r = recorder();
   render(<PreviewsSection config={config} onSave={r.onSave} canOperate />);
-  type('Dev server command', 'pnpm dev --port $PORT');
+  type('Start command', 'pnpm dev --port $PORT');
   expect(r.saved).toEqual([{ preview: { command: 'pnpm dev --port $PORT' } }]);
 });
 
@@ -62,7 +63,7 @@ test('previews: emptying a saved command sends null, restoring autodetect', () =
       canOperate
     />
   );
-  type('Dev server command', '');
+  type('Start command', '');
   expect(r.saved).toEqual([{ preview: { command: null } }]);
 });
 
@@ -71,10 +72,10 @@ test('previews: below the operator tier the commands are read-only', () => {
   render(
     <PreviewsSection config={config} onSave={r.onSave} canOperate={false} />
   );
-  expect(
-    screen.queryByRole('textbox', { name: 'Dev server command' })
-  ).toBeNull();
-  expect(screen.getAllByText(OPERATOR_ONLY).length).toBeGreaterThan(0);
+  expect(screen.queryByRole('textbox', { name: 'Start command' })).toBeNull();
+  // The reason is the lock's accessible name, not a printed sentence.
+  expect(screen.getAllByLabelText(OPERATOR_ONLY).length).toBeGreaterThan(0);
+  expect(screen.queryByText(OPERATOR_ONLY)).toBeNull();
 });
 
 test('remotes: a filled form adds one, and only a real port is accepted', () => {
@@ -100,7 +101,7 @@ test('remotes: a filled form adds one, and only a real port is accepted', () => 
   fireEvent.change(screen.getByLabelText('Checkout path'), {
     target: { value: '/srv/repo' },
   });
-  fireEvent.click(screen.getByRole('button', { name: /Add remote/ }));
+  fireEvent.click(screen.getByRole('button', { name: /Add machine/ }));
   expect(r.saved).toEqual([
     { remotes: { box: { host: 'build-box', path: '/srv/repo' } } },
   ]);
@@ -112,17 +113,11 @@ test('statuses: a new one goes before the last, and they reorder and remove', ()
 
   const r = recorder();
   const statuses = ['draft', 'ready', 'landed'];
-  render(
-    <ProjectGroups
-      config={{ ...config, statuses }}
-      onSave={r.onSave}
-      canOperate
-    />
-  );
-  fireEvent.change(screen.getByLabelText('Add a status'), {
+  render(<StatusesGroup config={{ ...config, statuses }} onSave={r.onSave} />);
+  fireEvent.change(screen.getByLabelText('Add a column'), {
     target: { value: 'QA' },
   });
-  fireEvent.click(screen.getByRole('button', { name: 'Add status' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Add' }));
   fireEvent.click(screen.getByRole('button', { name: 'Move ready up' }));
   fireEvent.click(screen.getByRole('button', { name: 'Remove draft' }));
   expect(r.saved).toEqual([
@@ -135,7 +130,7 @@ test('statuses: a new one goes before the last, and they reorder and remove', ()
 test('verify steps: added in order, and removing the last clears the list', () => {
   const r = recorder();
   render(
-    <ProjectGroups
+    <VerifyStepsList
       config={{
         ...config,
         verifySteps: [{ name: 'types', command: 'pnpm typecheck' }],
@@ -155,15 +150,8 @@ test('agents: a CLI agent is declared from one argument per line', () => {
     '{prompt}',
   ]);
   const r = recorder();
-  render(
-    <AgentsMoreGroups
-      config={config}
-      executors={null}
-      onSave={r.onSave}
-      canOperate
-    />
-  );
-  fireEvent.change(screen.getByLabelText('Add an agent'), {
+  render(<CliAgents config={config} onSave={r.onSave} canOperate />);
+  fireEvent.change(screen.getByLabelText('Agent name'), {
     target: { value: 'gemini' },
   });
   fireEvent.change(screen.getByLabelText('Command, one argument per line'), {
@@ -182,25 +170,6 @@ test('agents: a CLI agent is declared from one argument per line', () => {
         },
       },
     },
-  ]);
-});
-
-test('agents: the run limits save as the numbers they are', () => {
-  const r = recorder();
-  render(
-    <AgentsMoreGroups
-      config={config}
-      executors={null}
-      onSave={r.onSave}
-      canOperate
-    />
-  );
-  type('Most runs at once', '6');
-  type('Cost estimate per run', '0.75');
-  type('Most runs at once', 'lots');
-  expect(r.saved).toEqual([
-    { maxConcurrency: 6 },
-    { runCostEstimateUsd: 0.75 },
   ]);
 });
 
@@ -226,18 +195,50 @@ test('where sync and receipts go: nothing is written until there is somewhere to
   expect(receiptsPlacePatch('repo', { remote: 'origin' })).toBeNull();
 });
 
-test('daemon: interval and digest save; the receipt folder is the owner’s', () => {
+test('daemon: the digest cooldown saves; the receipt folder is the owner’s', () => {
   const r = recorder();
   render(
     <DaemonConfigGroups config={config} onSave={r.onSave} canOperate={false} />
   );
-  type("Check for teammates' changes every", '60');
-  type('Refresh the digest at most every', '12');
-  expect(r.saved).toEqual([
-    { sync: { intervalSec: 60 } },
-    { repoDigest: { cooldownHours: 12 } },
-  ]);
+  type('Refresh the summary at most every', '12');
+  expect(r.saved).toEqual([{ repoDigest: { cooldownHours: 12 } }]);
   expect(screen.queryByRole('textbox', { name: 'Folder' })).toBeNull();
+});
+
+test('board sync: the interval saves; where the board is kept is the owner’s', () => {
+  const r = recorder();
+  render(
+    <BoardSyncSettings config={config} onSave={r.onSave} canOperate={false} />
+  );
+  type("Check for teammates' changes every", '60');
+  expect(r.saved).toEqual([{ sync: { intervalSec: 60 } }]);
+  expect(screen.queryByRole('textbox', { name: 'Remote' })).toBeNull();
+  expect(screen.getAllByLabelText(OPERATOR_ONLY).length).toBeGreaterThan(0);
+});
+
+// Auto-commit is a row whose title labels an indigo `Switch`, not a checkbox.
+test('board sync: auto-commit renders as a switch named by its row title', () => {
+  render(
+    <BoardSyncSettings
+      config={config}
+      onSave={() => Promise.resolve()}
+      canOperate
+    />
+  );
+  const toggle = screen.getByRole('switch', {
+    name: 'Commit task changes automatically',
+  });
+  expect(toggle.getAttribute('aria-checked')).toBe('false');
+  expect(screen.queryByRole('checkbox')).toBeNull();
+});
+
+// Clicking the title, not just the switch, is the hit target people actually
+// use — that only works if the title stays a real <label> for the switch.
+test('board sync: clicking the auto-commit title toggles and saves', () => {
+  const r = recorder();
+  render(<BoardSyncSettings config={config} onSave={r.onSave} canOperate />);
+  fireEvent.click(screen.getByText('Commit task changes automatically'));
+  expect(r.saved).toEqual([{ autoCommit: true }]);
 });
 
 test('queue weights: each factor saves, and 0 is allowed', () => {

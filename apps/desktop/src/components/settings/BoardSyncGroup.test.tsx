@@ -40,8 +40,8 @@ const on: BoardSyncStatus = {
 
 test('off, it says how to turn it on', async () => {
   mount({ enabled: false });
-  expect(await screen.findByText('Off')).toBeTruthy();
-  expect(screen.getByText(/sync:/)).toBeTruthy();
+  expect(await screen.findByText('Not sharing')).toBeTruthy();
+  expect(screen.getByText(/Turn on sharing below/)).toBeTruthy();
 });
 
 test('on, it names the branch and remote and offers to sync now', async () => {
@@ -69,7 +69,9 @@ test('a clash is shown as something that needs a person', async () => {
       },
     ],
   });
-  expect(await screen.findByText('Needs a person: t-abc12345')).toBeTruthy();
+  expect(
+    await screen.findByText('Needs your attention: t-abc12345')
+  ).toBeTruthy();
 });
 
 test('syncedWhen reads the states a person sees', () => {
@@ -87,5 +89,5 @@ test('past the seats it says it is paused, not that the remote is down', async (
   expect(
     await screen.findByText(/Board sync is paused on this machine/)
   ).toBeTruthy();
-  expect(screen.queryByText(/could not be reached/)).toBeNull();
+  expect(screen.queryByText(/reach the remote/)).toBeNull();
 });
