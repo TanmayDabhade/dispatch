@@ -565,10 +565,16 @@ export interface ConfigPatch {
   models?: Partial<ModelConfig>;
   /** Writes `orchestrator.executor`. */
   executor?: string;
-  /** Written key-by-key under `executors.<name>.models`. */
+  /** Written key-by-key under `executors.<name>.models`. `command` declares
+   *  or changes a CLI agent (null makes it a plain executor again); a whole
+   *  entry of `null` removes that agent. */
   executors?: Record<
     string,
-    { models?: Partial<ExecutorModels>; pricing?: ExecutorPricing }
+    {
+      models?: Partial<ExecutorModels>;
+      pricing?: ExecutorPricing;
+      command?: ExecutorCommand | null;
+    } | null
   >;
   linear?: Partial<LinearConfig>;
   fixLoop?: Partial<FixLoopConfig>;
@@ -585,5 +591,39 @@ export interface ConfigPatch {
   policy?: {
     rung?: number;
     gates?: Partial<Record<PolicyGate, PolicyGateMode | null>>;
+  };
+  // The blocks below follow one rule, field by field: a value sets it, `null`
+  // removes it (its default applies again), absent leaves it alone. The
+  // patched document is then validated whole (updateConfig), so none of
+  // these can write something the loader would refuse.
+  /** The board's statuses, in order, replacing the list. */
+  statuses?: string[];
+  /** Named verify gates, replacing the list; null or empty removes it. */
+  verifySteps?: VerifyStep[] | null;
+  /** Per remote name: a config sets it, null removes it. */
+  remotes?: Record<string, RemoteConfig | null>;
+  carto?: { enabled?: CartoMode };
+  repoDigest?: { enabled?: boolean; cooldownHours?: number | null };
+  receipts?: {
+    enabled?: boolean;
+    dir?: string | null;
+    remote?: string | null;
+    repo?: string | null;
+    branch?: string | null;
+  };
+  sync?: {
+    enabled?: boolean;
+    remote?: string | null;
+    repo?: string | null;
+    branch?: string | null;
+    intervalSec?: number | null;
+  };
+  prWorktreeDir?: string | null;
+  preview?: {
+    enabled?: boolean;
+    command?: string | null;
+    installCommand?: string | null;
+    readyTimeoutSec?: number | null;
+    idleTimeoutSec?: number | null;
   };
 }

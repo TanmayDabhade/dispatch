@@ -1240,6 +1240,16 @@ export function loadConfig(rootDir: string): DispatchConfig {
       `invalid .dispatch/config.yml: ${(err as Error).message}`
     );
   }
+  return parseConfig(parsed);
+}
+
+/**
+ * A parsed config.yml, validated and defaulted: what loadConfig returns, from
+ * the document instead of the file. updateConfig runs a patched document
+ * through this before writing it, so a value the loader would refuse never
+ * reaches disk, whichever key it came in through.
+ */
+function parseConfig(parsed: unknown): DispatchConfig {
   const raw = (parsed ?? {}) as Partial<DispatchConfig>;
   if (raw.verifySteps !== undefined) {
     if (!Array.isArray(raw.verifySteps)) {
@@ -1432,6 +1442,64 @@ function applyFixLoopPatch(
 
 /** Applies a partial change to `.dispatch/config.yml` through YAML's document API, so the
  *  hand-written file keeps its comments and ordering. `verifyCommand: null` clears the key. */
+// Writes one value, or removes it for `null`; a string that is empty after
+// trimming counts as removing, since a form cannot send null from a text
+// field. `undefined` is "not in this patch" and leaves the key alone. Removing
+// never creates the parents on the way.
+function setOrDelete(doc: YAML.Document, path: string[], value: unknown): void {
+  if (value === undefined) return;
+  const cleared =
+    value === null || (typeof value === 'string' && value.trim() === '');
+  if (cleared) {
+    if (doc.hasIn(path)) doc.deleteIn(path);
+    return;
+  }
+  doc.setIn(path, typeof value === 'string' ? value.trim() : value);
+}
+
+// The blocks Settings edits whole or field by field (ConfigPatch's second
+// half). Validation is the loader's own, run on the whole document after.
+function applyBlockPatches(doc: YAML.Document, patch: ConfigPatch): void {
+  if (patch.statuses !== undefined) {
+    doc.set(
+      'statuses',
+      patch.statuses.map((status) => status.trim())
+    );
+  }
+  if (patch.verifySteps !== undefined) {
+    if (patch.verifySteps === null || patch.verifySteps.length === 0) {
+      doc.delete('verifySteps');
+    } else {
+      doc.set(
+        'verifySteps',
+        patch.verifySteps.map((step) => ({
+          name: step.name.trim(),
+          command: step.command.trim(),
+        }))
+      );
+    }
+  }
+  if (patch.remotes !== undefined) {
+    for (const [name, remote] of Object.entries(patch.remotes)) {
+      setOrDelete(doc, ['remotes', name], remote);
+    }
+  }
+  const blocks = [
+    ['carto', patch.carto],
+    ['repoDigest', patch.repoDigest],
+    ['receipts', patch.receipts],
+    ['sync', patch.sync],
+    ['preview', patch.preview],
+  ] as const;
+  for (const [block, fields] of blocks) {
+    if (fields === undefined) continue;
+    for (const [field, value] of Object.entries(fields)) {
+      setOrDelete(doc, [block, field], value);
+    }
+  }
+  setOrDelete(doc, ['prWorktreeDir'], patch.prWorktreeDir);
+}
+
 export function updateConfig(
   rootDir: string,
   patch: ConfigPatch
@@ -1554,6 +1622,13 @@ export function updateConfig(
   }
   if (patch.executors !== undefined) {
     for (const [name, entry] of Object.entries(patch.executors)) {
+      if (entry === null) {
+        if (doc.hasIn(['executors', name])) doc.deleteIn(['executors', name]);
+        continue;
+      }
+      if (entry.command !== undefined) {
+        setOrDelete(doc, ['executors', name, 'command'], entry.command);
+      }
       if (entry.models !== undefined) {
         const models = parseExecutorModels(name, entry.models, 'invalid patch');
         for (const [role, value] of Object.entries(models)) {
@@ -1659,6 +1734,13 @@ export function updateConfig(
     }
   }
 
+  applyBlockPatches(doc, patch);
+
+  // The whole patched document, checked by the same parser loadConfig uses
+  // before anything is written: a value it would refuse — from any key, not
+  // only the ones checked above — throws here instead of leaving a file
+  // every later load rejects.
+  parseConfig(doc.toJS());
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, doc.toString());
   // Re-read rather than returning a locally-patched object, so the caller gets exactly what the

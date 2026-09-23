@@ -76,6 +76,8 @@ export type SettingsPage =
   | 'license'
   | 'autonomy'
   | 'agents'
+  | 'previews'
+  | 'remotes'
   | 'integrations'
   | 'notifications'
   | 'daemon'
