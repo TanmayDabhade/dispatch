@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { connect } from 'node:net';
 
 import type { PreviewSupervisor } from '../src/preview.js';
 import { PreviewGateway } from '../src/previewGateway.js';
@@ -83,6 +84,51 @@ async function open(link: string) {
     },
   });
   return { first, cookie, page, target };
+}
+
+/** Sends a request target byte for byte. fetch() normalises the URL first,
+ *  so a backslash would never reach the gateway through it. Settles once the
+ *  response is complete rather than waiting on the server to close. */
+async function rawGet(port: number, target: string, cookie: string) {
+  return await new Promise<string>((resolve, reject) => {
+    const socket = connect(port, '127.0.0.1', () => {
+      socket.write(
+        `GET ${target} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\n` +
+          `Cookie: ${cookie}\r\nConnection: close\r\n\r\n`
+      );
+    });
+    let response = '';
+    const settle = (error?: Error) => {
+      clearTimeout(timer);
+      socket.destroy();
+      if (error === undefined) resolve(response);
+      else reject(error);
+    };
+    const timer = setTimeout(() => {
+      settle(new Error(`no complete response to ${target}: ${response}`));
+    }, 2000);
+    socket.on('data', (chunk) => {
+      response += chunk.toString();
+      if (responseComplete(response)) settle();
+    });
+    socket.on('end', () => settle());
+    socket.on('error', settle);
+  });
+}
+
+/** Whether a raw HTTP/1.1 response has all of its body, by Content-Length
+ *  or the terminating chunk. */
+function responseComplete(response: string): boolean {
+  const split = response.indexOf('\r\n\r\n');
+  if (split === -1) return false;
+  const head = response.slice(0, split);
+  const body = response.slice(split + 4);
+  const length = /\r\ncontent-length: *(\d+)/i.exec(head)?.[1];
+  if (length !== undefined) return Buffer.byteLength(body) >= Number(length);
+  if (/\r\ntransfer-encoding: *chunked/i.test(head)) {
+    return body.endsWith('0\r\n\r\n');
+  }
+  return false;
 }
 
 describe('PreviewGateway', () => {
@@ -184,5 +230,62 @@ describe('PreviewGateway', () => {
     const c = new URL(gateway.link('r-2', '127.0.0.1') ?? '').port;
     expect(a).toBe(b);
     expect(c).not.toBe(a);
+  });
+
+  test('a path that looks protocol-relative reaches only the preview’s own port', async () => {
+    // Another loopback server stands in for the host an attacker would name.
+    const decoyHits: string[] = [];
+    const decoy = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch(req) {
+        decoyHits.push(req.url);
+        return new Response('decoy');
+      },
+    });
+    try {
+      gateway = new PreviewGateway({ previews: supervisor().fake });
+      const link = gateway.link('r-1', '127.0.0.1') ?? '';
+      const { cookie } = await open(link);
+      const port = Number(new URL(link).port);
+      const hostile = [
+        `//127.0.0.1:${decoy.port}/x?y=1`,
+        `/\\127.0.0.1:${decoy.port}/x?y=1`,
+        '//evil.example/x?y=1',
+        '/\\evil.example/x?y=1',
+      ];
+      for (const target of hostile) {
+        const response = await rawGet(port, target, cookie);
+        expect(response).toStartWith('HTTP/1.1 200');
+        expect(response).toContain('<h1>preview</h1>');
+      }
+      expect(decoyHits).toEqual([]);
+      // Every one reached the preview, as a path on its own host. (Bun's
+      // fetch sends the leading `//` as one slash; the host is what matters.)
+      expect(seen.slice(-4).map((s) => s.path.replace(/^\/+/, '/'))).toEqual([
+        `/127.0.0.1:${decoy.port}/x?y=1`,
+        `/127.0.0.1:${decoy.port}/x?y=1`,
+        '/evil.example/x?y=1',
+        '/evil.example/x?y=1',
+      ]);
+    } finally {
+      void decoy.stop(true);
+    }
+  });
+
+  test('the grant exchange never redirects off the preview’s origin', async () => {
+    gateway = new PreviewGateway({ previews: supervisor().fake });
+    const link = new URL(gateway.link('r-1', '127.0.0.1') ?? '');
+    const grant = link.searchParams.get('dispatch_preview') ?? '';
+    for (const path of ['//evil.example/x', '/\\evil.example/x']) {
+      const response = await rawGet(
+        Number(link.port),
+        `${path}?dispatch_preview=${grant}`,
+        ''
+      );
+      expect(response).toStartWith('HTTP/1.1 303');
+      const location = /\r\nlocation: ([^\r]*)/i.exec(response)?.[1] ?? '';
+      expect(new URL(location, link).host).toBe(link.host);
+    }
   });
 });

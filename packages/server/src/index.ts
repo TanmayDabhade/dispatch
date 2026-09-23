@@ -121,6 +121,7 @@ import { PreviewGateway } from './previewGateway.js';
 import {
   previewRequestHeaders,
   previewResponseHeaders,
+  previewUpstreamUrl,
 } from './previewHeaders.js';
 import { isReceiptEvent, ReceiptsScheduler } from './receipts/scheduler.js';
 import { ReviewCommentStore } from './reviewComments.js';
@@ -602,10 +603,14 @@ async function proxyPreview(
   }
   previews.touch(runId);
 
-  const target = new URL(
-    `/${rest.join('/')}${url.search}`,
-    `http://127.0.0.1:${preview.port}`
+  const target = previewUpstreamUrl(
+    preview.port,
+    `/${rest.join('/')}`,
+    url.search
   );
+  if (target === null) {
+    return new Response('not a preview path', { status: 400 });
+  }
   try {
     const upstream = await fetch(target, {
       method: req.method,
