@@ -476,7 +476,8 @@ function App() {
     rawData.client,
     rawData.port,
     activeProject?.path ?? null,
-    rawData.config?.models.overseer
+    rawData.config?.models.overseer,
+    rawData.config?.effort?.overseer
   );
 
   // Opens the full task view; unspecified runId resolves to the task's latest
@@ -696,6 +697,7 @@ function App() {
     return {
       doc,
       defaultModel: resolveExecuteModel(data.config),
+      defaultEffort: data.config.effort?.execute,
       executors: data.executors ?? undefined,
       statuses: data.config.statuses,
       ready: data.readyIds.has(doc.meta.id),

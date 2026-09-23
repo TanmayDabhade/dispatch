@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 
-import { modelDisplayName } from './models.ts';
+import {
+  DEFAULT_EFFORT_ID,
+  effortFromId,
+  effortOptions,
+  modelDisplayName,
+} from './models.ts';
 
 // `modelDisplayName` is the single id->label mapping used across the Sessions analytics views
 // (session rows, session detail, per-model spend). It must name every model shape that shows up
@@ -39,5 +44,29 @@ describe('modelDisplayName', () => {
   test('returns undefined for a missing id so callers can show "unknown model"', () => {
     expect(modelDisplayName(null)).toBeUndefined();
     expect(modelDisplayName(undefined)).toBeUndefined();
+  });
+});
+
+describe('effort picker', () => {
+  test('offers Default first, naming the configured level when there is one', () => {
+    expect(effortOptions(undefined)[0]).toEqual({
+      id: DEFAULT_EFFORT_ID,
+      label: 'Default',
+    });
+    expect(effortOptions('xhigh')[0]?.label).toBe('Default (Extra high)');
+    expect(effortOptions(undefined)[5]?.label).toBe('Max');
+    expect(effortOptions(undefined).map((o) => o.id)).toEqual([
+      DEFAULT_EFFORT_ID,
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+    ]);
+  });
+
+  test('maps the Default sentinel to no effort and a level to itself', () => {
+    expect(effortFromId(DEFAULT_EFFORT_ID)).toBeUndefined();
+    expect(effortFromId('max')).toBe('max');
   });
 });

@@ -52,6 +52,9 @@ function overseerSession(over: Partial<OverseerSession> = {}): OverseerSession {
     decideError: null,
     model: 'claude-opus-5',
     setModel: () => {},
+    effortId: 'default',
+    setEffortId: () => {},
+    configuredEffort: undefined,
     reset: () => {},
     draft: '',
     setDraft: () => {},
@@ -575,6 +578,9 @@ test('the opening composer offers the model picker and an open conversation name
   const first = render(<ChatWithDraft overseer={fresh} />);
   const picker = screen.getByRole('combobox', { name: 'Choose model' });
   expect(picker.textContent).toContain('Opus 5.5');
+  expect(
+    screen.getByRole('combobox', { name: 'Choose effort' }).textContent
+  ).toContain('Default');
   first.unmount();
 
   render(

@@ -3,7 +3,9 @@ import {
   canonicalStatus,
   ConfigError,
   describeValue,
+  EFFORT_LEVELS,
   getSection,
+  isEffortLevel,
   KINDS,
   loadConfig,
   PRIORITIES,
@@ -22,7 +24,12 @@ import type {
   UpdatePatch,
   VerifyConfig,
 } from '@dispatch/core';
-import type { ActorContext, TaskDoc, TaskStorePort } from '@dispatch/core';
+import type {
+  ActorContext,
+  EffortLevel,
+  TaskDoc,
+  TaskStorePort,
+} from '@dispatch/core';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
@@ -720,6 +727,9 @@ async function createRun(
     return errorResponse(400, 'invalid model: expected a string');
   }
 
+  const effort = readOptionalEffort(parsed.value.effort);
+  if (!effort.ok) return effort.response;
+
   const freshField = parsed.value.fresh;
   if (freshField !== undefined && typeof freshField !== 'boolean') {
     return errorResponse(400, 'invalid fresh: expected a boolean');
@@ -730,6 +740,7 @@ async function createRun(
   const meta = await ctx.orchestrator.dispatchOrResume(taskId, {
     executor: typeof executorField === 'string' ? executorField : undefined,
     model: typeof modelField === 'string' ? modelField : undefined,
+    effort: effort.effort,
     fresh: freshField === true,
     // Whoever pressed dispatch, so the run — and its claims, and the
     // decisions it later parks on — is theirs rather than the operator's.
@@ -3397,6 +3408,26 @@ function withdrawQuestion(
 // Validates an optional `model` body field the way createRun does: absent
 // means "the configured role's model"; present must be a non-empty string.
 // Returns the 400 to send, or the model (possibly undefined) to pass on.
+// An optional `effort` body field: absent is fine, anything but one of the
+// SDK's five levels is a 400.
+function readOptionalEffort(
+  value: unknown
+):
+  | { ok: true; effort: EffortLevel | undefined }
+  | { ok: false; response: Response } {
+  if (value === undefined) return { ok: true, effort: undefined };
+  if (!isEffortLevel(value)) {
+    return {
+      ok: false,
+      response: errorResponse(
+        400,
+        `invalid effort: ${describeValue(value)} (expected ${EFFORT_LEVELS.join('|')})`
+      ),
+    };
+  }
+  return { ok: true, effort: value };
+}
+
 function readOptionalModel(
   value: unknown
 ): { ok: true; model: string | undefined } | { ok: false; response: Response } {
@@ -3514,12 +3545,15 @@ async function startOverseer(req: Request, ctx: ApiContext): Promise<Response> {
     prompt?: unknown;
     backend?: unknown;
     model?: unknown;
+    effort?: unknown;
   };
   if (typeof body.prompt !== 'string' || body.prompt.trim() === '') {
     return errorResponse(400, 'invalid prompt: prompt is required');
   }
   const model = readOptionalModel(body.model);
   if (!model.ok) return model.response;
+  const effort = readOptionalEffort(body.effort);
+  if (!effort.ok) return effort.response;
   const knownBackendNames = ctx.overseerManager.registeredBackendNames();
   if (
     body.backend !== undefined &&
@@ -3536,7 +3570,8 @@ async function startOverseer(req: Request, ctx: ApiContext): Promise<Response> {
   const record = ctx.overseerManager.start(
     body.prompt,
     backendName,
-    model.model
+    model.model,
+    effort.effort
   );
   return jsonResponse(record, 202);
 }

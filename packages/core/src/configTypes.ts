@@ -169,6 +169,9 @@ export interface DispatchConfig {
   verifySteps?: VerifyStep[];
   orchestrator: OrchestratorConfig;
   models: ModelConfig;
+  /** Per-role reasoning effort. `loadConfig` always populates it (empty when
+   *  the block is absent); optional so hand-built fixtures stay valid. */
+  effort?: EffortConfig;
   /** Per-executor overrides of the execute-side model roles (see
    *  `executorModels`). `loadConfig` always populates it; optional only so
    *  hand-built config literals (test fixtures) stay valid. */
@@ -443,6 +446,32 @@ export const DEFAULT_MODELS: ModelConfig = {
   summarize: 'claude-haiku-4-5-20251001',
   judge: 'jev-latest',
 };
+
+/** Reasoning effort levels a Claude agent session accepts, lowest first. */
+export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+
+export type EffortLevel = (typeof EFFORT_LEVELS)[number];
+
+export function isEffortLevel(value: unknown): value is EffortLevel {
+  return (
+    typeof value === 'string' &&
+    (EFFORT_LEVELS as readonly string[]).includes(value)
+  );
+}
+
+/** Per-role effort for the Claude agent sessions. An unset role sends no
+ *  effort, so the model's own default applies (Opus 5.5: medium). */
+export interface EffortConfig {
+  execute?: EffortLevel;
+  overseer?: EffortLevel;
+  plan?: EffortLevel;
+}
+
+export const EFFORT_ROLES: readonly (keyof EffortConfig)[] = [
+  'execute',
+  'overseer',
+  'plan',
+];
 
 /** Every valid key of `ModelConfig`, in the order the Settings UI renders them. */
 export const MODEL_ROLES: readonly (keyof ModelConfig)[] = [

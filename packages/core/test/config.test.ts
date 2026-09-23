@@ -57,6 +57,8 @@ describe('loadConfig', () => {
         executor: 'claude',
       },
       models: DEFAULT_MODELS,
+      // No effort sent until an effort: block names one.
+      effort: {},
       executors: {},
       // No machines reachable over ssh until a remotes: block adds some.
       remotes: {},

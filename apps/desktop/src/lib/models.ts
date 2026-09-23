@@ -1,6 +1,9 @@
 // The Claude models a run can be dispatched with. localStorage here holds only
 // a per-device override of the project's `.dispatch/config.yml` default.
 
+import { EFFORT_LEVELS, isEffortLevel } from '@dispatch/core/browser';
+import type { EffortLevel } from '@dispatch/core/browser';
+
 export interface ModelOption {
   /** SDK model id passed straight through to the Agent SDK's `query({ options: { model } })`. */
   id: string;
@@ -133,4 +136,42 @@ export function modelDisplayName(
     .filter((m) => id.startsWith(m.id))
     .sort((a, b) => b.id.length - a.id.length)[0];
   return prefix?.label ?? id;
+}
+
+// The effort picker's sentinel for "send nothing": the server then applies the
+// config's effort for the role, or the model's own default.
+export const DEFAULT_EFFORT_ID = 'default';
+
+const EFFORT_LABELS: Record<EffortLevel, string> = {
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Extra high',
+  max: 'Max',
+};
+
+// Picker choices: "Default" first (naming the configured level when there is
+// one, so the user sees what they would get), then the five SDK levels.
+export function effortOptions(
+  configured: EffortLevel | undefined
+): { id: string; label: string }[] {
+  return [
+    {
+      id: DEFAULT_EFFORT_ID,
+      label:
+        configured === undefined
+          ? 'Default'
+          : `Default (${EFFORT_LABELS[configured]})`,
+    },
+    ...EFFORT_LEVELS.map((level) => ({
+      id: level,
+      label: EFFORT_LABELS[level],
+    })),
+  ];
+}
+
+// The level a picker id stands for; the "Default" sentinel (or anything
+// unrecognised) is undefined, meaning no effort is sent.
+export function effortFromId(id: string): EffortLevel | undefined {
+  return isEffortLevel(id) ? id : undefined;
 }

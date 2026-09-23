@@ -3,6 +3,7 @@ import type {
   ConfigPatch,
   CreateInput,
   DispatchConfig,
+  EffortLevel,
   Finding,
   FindingRecommendation,
   FindingSeverity,
@@ -151,6 +152,8 @@ export interface RunMeta {
   error?: string;
   /** The Claude model this run was dispatched with, if one was chosen. */
   model?: string;
+  /** The reasoning effort this run started at; absent is the model default. */
+  effort?: EffortLevel;
   /** ActorRef of the human who dispatched this run — see the server's RunMeta. */
   dispatchedBy?: string;
   // The approval this run is parked on while `state` is 'awaiting-approval',
@@ -1037,6 +1040,8 @@ export interface OverseerRecord {
   /** The model this conversation was opened on when the composer chose one;
    *  every follow-up reuses it. Absent: the configured `overseer` role's model. */
   model?: string;
+  /** Same rule as `model`, falling back to config `effort.overseer`. */
+  effort?: EffortLevel;
   state: OverseerState;
   messages: OverseerMessage[];
   /**
@@ -2275,7 +2280,12 @@ export interface ApiClient {
   // re-dispatch cannot silently abandon work an agent had nearly finished.
   createRun(
     taskId: string,
-    opts?: { executor?: string; model?: string; fresh?: boolean }
+    opts?: {
+      executor?: string;
+      model?: string;
+      effort?: EffortLevel;
+      fresh?: boolean;
+    }
   ): Promise<RunMeta>;
   fetchRuns(): Promise<RunMeta[]>;
   // The executors this daemon registered (`GET /api/executors`) and which
@@ -2664,7 +2674,7 @@ export interface ApiClient {
   // `overseer` role's model; the conversation keeps it for every follow-up.
   startOverseer(
     prompt: string,
-    opts?: { backend?: string; model?: string }
+    opts?: { backend?: string; model?: string; effort?: EffortLevel }
   ): Promise<OverseerRecord>;
   getOverseer(id: string): Promise<OverseerRecord>;
   // Sends a follow-up on an existing conversation. Resolves (202) with the
@@ -2959,6 +2969,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         ...jsonBody({
           ...(opts.executor !== undefined ? { executor: opts.executor } : {}),
           ...(opts.model !== undefined ? { model: opts.model } : {}),
+          ...(opts.effort !== undefined ? { effort: opts.effort } : {}),
           ...(opts.fresh !== undefined ? { fresh: opts.fresh } : {}),
         }),
       }),
@@ -3352,6 +3363,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
           prompt,
           ...(opts.backend !== undefined ? { backend: opts.backend } : {}),
           ...(opts.model !== undefined ? { model: opts.model } : {}),
+          ...(opts.effort !== undefined ? { effort: opts.effort } : {}),
         }),
       }),
     getOverseer: (id) => request(target, `/api/overseer/${id}`),

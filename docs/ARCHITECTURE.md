@@ -207,8 +207,12 @@ worktree. `GET /api/executors` publishes the registry with those flags and the
 configured default, so no client hard-codes executor names. Model choice goes
 through `executorModels()` in core: `models.execute`/`plan` stay the Claude
 aliases, `executors.<name>.models` overlays them per executor, and
-`orchestrator.executor` names the default. Fix and verify runs follow the
-executor that wrote the work; review runs use the project default. Both
+`orchestrator.executor` names the default. Reasoning effort is separate:
+`effort.execute`/`overseer`/`plan` (`low` to `max`) apply when the dispatch or
+composer picker is left on Default; an unset role sends none, so the model's own
+default holds, and a run records its effort in `RunMeta` so a resume keeps it.
+Only the Claude executor, overseer and planner act on it. Fix and verify runs
+follow the executor that wrote the work; review runs use the project default. Both
 executors share the Dispatch and carto MCP wiring in
 `orchestrator/dispatchMcp.ts`.
 

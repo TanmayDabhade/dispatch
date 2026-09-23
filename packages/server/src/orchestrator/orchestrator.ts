@@ -9,7 +9,7 @@ import {
   TaskParseError,
   TaskStore,
 } from '@dispatch/core';
-import type { SubagentStatus } from '@dispatch/core';
+import type { EffortLevel, SubagentStatus } from '@dispatch/core';
 import type {
   ActorContext,
   CommandEvidence,
@@ -682,7 +682,7 @@ export class Orchestrator {
     // dispatch) defaults to the daemon's human, but an automatic caller
     // (EpicEngine's auto-fill) passes 'none' explicitly — no human pressed
     // dispatch for that specific task.
-    opts: { model?: string; actor?: string } = {}
+    opts: { model?: string; effort?: EffortLevel; actor?: string } = {}
   ): Promise<RunMeta> {
     const task = this.ctx.store.get(taskId);
     if (task === null) {
@@ -733,6 +733,7 @@ export class Orchestrator {
       createdAt: now,
       updatedAt: now,
       model: opts.model,
+      ...this.effortField(opts.effort),
       // Only a human ref is recorded: 'none' is how an automatic caller says
       // nobody pressed dispatch for this task, and crediting that to anyone
       // would be inventing an owner.
@@ -777,6 +778,7 @@ export class Orchestrator {
         maxTurns: caps.maxTurns,
         maxBudgetUsd: caps.maxBudgetUsd,
         model: opts.model,
+        effort: meta.effort,
       },
       executor
     );
@@ -794,6 +796,7 @@ export class Orchestrator {
     head: string;
     executor?: string;
     model?: string;
+    effort?: EffortLevel;
     buildPrompt: (ctx: { runId: string; worktreePath: string }) => string;
   }): Promise<RunMeta> {
     const task = this.ctx.store.get(opts.taskId);
@@ -833,6 +836,7 @@ export class Orchestrator {
       createdAt: now,
       updatedAt: now,
       model: opts.model,
+      ...this.effortField(opts.effort),
       kind: opts.kind,
       claims: [...task.meta.writes],
     };
@@ -867,6 +871,7 @@ export class Orchestrator {
         maxTurns: caps.maxTurns,
         maxBudgetUsd: caps.maxBudgetUsd,
         model: opts.model,
+        effort: meta.effort,
       },
       executor
     );
@@ -2022,6 +2027,7 @@ export class Orchestrator {
     request: {
       executor?: string;
       model?: string;
+      effort?: EffortLevel;
       fresh?: boolean;
       actor?: string;
       defaults?: { executor?: string; model?: string };
@@ -2044,6 +2050,7 @@ export class Orchestrator {
     );
     const meta = await this.dispatch(taskId, executorName, {
       model,
+      effort: request.effort,
       actor: request.actor,
     });
     if (reason !== null) {
@@ -2102,9 +2109,16 @@ export class Orchestrator {
   // got the old one back.
   private resumeHonoursRequest(
     run: RunMeta,
-    request: { executor?: string; model?: string }
+    request: { executor?: string; model?: string; effort?: EffortLevel }
   ): boolean {
     if (request.executor !== undefined && request.executor !== run.executor) {
+      return false;
+    }
+    if (
+      request.effort !== undefined &&
+      run.effort !== undefined &&
+      request.effort !== run.effort
+    ) {
       return false;
     }
     // Only compared when the run's own model is known: an older run recorded
@@ -4570,6 +4584,7 @@ export class Orchestrator {
       // default, so continuing an Opus run could hand the rest of the task
       // to a different model mid-conversation.
       model: oldMeta.model,
+      effort: oldMeta.effort,
       // Carries forward whatever the prior run had already claimed — a
       // follow-up must not look like it has never touched anything.
       claims: oldMeta.claims,
@@ -4640,6 +4655,7 @@ export class Orchestrator {
         maxTurns: caps.maxTurns,
         maxBudgetUsd: caps.maxBudgetUsd,
         model: oldMeta.model,
+        effort: oldMeta.effort,
       },
       executor
     );
@@ -4719,6 +4735,7 @@ export class Orchestrator {
       // actually resumed must not be reported as this run's.
       ...(continuing ? { sessionId: meta.sessionId } : {}),
       model: meta.model,
+      effort: meta.effort,
       // See requestChanges' matching comment — a resumed run keeps whatever
       // its predecessor had already claimed.
       claims: meta.claims,
@@ -4829,6 +4846,7 @@ export class Orchestrator {
         maxTurns: caps.maxTurns,
         maxBudgetUsd: caps.maxBudgetUsd,
         model: meta.model,
+        effort: meta.effort,
       },
       executor
     );
@@ -4839,6 +4857,16 @@ export class Orchestrator {
   // every dispatch/resume — same rationale as the MCP tools re-resolving
   // config on every call: a config edit takes effect on the next dispatch
   // without a dispatchd restart.
+  // A run's effort: what the caller named, else config `effort.execute`, else
+  // nothing (the model's own default). Spread into RunMeta so an unset effort
+  // leaves no key, keeping transcript headers of default runs unchanged.
+  private effortField(named: EffortLevel | undefined): {
+    effort?: EffortLevel;
+  } {
+    const effort = named ?? loadConfig(this.ctx.rootDir).effort?.execute;
+    return effort === undefined ? {} : { effort };
+  }
+
   private orchestratorCaps(): OrchestratorConfig {
     return loadConfig(this.ctx.rootDir).orchestrator;
   }

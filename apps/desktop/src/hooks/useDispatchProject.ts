@@ -31,6 +31,7 @@ import { createApiClient } from '@dispatch/client';
 import type {
   CreateInput,
   DispatchConfig,
+  EffortLevel,
   EscalationStep,
   ModelConfig,
   NotificationKind,
@@ -199,6 +200,9 @@ interface DispatchOptions {
    * exactly one is not a batch: pass `false` and it jumps like any single dispatch.
    */
   batch?: boolean;
+  /** The effort the task page's picker chose; absent lets the daemon apply
+   * config `effort.execute`, or the model's own default. */
+  effort?: EffortLevel;
 }
 
 export interface DispatchProjectData {
@@ -2079,6 +2083,7 @@ export function useDispatchProject(
         model:
           model ??
           (effective === 'claude' ? resolveExecuteModel(config) : undefined),
+        effort: opts?.effort,
       });
       void queryClient.invalidateQueries({ queryKey: runsQueryKey });
       void queryClient.invalidateQueries({ queryKey: tasksQueryKey });

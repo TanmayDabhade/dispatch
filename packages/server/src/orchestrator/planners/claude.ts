@@ -1,5 +1,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
+import { loadConfig } from '@dispatch/core';
+import type { EffortLevel } from '@dispatch/core';
 
 import { openClaudeQuery, rewriteMissingCliError } from '../claudeCli.js';
 import type {
@@ -261,7 +263,12 @@ export class ClaudePlanner implements Planner {
     mode: PlannerMode = 'plan'
   ): Promise<PlannerTurn> {
     const builder = mode === 'draft' ? buildDraftPrompt : buildPlannerPrompt;
-    return this.runTurn(builder(prompt), undefined, model);
+    return this.runTurn(
+      builder(prompt),
+      undefined,
+      model,
+      this.effortFor(mode)
+    );
   }
 
   sendMessage(
@@ -272,18 +279,31 @@ export class ClaudePlanner implements Planner {
   ): Promise<PlannerTurn> {
     const builder =
       mode === 'draft' ? buildDraftFollowupPrompt : buildFollowupPrompt;
-    return this.runTurn(builder(message), sessionId, model);
+    return this.runTurn(
+      builder(message),
+      sessionId,
+      model,
+      this.effortFor(mode)
+    );
+  }
+
+  // Config `effort.plan`, read per turn so a settings change applies on the
+  // next one. Planning turns only: a draft runs on the cheap `draft` model.
+  private effortFor(mode: PlannerMode): EffortLevel | undefined {
+    if (mode !== 'plan') return undefined;
+    return loadConfig(this.rootDir).effort?.plan;
   }
 
   // Runs one turn, retrying attemptTurn once if the first call returns null.
   private async runTurn(
     prompt: string,
     resume: string | undefined,
-    model: string | undefined
+    model: string | undefined,
+    effort: EffortLevel | undefined
   ): Promise<PlannerTurn> {
-    const first = await this.attemptTurn(prompt, resume, model);
+    const first = await this.attemptTurn(prompt, resume, model, effort);
     if (first !== null) return first;
-    const second = await this.attemptTurn(prompt, resume, model);
+    const second = await this.attemptTurn(prompt, resume, model, effort);
     if (second !== null) return second;
     throw new Error(EMPTY_TURN_MESSAGE);
   }
@@ -293,7 +313,8 @@ export class ClaudePlanner implements Planner {
   private async attemptTurn(
     prompt: string,
     resume: string | undefined,
-    model: string | undefined
+    model: string | undefined,
+    effort: EffortLevel | undefined
   ): Promise<PlannerTurn | null> {
     const options: Options = {
       cwd: this.rootDir,
@@ -309,6 +330,7 @@ export class ClaudePlanner implements Planner {
       skills: [],
       ...(resume !== undefined ? { resume } : {}),
       ...(model !== undefined ? { model } : {}),
+      ...(effort !== undefined ? { effort } : {}),
     };
     // Same CLI-resolution chain (DISPATCH_CLAUDE_BIN -> bundled SDK CLI ->
     // PATH `claude` -> install hint) ClaudeExecutor.openQuery uses — see
