@@ -214,7 +214,15 @@ export function makeProgram(ctx: CliContext): Command {
       // deps out of the CLI's startup path — every other command pays
       // nothing for this one existing.
       const { runStdioServer } = await import('@dispatch/mcp');
-      await runStdioServer(ctx.cwd);
+      // A background daemon exits after it sits unused, so a quiet agent
+      // session can outlive it; this lets the task tools start a fresh one
+      // the same way every other command does. `ensureDaemon` keys on the
+      // project root itself, so the root the tool passes is used as its cwd.
+      await runStdioServer(ctx.cwd, {
+        startDaemon: async (rootDir) => {
+          await ensureDaemon({ ...ctx, cwd: rootDir });
+        },
+      });
     });
 
   registerTaskCommands(program, ctx);

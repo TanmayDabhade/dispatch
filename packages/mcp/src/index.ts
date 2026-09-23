@@ -6,3 +6,4 @@ export {
 } from './server.js';
 export { DEFAULT_QUESTION_TIMING, DEFAULT_SCOPE_TIMING } from './tools.js';
 export type { QuestionTiming, ScopeTiming } from './tools.js';
+export type { DaemonStarter } from './daemon.js';
