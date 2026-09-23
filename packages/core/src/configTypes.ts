@@ -592,6 +592,8 @@ export interface ConfigPatch {
   maxBudgetUsd?: number | null;
   permissionMode?: OrchestratorConfig['permissionMode'];
   models?: Partial<ModelConfig>;
+  /** Per-role effort; `null` removes the role so the model default applies. */
+  effort?: Partial<Record<keyof EffortConfig, EffortLevel | null>>;
   /** Writes `orchestrator.executor`. */
   executor?: string;
   /** Written key-by-key under `executors.<name>.models`. `command` declares

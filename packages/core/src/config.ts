@@ -1646,6 +1646,24 @@ export function updateConfig(
       doc.setIn(['models', role], value.trim());
     }
   }
+  if (patch.effort !== undefined) {
+    for (const [role, value] of Object.entries(patch.effort)) {
+      if (!EFFORT_ROLES.includes(role as keyof EffortConfig)) {
+        throw new ConfigError(
+          `invalid effort role: ${role} (expected ${EFFORT_ROLES.join('|')})`
+        );
+      }
+      if (value !== null && !isEffortLevel(value)) {
+        throw new ConfigError(
+          `invalid effort.${role}: must be one of low|medium|high|xhigh|max`
+        );
+      }
+      setOrDelete(doc, ['effort', role], value);
+    }
+    // An emptied block would read back as `effort: {}`; drop it instead.
+    const block = doc.getIn(['effort']);
+    if (YAML.isMap(block) && block.items.length === 0) doc.deleteIn(['effort']);
+  }
   if (patch.executor !== undefined) {
     if (typeof patch.executor !== 'string' || patch.executor.trim() === '') {
       throw new ConfigError('invalid executor: must be a non-empty string');

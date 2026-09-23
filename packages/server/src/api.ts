@@ -1016,6 +1016,17 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     // value before writing, and that ConfigError becomes the 400 below.
     patch.models = body.models as Partial<ModelConfig>;
   }
+  if ('effort' in body) {
+    if (
+      typeof body.effort !== 'object' ||
+      body.effort === null ||
+      Array.isArray(body.effort)
+    ) {
+      return errorResponse(400, 'effort must be an object');
+    }
+    // Same deal as models: core validates each role and level before writing.
+    patch.effort = body.effort as NonNullable<ConfigPatch['effort']>;
+  }
   if ('executor' in body) {
     if (typeof body.executor !== 'string') {
       return errorResponse(400, 'executor must be a string');

@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'bun:test';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { ConfigError, isEffortLevel, loadConfig } from '../src/config.js';
+import {
+  ConfigError,
+  isEffortLevel,
+  loadConfig,
+  updateConfig,
+} from '../src/config.js';
 
 function root(contents?: string): string {
   const dir = mkdtempSync(join(tmpdir(), 'dispatch-effort-'));
@@ -51,5 +56,30 @@ describe('isEffortLevel', () => {
     expect(isEffortLevel('HIGH')).toBe(false);
     expect(isEffortLevel(3)).toBe(false);
     expect(isEffortLevel(undefined)).toBe(false);
+  });
+});
+
+describe('updateConfig effort', () => {
+  it('writes a role, and null removes it along with an emptied block', () => {
+    const dir = root('autoCommit: true\n');
+    updateConfig(dir, { effort: { execute: 'xhigh' } });
+    expect(loadConfig(dir).effort).toEqual({ execute: 'xhigh' });
+
+    updateConfig(dir, { effort: { execute: null } });
+    expect(loadConfig(dir).effort).toEqual({});
+    expect(
+      readFileSync(join(dir, '.dispatch', 'config.yml'), 'utf8')
+    ).not.toContain('effort');
+  });
+
+  it('refuses an unknown role or level before writing', () => {
+    const dir = root('autoCommit: true\n');
+    expect(() =>
+      updateConfig(dir, { effort: { draft: 'high' } as never })
+    ).toThrow(/invalid effort role: draft/);
+    expect(() =>
+      updateConfig(dir, { effort: { plan: 'extreme' as never } })
+    ).toThrow(/invalid effort\.plan/);
+    expect(loadConfig(dir).effort).toEqual({});
   });
 });
