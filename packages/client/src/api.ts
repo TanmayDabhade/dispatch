@@ -1,6 +1,5 @@
 import type {
   CommandEvidence,
-  CommentPatch,
   ConfigPatch,
   CreateInput,
   DispatchConfig,
@@ -638,14 +637,12 @@ export interface PeopleSnapshot {
   people: Person[];
 }
 
-// Mirrors POST /api/tasks/:id/comments's body. `author` defaults to the
-// caller; a sync passes it (and `created`) to import someone else's comment.
+// Mirrors POST /api/tasks/:id/comments's body. The server credits the
+// caller and stamps the time; `runId` lets an agent name its run.
 export interface NewCommentInput {
   body: string;
   parentId?: string | null;
-  external?: string | null;
-  author?: string;
-  created?: string;
+  runId?: string;
 }
 
 // Mirrors POST /api/tasks/:id/amend's body — a correction to a task's spec,
@@ -2292,12 +2289,13 @@ export interface ApiClient {
   /** A task's comment thread, oldest first. */
   fetchTaskComments(id: string): Promise<TaskComment[]>;
   addTaskComment(id: string, input: NewCommentInput): Promise<TaskComment>;
+  /** Author only (403 otherwise). */
   updateTaskComment(
     id: string,
     commentId: string,
-    patch: CommentPatch
+    patch: { body: string }
   ): Promise<TaskComment>;
-  /** Removes the comment and its replies; resolves with every removed id. */
+  /** Author only; removes its replies too, and 409s while others replied. */
   deleteTaskComment(
     id: string,
     commentId: string

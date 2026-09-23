@@ -1,6 +1,5 @@
 import type {
   CommandEvidence,
-  CommentPatch,
   CreateInput,
   Finding,
   LedgerEntry,
@@ -432,23 +431,18 @@ export interface TaskApiClient {
   listPeople(): Promise<{ me: string; people: Person[] }>;
   /** `GET /api/tasks/:id/comments`, oldest first. */
   listComments(id: string): Promise<TaskComment[]>;
-  /** `POST /api/tasks/:id/comments`; `author` defaults to the caller. */
+  /** `POST /api/tasks/:id/comments`, credited to the caller by the server. */
   addComment(
     id: string,
-    input: {
-      body: string;
-      parentId?: string | null;
-      external?: string | null;
-      author?: string;
-      created?: string;
-    }
+    input: { body: string; parentId?: string | null; runId?: string }
   ): Promise<TaskComment>;
+  /** Author only (403 otherwise). */
   updateComment(
     id: string,
     commentId: string,
-    patch: CommentPatch
+    patch: { body: string }
   ): Promise<TaskComment>;
-  /** Removes the comment and its replies. */
+  /** Author only; removes its replies too, and 409s while others replied. */
   deleteComment(id: string, commentId: string): Promise<{ removed: string[] }>;
   /**
    * `GET /api/health`, reduced to what doctor reports: `problems` are records
