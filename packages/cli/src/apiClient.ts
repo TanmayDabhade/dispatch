@@ -286,7 +286,7 @@ interface EpicSessionOptions {
 // The subset of packages/server/src/events.ts's ServerEvent union that
 // `--watch` acts on — deliberately partial; any other event is ignored.
 export type ServerEvent =
-  | { type: 'task.changed' }
+  | { type: 'task.changed'; ids?: string[] }
   | { type: 'hello'; version: string }
   | { type: 'run.changed' }
   | { type: 'run.log'; runId: string; entry: NormalizedEntry }

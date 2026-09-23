@@ -528,7 +528,7 @@ async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
 
   const doc = ctx.store.create(input);
   ctx.cache.rebuild(ctx.store);
-  ctx.events.broadcast({ type: 'task.changed' });
+  ctx.events.broadcast({ type: 'task.changed', ids: [doc.meta.id] });
   return jsonResponse(doc, 201);
 }
 
@@ -624,7 +624,7 @@ async function updateTask(
 
   const doc = ctx.store.update(id, patch);
   ctx.cache.rebuild(ctx.store);
-  ctx.events.broadcast({ type: 'task.changed' });
+  ctx.events.broadcast({ type: 'task.changed', ids: [id] });
   return jsonResponse(doc);
 }
 
@@ -662,7 +662,7 @@ async function createTaskComment(
     activityActor: commentAuthorFor(ctx, runId),
   });
   ctx.cache.rebuild(ctx.store);
-  ctx.events.broadcast({ type: 'task.changed' });
+  ctx.events.broadcast({ type: 'task.changed', ids: [id] });
   return jsonResponse(doc);
 }
 
@@ -3895,7 +3895,7 @@ function promoteNote(ctx: ApiContext, id: string): Response {
   // makes the hub render "→ t-xxxxxx", and that id has to already resolve in
   // the task cache by the time a client follows it.
   ctx.cache.rebuild(ctx.store);
-  ctx.events.broadcast({ type: 'task.changed' });
+  ctx.events.broadcast({ type: 'task.changed', ids: [task.meta.id] });
   linkNoteToTask(ctx, id, task.meta.id);
   return jsonResponse(task, 201);
 }
@@ -4073,7 +4073,10 @@ async function convertInbox(req: Request, ctx: ApiContext): Promise<Response> {
   if (links.length > 0) {
     // Cache first so the ids in the response already resolve for a client that follows them.
     ctx.cache.rebuild(ctx.store);
-    ctx.events.broadcast({ type: 'task.changed' });
+    ctx.events.broadcast({
+      type: 'task.changed',
+      ids: links.map((link) => link.taskId),
+    });
     ctx.inboxStore.markConverted(links);
     ctx.events.broadcast({ type: 'inbox.changed' });
   }

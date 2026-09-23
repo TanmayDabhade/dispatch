@@ -664,7 +664,7 @@ export class MergeQueue {
       if (task.meta.status !== from) return;
       this.ctx.store.update(taskId, { status: to, appendActivity: activity });
       this.ctx.cache.rebuild(this.ctx.store);
-      this.ctx.events.broadcast({ type: 'task.changed' });
+      this.ctx.events.broadcast({ type: 'task.changed', ids: [taskId] });
     } catch {
       // A status write must never take the queue down with it.
     }

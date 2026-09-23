@@ -90,7 +90,7 @@ function persistList(
 ): TaskDoc {
   const doc = ctx.store.update(id, { attachments });
   ctx.cache.rebuild(ctx.store);
-  ctx.events.broadcast({ type: 'task.changed' });
+  ctx.events.broadcast({ type: 'task.changed', ids: [id] });
   return doc;
 }
 

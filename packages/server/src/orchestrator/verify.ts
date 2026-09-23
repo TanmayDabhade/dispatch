@@ -332,7 +332,10 @@ export class VerificationRunner {
     if (pass) {
       this.ctx.store.update(pending.taskId, { exercised: true });
       this.ctx.cache.rebuild(this.ctx.store);
-      this.ctx.events.broadcast({ type: 'task.changed' });
+      this.ctx.events.broadcast({
+        type: 'task.changed',
+        ids: [pending.taskId],
+      });
     }
     this.ctx.events.broadcast({
       type: 'verification.changed',

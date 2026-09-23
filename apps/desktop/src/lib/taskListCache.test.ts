@@ -1,0 +1,49 @@
+import type { TaskListItem, TaskMeta } from '@dispatch/core/browser';
+import { describe, expect, test } from 'bun:test';
+
+import { removeTaskListItem, upsertTaskListItem } from './taskListCache';
+
+function item(id: string, created: string, updated = created): TaskListItem {
+  return { meta: { id, title: id, created, updated } as TaskMeta };
+}
+
+const ids = (list: TaskListItem[]) => list.map((t) => t.meta.id);
+
+describe('upsertTaskListItem', () => {
+  const list = [
+    item('t-a', '2026-01-01'),
+    item('t-b', '2026-01-02'),
+    item('t-c', '2026-01-03'),
+  ];
+
+  test('replaces an existing entry in place', () => {
+    const next = upsertTaskListItem(list, {
+      ...list[1].meta,
+      title: 'renamed',
+      updated: '2026-02-01',
+    });
+    expect(ids(next)).toEqual(['t-a', 't-b', 't-c']);
+    expect(next[1].meta.title).toBe('renamed');
+    expect(list[1].meta.title).toBe('t-b');
+  });
+
+  test('inserts a new task where the server orders it (created, then id)', () => {
+    expect(
+      ids(upsertTaskListItem(list, item('t-0', '2026-01-02').meta))
+    ).toEqual(['t-a', 't-0', 't-b', 't-c']);
+    expect(
+      ids(upsertTaskListItem(list, item('t-z', '2026-01-04').meta))
+    ).toEqual(['t-a', 't-b', 't-c', 't-z']);
+  });
+
+  test('ignores a response older than the cached entry', () => {
+    const fresh = [item('t-a', '2026-01-01', '2026-03-01')];
+    const stale = { ...fresh[0].meta, title: 'old', updated: '2026-02-01' };
+    expect(upsertTaskListItem(fresh, stale)).toBe(fresh);
+  });
+});
+
+test('removeTaskListItem drops only the named task', () => {
+  const list = [item('t-a', '2026-01-01'), item('t-b', '2026-01-02')];
+  expect(ids(removeTaskListItem(list, 't-a'))).toEqual(['t-b']);
+});

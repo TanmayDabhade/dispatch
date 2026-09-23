@@ -7,7 +7,7 @@ import type {
   ServerEvent,
 } from '@dispatch/client';
 import * as dispatchClient from '@dispatch/client';
-import type { TaskListItem } from '@dispatch/core/browser';
+import type { TaskDoc, TaskListItem } from '@dispatch/core/browser';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { expect, mock, test } from 'bun:test';
@@ -47,6 +47,12 @@ let epicProgressFixture: EpicProgress[] = [];
 let epicProgressFetches = 0;
 const epicStarts: [string, EpicSessionOptions | undefined][] = [];
 
+// The daemon's task list and per-task docs, for the `task.changed` tests. The
+// list rejects until a test opts in, so the others keep seeding it by hand.
+let taskListFixture: TaskListItem[] | null = null;
+let taskListFetches = 0;
+const taskDocs = new Map<string, TaskDoc>();
+
 // Only `createApiClient` is replaced — the rest of the module (ApiError, which
 // useOverseerSession's 404 veto instanceof-checks) has to stay real.
 // Lets a test hold the first presence fetch open, so a `hello` can land while
@@ -59,6 +65,20 @@ void mock.module('@dispatch/client', () => ({
   createApiClient: () => ({
     baseUrl: `http://127.0.0.1:${PORT}`,
     fetchRuns: () => Promise.resolve(runsFixture),
+    fetchTaskList: () => {
+      taskListFetches += 1;
+      return taskListFixture === null
+        ? Promise.reject(new Error('no task list in this test'))
+        : Promise.resolve(taskListFixture);
+    },
+    fetchTask: (id: string) => {
+      const doc = taskDocs.get(id);
+      return doc === undefined
+        ? Promise.reject(
+            new dispatchClient.ApiError(`task not found: ${id}`, 404)
+          )
+        : Promise.resolve(doc);
+    },
     fetchExecutors: () =>
       Promise.resolve({
         executors: [
@@ -265,6 +285,92 @@ test('a task change does not invalidate overseer records', async () => {
   expect(
     queryClient.getQueryState(overseerKey(PORT, 'w-1'))?.isInvalidated
   ).toBe(false);
+});
+
+function taskDoc(id: string, title: string, updated: string): TaskDoc {
+  return {
+    meta: {
+      id,
+      title,
+      status: 'ready',
+      kind: 'task',
+      parent: null,
+      milestone: null,
+      blockedBy: [],
+      labels: [],
+      priority: 'none',
+      assignee: 'none',
+      created: '2026-01-01T00:00:00.000Z',
+      updated,
+      external: null,
+      selfReview: false,
+      writes: [],
+      risk: 'routine',
+      model: null,
+      exercised: false,
+    },
+    body: `${title} body`,
+  };
+}
+
+// Mounts with a one-task list loaded, counting list fetches from there.
+async function mountWithTaskList() {
+  taskListFixture = [
+    { meta: taskDoc('t-1', 'Before', '2026-01-01T00:00:00.000Z').meta },
+  ];
+  taskDocs.clear();
+  const queryClient = await mountConnected();
+  await waitFor(() => {
+    expect(
+      queryClient.getQueryData<TaskListItem[]>(['dispatch-tasks', PORT])
+    ).toHaveLength(1);
+  });
+  taskListFetches = 0;
+  const titles = () =>
+    queryClient
+      .getQueryData<TaskListItem[]>(['dispatch-tasks', PORT])
+      ?.map((t) => t.meta.title);
+  return { queryClient, titles };
+}
+
+test('task.changed with ids patches just those tasks into the cached list', async () => {
+  const { titles } = await mountWithTaskList();
+  taskDocs.set('t-1', taskDoc('t-1', 'After', '2026-01-02T00:00:00.000Z'));
+  taskDocs.set('t-2', taskDoc('t-2', 'New', '2026-01-02T00:00:00.000Z'));
+
+  act(() => {
+    sink?.onEvent({ type: 'task.changed', ids: ['t-1', 't-2'] });
+  });
+  await waitFor(() => {
+    expect(titles()).toEqual(['After', 'New']);
+  });
+
+  // A named task that now 404s was deleted.
+  taskDocs.delete('t-2');
+  act(() => {
+    sink?.onEvent({ type: 'task.changed', ids: ['t-2'] });
+  });
+  await waitFor(() => {
+    expect(titles()).toEqual(['After']);
+  });
+  expect(taskListFetches).toBe(0);
+  taskListFixture = null;
+});
+
+test('an unscoped task.changed burst refetches the list once', async () => {
+  const { titles } = await mountWithTaskList();
+  taskListFixture = [
+    { meta: taskDoc('t-1', 'Refetched', '2026-01-02T00:00:00.000Z').meta },
+  ];
+
+  act(() => {
+    for (let i = 0; i < 3; i++) sink?.onEvent({ type: 'task.changed' });
+  });
+  await waitFor(() => {
+    expect(titles()).toEqual(['Refetched']);
+  });
+  expect(taskListFetches).toBe(1);
+  taskListFixture = null;
 });
 
 function runFixture(id: string, state: RunMeta['state']): RunMeta {

@@ -1032,7 +1032,7 @@ export class FixLoop {
       now
     );
     this.ctx.cache.rebuild(this.ctx.store);
-    this.ctx.events.broadcast({ type: 'task.changed' });
+    this.ctx.events.broadcast({ type: 'task.changed', ids: [taskId] });
   }
 
   private latestRun(taskId: string, kind: RunKind): RunMeta | null {

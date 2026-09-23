@@ -144,7 +144,7 @@ export function policyActivityAppender(ctx: {
       now
     );
     ctx.cache.rebuild(ctx.store);
-    ctx.events.broadcast({ type: 'task.changed' });
+    ctx.events.broadcast({ type: 'task.changed', ids: [taskId] });
   };
 }
 

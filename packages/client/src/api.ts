@@ -660,7 +660,9 @@ export type StartVerificationResult =
   | { skipped: true; reason: string };
 
 export type ServerEvent =
-  | { type: 'task.changed' }
+  // `ids`, when set, names every task the change touched; absent means
+  // "anything may have changed" — refetch the list.
+  | { type: 'task.changed'; ids?: string[] }
   | { type: 'hello'; version: string }
   | { type: 'run.changed' }
   | { type: 'run.log'; runId: string; entry: NormalizedEntry }

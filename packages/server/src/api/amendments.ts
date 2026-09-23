@@ -53,7 +53,7 @@ export async function amendTask(
     authoredBy: humanActor(ctx),
   });
 
-  ctx.events.broadcast({ type: 'task.changed' });
+  ctx.events.broadcast({ type: 'task.changed', ids: [id] });
   ctx.events.broadcast({ type: 'ledger.changed' });
   return jsonResponse(updated);
 }

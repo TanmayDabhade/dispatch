@@ -8,7 +8,7 @@ export function tasksKey(port: number | undefined) {
   return ['dispatch-tasks', port] as const;
 }
 
-function taskDocKey(port: number | undefined, taskId: string) {
+export function taskDocKey(port: number | undefined, taskId: string) {
   return ['dispatch-tasks', port, 'doc', taskId] as const;
 }
 

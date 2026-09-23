@@ -960,7 +960,7 @@ export class EpicEngine {
       now
     );
     this.ctx.cache.rebuild(this.ctx.store);
-    this.ctx.events.broadcast({ type: 'task.changed' });
+    this.ctx.events.broadcast({ type: 'task.changed', ids: [epicId] });
   }
 
   // The `epic.changed` refetch signal, debounced per epic on a trailing

@@ -762,7 +762,7 @@ export class Orchestrator {
       now
     );
     this.ctx.cache.rebuild(this.ctx.store);
-    this.ctx.events.broadcast({ type: 'task.changed' });
+    this.ctx.events.broadcast({ type: 'task.changed', ids: [taskId] });
 
     this.transition(runId, 'running');
     const caps = this.orchestratorCaps();
@@ -917,7 +917,7 @@ export class Orchestrator {
           now
         );
         this.ctx.cache.rebuild(this.ctx.store);
-        this.ctx.events.broadcast({ type: 'task.changed' });
+        this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
       });
       return;
     }
@@ -965,7 +965,7 @@ export class Orchestrator {
         now
       );
       this.ctx.cache.rebuild(this.ctx.store);
-      this.ctx.events.broadcast({ type: 'task.changed' });
+      this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
     });
   }
 
@@ -1108,7 +1108,7 @@ export class Orchestrator {
       now
     );
     this.ctx.cache.rebuild(this.ctx.store);
-    this.ctx.events.broadcast({ type: 'task.changed' });
+    this.ctx.events.broadcast({ type: 'task.changed', ids: [taskId] });
   }
 
   // The best-effort form of the above, for the paths that are already
@@ -1570,7 +1570,7 @@ export class Orchestrator {
         now
       );
       this.ctx.cache.rebuild(this.ctx.store);
-      this.ctx.events.broadcast({ type: 'task.changed' });
+      this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
     });
 
     this.scheduleStopEscalation(runId);
@@ -1658,7 +1658,7 @@ export class Orchestrator {
         now
       );
       this.ctx.cache.rebuild(this.ctx.store);
-      this.ctx.events.broadcast({ type: 'task.changed' });
+      this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
     });
     this.fireTerminalHooks(runId);
   }
@@ -3148,7 +3148,7 @@ export class Orchestrator {
         now
       );
       this.ctx.cache.rebuild(this.ctx.store);
-      this.ctx.events.broadcast({ type: 'task.changed' });
+      this.ctx.events.broadcast({ type: 'task.changed', ids: [epicId] });
     }
     this.ctx.events.broadcast({ type: 'run.changed' });
   }
@@ -3910,7 +3910,7 @@ export class Orchestrator {
       now
     );
     this.ctx.cache.rebuild(this.ctx.store);
-    this.ctx.events.broadcast({ type: 'task.changed' });
+    this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
   }
 
   private requireRun(runId: string): RunMeta {
@@ -3976,7 +3976,7 @@ export class Orchestrator {
       if (task.meta.status === 'working') patch.status = 'review';
       this.ctx.store.update(meta.taskId, patch, now);
       this.ctx.cache.rebuild(this.ctx.store);
-      this.ctx.events.broadcast({ type: 'task.changed' });
+      this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
     }
     this.fireTerminalHooks(meta.id);
     // Deferred, same as reconcileOnBoot()'s crash sweep — a zombied run's
@@ -4275,7 +4275,10 @@ export class Orchestrator {
             now
           );
           this.ctx.cache.rebuild(this.ctx.store);
-          this.ctx.events.broadcast({ type: 'task.changed' });
+          this.ctx.events.broadcast({
+            type: 'task.changed',
+            ids: [meta.taskId],
+          });
         } catch {
           // Even the Activity append failing must not propagate — the
           // triggering operation's own result already stands regardless.
@@ -4497,7 +4500,7 @@ export class Orchestrator {
       if (task.meta.status === 'working') patch.status = 'review';
       this.ctx.store.update(meta.taskId, patch, now);
       this.ctx.cache.rebuild(this.ctx.store);
-      this.ctx.events.broadcast({ type: 'task.changed' });
+      this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
     });
     this.fireTerminalHooks(runId);
   }
@@ -4624,7 +4627,7 @@ export class Orchestrator {
       now
     );
     this.ctx.cache.rebuild(this.ctx.store);
-    this.ctx.events.broadcast({ type: 'task.changed' });
+    this.ctx.events.broadcast({ type: 'task.changed', ids: [oldMeta.taskId] });
 
     this.transition(runId, 'running');
     const caps = this.orchestratorCaps();
@@ -4813,7 +4816,7 @@ export class Orchestrator {
       now
     );
     this.ctx.cache.rebuild(this.ctx.store);
-    this.ctx.events.broadcast({ type: 'task.changed' });
+    this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
 
     this.transition(newRunId, 'running');
     const caps = this.orchestratorCaps();

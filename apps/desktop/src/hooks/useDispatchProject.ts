@@ -27,7 +27,7 @@ import type {
   RunState,
   SyncStatus,
 } from '@dispatch/client';
-import { createApiClient } from '@dispatch/client';
+import { ApiError, createApiClient } from '@dispatch/client';
 import type {
   CreateInput,
   DispatchConfig,
@@ -36,6 +36,7 @@ import type {
   NotificationKind,
   PolicyGate,
   PolicyGateMode,
+  TaskDoc,
   TaskListItem,
   UpdatePatch,
 } from '@dispatch/core/browser';
@@ -78,6 +79,7 @@ import { isTerminalRunState, runSurveyNotice } from '../lib/runState';
 import type { TaskAttention } from '../lib/taskAttention';
 import { deriveTaskAttentionById } from '../lib/taskAttention';
 import { computeBlockedIds } from '../lib/taskGraph';
+import { removeTaskListItem, upsertTaskListItem } from '../lib/taskListCache';
 import { ensureDispatchd, restartDispatchd } from '../lib/tauri';
 import { gitQueryRootKey } from './useGit';
 import {
@@ -89,8 +91,13 @@ import {
   useStopFixLoop,
 } from './useOrchestration';
 import { overseerKey, overseerKeyPrefix } from './useOverseerSession';
-import { tasksKey } from './useTaskDoc';
+import { taskDocKey, tasksKey } from './useTaskDoc';
 import { useTransitionNotifications } from './useTransitionNotifications';
+
+// A `task.changed` naming more tasks than this refetches the list instead.
+const MAX_PATCHED_TASKS = 20;
+// Coalesces a burst of `task.changed` events into one refetch per query.
+const TASK_REFRESH_DEBOUNCE_MS = 250;
 
 // The approvals this window has seen live via the `approval.requested` WS
 // event. Not the whole picture on its own: the daemon also attaches a parked
@@ -503,7 +510,7 @@ export interface DispatchProjectData {
   moveTaskStatus: (id: string, status: string) => Promise<void>;
   /** Resolves with the created doc (the create dialog attaches pending files to its id);
    * `null` without a client. */
-  handleCreate: (input: CreateInput) => Promise<TaskListItem | null>;
+  handleCreate: (input: CreateInput) => Promise<TaskDoc | null>;
   /** Multipart upload against a task; `task.changed` then refreshes the list. */
   handleUploadAttachments: (taskId: string, files: File[]) => Promise<void>;
   /** Every task draft currently held in memory, newest first — feeds the app-wide drafts
@@ -836,6 +843,20 @@ export function useDispatchProject(
     () =>
       allTasksIncludingArchived?.filter((t) => t.meta.archivedAt === undefined),
     [allTasksIncludingArchived]
+  );
+
+  // Writes one fetched doc into the caches in place of a list refetch: its list entry
+  // (meta only) and, when a task page holds it, its full doc. Stale responses lose.
+  const applyTaskDoc = useCallback(
+    (doc: TaskDoc) => {
+      queryClient.setQueryData<TaskListItem[]>(tasksQueryKey, (old) =>
+        old === undefined ? old : upsertTaskListItem(old, doc.meta)
+      );
+      queryClient.setQueryData<TaskDoc>(taskDocKey(port, doc.meta.id), (old) =>
+        old === undefined || old.meta.updated > doc.meta.updated ? old : doc
+      );
+    },
+    [queryClient, tasksQueryKey, port]
   );
   const { data: config } = useQuery({
     queryKey: configQueryKey,
@@ -1291,399 +1312,449 @@ export function useDispatchProject(
 
   useEffect(() => {
     if (client === null) return;
-    return client.connectEvents(
-      () => {
+    // One pending refetch each for the list and for the queries derived from
+    // the task graph, so a burst of events costs one round trip apiece.
+    let listTimer: ReturnType<typeof setTimeout> | null = null;
+    let derivedTimer: ReturnType<typeof setTimeout> | null = null;
+    const refetchTaskList = () => {
+      if (listTimer !== null) return;
+      listTimer = setTimeout(() => {
+        listTimer = null;
         void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+      }, TASK_REFRESH_DEBOUNCE_MS);
+    };
+    const refetchDerived = () => {
+      if (derivedTimer !== null) return;
+      derivedTimer = setTimeout(() => {
+        derivedTimer = null;
         void queryClient.invalidateQueries({ queryKey: configQueryKey });
         void queryClient.invalidateQueries({ queryKey: readyQueryKey });
         void queryClient.invalidateQueries({ queryKey: epicProgressKeyPrefix });
-      },
-      {
-        onEvent: (event) => {
-          // Checked structurally (see isDecisionsChanged): the client's
-          // ServerEvent union predates this broadcast, so a literal comparison
-          // here would not typecheck. First in the chain because no later
-          // branch can match an out-of-union frame anyway.
-          if (isDecisionsChanged(event)) {
-            void queryClient.invalidateQueries({ queryKey: decisionsQueryKey });
-          } else if (event.type === 'hello') {
-            // The daemon sends `hello` from its websocket `open` handler
-            // (packages/server/src/index.ts), so this fires once per socket:
-            // on the first connect and again on every reconnect. A reconnect
-            // usually means dispatchd restarted, and overseer records live in an
-            // in-memory Map — so every cached id 404s now, and no
-            // `overseer.changed` can ever arrive for a conversation the daemon
-            // no longer has. Without this refetch the cached record keeps a
-            // pending action alive that exists nowhere: the rail shows a
-            // waiting row and an amber badge, Approve/Deny 404, and
-            // `hasPendingAction` disables both "New conversation" controls
-            // until the window happens to lose and regain focus.
-            //
-            // It has to be the whole prefix rather than one conversation's
-            // key: the open conversation, and its id, live in
-            // useOverseerSession, which this hook cannot see. On the first
-            // connect nothing is cached yet, so the invalidation is a no-op
-            // there rather than a wasted refetch.
-            void queryClient.invalidateQueries({
-              queryKey: overseerKeyPrefix(port),
-            });
-            // Presence too, and for a reason of its own: the daemon announces
-            // this socket's arrival before the socket joins the event bus, so
-            // the one event saying "you are here now" never reaches the window
-            // it is about. A presence fetch that raced ahead of the upgrade
-            // would otherwise leave a teammate seeing a room without
-            // themselves — and the stack hidden — until someone else moved.
-            //
-            // Invalidating is not enough on its own when that fetch is the
-            // query's first and still in flight: react-query then hands back
-            // the in-flight promise instead of restarting (it only cancels a
-            // query that already has data), so the stale answer lands. In that
-            // case, invalidate again once it has — the second fetch leaves
-            // after this socket is registered. Seen 1 in 12 in a browser.
-            const presence = queryClient.getQueryState(presenceQueryKey);
-            const firstFetchInFlight =
-              presence?.fetchStatus === 'fetching' &&
-              presence.data === undefined;
-            void queryClient
-              .invalidateQueries({ queryKey: presenceQueryKey })
-              .then(() =>
-                firstFetchInFlight
-                  ? queryClient.invalidateQueries({
-                      queryKey: presenceQueryKey,
-                    })
-                  : undefined
-              );
-          } else if (event.type === 'presence.changed') {
-            void queryClient.invalidateQueries({ queryKey: presenceQueryKey });
-          } else if (event.type === 'run.changed') {
-            void queryClient.invalidateQueries({ queryKey: runsQueryKey });
-            void queryClient.invalidateQueries({ queryKey: presenceQueryKey });
-            void queryClient.invalidateQueries({
-              queryKey: ['dispatch-run', port],
-            });
-            void queryClient.invalidateQueries({
-              queryKey: epicProgressKeyPrefix,
-            });
-            // Every worktree/branch lifecycle event (dispatch, review, and the
-            // branch actions themselves) broadcasts run.changed, so this is the
-            // one signal the Branches surface needs.
-            void queryClient.invalidateQueries({ queryKey: branchesQueryKey });
-          } else if (event.type === 'run.log') {
-            queryClient.setQueryData<RunDetail>(
-              ['dispatch-run', port, event.runId],
-              (prev) =>
-                prev !== undefined
-                  ? { ...prev, entries: [...prev.entries, event.entry] }
-                  : prev
-            );
-          } else if (event.type === 'approval.requested') {
-            setLivePendingApprovals((prev) => {
-              const next = new Map(prev);
-              next.set(event.runId, {
-                requestId: event.requestId,
-                toolName: event.toolName,
-              });
-              return next;
-            });
-            // Read the run list straight from the query cache rather than this
-            // effect's own `runs` variable — that variable is captured once when
-            // this effect's dependency array last changed, so it would otherwise
-            // go stale between reconnects and name the wrong task (or none).
-            const liveRuns = queryClient.getQueryData<RunMeta[]>(runsQueryKey);
-            const taskTitle =
-              liveRuns?.find((r) => r.id === event.runId)?.taskTitle ??
-              event.runId;
-            void notify(
-              'Approval needed',
-              `${event.toolName} · ${taskTitle}`,
-              'approval'
-            );
-          } else if (event.type === 'question.asked') {
-            void queryClient.invalidateQueries({ queryKey: questionsQueryKey });
-            // Same cache-read reason as approval.requested above: this effect's
-            // captured `runs` can be stale, so the title comes from the query cache.
-            const liveRuns = queryClient.getQueryData<RunMeta[]>(runsQueryKey);
-            const taskTitle =
-              liveRuns?.find((r) => r.id === event.runId)?.taskTitle ??
-              event.runId;
-            void notify('An agent has a question', taskTitle, 'question');
-          } else if (
-            event.type === 'question.answered' ||
-            event.type === 'question.closed'
-          ) {
-            void queryClient.invalidateQueries({ queryKey: questionsQueryKey });
-          } else if (event.type === 'scope.requested') {
-            setPendingScopeRequests((prev) => {
-              const next = new Map(prev);
-              next.set(event.runId, { requestId: event.requestId });
-              return next;
-            });
-            const liveRuns = queryClient.getQueryData<RunMeta[]>(runsQueryKey);
-            const taskTitle =
-              liveRuns?.find((r) => r.id === event.runId)?.taskTitle ??
-              event.runId;
-            void notify(
-              'An agent needs scope approval',
-              taskTitle,
-              'scope-request'
-            );
-          } else if (event.type === 'scope.decided') {
-            setPendingScopeRequests((prev) => {
-              if (!prev.has(event.runId)) return prev;
-              const next = new Map(prev);
-              next.delete(event.runId);
-              return next;
-            });
-          } else if (event.type === 'plan.changed') {
-            void queryClient.invalidateQueries({
-              queryKey: ['dispatch-plan', port, event.planId],
-            });
-            // The history list carries every plan's state — refresh it with
-            // the record so the two never disagree.
-            void queryClient.invalidateQueries({
-              queryKey: ['dispatch-plans', port],
-            });
-            void queryClient.invalidateQueries({
-              queryKey: agentSessionsQueryKey,
-            });
-          } else if (event.type === 'overseer.changed') {
-            // The overseer record query itself lives in useOverseerSession; this
-            // hook owns the one WS connection, so the invalidation happens
-            // here — the same split useOrchestration's keys use.
-            void queryClient.invalidateQueries({
-              queryKey: overseerKey(port, event.conversationId),
-            });
-            void queryClient.invalidateQueries({
-              queryKey: agentSessionsQueryKey,
-            });
-          } else if (event.type === 'note.changed') {
-            void queryClient.invalidateQueries({ queryKey: notesQueryKey });
-          } else if (event.type === 'draft.changed') {
-            void queryClient.invalidateQueries({ queryKey: draftsQueryKey });
-            void queryClient.invalidateQueries({
-              queryKey: agentSessionsQueryKey,
-            });
-          } else if (event.type === 'review.changed') {
-            void queryClient.invalidateQueries({ queryKey: reviewQueryKey });
-            // The server broadcasts this same event for a reviewer's inline edit and an
-            // applied suggestion — both commit straight onto the run branch, so the diff
-            // itself (not just its comment thread) is now stale too.
-            void queryClient.invalidateQueries({ queryKey: runDiffQueryKey });
-          } else if (event.type === 'inbox.changed') {
-            void queryClient.invalidateQueries({ queryKey: inboxQueryKey });
-            // The daemon triages captures in the background and announces
-            // the result on the same event, so the hints refresh with the rows.
-            void queryClient.invalidateQueries({
-              queryKey: inboxTriageQueryKey,
-            });
-          } else if (event.type === 'git.changed') {
-            // Prefix match: invalidates every query useGit.ts builds in one call.
-            void queryClient.invalidateQueries({ queryKey: gitQueryRootKey });
-            // A git-level mutation can change dispatch's own worktree bookkeeping too, so
-            // the Branches panel's GitSummary chips don't go stale until a manual refresh.
-            void queryClient.invalidateQueries({ queryKey: branchesQueryKey });
-          } else if (event.type === 'merge-queue.changed') {
-            void queryClient.invalidateQueries({
-              queryKey: mergeQueueQueryKey,
-            });
-            // Queue progress moves the landing table's in-queue rows too.
-            void queryClient.invalidateQueries({
-              queryKey: landingQueryKey,
-            });
-          } else if (event.type === 'landing.changed') {
-            void queryClient.invalidateQueries({
-              queryKey: landingQueryKey,
-            });
-          } else if (event.type === 'finding.changed') {
-            void queryClient.invalidateQueries({
-              queryKey: findingsQueryRootKey(port),
-            });
-          } else if (event.type === 'ledger.changed') {
-            void queryClient.invalidateQueries({
-              queryKey: ledgerQueryRootKey(port),
-            });
-          } else if (event.type === 'fixloop.changed') {
-            // The root covers the per-task query and the bulk by-task map.
-            void queryClient.invalidateQueries({
-              queryKey: fixLoopQueryRootKey(port),
-            });
-          } else if (event.type === 'fixloop.capped') {
-            void queryClient.invalidateQueries({
-              queryKey: fixLoopQueryRootKey(port),
-            });
-            // A stopped loop needs a human — a toast plus a durable inbox row,
-            // worded from the stop reason.
-            const liveTasks =
-              queryClient.getQueryData<TaskListItem[]>(tasksQueryKey);
-            const taskTitle =
-              liveTasks?.find((t) => t.meta.id === event.taskId)?.meta.title ??
-              event.taskId;
-            const notice = fixLoopCappedNotice(
-              taskTitle,
-              event.reason,
-              event.message
-            );
-            void notify(notice.title, taskTitle, 'fix-loop-capped');
-            onRecordInbox([
-              {
-                ts: new Date().toISOString(),
-                title: notice.title,
-                body: notice.body,
-                target: { kind: 'task', taskId: event.taskId },
-              },
-            ]);
-          } else if (event.type === 'epic.changed') {
-            // A session started, paused, resumed, stopped, completed or filled
-            // a batch — the bulk progress query is the one reader.
-            void queryClient.invalidateQueries({
-              queryKey: epicProgressKeyPrefix,
-            });
-          } else if (event.type === 'epic.paused') {
-            void queryClient.invalidateQueries({
-              queryKey: epicProgressKeyPrefix,
-            });
-            // A session that paused itself needs a human to resume or raise
-            // the ceiling — a toast plus a durable inbox row, worded from the
-            // event's own numbers so neither waits on the refetch above.
-            const liveTasks =
-              queryClient.getQueryData<TaskListItem[]>(tasksQueryKey);
-            const epicTitle =
-              liveTasks?.find((t) => t.meta.id === event.epicId)?.meta.title ??
-              event.epicId;
-            const notice = epicPausedNotice(epicTitle, event);
-            void notify(notice.title, notice.body);
-            onRecordInbox([
-              {
-                ts: new Date().toISOString(),
-                title: notice.title,
-                body: notice.body,
-                target: { kind: 'task', taskId: event.epicId },
-              },
-            ]);
-          } else if (event.type === 'config.changed') {
-            // Settings in another window, the CLI, and Linear connect/disconnect
-            // all write config; without this branch they sit stale here.
-            for (const key of configChangedQueryKeys(port)) {
-              void queryClient.invalidateQueries({ queryKey: key });
-            }
-          } else if (event.type === 'run.survey') {
-            // Same cache-read reason as approval.requested above. This is the
-            // only signal that a terminal run left uncommitted work behind.
-            const liveRuns = queryClient.getQueryData<RunMeta[]>(runsQueryKey);
-            const taskTitle =
-              liveRuns?.find((r) => r.id === event.runId)?.taskTitle ??
-              event.runId;
-            const notice = runSurveyNotice(taskTitle, event.survey);
-            if (notice !== null) {
-              void notify(notice.title, notice.body, 'run-stalled');
-              onRecordInbox([
-                {
-                  ts: new Date().toISOString(),
-                  title: notice.title,
-                  body: notice.body,
-                  target: { kind: 'run', runId: event.runId },
-                },
-              ]);
-            }
-          } else if (event.type === 'verification.changed') {
-            void queryClient.invalidateQueries({
-              queryKey: taskVerificationKey(port, event.taskId),
-            });
-          } else if (
-            event.type === 'board.sync' ||
-            event.type === 'receipts.export'
-          ) {
-            // Both feed the same chip — a project has a board syncer or a
-            // receipts exporter, never both — and GET /api/sync carries both
-            // halves. Refetches rather than reading `event.result` straight
-            // into the cache: the pending counts the chip also shows are
-            // computed live server-side and aren't part of either payload.
-            void queryClient.invalidateQueries({
-              queryKey: syncStatusQueryKey,
-            });
-          } else if (event.type === 'linear.changed') {
-            // A sync pass finished — refetch status (lastSyncAt/lastSummary/lastError) so
-            // Settings reflects it immediately rather than waiting on its own poll.
-            void queryClient.invalidateQueries({
-              queryKey: linearStatusQueryKey,
-            });
-            // The pass may have linked a new issue — refetch so a chip appears without
-            // waiting for this window's own action to trigger it.
-            void queryClient.invalidateQueries({
-              queryKey: linearLinksQueryKey,
-            });
-          } else if (event.type === 'queue.drained') {
-            // The drain reviewed runs (tasks/runs move to done) and may have
-            // pushed origin (branches' pushedToOrigin flips) — refetch all
-            // four rather than waiting on their own *.changed broadcasts.
-            void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
-            void queryClient.invalidateQueries({ queryKey: runsQueryKey });
-            void queryClient.invalidateQueries({
-              queryKey: mergeQueueQueryKey,
-            });
-            // pushedToOrigin flips on every merged branch too — Branches needs
-            // its own refetch, same as run.changed's invalidation above.
-            void queryClient.invalidateQueries({ queryKey: branchesQueryKey });
-            // Per-run "Merged" toasts already come from
-            // useTransitionNotifications' own merge-queue diff — this event
-            // only needs to report the *push* outcome, not repeat that a
-            // merge happened. Both outcomes below also go through
-            // onRecordInbox, not just `notify`: this is the exact event
-            // class the inbox exists for — `lastPushError`'s own banner
-            // clears on the next drain, but without an inbox row a failed
-            // auto-push would otherwise leave no trace at all once that
-            // banner is gone.
-            if (event.pushError !== undefined) {
-              setLastPushError(event.pushError);
-              void notify('Push failed', event.pushError);
-              onRecordInbox([
-                {
-                  ts: new Date().toISOString(),
-                  title: 'Push failed',
-                  body: event.pushError,
-                  target: { kind: 'runs-page' },
-                },
-              ]);
-            } else if (event.pushed && event.merged === 0) {
-              // A retry-only drain: nothing new merged this pass, just a
-              // previously-failed push that finally landed. Recording it in
-              // the inbox is still worthwhile (the earlier failure got a row
-              // too), but "0 merge(s) now on origin" would misread as if
-              // nothing happened at all — so no toast here.
-              setLastPushError(null);
-              onRecordInbox([
-                {
-                  ts: new Date().toISOString(),
-                  title: 'Push retry succeeded',
-                  body: 'Origin is now up to date.',
-                  target: { kind: 'runs-page' },
-                },
-              ]);
-            } else if (event.pushed) {
-              setLastPushError(null);
-              const body = `${event.merged} merge(s) now on origin`;
-              void notify('Pushed to origin', body);
-              onRecordInbox([
-                {
-                  ts: new Date().toISOString(),
-                  title: 'Pushed to origin',
-                  body,
-                  target: { kind: 'runs-page' },
-                },
-              ]);
-            } else {
-              // Merged locally with nothing to push to (no origin remote
-              // configured) — not a failure, so no toast, no banner, and no
-              // inbox row either.
-              setLastPushError(null);
-            }
-          }
-        },
+      }, TASK_REFRESH_DEBOUNCE_MS);
+    };
+    // Refetches just the named tasks into the cached list; an unscoped or
+    // wide change, or a list fetch already in flight, refetches the list.
+    const patchTasks = (ids: readonly string[] | undefined) => {
+      if (
+        ids === undefined ||
+        ids.length === 0 ||
+        ids.length > MAX_PATCHED_TASKS ||
+        queryClient.getQueryData(tasksQueryKey) === undefined ||
+        queryClient.isFetching({ queryKey: tasksQueryKey, exact: true }) > 0
+      ) {
+        refetchTaskList();
+        return;
       }
-    );
+      for (const id of ids) {
+        client.fetchTask(id).then(applyTaskDoc, (err: unknown) => {
+          if (!(err instanceof ApiError && err.status === 404)) {
+            refetchTaskList();
+            return;
+          }
+          queryClient.setQueryData<TaskListItem[]>(tasksQueryKey, (old) =>
+            old === undefined ? old : removeTaskListItem(old, id)
+          );
+          queryClient.removeQueries({ queryKey: taskDocKey(port, id) });
+        });
+      }
+    };
+    const disconnect = client.connectEvents(refetchDerived, {
+      onEvent: (event) => {
+        // Checked structurally (see isDecisionsChanged): the client's
+        // ServerEvent union predates this broadcast, so a literal comparison
+        // here would not typecheck. First in the chain because no later
+        // branch can match an out-of-union frame anyway.
+        if (isDecisionsChanged(event)) {
+          void queryClient.invalidateQueries({ queryKey: decisionsQueryKey });
+        } else if (event.type === 'task.changed') {
+          patchTasks(event.ids);
+        } else if (event.type === 'hello') {
+          // Events sent while the socket was down are lost, so a reconnect
+          // refetches the list rather than trusting the patched cache.
+          if (queryClient.getQueryData(tasksQueryKey) !== undefined) {
+            refetchTaskList();
+          }
+          // The daemon sends `hello` from its websocket `open` handler
+          // (packages/server/src/index.ts), so this fires once per socket:
+          // on the first connect and again on every reconnect. A reconnect
+          // usually means dispatchd restarted, and overseer records live in an
+          // in-memory Map — so every cached id 404s now, and no
+          // `overseer.changed` can ever arrive for a conversation the daemon
+          // no longer has. Without this refetch the cached record keeps a
+          // pending action alive that exists nowhere: the rail shows a
+          // waiting row and an amber badge, Approve/Deny 404, and
+          // `hasPendingAction` disables both "New conversation" controls
+          // until the window happens to lose and regain focus.
+          //
+          // It has to be the whole prefix rather than one conversation's
+          // key: the open conversation, and its id, live in
+          // useOverseerSession, which this hook cannot see. On the first
+          // connect nothing is cached yet, so the invalidation is a no-op
+          // there rather than a wasted refetch.
+          void queryClient.invalidateQueries({
+            queryKey: overseerKeyPrefix(port),
+          });
+          // Presence too, and for a reason of its own: the daemon announces
+          // this socket's arrival before the socket joins the event bus, so
+          // the one event saying "you are here now" never reaches the window
+          // it is about. A presence fetch that raced ahead of the upgrade
+          // would otherwise leave a teammate seeing a room without
+          // themselves — and the stack hidden — until someone else moved.
+          //
+          // Invalidating is not enough on its own when that fetch is the
+          // query's first and still in flight: react-query then hands back
+          // the in-flight promise instead of restarting (it only cancels a
+          // query that already has data), so the stale answer lands. In that
+          // case, invalidate again once it has — the second fetch leaves
+          // after this socket is registered. Seen 1 in 12 in a browser.
+          const presence = queryClient.getQueryState(presenceQueryKey);
+          const firstFetchInFlight =
+            presence?.fetchStatus === 'fetching' && presence.data === undefined;
+          void queryClient
+            .invalidateQueries({ queryKey: presenceQueryKey })
+            .then(() =>
+              firstFetchInFlight
+                ? queryClient.invalidateQueries({
+                    queryKey: presenceQueryKey,
+                  })
+                : undefined
+            );
+        } else if (event.type === 'presence.changed') {
+          void queryClient.invalidateQueries({ queryKey: presenceQueryKey });
+        } else if (event.type === 'run.changed') {
+          void queryClient.invalidateQueries({ queryKey: runsQueryKey });
+          void queryClient.invalidateQueries({ queryKey: presenceQueryKey });
+          void queryClient.invalidateQueries({
+            queryKey: ['dispatch-run', port],
+          });
+          void queryClient.invalidateQueries({
+            queryKey: epicProgressKeyPrefix,
+          });
+          // Every worktree/branch lifecycle event (dispatch, review, and the
+          // branch actions themselves) broadcasts run.changed, so this is the
+          // one signal the Branches surface needs.
+          void queryClient.invalidateQueries({ queryKey: branchesQueryKey });
+        } else if (event.type === 'run.log') {
+          queryClient.setQueryData<RunDetail>(
+            ['dispatch-run', port, event.runId],
+            (prev) =>
+              prev !== undefined
+                ? { ...prev, entries: [...prev.entries, event.entry] }
+                : prev
+          );
+        } else if (event.type === 'approval.requested') {
+          setLivePendingApprovals((prev) => {
+            const next = new Map(prev);
+            next.set(event.runId, {
+              requestId: event.requestId,
+              toolName: event.toolName,
+            });
+            return next;
+          });
+          // Read the run list straight from the query cache rather than this
+          // effect's own `runs` variable — that variable is captured once when
+          // this effect's dependency array last changed, so it would otherwise
+          // go stale between reconnects and name the wrong task (or none).
+          const liveRuns = queryClient.getQueryData<RunMeta[]>(runsQueryKey);
+          const taskTitle =
+            liveRuns?.find((r) => r.id === event.runId)?.taskTitle ??
+            event.runId;
+          void notify(
+            'Approval needed',
+            `${event.toolName} · ${taskTitle}`,
+            'approval'
+          );
+        } else if (event.type === 'question.asked') {
+          void queryClient.invalidateQueries({ queryKey: questionsQueryKey });
+          // Same cache-read reason as approval.requested above: this effect's
+          // captured `runs` can be stale, so the title comes from the query cache.
+          const liveRuns = queryClient.getQueryData<RunMeta[]>(runsQueryKey);
+          const taskTitle =
+            liveRuns?.find((r) => r.id === event.runId)?.taskTitle ??
+            event.runId;
+          void notify('An agent has a question', taskTitle, 'question');
+        } else if (
+          event.type === 'question.answered' ||
+          event.type === 'question.closed'
+        ) {
+          void queryClient.invalidateQueries({ queryKey: questionsQueryKey });
+        } else if (event.type === 'scope.requested') {
+          setPendingScopeRequests((prev) => {
+            const next = new Map(prev);
+            next.set(event.runId, { requestId: event.requestId });
+            return next;
+          });
+          const liveRuns = queryClient.getQueryData<RunMeta[]>(runsQueryKey);
+          const taskTitle =
+            liveRuns?.find((r) => r.id === event.runId)?.taskTitle ??
+            event.runId;
+          void notify(
+            'An agent needs scope approval',
+            taskTitle,
+            'scope-request'
+          );
+        } else if (event.type === 'scope.decided') {
+          setPendingScopeRequests((prev) => {
+            if (!prev.has(event.runId)) return prev;
+            const next = new Map(prev);
+            next.delete(event.runId);
+            return next;
+          });
+        } else if (event.type === 'plan.changed') {
+          void queryClient.invalidateQueries({
+            queryKey: ['dispatch-plan', port, event.planId],
+          });
+          // The history list carries every plan's state — refresh it with
+          // the record so the two never disagree.
+          void queryClient.invalidateQueries({
+            queryKey: ['dispatch-plans', port],
+          });
+          void queryClient.invalidateQueries({
+            queryKey: agentSessionsQueryKey,
+          });
+        } else if (event.type === 'overseer.changed') {
+          // The overseer record query itself lives in useOverseerSession; this
+          // hook owns the one WS connection, so the invalidation happens
+          // here — the same split useOrchestration's keys use.
+          void queryClient.invalidateQueries({
+            queryKey: overseerKey(port, event.conversationId),
+          });
+          void queryClient.invalidateQueries({
+            queryKey: agentSessionsQueryKey,
+          });
+        } else if (event.type === 'note.changed') {
+          void queryClient.invalidateQueries({ queryKey: notesQueryKey });
+        } else if (event.type === 'draft.changed') {
+          void queryClient.invalidateQueries({ queryKey: draftsQueryKey });
+          void queryClient.invalidateQueries({
+            queryKey: agentSessionsQueryKey,
+          });
+        } else if (event.type === 'review.changed') {
+          void queryClient.invalidateQueries({ queryKey: reviewQueryKey });
+          // The server broadcasts this same event for a reviewer's inline edit and an
+          // applied suggestion — both commit straight onto the run branch, so the diff
+          // itself (not just its comment thread) is now stale too.
+          void queryClient.invalidateQueries({ queryKey: runDiffQueryKey });
+        } else if (event.type === 'inbox.changed') {
+          void queryClient.invalidateQueries({ queryKey: inboxQueryKey });
+          // The daemon triages captures in the background and announces
+          // the result on the same event, so the hints refresh with the rows.
+          void queryClient.invalidateQueries({
+            queryKey: inboxTriageQueryKey,
+          });
+        } else if (event.type === 'git.changed') {
+          // Prefix match: invalidates every query useGit.ts builds in one call.
+          void queryClient.invalidateQueries({ queryKey: gitQueryRootKey });
+          // A git-level mutation can change dispatch's own worktree bookkeeping too, so
+          // the Branches panel's GitSummary chips don't go stale until a manual refresh.
+          void queryClient.invalidateQueries({ queryKey: branchesQueryKey });
+        } else if (event.type === 'merge-queue.changed') {
+          void queryClient.invalidateQueries({
+            queryKey: mergeQueueQueryKey,
+          });
+          // Queue progress moves the landing table's in-queue rows too.
+          void queryClient.invalidateQueries({
+            queryKey: landingQueryKey,
+          });
+        } else if (event.type === 'landing.changed') {
+          void queryClient.invalidateQueries({
+            queryKey: landingQueryKey,
+          });
+        } else if (event.type === 'finding.changed') {
+          void queryClient.invalidateQueries({
+            queryKey: findingsQueryRootKey(port),
+          });
+        } else if (event.type === 'ledger.changed') {
+          void queryClient.invalidateQueries({
+            queryKey: ledgerQueryRootKey(port),
+          });
+        } else if (event.type === 'fixloop.changed') {
+          // The root covers the per-task query and the bulk by-task map.
+          void queryClient.invalidateQueries({
+            queryKey: fixLoopQueryRootKey(port),
+          });
+        } else if (event.type === 'fixloop.capped') {
+          void queryClient.invalidateQueries({
+            queryKey: fixLoopQueryRootKey(port),
+          });
+          // A stopped loop needs a human — a toast plus a durable inbox row,
+          // worded from the stop reason.
+          const liveTasks =
+            queryClient.getQueryData<TaskListItem[]>(tasksQueryKey);
+          const taskTitle =
+            liveTasks?.find((t) => t.meta.id === event.taskId)?.meta.title ??
+            event.taskId;
+          const notice = fixLoopCappedNotice(
+            taskTitle,
+            event.reason,
+            event.message
+          );
+          void notify(notice.title, taskTitle, 'fix-loop-capped');
+          onRecordInbox([
+            {
+              ts: new Date().toISOString(),
+              title: notice.title,
+              body: notice.body,
+              target: { kind: 'task', taskId: event.taskId },
+            },
+          ]);
+        } else if (event.type === 'epic.changed') {
+          // A session started, paused, resumed, stopped, completed or filled
+          // a batch — the bulk progress query is the one reader.
+          void queryClient.invalidateQueries({
+            queryKey: epicProgressKeyPrefix,
+          });
+        } else if (event.type === 'epic.paused') {
+          void queryClient.invalidateQueries({
+            queryKey: epicProgressKeyPrefix,
+          });
+          // A session that paused itself needs a human to resume or raise
+          // the ceiling — a toast plus a durable inbox row, worded from the
+          // event's own numbers so neither waits on the refetch above.
+          const liveTasks =
+            queryClient.getQueryData<TaskListItem[]>(tasksQueryKey);
+          const epicTitle =
+            liveTasks?.find((t) => t.meta.id === event.epicId)?.meta.title ??
+            event.epicId;
+          const notice = epicPausedNotice(epicTitle, event);
+          void notify(notice.title, notice.body);
+          onRecordInbox([
+            {
+              ts: new Date().toISOString(),
+              title: notice.title,
+              body: notice.body,
+              target: { kind: 'task', taskId: event.epicId },
+            },
+          ]);
+        } else if (event.type === 'config.changed') {
+          // Settings in another window, the CLI, and Linear connect/disconnect
+          // all write config; without this branch they sit stale here.
+          for (const key of configChangedQueryKeys(port)) {
+            void queryClient.invalidateQueries({ queryKey: key });
+          }
+        } else if (event.type === 'run.survey') {
+          // Same cache-read reason as approval.requested above. This is the
+          // only signal that a terminal run left uncommitted work behind.
+          const liveRuns = queryClient.getQueryData<RunMeta[]>(runsQueryKey);
+          const taskTitle =
+            liveRuns?.find((r) => r.id === event.runId)?.taskTitle ??
+            event.runId;
+          const notice = runSurveyNotice(taskTitle, event.survey);
+          if (notice !== null) {
+            void notify(notice.title, notice.body, 'run-stalled');
+            onRecordInbox([
+              {
+                ts: new Date().toISOString(),
+                title: notice.title,
+                body: notice.body,
+                target: { kind: 'run', runId: event.runId },
+              },
+            ]);
+          }
+        } else if (event.type === 'verification.changed') {
+          void queryClient.invalidateQueries({
+            queryKey: taskVerificationKey(port, event.taskId),
+          });
+        } else if (
+          event.type === 'board.sync' ||
+          event.type === 'receipts.export'
+        ) {
+          // Both feed the same chip — a project has a board syncer or a
+          // receipts exporter, never both — and GET /api/sync carries both
+          // halves. Refetches rather than reading `event.result` straight
+          // into the cache: the pending counts the chip also shows are
+          // computed live server-side and aren't part of either payload.
+          void queryClient.invalidateQueries({
+            queryKey: syncStatusQueryKey,
+          });
+        } else if (event.type === 'linear.changed') {
+          // A sync pass finished — refetch status (lastSyncAt/lastSummary/lastError) so
+          // Settings reflects it immediately rather than waiting on its own poll.
+          void queryClient.invalidateQueries({
+            queryKey: linearStatusQueryKey,
+          });
+          // The pass may have linked a new issue — refetch so a chip appears without
+          // waiting for this window's own action to trigger it.
+          void queryClient.invalidateQueries({
+            queryKey: linearLinksQueryKey,
+          });
+        } else if (event.type === 'queue.drained') {
+          // The drain reviewed runs (tasks/runs move to done) and may have
+          // pushed origin (branches' pushedToOrigin flips) — refetch all
+          // four rather than waiting on their own *.changed broadcasts.
+          void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+          void queryClient.invalidateQueries({ queryKey: runsQueryKey });
+          void queryClient.invalidateQueries({
+            queryKey: mergeQueueQueryKey,
+          });
+          // pushedToOrigin flips on every merged branch too — Branches needs
+          // its own refetch, same as run.changed's invalidation above.
+          void queryClient.invalidateQueries({ queryKey: branchesQueryKey });
+          // Per-run "Merged" toasts already come from
+          // useTransitionNotifications' own merge-queue diff — this event
+          // only needs to report the *push* outcome, not repeat that a
+          // merge happened. Both outcomes below also go through
+          // onRecordInbox, not just `notify`: this is the exact event
+          // class the inbox exists for — `lastPushError`'s own banner
+          // clears on the next drain, but without an inbox row a failed
+          // auto-push would otherwise leave no trace at all once that
+          // banner is gone.
+          if (event.pushError !== undefined) {
+            setLastPushError(event.pushError);
+            void notify('Push failed', event.pushError);
+            onRecordInbox([
+              {
+                ts: new Date().toISOString(),
+                title: 'Push failed',
+                body: event.pushError,
+                target: { kind: 'runs-page' },
+              },
+            ]);
+          } else if (event.pushed && event.merged === 0) {
+            // A retry-only drain: nothing new merged this pass, just a
+            // previously-failed push that finally landed. Recording it in
+            // the inbox is still worthwhile (the earlier failure got a row
+            // too), but "0 merge(s) now on origin" would misread as if
+            // nothing happened at all — so no toast here.
+            setLastPushError(null);
+            onRecordInbox([
+              {
+                ts: new Date().toISOString(),
+                title: 'Push retry succeeded',
+                body: 'Origin is now up to date.',
+                target: { kind: 'runs-page' },
+              },
+            ]);
+          } else if (event.pushed) {
+            setLastPushError(null);
+            const body = `${event.merged} merge(s) now on origin`;
+            void notify('Pushed to origin', body);
+            onRecordInbox([
+              {
+                ts: new Date().toISOString(),
+                title: 'Pushed to origin',
+                body,
+                target: { kind: 'runs-page' },
+              },
+            ]);
+          } else {
+            // Merged locally with nothing to push to (no origin remote
+            // configured) — not a failure, so no toast, no banner, and no
+            // inbox row either.
+            setLastPushError(null);
+          }
+        }
+      },
+    });
+    return () => {
+      if (listTimer !== null) clearTimeout(listTimer);
+      if (derivedTimer !== null) clearTimeout(derivedTimer);
+      disconnect();
+    };
   }, [
     client,
     queryClient,
+    applyTaskDoc,
     tasksQueryKey,
     configQueryKey,
     readyQueryKey,
@@ -1831,11 +1902,10 @@ export function useDispatchProject(
   const handleUpdate = useCallback(
     async (id: string, patch: UpdatePatch): Promise<void> => {
       if (client === null) return;
-      await client.updateTask(id, patch);
-      void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+      applyTaskDoc(await client.updateTask(id, patch));
       void queryClient.invalidateQueries({ queryKey: readyQueryKey });
     },
-    [client, queryClient, tasksQueryKey, readyQueryKey]
+    [client, queryClient, applyTaskDoc, readyQueryKey]
   );
 
   // Optimistic status change for the board's drag-and-drop: the card jumps to
@@ -1855,29 +1925,37 @@ export function useDispatchProject(
           doc.meta.id === id ? { ...doc, meta: { ...doc.meta, status } } : doc
         )
       );
+      let updated: TaskDoc;
       try {
-        await client.updateTask(id, { status });
+        updated = await client.updateTask(id, { status });
       } catch (err) {
         if (previous !== undefined) {
           queryClient.setQueryData(tasksQueryKey, previous);
         }
         throw err;
       }
-      void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+      applyTaskDoc(updated);
       void queryClient.invalidateQueries({ queryKey: readyQueryKey });
     },
-    [client, queryClient, tasksQueryKey, readyQueryKey, archivedTaskIds]
+    [
+      client,
+      queryClient,
+      applyTaskDoc,
+      tasksQueryKey,
+      readyQueryKey,
+      archivedTaskIds,
+    ]
   );
 
   const handleCreate = useCallback(
-    async (input: CreateInput): Promise<TaskListItem | null> => {
+    async (input: CreateInput): Promise<TaskDoc | null> => {
       if (client === null) return null;
       const created = await client.createTask(input);
-      void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+      applyTaskDoc(created);
       void queryClient.invalidateQueries({ queryKey: readyQueryKey });
       return created;
     },
-    [client, queryClient, tasksQueryKey, readyQueryKey]
+    [client, queryClient, applyTaskDoc, readyQueryKey]
   );
 
   // The create dialog's post-create upload; the `handle` prefix puts it under
@@ -1886,10 +1964,9 @@ export function useDispatchProject(
   const handleUploadAttachments = useCallback(
     async (taskId: string, files: File[]): Promise<void> => {
       if (client === null) return;
-      await client.uploadTaskAttachments(taskId, files);
-      void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+      applyTaskDoc(await client.uploadTaskAttachments(taskId, files));
     },
-    [client, queryClient, tasksQueryKey]
+    [client, applyTaskDoc]
   );
 
   // Seeds the drafts query with the 202's `running` record immediately, so the tray shows it
@@ -2007,17 +2084,16 @@ export function useDispatchProject(
     [client, queryClient, branchesQueryKey, runsQueryKey]
   );
 
-  // Promoting a note into a task refetches both — the note gains its linked-task
-  // marker and the new task shows up on the board.
+  // Promoting a note into a task refetches the note (it gains its linked-task
+  // marker); the new task reaches the board through its `task.changed`.
   const handlePromoteNote = useCallback(
     async (id: string): Promise<void> => {
       if (client === null) return;
       await client.promoteNote(id);
       void queryClient.invalidateQueries({ queryKey: notesQueryKey });
-      void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
       void queryClient.invalidateQueries({ queryKey: readyQueryKey });
     },
-    [client, queryClient, notesQueryKey, tasksQueryKey, readyQueryKey]
+    [client, queryClient, notesQueryKey, readyQueryKey]
   );
 
   // The AI half of promoting: asks the daemon to draft the task this note should become and
@@ -2071,8 +2147,8 @@ export function useDispatchProject(
           model ??
           (effective === 'claude' ? resolveExecuteModel(config) : undefined),
       });
+      // The task's own status change arrives as a `task.changed` naming it.
       void queryClient.invalidateQueries({ queryKey: runsQueryKey });
-      void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
       void queryClient.invalidateQueries({ queryKey: readyQueryKey });
       // A batch member stays where the user is; only a lone dispatch follows its
       // run. See DispatchOptions for what firing this per task looks like.
@@ -2084,7 +2160,6 @@ export function useDispatchProject(
       executors,
       queryClient,
       runsQueryKey,
-      tasksQueryKey,
       readyQueryKey,
       onRunDispatched,
     ]
@@ -2206,11 +2281,11 @@ export function useDispatchProject(
     async (runId: string, action: 'merge' | 'discard'): Promise<void> => {
       if (client === null) return;
       await client.reviewRun(runId, action);
+      // Task changes arrive over `task.changed`.
       void queryClient.invalidateQueries({ queryKey: runsQueryKey });
-      void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
       void queryClient.invalidateQueries({ queryKey: readyQueryKey });
     },
-    [client, queryClient, runsQueryKey, tasksQueryKey, readyQueryKey]
+    [client, queryClient, runsQueryKey, readyQueryKey]
   );
 
   const handleRequestChanges = useCallback(
@@ -2218,20 +2293,12 @@ export function useDispatchProject(
       if (client === null) return;
       const meta = await client.sendRunMessage(runId, text, { resume: true });
       void queryClient.invalidateQueries({ queryKey: runsQueryKey });
-      void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
       void queryClient.invalidateQueries({ queryKey: readyQueryKey });
       // request-changes re-dispatches under a fresh run id — follow it so the caller keeps
       // showing the run that's now actually live.
       onRunDispatched?.(meta.id, meta.taskId);
     },
-    [
-      client,
-      queryClient,
-      runsQueryKey,
-      tasksQueryKey,
-      readyQueryKey,
-      onRunDispatched,
-    ]
+    [client, queryClient, runsQueryKey, readyQueryKey, onRunDispatched]
   );
 
   const handleOpenPr = useCallback(

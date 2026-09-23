@@ -18,7 +18,9 @@ import type { SyncResult } from './sync/boardSyncer.js';
 // to the right run's log without a refetch; `approval.requested` tells
 // clients a run is now waiting on a human decision.
 export type ServerEvent =
-  | { type: 'task.changed' }
+  // `ids`, when set, names every task the change touched, so a client can
+  // refetch just those; absent means "anything may have changed".
+  | { type: 'task.changed'; ids?: string[] }
   | { type: 'hello'; version: string }
   | { type: 'run.changed' }
   | { type: 'run.log'; runId: string; entry: NormalizedEntry }
