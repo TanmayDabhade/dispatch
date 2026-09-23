@@ -6,6 +6,7 @@ import type {
 } from '@dispatch/client';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { MonitorPlay, RotateCw } from 'lucide-react';
+import { useState } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { isTeamLocalPage } from '../../lib/teamLocal';
@@ -33,6 +34,37 @@ export interface TaskPreviewTabProps {
  * `allow-popups` keep ordinary app interactions working inside it.
  */
 const PREVIEW_SANDBOX = 'allow-scripts allow-forms allow-popups';
+
+/**
+ * The sandbox for a teammate's preview on a team-local daemon, which frames
+ * the gateway's link (packages/server/src/previewGateway.ts) instead.
+ *
+ * Here `allow-same-origin` is right, not a slip. That preview has an origin of
+ * its own — its own port — so being same-origin with itself grants it nothing
+ * of the daemon's: not the page's storage, not the session cookie (HttpOnly),
+ * and its requests to the daemon are cross-origin, which the daemon refuses.
+ * What the flag does grant is its own cookie, which is how the gateway lets
+ * the frame's scripts, styles and images in; without it every one of them
+ * would be refused.
+ */
+const REMOTE_PREVIEW_SANDBOX =
+  'allow-scripts allow-forms allow-popups allow-same-origin';
+
+/**
+ * The first value seen for `key`, held until `key` changes.
+ *
+ * A teammate's preview link carries a fresh grant every time it is fetched,
+ * so the URL differs on each refetch; framing the latest one would reload the
+ * app under review on every poll, focus and presence event. Held per preview
+ * instance instead — the gateway's cookie carries access after the first load.
+ */
+function useHeldValue(key: string, value: string | undefined) {
+  const [held, setHeld] = useState<{ key: string; value: string } | null>(null);
+  if (value !== undefined && held?.key !== key) {
+    setHeld({ key, value });
+  }
+  return held?.key === key ? held.value : value;
+}
 
 /** What each refusal means to someone looking at this tab. `no-command` is by
  *  far the common one — most repos are not web apps — so it reads as a plain
@@ -75,6 +107,10 @@ export function TaskPreviewTab({ data, selectedRun }: TaskPreviewTabProps) {
   // have resolved yet, and the tab renders before a run is selected.
   const nothing: RunPreviewResult = { preview: null };
 
+  // Bumped by Reload: remounts the frame and, for a teammate, takes a fresh
+  // link rather than the one held above.
+  const [reloads, setReloads] = useState(0);
+
   const { data: result, isLoading } = useQuery({
     queryKey,
     enabled: client !== null && runId !== undefined,
@@ -103,20 +139,13 @@ export function TaskPreviewTab({ data, selectedRun }: TaskPreviewTabProps) {
     onSuccess: () => queryClient.setQueryData(queryKey, nothing),
   });
 
-  // A team-local daemon serves previews only to the machine it runs on (see
-  // proxyPreview in packages/server/src/index.ts): a preview has no credential
-  // of its own, so serving unmerged agent work to the whole network would be
-  // serving it to anyone. Said plainly here rather than as a frame full of 403.
-  if (isTeamLocalPage()) {
-    return (
-      <EmptyState
-        icon={MonitorPlay}
-        heading="Previews run on the host's machine"
-        description="Live previews are only served to the machine running this project's daemon. Review the diff here, or ask them to share the run."
-        className="h-full justify-center"
-      />
-    );
-  }
+  const teamLocal = isTeamLocalPage();
+  const livePreview = result?.preview ?? null;
+  const remoteSrc = useHeldValue(
+    `${livePreview?.runId}@${livePreview?.startedAt}#${reloads}`,
+    livePreview?.remoteUrl
+  );
+
   if (selectedRun === undefined) {
     return (
       <EmptyState
@@ -182,7 +211,10 @@ export function TaskPreviewTab({ data, selectedRun }: TaskPreviewTabProps) {
           <Button
             size="sm"
             variant="ghost"
-            onClick={() => void queryClient.invalidateQueries({ queryKey })}
+            onClick={() => {
+              setReloads((n) => n + 1);
+              void queryClient.invalidateQueries({ queryKey });
+            }}
             aria-label="Reload preview"
           >
             <RotateCw aria-hidden />
@@ -194,14 +226,27 @@ export function TaskPreviewTab({ data, selectedRun }: TaskPreviewTabProps) {
       </div>
       {preview.status === 'starting' ? (
         <TabSkeleton />
+      ) : teamLocal && remoteSrc === undefined ? (
+        // A daemon from before teammate previews, or one bound to loopback
+        // that served this page anyway: nothing a teammate's browser can
+        // reach, said plainly rather than as a frame full of 403.
+        <EmptyState
+          icon={MonitorPlay}
+          heading="This preview is only on the host's machine"
+          description="The daemon did not offer a link teammates can open. Review the diff here, or ask them to share the run."
+          className="h-full justify-center"
+        />
       ) : (
         <iframe
           // Keyed on the run so switching sessions remounts the frame rather
-          // than leaving the previous run's app on screen under a new label.
-          key={preview.runId}
+          // than leaving the previous run's app on screen under a new label,
+          // and on Reload so pressing it actually reloads.
+          key={`${preview.runId}#${reloads}`}
           title="Run preview"
-          src={`${data.daemonBaseUrl ?? ''}${preview.url}`}
-          sandbox={PREVIEW_SANDBOX}
+          src={
+            teamLocal ? remoteSrc : `${data.daemonBaseUrl ?? ''}${preview.url}`
+          }
+          sandbox={teamLocal ? REMOTE_PREVIEW_SANDBOX : PREVIEW_SANDBOX}
           className="min-h-0 w-full flex-1 border-0 bg-white"
         />
       )}

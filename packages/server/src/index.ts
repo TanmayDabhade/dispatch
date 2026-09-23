@@ -111,6 +111,7 @@ import {
 import type { ApprovalFloor } from './policyEngine.js';
 import { PresenceTracker } from './presence.js';
 import { PreviewSupervisor } from './preview.js';
+import { PreviewGateway } from './previewGateway.js';
 import {
   previewRequestHeaders,
   previewResponseHeaders,
@@ -1537,9 +1538,24 @@ async function bootServer(
   // Per-run dev-server previews. Config is read fresh per start (the same
   // shape the notifications reader above uses), so editing `preview:` in
   // config.yml takes effect without restarting the daemon.
+  // Teammates' way into a preview (previewGateway.ts), in team-local mode
+  // only. Declared before the supervisor so the supervisor's onStop can close
+  // a gateway listener the moment its dev server goes.
+  let previewGateway: PreviewGateway | null = null;
   const previews = new PreviewSupervisor({
     loadConfig: () => loadConfig(rootDir),
+    onStop: (runId) => previewGateway?.close(runId),
   });
+  const tlsFiles =
+    opts.tls === undefined
+      ? undefined
+      : { cert: Bun.file(opts.tls.certPath), key: Bun.file(opts.tls.keyPath) };
+  if (shared) {
+    previewGateway = new PreviewGateway({
+      previews,
+      ...(tlsFiles === undefined ? {} : { tls: tlsFiles }),
+    });
+  }
   // Previews are swept on a timer rather than on each request: the sweep has
   // to reclaim a preview whose reviewer closed the tab and is therefore
   // making no requests at all, which a request-driven check never sees.
@@ -1595,6 +1611,7 @@ async function bootServer(
     claimsDaemonFile: shouldWriteDaemonFile,
     watchdogStatus: () => watchdog.status(),
     previews,
+    previewGateway,
     presence: presenceTracker,
     ownOrigins: ownOriginSet,
     sessionOrigins: sessionOriginSet,
@@ -1779,10 +1796,7 @@ async function bootServer(
   const tlsServer =
     opts.tls === undefined
       ? null
-      : listen('0.0.0.0', opts.tls.port ?? 0, {
-          cert: Bun.file(opts.tls.certPath),
-          key: Bun.file(opts.tls.keyPath),
-        });
+      : listen('0.0.0.0', opts.tls.port ?? 0, tlsFiles);
 
   // `Server.port` is typed optional (Bun also serves over unix sockets, which
   // have no port); we always bind a TCP hostname:port above, so it is always
@@ -1826,6 +1840,9 @@ async function bootServer(
       watchdog.stop();
       clearInterval(previewSweep);
       previews.stopAll();
+      // stopAll closes each preview's listener through onStop; this catches
+      // one opened for a preview that stopped some other way.
+      previewGateway?.closeAll();
       // First, so the boot recovery sweep stops before anything it might act
       // on is torn down — it can sit in a quiet window for minutes and ends by
       // starting an agent (see Orchestrator.shutdown).

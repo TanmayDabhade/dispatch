@@ -1571,6 +1571,9 @@ export interface RunPreview {
   /** Daemon-relative, e.g. `/preview/r-abc123/`. Resolve it against the
    *  daemon's base URL; the dev server's own port is never the address. */
   url: string;
+  /** Team-local mode only: a signed, expiring link to this preview on an
+   *  origin of its own, for a teammate's browser — see previewGateway.ts. */
+  remoteUrl?: string;
   command: string;
   error?: string;
   startedAt: string;
