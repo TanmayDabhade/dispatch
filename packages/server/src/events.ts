@@ -177,6 +177,13 @@ export class EventBus {
     this.clients.delete(client);
   }
 
+  // Whether any socket (the desktop app, a browser tab, `dispatch watch`) is
+  // connected right now. Background work that only exists to keep a viewer's
+  // picture fresh checks this so a daemon nobody is looking at stays quiet.
+  hasClients(): boolean {
+    return this.clients.size > 0;
+  }
+
   // In-process listener, for daemon components that need to react to an event
   // rather than forward it to a socket. Returns its own unsubscribe.
   subscribe(listener: (event: ServerEvent) => void): () => void {
