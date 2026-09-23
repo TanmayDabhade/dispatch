@@ -520,10 +520,23 @@ console.log(`dispatchd listening on http://127.0.0.1:${handle.port}`);
 
 // The only place the app token leaves this process — it is never written to
 // disk, so anything capturing this stdout must not persist the line either.
-console.log(`DISPATCH_APP_TOKEN=${handle.tokens.appToken}`);
-console.log(
-  'dispatchd: that token authorizes approval decisions; it is not stored anywhere, so keep it if you need it'
-);
+//
+// Unless it came in through DISPATCH_APP_TOKEN: then whoever launched the
+// daemon already holds it, and printing it only hands a copy to wherever
+// stdout goes. Under a service manager that is a journal kept on disk, which
+// is the one place the token is meant never to be. The notice deliberately
+// does not start with `DISPATCH_APP_TOKEN=`, the prefix the desktop sidecar
+// parses — that spawner never presets one, and Playwright's never reads it.
+if (presetAppToken !== undefined && presetAppToken !== '') {
+  console.log(
+    'dispatchd: using the app token from DISPATCH_APP_TOKEN; not printing it'
+  );
+} else {
+  console.log(`DISPATCH_APP_TOKEN=${handle.tokens.appToken}`);
+  console.log(
+    'dispatchd: that token authorizes approval decisions; it is not stored anywhere, so keep it if you need it'
+  );
+}
 
 if (enableFakes) {
   console.log(

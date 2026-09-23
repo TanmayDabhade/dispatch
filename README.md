@@ -277,6 +277,56 @@ teammates' browsers trust works — one from your own CA, `mkcert`, or
 front instead (Caddy, `tailscale serve`), keep the daemon plain on loopback and
 name the proxy's address with `--public-origin`.
 
+### Running it on a shared machine
+
+Team-local mode lives on whoever's machine runs the daemon, so the board goes to
+sleep with their laptop. For a team, run it on something that stays up — a small
+VM, a spare box, anything on the network or Tailscale you all reach:
+
+    git clone <your repo> /srv/project
+    # The page teammates load is the desktop app's browser build, which comes
+    # from a Dispatch checkout rather than from your project:
+    git clone https://github.com/wsoule/dispatch /opt/dispatch
+    (cd /opt/dispatch && pnpm install && moonx desktop:build)
+    umask 077 && printf 'DISPATCH_APP_TOKEN=%s\n' "$(openssl rand -hex 32)" > /etc/dispatch.env
+
+The app token is the operator's credential. Passing it in through the
+environment rather than letting the daemon mint one means it is not printed —
+under a service manager stdout is a journal kept on disk, which is exactly where
+that token must not end up. Keep `/etc/dispatch.env` readable only by the
+account the daemon runs as. A systemd unit:
+
+    [Unit]
+    Description=dispatchd for /srv/project
+    After=network-online.target
+
+    [Service]
+    User=dispatch
+    WorkingDirectory=/srv/project
+    EnvironmentFile=/etc/dispatch.env
+    ExecStart=/usr/local/bin/dispatch serve --port 4771 --host 0.0.0.0 \
+      --web-dist /opt/dispatch/apps/desktop/dist \
+      --tls-cert /etc/dispatch/cert.pem --tls-key /etc/dispatch/key.pem --tls-port 4772
+    Restart=on-failure
+
+    [Install]
+    WantedBy=multi-user.target
+
+Pick a fixed `--tls-port` below the kernel's ephemeral range (on Linux, below
+32768): it is the address you hand teammates, and a port in that range can be
+briefly held by an outgoing connection when the daemon starts. Then, on that
+machine and as the account the daemon runs as (the CLI finds the daemon through
+that account's `~/.dispatch`), invite people with the token from the file:
+
+    sudo -u dispatch sh -c 'set -a; . /etc/dispatch.env; cd /srv/project && dispatch team invite ada@example.com --tier decide'
+
+What to back up: `.dispatch/` in the checkout (the board's database, config and
+roster) and `~/.dispatch/` for the service account (hashed teammate tokens, the
+receipt log, run history, and each run's worktree — including any work an agent
+has not committed yet, so do not treat those as disposable while runs are open).
+A restart keeps teammates signed in — their tokens are on disk as hashes — but
+ends any live previews and hands out fresh preview links.
+
 What changes when the daemon is shared, and why:
 
 - **No token is ever put in the served page.** On loopback the page carries the
