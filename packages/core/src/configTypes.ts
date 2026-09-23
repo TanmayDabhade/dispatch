@@ -434,8 +434,8 @@ export interface ModelConfig {
 }
 
 export const DEFAULT_MODELS: ModelConfig = {
-  execute: 'claude-opus-5',
-  overseer: 'claude-opus-5',
+  execute: 'claude-opus-5-5',
+  overseer: 'claude-opus-5-5',
   plan: 'claude-sonnet-5',
   draft: 'claude-haiku-4-5-20251001',
   enrich: 'claude-haiku-4-5-20251001',

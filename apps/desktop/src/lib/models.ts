@@ -10,7 +10,7 @@ export interface ModelOption {
 // The default for real work first; Fable is the hardest-work premium tier, Sonnet the
 // faster/cheaper pick for well-scoped tasks, Haiku the fastest for small mechanical changes.
 export const MODELS: ModelOption[] = [
-  { id: 'claude-opus-5', label: 'Opus 5' },
+  { id: 'claude-opus-5-5', label: 'Opus 5.5' },
   { id: 'claude-fable-5-1', label: 'Fable 5.1' },
   { id: 'claude-sonnet-5', label: 'Sonnet 5' },
   { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
@@ -101,6 +101,7 @@ export function modelLabel(id: string | undefined): string | undefined {
 // non-billable `<synthetic>` sentinel. Kept beside `MODELS` so all id→label mapping lives in
 // one file, per the parser's "map raw ids to display names in one place" note.
 const HISTORICAL_MODEL_LABELS: Record<string, string> = {
+  'claude-opus-5': 'Opus 5',
   'claude-fable-5': 'Fable 5',
   'claude-opus-4-8': 'Opus 4.8',
   'claude-opus-4-7': 'Opus 4.7',

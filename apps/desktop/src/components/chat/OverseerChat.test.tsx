@@ -567,14 +567,14 @@ test('a parked tool call renders an allow/deny card wired to decideApproval', as
 test('the opening composer offers the model picker and an open conversation names its model', () => {
   const picks: string[] = [];
   const fresh = overseerSession({
-    model: 'claude-opus-5',
+    model: 'claude-opus-5-5',
     setModel: (id) => {
       picks.push(id);
     },
   });
   const first = render(<ChatWithDraft overseer={fresh} />);
   const picker = screen.getByRole('combobox', { name: 'Choose model' });
-  expect(picker.textContent).toContain('Opus 5');
+  expect(picker.textContent).toContain('Opus 5.5');
   first.unmount();
 
   render(
