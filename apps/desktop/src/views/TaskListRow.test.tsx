@@ -1,11 +1,10 @@
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskDoc, UpdatePatch } from '@dispatch/core/browser';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 import { useState } from 'react';
 
 import { testConfig } from '../components/settings/fixtures.test-helper';
-import type { DispatchProjectData } from '../hooks/useDispatchProject';
-import { DEFAULT_TASKS_DISPLAY } from '../lib/tasksPrefs';
+import { DEFAULT_TASKS_DISPLAY, type TaskProperty } from '../lib/tasksPrefs';
 import {
   handleTaskListKeyDown,
   type ListRowPassthrough,
@@ -39,23 +38,10 @@ const TASKS = [
   task('t-2', 'Ship the pass', ['api', 'infra']),
 ];
 
-/** A `DispatchProjectData` stub carrying only what the row reads, logging label patches. */
-function rowData(updates: [string, unknown][]): DispatchProjectData {
-  return {
-    config: testConfig,
-    tasks: TASKS,
-    epics: [],
-    latestRunByTaskId: new Map(),
-    liveRunStateByTaskId: new Map(),
-    attentionByTaskId: new Map(),
-    fixLoops: new Map(),
-    handleUpdate: (id: string, patch: unknown) => {
-      updates.push([id, patch]);
-      return Promise.resolve();
-    },
-    moveTaskStatus: () => Promise.resolve(),
-  } as unknown as DispatchProjectData;
-}
+const noop = () => {};
+const resolved = () => Promise.resolve();
+const NO_EPICS: TaskDoc[] = [];
+const LABELS = [...new Set(TASKS.flatMap((t) => t.meta.labels))].sort();
 
 // A popover positions itself a microtask after mount (floating-ui), so anything that opens
 // or drives one runs inside an async `act` that lets that settle.
@@ -79,7 +65,10 @@ function Grid({
 }) {
   const [picker, setPicker] = useState<OpenPicker | null>(null);
   const [focusedTaskId, setFocused] = useState<string | null>('t-1');
-  const data = rowData(updates);
+  const onUpdate = (id: string, patch: UpdatePatch) => {
+    updates.push([id, patch]);
+    return Promise.resolve();
+  };
   return (
     <div
       role="grid"
@@ -103,14 +92,21 @@ function Grid({
         <TaskListRow
           key={doc.meta.id}
           doc={doc}
-          data={data}
           prefs={DEFAULT_TASKS_DISPLAY}
+          run={undefined}
+          live={false}
+          needsYou={false}
+          statuses={testConfig.statuses}
+          epics={NO_EPICS}
+          labelCandidates={LABELS}
+          onUpdate={onUpdate}
+          onMoveStatus={resolved}
           picker={picker}
           onPickerChange={setPicker}
           selected={false}
           focused={focusedTaskId === doc.meta.id}
-          onOpen={() => {}}
-          onFocus={() => {}}
+          onOpen={noop}
+          onFocus={noop}
           rowProps={rowProps}
         />
       ))}
@@ -195,4 +191,61 @@ test('rowProps land on the row element', () => {
     expect(row.dataset['probe']).toBe('x');
   }
   expect(rows()[0]?.dataset['rowId']).toBe('t-1');
+});
+
+// Rows are memo'd with id-based callbacks, so hovering one re-renders only the rows whose
+// `focused` flipped. Render work is counted through `prefs.properties.has`, which every
+// row render calls a fixed number of times.
+test('a cursor move re-renders only the rows whose focus changed', () => {
+  let reads = 0;
+  class CountingSet extends Set<TaskProperty> {
+    override has(value: TaskProperty): boolean {
+      reads += 1;
+      return super.has(value);
+    }
+  }
+  const prefs = {
+    ...DEFAULT_TASKS_DISPLAY,
+    properties: new CountingSet(DEFAULT_TASKS_DISPLAY.properties),
+  };
+  const docs = ['t-1', 't-2', 't-3', 't-4', 't-5'].map((id) => task(id, id));
+  function List() {
+    const [focused, setFocused] = useState<string | null>(null);
+    return (
+      <div>
+        {docs.map((doc) => (
+          <TaskListRow
+            key={doc.meta.id}
+            doc={doc}
+            prefs={prefs}
+            run={undefined}
+            live={false}
+            needsYou={false}
+            statuses={testConfig.statuses}
+            epics={NO_EPICS}
+            onUpdate={resolved}
+            onMoveStatus={resolved}
+            picker={null}
+            onPickerChange={noop}
+            selected={false}
+            focused={focused === doc.meta.id}
+            onOpen={noop}
+            onFocus={setFocused}
+            rowProps={{ 'data-probe': doc.meta.id } as ListRowPassthrough}
+          />
+        ))}
+      </div>
+    );
+  }
+  render(<List />);
+  const perRow = reads / docs.length;
+  expect(perRow).toBeGreaterThan(0);
+
+  reads = 0;
+  fireEvent.mouseEnter(rows()[2]);
+  expect(reads).toBe(perRow);
+
+  reads = 0;
+  fireEvent.mouseEnter(rows()[3]);
+  expect(reads).toBe(perRow * 2);
 });

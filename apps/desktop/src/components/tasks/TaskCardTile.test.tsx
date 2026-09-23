@@ -198,7 +198,7 @@ test('clicking a label pill opens the labels picker over the catalogue, not the 
   const patches: unknown[] = [];
   renderCard({
     onClick: () => (opened += 1),
-    onEditTask: (patch) => patches.push(patch),
+    onEditTask: (id, patch) => patches.push([id, patch]),
     labelCatalogue: ['docs', 'ui'],
   });
   const trigger = screen.getByRole('button', { name: 'Change labels' });
@@ -229,7 +229,9 @@ test('clicking a label pill opens the labels picker over the catalogue, not the 
     fireEvent.pointerDown(option);
     fireEvent.click(option);
   });
-  expect(patches).toEqual([{ labels: ['ui', 'api', 'infra', 'docs'] }]);
+  expect(patches).toEqual([
+    ['t-1', { labels: ['ui', 'api', 'infra', 'docs'] }],
+  ]);
   expect(opened).toBe(0);
 });
 

@@ -18,7 +18,7 @@ import {
   Waypoints,
 } from 'lucide-react';
 import type { KeyboardEvent, ReactNode } from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useDeepLinkActions } from '../components/shell/DeepLinkContext';
 import { useShellActions } from '../components/shell/ShellActionsContext';
@@ -86,6 +86,9 @@ interface TasksListViewProps {
 
 const PRIORITIES = Object.keys(PRIORITY_ORDER) as Priority[];
 const ASSIGNEES: Assignee[] = ['agent', 'human', 'none'];
+
+// Stable fallback while the config loads, so rows' `statuses` prop never churns.
+const NO_STATUSES: string[] = [];
 
 /** The DOM id `aria-activedescendant` points at for one row; the view prefix keeps ids
  * unique across view switches. */
@@ -222,13 +225,27 @@ export function TasksListView({
     [selectedTasks, data.readyIds]
   );
 
-  function toggleSelected(id: string) {
+  const toggleSelected = useCallback((id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (!next.delete(id)) next.add(id);
       return next;
     });
-  }
+  }, []);
+  // The row's right-click: remember it for the list-wide menu and move the cursor there.
+  const openRowMenu = useCallback((id: string) => {
+    setMenuTaskId(id);
+    setFocusedTaskId(id);
+  }, []);
+  // The labels picker's vocabulary, gathered only while one is open.
+  const labelCandidates = useMemo(
+    () =>
+      picker?.kind === 'labels'
+        ? [...new Set(data.tasks.flatMap((t) => t.meta.labels))].sort()
+        : undefined,
+    [picker?.kind, data.tasks]
+  );
+  const statuses = data.config?.statuses ?? NO_STATUSES;
 
   function toggleGroup(key: string) {
     setCollapsed((prev) => {
@@ -390,8 +407,17 @@ export function TasksListView({
                         <TaskListRow
                           key={id}
                           doc={row.doc}
-                          data={data}
                           prefs={prefs}
+                          run={data.latestRunByTaskId.get(id)}
+                          live={data.liveRunStateByTaskId.has(id)}
+                          needsYou={data.attentionByTaskId.has(id)}
+                          statuses={statuses}
+                          epics={data.epics}
+                          labelCandidates={
+                            picker?.taskId === id ? labelCandidates : undefined
+                          }
+                          onUpdate={data.handleUpdate}
+                          onMoveStatus={data.moveTaskStatus}
                           indent={row.indent}
                           archived={group.archived}
                           epic={
@@ -401,17 +427,14 @@ export function TasksListView({
                           }
                           childCount={childCountByParent.get(id) ?? 0}
                           showEpicChip={showEpicChip}
-                          picker={picker}
+                          picker={picker?.taskId === id ? picker : null}
                           onPickerChange={setPicker}
                           selected={selectedIds.has(id)}
                           focused={focusedTaskId === id}
-                          onOpen={() => onSelectTask(id)}
-                          onFocus={() => setFocusedTaskId(id)}
-                          onContextMenu={() => {
-                            setMenuTaskId(id);
-                            setFocusedTaskId(id);
-                          }}
-                          onSelectToggle={() => toggleSelected(id)}
+                          onOpen={onSelectTask}
+                          onFocus={setFocusedTaskId}
+                          onContextMenu={openRowMenu}
+                          onSelectToggle={toggleSelected}
                           rowProps={{ domId: rowDomId(id) }}
                         />
                       );

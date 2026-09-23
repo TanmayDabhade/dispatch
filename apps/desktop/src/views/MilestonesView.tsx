@@ -2,7 +2,7 @@ import type { EpicProgressChild } from '@dispatch/client';
 import type { TaskListItem } from '@dispatch/core/browser';
 import { Target } from 'lucide-react';
 import type { KeyboardEvent } from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   FanoutControls,
@@ -66,6 +66,9 @@ interface MilestonesViewProps {
   onRequestFilter?: () => void;
   onRequestDisplay?: () => void;
 }
+
+// Stable fallback while the config loads, so rows' `statuses` prop never churns.
+const NO_STATUSES: string[] = [];
 
 /** The DOM id `aria-activedescendant` points at for one row; the view prefix keeps ids
  * unique across view switches. */
@@ -209,6 +212,31 @@ export function MilestonesView({
     }
   }, [focusEpic, groups]);
 
+  // Stable across renders so memo'd rows skip re-rendering on a cursor move.
+  const openRow = useCallback(
+    (id: string) => {
+      const parent = taskById.get(id)?.meta.parent ?? null;
+      const phase =
+        parent === null ? undefined : phaseByEpic.get(parent)?.get(id);
+      if (phase !== undefined && showsPhasePill(phase.phase)) {
+        const target = drillTargetFor(phase);
+        onOpenTask(id, target.tab, target.runId);
+        return;
+      }
+      onOpenTask(id);
+    },
+    [taskById, phaseByEpic, onOpenTask]
+  );
+  // The labels picker's vocabulary, gathered only while one is open.
+  const labelCandidates = useMemo(
+    () =>
+      picker?.kind === 'labels'
+        ? [...new Set(data.tasks.flatMap((t) => t.meta.labels))].sort()
+        : undefined,
+    [picker?.kind, data.tasks]
+  );
+  const statuses = data.config?.statuses ?? NO_STATUSES;
+
   if (!daemonReady) {
     return (
       <DaemonUnavailable
@@ -243,17 +271,6 @@ export function MilestonesView({
     const parent = doc.meta.parent;
     if (parent === null) return undefined;
     return phaseByEpic.get(parent)?.get(doc.meta.id);
-  }
-
-  function openRow(id: string) {
-    const doc = taskById.get(id);
-    const phase = doc === undefined ? undefined : phaseFor(doc);
-    if (phase !== undefined && showsPhasePill(phase.phase)) {
-      const target = drillTargetFor(phase);
-      onOpenTask(id, target.tab, target.runId);
-      return;
-    }
-    onOpenTask(id);
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLDivElement>) {
@@ -439,17 +456,27 @@ export function MilestonesView({
                   <TaskListRow
                     key={id}
                     doc={row.doc}
-                    data={data}
                     prefs={prefs}
+                    run={data.latestRunByTaskId.get(id)}
+                    live={data.liveRunStateByTaskId.has(id)}
+                    needsYou={data.attentionByTaskId.has(id)}
+                    fixLoop={data.fixLoops.get(id)}
+                    statuses={statuses}
+                    epics={data.epics}
+                    labelCandidates={
+                      picker?.taskId === id ? labelCandidates : undefined
+                    }
+                    onUpdate={data.handleUpdate}
+                    onMoveStatus={data.moveTaskStatus}
                     indent={row.indent}
                     showEpicChip={false}
-                    picker={picker}
+                    picker={picker?.taskId === id ? picker : null}
                     onPickerChange={setPicker}
                     phase={phaseFor(row.doc)}
                     selected={false}
                     focused={focusedTaskId === id}
-                    onOpen={() => openRow(id)}
-                    onFocus={() => setFocusedTaskId(id)}
+                    onOpen={openRow}
+                    onFocus={setFocusedTaskId}
                     rowProps={{ domId: rowDomId(id) }}
                   />
                 );

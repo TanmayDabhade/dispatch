@@ -1,7 +1,11 @@
-import type { EpicProgressChild, FixLoopState } from '@dispatch/client';
-import type { TaskListItem } from '@dispatch/core/browser';
+import type {
+  EpicProgressChild,
+  FixLoopState,
+  RunMeta,
+} from '@dispatch/client';
+import type { TaskListItem, UpdatePatch } from '@dispatch/core/browser';
 import { Milestone, Play } from 'lucide-react';
-import type { KeyboardEvent } from 'react';
+import { type KeyboardEvent, memo } from 'react';
 
 import { RunStatePill } from '../components/runs/RunStatePill';
 import { AssigneeAvatar } from '../components/tasks/AssigneeAvatar';
@@ -14,7 +18,6 @@ import {
   StatusControl,
 } from '../components/tasks/PropertyControls';
 import { StatusIcon } from '../components/tasks/StatusIcon';
-import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import {
   formatUsd,
   PHASE_LABEL,
@@ -75,8 +78,23 @@ export type ListRowPassthrough = Omit<
 
 export interface TaskListRowProps {
   doc: TaskListItem;
-  data: DispatchProjectData;
   prefs: TasksDisplayPrefs;
+  /** This task's latest run, if any. */
+  run: RunMeta | undefined;
+  /** Whether `run` is still live — only then does the row show its run mark. */
+  live: boolean;
+  /** Whether the task's latest run needs a human (`attentionByTaskId`). */
+  needsYou: boolean;
+  /** This task's fix loop, for a capped phase pill's wording. */
+  fixLoop?: FixLoopState;
+  /** The project's configured statuses, for the status picker. */
+  statuses: string[];
+  /** Every epic, for the `e` picker. */
+  epics: TaskListItem[];
+  /** The label vocabulary — only passed while this row's labels picker is open. */
+  labelCandidates?: string[];
+  onUpdate: (id: string, patch: UpdatePatch) => Promise<void>;
+  onMoveStatus: (id: string, status: string) => Promise<void>;
   indent?: 0 | 1;
   /** Read-only: glyphs instead of pickers, no checkbox, dimmed. */
   archived?: boolean;
@@ -90,14 +108,17 @@ export interface TaskListRowProps {
    * a phase pill (only where the phase says more than the status glyph), the run's cost
    * and the open findings count. */
   phase?: EpicProgressChild;
+  /** The open picker; callers pass it only to the row it belongs to, so opening one
+   * re-renders that row alone. */
   picker: OpenPicker | null;
   onPickerChange: (picker: OpenPicker | null) => void;
   selected: boolean;
   focused: boolean;
-  onOpen: () => void;
-  onFocus: () => void;
-  onContextMenu?: () => void;
-  onSelectToggle?: () => void;
+  // Id-based so a list can hand every row the same stable callbacks.
+  onOpen: (id: string) => void;
+  onFocus: (id: string) => void;
+  onContextMenu?: (id: string) => void;
+  onSelectToggle?: (id: string) => void;
   /** Spread last onto the `ListRow` — see `ListRowPassthrough`. */
   rowProps?: ListRowPassthrough;
 }
@@ -117,10 +138,18 @@ function phasePillLabel(
 /** One 36px task row: priority picker, sans id, status picker, title, then the right-aligned
  * label pills, epic chip, sub-task count, `Needs you`, live run mark and assignee, and the
  * absolute date. Which of those show comes from `prefs.properties`. */
-export function TaskListRow({
+export const TaskListRow = memo(function TaskListRow({
   doc,
-  data,
   prefs,
+  run,
+  live: liveRun,
+  needsYou,
+  fixLoop,
+  statuses,
+  epics,
+  labelCandidates,
+  onUpdate,
+  onMoveStatus,
   indent = 0,
   archived = false,
   epic,
@@ -138,8 +167,7 @@ export function TaskListRow({
   rowProps,
 }: TaskListRowProps) {
   const id = doc.meta.id;
-  const run = data.latestRunByTaskId.get(id);
-  const live = run !== undefined && data.liveRunStateByTaskId.has(id);
+  const live = run !== undefined && liveRun;
   const editable = !archived;
   const has = (p: TaskProperty) => prefs.properties.has(p);
 
@@ -158,16 +186,13 @@ export function TaskListRow({
           </LabelPill>
         ))}
       {/* The label picker only mounts while the `l` key has it open — the pills above are
-          the row's resting face. The vocabulary is gathered here, once per open picker,
-          never on every row render. */}
+          the row's resting face. The caller gathers the vocabulary once per open picker. */}
       {picker?.taskId === id && picker.kind === 'labels' && (
         <LabelsControl
           variant="inline"
           value={doc.meta.labels}
-          candidates={[
-            ...new Set(data.tasks.flatMap((t) => t.meta.labels)),
-          ].sort()}
-          onChange={(labels) => void data.handleUpdate(id, { labels })}
+          candidates={labelCandidates ?? []}
+          onChange={(labels) => void onUpdate(id, { labels })}
           {...pickerProps('labels')}
         />
       )}
@@ -182,9 +207,9 @@ export function TaskListRow({
       {picker?.taskId === id && picker.kind === 'epic' && (
         <EpicControl
           value={doc.meta.parent}
-          epics={data.epics}
+          epics={epics}
           variant="inline"
-          onChange={(parent) => void data.handleUpdate(id, { parent })}
+          onChange={(parent) => void onUpdate(id, { parent })}
           {...pickerProps('epic')}
         />
       )}
@@ -194,7 +219,7 @@ export function TaskListRow({
           {childCount}
         </Pill>
       )}
-      {data.attentionByTaskId.has(id) && !archived && (
+      {needsYou && !archived && (
         <LabelPill color="var(--state-waiting-fg)">Needs you</LabelPill>
       )}
       {has('run') && live && <RunStatePill meta={run} compact />}
@@ -205,7 +230,7 @@ export function TaskListRow({
           color={phaseTint(phase.phase) ?? 'var(--text-muted)'}
           title={phase.reason}
         >
-          {phasePillLabel(phase, data.fixLoops.get(id))}
+          {phasePillLabel(phase, fixLoop)}
         </LabelPill>
       )}
       {phase?.costUsd !== undefined && (
@@ -220,7 +245,7 @@ export function TaskListRow({
         (editable ? (
           <AssigneeControl
             value={doc.meta.assignee}
-            onChange={(a) => void data.handleUpdate(id, { assignee: a })}
+            onChange={(a) => void onUpdate(id, { assignee: a })}
             {...pickerProps('assignee')}
           />
         ) : (
@@ -239,7 +264,7 @@ export function TaskListRow({
           editable ? (
             <PriorityControl
               value={doc.meta.priority}
-              onChange={(p) => void data.handleUpdate(id, { priority: p })}
+              onChange={(p) => void onUpdate(id, { priority: p })}
               {...pickerProps('priority')}
             />
           ) : (
@@ -253,8 +278,8 @@ export function TaskListRow({
           editable ? (
             <StatusControl
               value={doc.meta.status}
-              statuses={data.config?.statuses ?? []}
-              onChange={(status) => void data.moveTaskStatus(id, status)}
+              statuses={statuses}
+              onChange={(status) => void onMoveStatus(id, status)}
               {...pickerProps('status')}
             />
           ) : (
@@ -271,9 +296,11 @@ export function TaskListRow({
       }
       selected={selected}
       focused={focused}
-      onClick={onOpen}
-      onMouseEnter={onFocus}
-      onContextMenu={onContextMenu}
+      onClick={() => onOpen(id)}
+      onMouseEnter={() => onFocus(id)}
+      onContextMenu={
+        onContextMenu === undefined ? undefined : () => onContextMenu(id)
+      }
       onKeyDown={(e: KeyboardEvent<HTMLDivElement>) => {
         // The list container owns Enter/Space (open/peek); the row's own activation must
         // not fire a second open.
@@ -284,11 +311,36 @@ export function TaskListRow({
           e.preventDefault();
         }
       }}
-      onSelectToggle={editable ? onSelectToggle : undefined}
+      onSelectToggle={
+        editable && onSelectToggle !== undefined
+          ? () => onSelectToggle(id)
+          : undefined
+      }
       selectLabel={`Select ${doc.meta.title}`}
       className={cn(archived && 'opacity-55')}
       {...rowProps}
     />
+  );
+}, sameRowProps);
+
+// Shallow equality, except `rowProps`, which callers build inline on every render.
+function sameRowProps(a: TaskListRowProps, b: TaskListRowProps): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const key of keys as Set<keyof TaskListRowProps>) {
+    if (key === 'rowProps') {
+      if (!shallowEqual(a.rowProps ?? {}, b.rowProps ?? {})) return false;
+    } else if (!Object.is(a[key], b[key])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function shallowEqual(a: object, b: object): boolean {
+  const aEntries = Object.entries(a);
+  if (aEntries.length !== Object.keys(b).length) return false;
+  return aEntries.every(([key, value]) =>
+    Object.is(value, (b as Record<string, unknown>)[key])
   );
 }
 

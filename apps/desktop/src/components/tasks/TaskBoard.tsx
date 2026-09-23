@@ -27,7 +27,7 @@ import {
   Play,
   Plus,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   type BoardLane,
@@ -138,6 +138,7 @@ interface TaskBoardProps {
 
 // Stable empty-set defaults — no fresh `Set` per render for the common case.
 const NO_IDS: ReadonlySet<string> = new Set();
+const noop = () => {};
 
 // Linear's column: 348px including 12px of padding either side, so the 322px card sits on
 // the 324px inner width. Shared by the sticky header row and every lane's columns.
@@ -189,10 +190,20 @@ function DraggableCard({
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({ id, disabled });
-  const style = transform
-    ? { transform: CSS.Translate.toString(transform) }
-    : undefined;
-  return children({ setNodeRef, style, attributes, listeners, isDragging });
+  // Memoized so an idle card's `drag` prop keeps its identity and the memo'd tile skips.
+  const drag = useMemo(
+    () => ({
+      setNodeRef,
+      style: transform
+        ? { transform: CSS.Translate.toString(transform) }
+        : undefined,
+      attributes,
+      listeners,
+      isDragging,
+    }),
+    [setNodeRef, transform, attributes, listeners, isDragging]
+  );
+  return children(drag);
 }
 
 // One lane+status cell's card stack, droppable by the composite id `dropZoneId` builds (never
@@ -405,10 +416,25 @@ export function TaskBoard({
     return map;
   }, [tasks]);
 
-  // Every label the board's tasks use — the vocabulary a card's label picker offers.
-  const labelCatalogue = useMemo(
-    () => [...new Set(tasks.flatMap((t) => t.meta.labels))].sort(),
+  // Every label the board's tasks use — the vocabulary a card's label picker offers. Keyed
+  // on its contents, so an edit that adds no label keeps the array (and the cards) as is.
+  const labelKey = useMemo(
+    () => [...new Set(tasks.flatMap((t) => t.meta.labels))].sort().join('\0'),
     [tasks]
+  );
+  const labelCatalogue = useMemo(
+    () => (labelKey === '' ? [] : labelKey.split('\0')),
+    [labelKey]
+  );
+
+  // Stable, id-based card callbacks so the memo'd tiles skip unrelated renders.
+  const moveCardStatus = useCallback(
+    (id: string, next: string) => void onMoveStatus?.(id, next),
+    [onMoveStatus]
+  );
+  const editCard = useCallback(
+    (id: string, patch: UpdatePatch) => void onEditTask?.(id, patch),
+    [onEditTask]
   );
 
   // Every epic's children, bucketed in one pass — feeds `EpicLaneHeader`'s rolled-up status
@@ -610,21 +636,16 @@ export function TaskBoard({
                                     statuses={statuses}
                                     properties={display.properties}
                                     labelCatalogue={labelCatalogue}
-                                    onStatusChange={(next) =>
-                                      void onMoveStatus?.(doc.meta.id, next)
-                                    }
-                                    onEditTask={(patch) =>
-                                      void onEditTask?.(doc.meta.id, patch)
-                                    }
-                                    onClick={() => onSelect(doc.meta.id)}
+                                    onStatusChange={moveCardStatus}
+                                    onEditTask={editCard}
+                                    onClick={onSelect}
                                     onDispatch={
-                                      readyIds.has(doc.meta.id) &&
-                                      onDispatch !== undefined
-                                        ? () => onDispatch(doc.meta.id)
+                                      readyIds.has(doc.meta.id)
+                                        ? onDispatch
                                         : undefined
                                     }
                                     focused={doc.meta.id === focusedTaskId}
-                                    onFocus={() => onCardFocus?.(doc.meta.id)}
+                                    onFocus={onCardFocus}
                                     drag={drag}
                                     archived={archivedTaskIds.has(doc.meta.id)}
                                     needsAttention={
@@ -659,9 +680,9 @@ export function TaskBoard({
               readiness={readinessById?.get(activeDoc.meta.id)}
               statuses={statuses}
               properties={display.properties}
-              onStatusChange={() => {}}
-              onEditTask={() => {}}
-              onClick={() => {}}
+              onStatusChange={noop}
+              onEditTask={noop}
+              onClick={noop}
             />
           </div>
         )}

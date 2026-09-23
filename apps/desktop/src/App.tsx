@@ -7,6 +7,7 @@ import {
   useLayoutEffect,
   useMemo,
   useReducer,
+  useRef,
   useState,
 } from 'react';
 
@@ -59,7 +60,10 @@ import { useGlobalKeyboard } from './hooks/useGlobalKeyboard';
 import { useOverseerSession } from './hooks/useOverseerSession';
 import { useSavedViews } from './hooks/useSavedViews';
 import { useTaskDoc, withBody } from './hooks/useTaskDoc';
-import { withActionFeedback } from './lib/actionFeedback';
+import {
+  type ActionFeedbackCache,
+  withActionFeedback,
+} from './lib/actionFeedback';
 import type {
   GlobalView,
   ProjectView,
@@ -434,38 +438,54 @@ function App() {
   // Wrapped once, here, so a failed action says so instead of the button
   // appearing to do nothing. See lib/actionFeedback.ts for why this is not done
   // per handler.
+  // The toasts read the latest project through a ref, so the callbacks (and the
+  // wrapper cache keyed on them) survive task changes and unchanged handlers keep
+  // their identity — memo'd rows then skip re-rendering.
+  const rawDataRef = useRef(rawData);
+  useEffect(() => {
+    rawDataRef.current = rawData;
+  }, [rawData]);
+  const feedback = useMemo(
+    () => ({
+      onError: (action: string, message: string) =>
+        toasts.push({
+          title: `${action} failed`,
+          description: message,
+          tone: 'error',
+        }),
+      onSuccess: (message: string, taskId?: string) =>
+        toasts.push({
+          title: message,
+          tone: 'success',
+          ...(taskId !== undefined && {
+            description: taskToastDescription(
+              taskId,
+              rawDataRef.current.tasks.find((t) => t.meta.id === taskId)?.meta
+                .title ?? taskId
+            ),
+            link: viewTaskLink(taskId, (id) =>
+              dispatchNav({
+                type: 'openTask',
+                taskId: id,
+                tab: 'details',
+                runId: rawDataRef.current.latestRunByTaskId.get(id)?.id ?? null,
+              })
+            ),
+          }),
+        }),
+      cache: new WeakMap() as ActionFeedbackCache,
+    }),
+    [toasts]
+  );
   const data = useMemo(
     () =>
       withActionFeedback(
         rawData,
-        (action, message) =>
-          toasts.push({
-            title: `${action} failed`,
-            description: message,
-            tone: 'error',
-          }),
-        (message, taskId) =>
-          toasts.push({
-            title: message,
-            tone: 'success',
-            ...(taskId !== undefined && {
-              description: taskToastDescription(
-                taskId,
-                rawData.tasks.find((t) => t.meta.id === taskId)?.meta.title ??
-                  taskId
-              ),
-              link: viewTaskLink(taskId, (id) =>
-                dispatchNav({
-                  type: 'openTask',
-                  taskId: id,
-                  tab: 'details',
-                  runId: rawData.latestRunByTaskId.get(id)?.id ?? null,
-                })
-              ),
-            }),
-          })
+        feedback.onError,
+        feedback.onSuccess,
+        feedback.cache
       ),
-    [rawData, toasts]
+    [rawData, feedback]
   );
 
   // The overseer chat's session — mounted here, not inside OverseerView, so the
@@ -489,6 +509,16 @@ function App() {
       dispatchNav({ type: 'openTask', taskId, tab, runId: resolved });
     },
     [rawData.latestRunByTaskId]
+  );
+
+  // A Tasks-page row or card open: a phase drill from the milestones layout names
+  // its tab; a plain click keeps the peek. Stable, so memo'd rows can skip renders.
+  const selectBoardTask = useCallback(
+    (taskId: string, tab?: TaskTab, runId?: string) => {
+      if (tab !== undefined) openTaskView(taskId, tab, runId);
+      else dispatchNav({ type: 'openPeek', taskId });
+    },
+    [openTaskView]
   );
 
   // The project's saved views and favorites, one instance shared through
@@ -742,12 +772,9 @@ function App() {
       : null;
 
   // Destructured to bare locals rather than referenced as `data.tasks`/`data.readyIds`/
-  // `data.handleDispatch` inside the memo below: `data` itself is a brand-new object literal
-  // every render (it's returned fresh from `useDispatchProject` each time), so
-  // `react-hooks/exhaustive-deps` correctly refuses to accept a `data.X` member expression in
-  // the dependency array in place of the whole (unstable) `data` — these three fields/
-  // handlers are independently stable (state values, or `useCallback`-memoized), so binding
-  // them to their own names lets the array list exactly what changes.
+  // `data.handleDispatch` inside the memo below: `data` changes whenever any of its fields
+  // does, so depending on it whole would recompute on unrelated changes — binding the fields
+  // this reads to their own names lets the array list exactly what matters.
   const {
     tasks: paletteTasks,
     tasksIncludingArchived,
@@ -1296,14 +1323,7 @@ function App() {
                                   data={data}
                                   mode={tasksViewMode}
                                   focusEpic={focusEpic}
-                                  onSelectTask={(taskId, tab, runId) => {
-                                    // A phase drill from the milestones layout names its
-                                    // tab; a plain row click keeps the peek.
-                                    if (tab !== undefined)
-                                      openTaskView(taskId, tab, runId);
-                                    else
-                                      dispatchNav({ type: 'openPeek', taskId });
-                                  }}
+                                  onSelectTask={selectBoardTask}
                                   onNewTask={(status) =>
                                     openCreateTask(
                                       status !== undefined
