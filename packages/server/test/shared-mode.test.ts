@@ -1,5 +1,6 @@
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { networkInterfaces, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -247,4 +248,127 @@ describe('team-local mode', () => {
       expect(await opened(`http://127.0.0.1:5173`)).toBe('refused');
     }
   );
+
+  describe('over HTTPS', () => {
+    // A throwaway self-signed certificate, made fresh so no key lives in the
+    // repo. The SAN names the LAN address, as a real deployment's would.
+    function makeCert(): { certPath: string; keyPath: string } {
+      const dir = mkdtempSync(join(tmpdir(), 'dispatch-tls-'));
+      const certPath = join(dir, 'cert.pem');
+      const keyPath = join(dir, 'key.pem');
+      const res = spawnSync('openssl', [
+        'req',
+        '-x509',
+        '-newkey',
+        'rsa:2048',
+        '-nodes',
+        '-keyout',
+        keyPath,
+        '-out',
+        certPath,
+        '-days',
+        '1',
+        '-subj',
+        '/CN=dispatch.test',
+        '-addext',
+        `subjectAltName=IP:127.0.0.1${LAN_ADDRESS === undefined ? '' : `,IP:${LAN_ADDRESS}`}`,
+      ]);
+      if (res.status !== 0)
+        throw new Error(`openssl failed: ${String(res.stderr)}`);
+      return { certPath, keyPath };
+    }
+    const insecure = { tls: { rejectUnauthorized: false } } as RequestInit;
+    // The HTTPS listener binds 0.0.0.0, so it is one socket whether reached at
+    // the LAN address or at loopback. These tests speak TLS to it over
+    // loopback because some sandboxes route https to any other address
+    // through a proxy; the Origin they send is still the LAN one a
+    // teammate's browser would.
+
+    it('refuses TLS without a network bind, since it would protect nothing', async () => {
+      await boot(undefined);
+      await expect(
+        startServer({
+          rootDir: root,
+          port: 0,
+          webDistDir: null,
+          tls: makeCert(),
+        })
+      ).rejects.toThrow('--host 0.0.0.0');
+    });
+
+    it.skipIf(LAN_ADDRESS === undefined)(
+      'teammates get HTTPS, and the plain listener leaves the network',
+      async () => {
+        handle = await startServer({
+          rootDir: root,
+          port: 0,
+          webDistDir: webDist(),
+          host: '0.0.0.0',
+          tls: makeCert(),
+        });
+        const tlsPort = handle.tlsPort;
+        expect(tlsPort).toBeGreaterThan(0);
+
+        const overTls = await fetch(`https://127.0.0.1:${tlsPort}/api/whoami`, {
+          ...insecure,
+          headers: { authorization: `Bearer ${handle.tokens.agentToken}` },
+        });
+        expect(overTls.status).toBe(200);
+
+        // The CLI, MCP and desktop sidecar still reach plain loopback…
+        const local = await rawFetch(
+          `http://127.0.0.1:${handle.port}/api/whoami`,
+          {
+            headers: { authorization: `Bearer ${handle.tokens.agentToken}` },
+          }
+        );
+        expect(local.status).toBe(200);
+        // …but nothing on the network can talk to the daemon unencrypted.
+        const plainLan = await rawFetch(
+          `http://${LAN_ADDRESS}:${handle.port}/api/health`
+        ).then(
+          () => 'answered',
+          () => 'refused'
+        );
+        expect(plainLan).toBe('refused');
+      }
+    );
+
+    it.skipIf(LAN_ADDRESS === undefined)(
+      'a session cookie issued over HTTPS is Secure, and the HTTPS origin is trusted',
+      async () => {
+        handle = await startServer({
+          rootDir: root,
+          port: 0,
+          webDistDir: webDist(),
+          host: '0.0.0.0',
+          tls: makeCert(),
+        });
+        const origin = `https://${LAN_ADDRESS}:${handle.tlsPort}`;
+        const issued = await rawFetch(
+          `http://127.0.0.1:${handle.port}/api/team/tokens`,
+          {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              authorization: `Bearer ${handle.tokens.appToken}`,
+            },
+            body: JSON.stringify({ email: 'ada@example.com' }),
+          }
+        );
+        const { token } = (await issued.json()) as { token: string };
+        const signedIn = await fetch(
+          `https://127.0.0.1:${handle.tlsPort}/api/session`,
+          {
+            ...insecure,
+            method: 'POST',
+            headers: { 'content-type': 'application/json', origin },
+            body: JSON.stringify({ token }),
+          }
+        );
+        expect(signedIn.status).toBe(200);
+        expect(signedIn.headers.get('set-cookie')).toContain('Secure');
+      }
+    );
+  });
 });

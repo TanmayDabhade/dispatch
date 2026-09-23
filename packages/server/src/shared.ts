@@ -45,7 +45,8 @@ export function isLoopbackAddress(address: string): boolean {
 /**
  * The origins a browser shows when it loads the app from this daemon over the
  * network: one per non-internal interface address, plus any the operator
- * names (a hostname teammates use, a reverse proxy in front).
+ * names (a hostname teammates use, a reverse proxy in front). `scheme` is
+ * `https` when teammates reach the daemon on its TLS listener.
  *
  * These are trusted in shared mode because they are the daemon's own origin —
  * a teammate's page making a same-origin request. What is NOT done is trusting
@@ -55,14 +56,15 @@ export function isLoopbackAddress(address: string): boolean {
 export function ownOrigins(
   port: number,
   interfaces: NodeJS.Dict<NetworkInterfaceInfo[]>,
-  extra: readonly string[] = []
+  extra: readonly string[] = [],
+  scheme: 'http' | 'https' = 'http'
 ): Set<string> {
   const origins = new Set<string>();
   for (const entries of Object.values(interfaces)) {
     for (const addr of entries ?? []) {
       if (addr.internal) continue;
       const host = addr.family === 'IPv6' ? `[${addr.address}]` : addr.address;
-      origins.add(`http://${host}:${port}`);
+      origins.add(`${scheme}://${host}:${port}`);
     }
   }
   for (const origin of extra) {

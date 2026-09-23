@@ -19,32 +19,55 @@ const HOP_BY_HOP = new Set([
   'upgrade',
 ]);
 
-// Credentials the browser attaches for the daemon, never for the preview.
-// The iframe's own navigation is a same-origin request from the daemon's
-// page, so a teammate's session cookie rides it; forwarded, the dev server
-// would receive a working token for the person looking at it.
-const REQUEST_CREDENTIALS = new Set(['cookie', 'authorization']);
+// Every cookie the daemon sets is named with this prefix — the session, and
+// each preview's own capability. Cookies are scoped to a host, not a port, so
+// all of them reach the preview's port too, and a Set-Cookie from a preview
+// lands in the daemon's jar.
+const DAEMON_COOKIE_PREFIX = 'dispatch_';
 
-// Cookies are scoped to a host, not a port, so a Set-Cookie from the preview
-// lands in the daemon's cookie jar too — where a `dispatch_session` of the
-// dev server's choosing would replace the viewer's own.
-const RESPONSE_CREDENTIALS = new Set(['set-cookie']);
+/** A Cookie header with the daemon's own cookies taken out, or null when
+ *  nothing is left. The app being previewed keeps its own: one that logs its
+ *  users in with a cookie must still work inside a preview. */
+function withoutDaemonCookies(header: string): string | null {
+  const kept = header
+    .split(';')
+    .map((part) => part.trim())
+    .filter((part) => part !== '' && !part.startsWith(DAEMON_COOKIE_PREFIX));
+  return kept.length === 0 ? null : kept.join('; ');
+}
 
-function without(headers: Headers, drop: ReadonlySet<string>): Headers {
+/** A browser's request headers, as the dev server may see them: never the
+ *  bearer header, and never a cookie the daemon set. */
+export function previewRequestHeaders(headers: Headers): Headers {
   const copy = new Headers();
   headers.forEach((value, key) => {
     const name = key.toLowerCase();
-    if (!HOP_BY_HOP.has(name) && !drop.has(name)) copy.append(key, value);
+    if (HOP_BY_HOP.has(name) || name === 'authorization') return;
+    if (name === 'cookie') {
+      const kept = withoutDaemonCookies(value);
+      if (kept !== null) copy.append(key, kept);
+      return;
+    }
+    copy.append(key, value);
   });
   return copy;
 }
 
-/** A browser's request headers, as the dev server may see them. */
-export function previewRequestHeaders(headers: Headers): Headers {
-  return without(headers, REQUEST_CREDENTIALS);
-}
-
-/** The dev server's response headers, as the browser may see them. */
+/** The dev server's response headers, as the browser may see them. A
+ *  Set-Cookie naming one of the daemon's cookies is dropped — otherwise the
+ *  preview could replace the viewer's session with one of its choosing. */
 export function previewResponseHeaders(headers: Headers): Headers {
-  return without(headers, RESPONSE_CREDENTIALS);
+  const copy = new Headers();
+  headers.forEach((value, key) => {
+    const name = key.toLowerCase();
+    if (HOP_BY_HOP.has(name)) return;
+    if (
+      name === 'set-cookie' &&
+      value.trimStart().startsWith(DAEMON_COOKIE_PREFIX)
+    ) {
+      return;
+    }
+    copy.append(key, value);
+  });
+  return copy;
 }

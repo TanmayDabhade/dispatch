@@ -182,7 +182,8 @@ import {
 import type { RunMeta } from './orchestrator/types.js';
 import type { VerificationRunner } from './orchestrator/verify.js';
 import type { PresenceTracker } from './presence.js';
-import type { PreviewSupervisor } from './preview.js';
+import type { PreviewState, PreviewSupervisor } from './preview.js';
+import type { PreviewGateway } from './previewGateway.js';
 import type { ReceiptsScheduler } from './receipts/scheduler.js';
 import {
   formatCommentsForAgent,
@@ -320,6 +321,8 @@ export interface ApiContext {
   // the idle sweep and the shutdown stop belong to the process that owns the
   // port allocations.
   previews: PreviewSupervisor;
+  /** Teammates' way into previews, in team-local mode; null on loopback. */
+  previewGateway: PreviewGateway | null;
   /** Who is connected right now; see presence.ts. */
   presence: PresenceTracker;
   /** The daemon's own network origins in team-local mode, empty otherwise.
@@ -736,12 +739,24 @@ async function createRun(
  * repo, and a surface should render it as an empty state, not a failure.
  */
 async function handleRunPreview(
+  req: Request,
   ctx: ApiContext,
   runId: string,
   method: string
 ): Promise<Response> {
+  // In team-local mode a ready preview also carries `remoteUrl`, the signed
+  // link a teammate's app frames (previewGateway.ts). Built from the host the
+  // caller reached the daemon by, so it works from where they are; access
+  // rests on the signature in it, never on that host.
+  const withRemote = (preview: PreviewState | null) => {
+    if (preview === null || ctx.previewGateway === null) return preview;
+    const remoteUrl = ctx.previewGateway.link(runId, new URL(req.url).hostname);
+    return remoteUrl === null ? preview : { ...preview, remoteUrl };
+  };
   if (method === 'GET') {
-    return jsonResponse({ preview: ctx.previews.get(runId) ?? null });
+    return jsonResponse({
+      preview: withRemote(ctx.previews.get(runId) ?? null),
+    });
   }
   if (method === 'DELETE') {
     ctx.previews.stop(runId);
@@ -757,7 +772,7 @@ async function handleRunPreview(
   if (!result.ok) {
     return jsonResponse({ preview: null, reason: result.refusal.reason });
   }
-  return jsonResponse({ preview: result.preview });
+  return jsonResponse({ preview: withRemote(result.preview) });
 }
 
 async function approveRun(
@@ -5090,7 +5105,7 @@ export async function handleApi(
         return jsonResponse({ ok: true });
       }
       if (segments.length === 3 && segments[2] === 'preview') {
-        return await handleRunPreview(ctx, segments[1], method);
+        return await handleRunPreview(req, ctx, segments[1], method);
       }
       // POST /api/runs/:id/stop — the graceful counterpart to cancel: the agent
       // finishes what it is doing and then stops, so its work is committed.

@@ -71,6 +71,10 @@ export interface PreviewSupervisorOptions {
   now?: () => Date;
   /** Wait between readiness probes. Injected so tests do not really sleep. */
   sleep?: (ms: number) => Promise<void>;
+  /** Called whenever a preview stops — asked to, swept as idle, or at
+   *  shutdown — so anything serving it (the team-local gateway) goes with it
+   *  rather than holding a port open onto a dead dev server. */
+  onStop?: (runId: string) => void;
 }
 
 /** Why `ensure` produced no preview. Separate from a `failed` state because
@@ -179,6 +183,7 @@ export class PreviewSupervisor {
       sleep:
         opts.sleep ??
         ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms))),
+      onStop: opts.onStop ?? (() => {}),
     };
   }
 
@@ -283,6 +288,7 @@ export class PreviewSupervisor {
     live.process.kill();
     live.state.status = 'stopped';
     this.previews.delete(runId);
+    this.opts.onStop(runId);
   }
 
   /** Stops everything. The daemon calls this on shutdown: a dev server that
