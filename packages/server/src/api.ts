@@ -883,10 +883,69 @@ async function reviewRun(
  * orphan tasks whose status no longer exists. Anything not in ConfigPatch has to be edited in
  * the file, where the consequences are visible.
  */
+// The config keys that make the daemon run a command, or send the project's
+// data somewhere, named as a patch would carry them. Changing one is acting on
+// the host as its owner — the operator tier — however harmless the rest of a
+// settings page is: a request-tier caller able to set verifyCommand or
+// receipts.repo could run what it liked, or copy the audit log off the
+// machine.
+function operatorOnlyKeys(body: Record<string, unknown>): string[] {
+  const keys: string[] = [];
+  const has = (obj: unknown, field: string) =>
+    typeof obj === 'object' && obj !== null && field in obj;
+  if ('verifyCommand' in body) keys.push('verifyCommand');
+  if ('verifySteps' in body) keys.push('verifySteps');
+  if (has(body.verify, 'command')) keys.push('verify.command');
+  if ('remotes' in body) keys.push('remotes');
+  if ('prWorktreeDir' in body) keys.push('prWorktreeDir');
+  if (has(body.notifications, 'webhook')) keys.push('notifications.webhook');
+  for (const field of ['command', 'installCommand']) {
+    if (has(body.preview, field)) keys.push(`preview.${field}`);
+  }
+  for (const field of ['remote', 'repo', 'dir']) {
+    if (has(body.receipts, field)) keys.push(`receipts.${field}`);
+  }
+  for (const field of ['remote', 'repo']) {
+    if (has(body.sync, field)) keys.push(`sync.${field}`);
+  }
+  if (typeof body.executors === 'object' && body.executors !== null) {
+    for (const [name, entry] of Object.entries(body.executors)) {
+      if (entry === null || has(entry, 'command')) {
+        keys.push(`executors.${name}.command`);
+      }
+    }
+  }
+  return keys;
+}
+
+// An object-valued patch field, or the 400 to answer with.
+function objectField(
+  body: Record<string, unknown>,
+  key: string
+): { ok: true; value: Record<string, unknown> } | { ok: false; res: Response } {
+  const value = body[key];
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return { ok: false, res: errorResponse(400, `${key} must be an object`) };
+  }
+  return { ok: true, value: value as Record<string, unknown> };
+}
+
 async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
   const body = parsed.value as Record<string, unknown>;
+
+  const needsOperator = operatorOnlyKeys(body);
+  if (
+    needsOperator.length > 0 &&
+    !tierAllows(ctx.caller?.tier ?? 'request', 'operator')
+  ) {
+    return authErrorResponse(
+      403,
+      `changing ${needsOperator.join(', ')} needs the operator tier: they run commands on this machine or send its data elsewhere. Ask whoever runs this daemon.`,
+      'auth_insufficient_tier'
+    );
+  }
 
   const patch: ConfigPatch = {};
   if ('verifyCommand' in body) {
@@ -1050,6 +1109,66 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     // Same deal as models/linear: core validates the rung and each gate pin
     // before writing, and that ConfigError becomes the 400 below.
     patch.policy = body.policy as ConfigPatch['policy'];
+  }
+
+  // The blocks below are validated whole by core before anything is written
+  // (updateConfig), so only their outer shape is checked here.
+  if ('statuses' in body) {
+    const { statuses } = body;
+    if (
+      !Array.isArray(statuses) ||
+      statuses.some((s) => typeof s !== 'string' || s.trim() === '')
+    ) {
+      return errorResponse(400, 'statuses must be a list of names');
+    }
+    // A status some task still has cannot go: the task would sit in a
+    // column the board no longer draws, and its file would fail to load
+    // against the new list.
+    const kept = new Set(statuses.map((s) => canonicalStatus(s.trim())));
+    const stranded = new Map<string, number>();
+    for (const task of ctx.store.list()) {
+      const status = canonicalStatus(task.meta.status);
+      if (!kept.has(status)) {
+        stranded.set(status, (stranded.get(status) ?? 0) + 1);
+      }
+    }
+    if (stranded.size > 0) {
+      const which = [...stranded]
+        .map(([status, n]) => `${status} (${n} task${n === 1 ? '' : 's'})`)
+        .join(', ');
+      return errorResponse(
+        409,
+        `cannot remove ${which}: move those tasks to another status first`
+      );
+    }
+    patch.statuses = statuses as string[];
+  }
+  if ('verifySteps' in body) {
+    const steps = body.verifySteps;
+    if (steps !== null && !Array.isArray(steps)) {
+      return errorResponse(400, 'verifySteps must be a list or null');
+    }
+    patch.verifySteps = steps as ConfigPatch['verifySteps'];
+  }
+  if ('prWorktreeDir' in body) {
+    const dir = body.prWorktreeDir;
+    if (dir !== null && typeof dir !== 'string') {
+      return errorResponse(400, 'prWorktreeDir must be a string or null');
+    }
+    patch.prWorktreeDir = dir;
+  }
+  for (const key of [
+    'remotes',
+    'carto',
+    'repoDigest',
+    'receipts',
+    'sync',
+    'preview',
+  ] as const) {
+    if (!(key in body)) continue;
+    const field = objectField(body, key);
+    if (!field.ok) return field.res;
+    Object.assign(patch, { [key]: field.value });
   }
 
   try {
@@ -4279,6 +4398,11 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   { method: 'GET', segments: ['team', 'address'], tier: 'decide' },
   { method: 'POST', segments: ['team', 'tokens'], tier: 'decide' },
   { method: 'DELETE', segments: ['team', 'tokens', '*'], tier: 'decide' },
+  // Settings are the project's policy — autonomy gates, caps, what a run may
+  // do — so changing them is an adjudication, never something an agent
+  // holding the on-disk token may do to itself. Keys that run commands or
+  // send data elsewhere need the operator tier on top (patchConfig).
+  { method: 'PATCH', segments: ['config'], tier: 'decide' },
   // Installing a license key changes who may sign in to this machine's
   // daemon at all — the owner's call, like the rest of the operator tier.
   { method: 'PUT', segments: ['license'], tier: 'operator' },

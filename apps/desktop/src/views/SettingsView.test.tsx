@@ -112,6 +112,8 @@ test('the nav lists every page under a Project heading, and the page title is th
     'License',
     'Autonomy',
     'Agents',
+    'Previews',
+    'Remotes',
     'Integrations',
     'Notifications',
     'Daemon',
@@ -131,7 +133,13 @@ test('a page renders its sections as level-2 headings', () => {
   render(<SettingsView activeProject={project} data={data} />);
   expect(
     screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
-  ).toEqual(['Before anything lands', 'How to run this project']);
+  ).toEqual([
+    'Before anything lands',
+    'How to run this project',
+    'Statuses',
+    'Verify steps',
+    'Pull requests',
+  ]);
 });
 
 // The nav search narrows the rows to the pages whose name matches.

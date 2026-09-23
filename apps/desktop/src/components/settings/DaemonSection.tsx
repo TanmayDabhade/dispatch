@@ -5,7 +5,6 @@ import { describeDaemonError } from '../shell/DaemonUnavailable';
 import { BoardSyncGroup } from './BoardSyncGroup';
 import { SettingsGroup, SettingsRow } from './SettingsGroup';
 import { cn } from '@/lib/utils';
-import { Pill } from '@/ui/ai/pill';
 import { PanelRow } from '@/ui/chrome';
 import { StatTile } from '@/ui/chrome/StatTile';
 
@@ -26,8 +25,8 @@ function daemonStatusLabel(data: DispatchProjectData): string {
   return data.client !== null ? 'Running' : 'Not running';
 }
 
-/** Daemon health, plus the one tracker-config field with no editable home
- *  elsewhere: statuses. */
+/** Daemon health and board sync status. The daemon's own settings are
+ *  DaemonConfigGroups, rendered beside this on the same page. */
 export function DaemonSection({ activeProject, data }: DaemonSectionProps) {
   const errorDetail = describeDaemonError(data.portErrorDetail);
   return (
@@ -77,22 +76,6 @@ export function DaemonSection({ activeProject, data }: DaemonSectionProps) {
       </SettingsGroup>
 
       <BoardSyncGroup data={data} />
-
-      {data.config !== null && (
-        <SettingsGroup title="Tracker config">
-          <SettingsRow
-            title="Statuses"
-            subtitle="Statuses stay in .dispatch/config.yml. Every task file on disk stores its status by name, so removing one here would orphan those tasks."
-            stacked
-          >
-            <div className="flex flex-wrap gap-1">
-              {data.config.statuses.map((status) => (
-                <Pill key={status}>{status}</Pill>
-              ))}
-            </div>
-          </SettingsRow>
-        </SettingsGroup>
-      )}
     </>
   );
 }

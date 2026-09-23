@@ -1,7 +1,9 @@
 import { FolderSearch, SearchIcon } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 
+import { AgentsMoreGroups } from '../components/settings/AgentsMoreGroups';
 import { AgentsSection } from '../components/settings/AgentsSection';
+import { DaemonConfigGroups } from '../components/settings/DaemonConfigGroups';
 import { DaemonSection } from '../components/settings/DaemonSection';
 import { DiffsSection } from '../components/settings/DiffsSection';
 import { GeneralSection } from '../components/settings/GeneralSection';
@@ -9,6 +11,10 @@ import { IntegrationsSection } from '../components/settings/IntegrationsSection'
 import { LicenseSection } from '../components/settings/LicenseSection';
 import { NotificationsSection } from '../components/settings/NotificationsSection';
 import { PolicySection } from '../components/settings/PolicySection';
+import { PreviewsSection } from '../components/settings/PreviewsSection';
+import { ProjectGroups } from '../components/settings/ProjectGroups';
+import { QueueWeightsGroup } from '../components/settings/QueueWeightsGroup';
+import { RemotesSection } from '../components/settings/RemotesSection';
 import { TeamSection } from '../components/settings/TeamSection';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { SettingsPage } from '../lib/appNav';
@@ -49,6 +55,8 @@ const SETTINGS_PAGES: { id: SettingsPage; label: string }[] = [
   { id: 'license', label: 'License' },
   { id: 'autonomy', label: 'Autonomy' },
   { id: 'agents', label: 'Agents' },
+  { id: 'previews', label: 'Previews' },
+  { id: 'remotes', label: 'Remotes' },
   { id: 'integrations', label: 'Integrations' },
   { id: 'notifications', label: 'Notifications' },
   { id: 'daemon', label: 'Daemon' },
@@ -121,6 +129,9 @@ export function SettingsView({
       : SETTINGS_PAGES.filter((entry) =>
           entry.label.toLowerCase().includes(needle)
         );
+  // The settings that run a command or send data elsewhere are the owner's
+  // alone (the server's patchConfig); below that tier they show read-only.
+  const canOperate = data.myTier === 'operator';
   const title =
     SETTINGS_PAGES.find((entry) => entry.id === page)?.label ?? 'Settings';
 
@@ -200,20 +211,52 @@ export function SettingsView({
             </div>
 
             {page === 'general' && data.config !== null && (
-              <GeneralSection config={data.config} onSave={save} />
+              <>
+                <GeneralSection config={data.config} onSave={save} />
+                <ProjectGroups
+                  config={data.config}
+                  onSave={save}
+                  canOperate={canOperate}
+                />
+              </>
             )}
             {page === 'team' && <TeamSection data={data} />}
             {page === 'license' && <LicenseSection data={data} />}
             {page === 'autonomy' && data.config !== null && (
-              <PolicySection
-                config={data.config}
-                onSave={save}
-                client={data.client}
-                onOpenTask={onOpenTask}
-              />
+              <>
+                <PolicySection
+                  config={data.config}
+                  onSave={save}
+                  client={data.client}
+                  onOpenTask={onOpenTask}
+                />
+                <QueueWeightsGroup config={data.config} onSave={save} />
+              </>
             )}
             {page === 'agents' && data.config !== null && (
-              <AgentsSection config={data.config} onSave={save} />
+              <>
+                <AgentsSection config={data.config} onSave={save} />
+                <AgentsMoreGroups
+                  config={data.config}
+                  executors={data.executors}
+                  onSave={save}
+                  canOperate={canOperate}
+                />
+              </>
+            )}
+            {page === 'previews' && data.config !== null && (
+              <PreviewsSection
+                config={data.config}
+                onSave={save}
+                canOperate={canOperate}
+              />
+            )}
+            {page === 'remotes' && data.config !== null && (
+              <RemotesSection
+                config={data.config}
+                onSave={save}
+                canOperate={canOperate}
+              />
             )}
             {page === 'integrations' && (
               <IntegrationsSection data={integrationsData} />
@@ -222,7 +265,16 @@ export function SettingsView({
               <NotificationsSection config={data.config} onSave={save} />
             )}
             {page === 'daemon' && (
-              <DaemonSection activeProject={activeProject} data={data} />
+              <>
+                <DaemonSection activeProject={activeProject} data={data} />
+                {data.config !== null && (
+                  <DaemonConfigGroups
+                    config={data.config}
+                    onSave={save}
+                    canOperate={canOperate}
+                  />
+                )}
+              </>
             )}
             {page === 'diffs' && <DiffsSection />}
           </div>

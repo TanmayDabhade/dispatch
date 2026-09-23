@@ -20,9 +20,11 @@ function render(ui: ReactElement) {
 
 // The old copy said only "this view is read-only" — the reason matters, because
 // a status is stored by name in every task file on disk.
-test('the read-only statuses list gives the real reason', () => {
+// Statuses moved to Settings → General, where they are editable; the Daemon
+// page keeps to the daemon itself.
+test('statuses are no longer a read-only list here', () => {
   render(<DaemonSection activeProject={project} data={data} />);
-  expect(screen.getByText(/every task file/i)).toBeDefined();
+  expect(screen.queryByRole('heading', { name: 'Tracker config' })).toBeNull();
 });
 
 test('a failed daemon start shows the captured detail', () => {
@@ -40,12 +42,4 @@ test('the daemon status reads Running while a client is up', () => {
   render(<DaemonSection activeProject={project} data={data} />);
   expect(screen.getByText('Running')).toBeDefined();
   expect(screen.getByText('dispatchd')).toBeDefined();
-});
-
-test('the tracker statuses render as pills under a sentence-case heading', () => {
-  render(<DaemonSection activeProject={project} data={data} />);
-  expect(screen.getByRole('heading', { name: 'Tracker config' })).toBeDefined();
-  expect(screen.getByText('in-progress').getAttribute('data-slot')).toBe(
-    'pill'
-  );
 });

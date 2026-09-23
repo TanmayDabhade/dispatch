@@ -1,8 +1,8 @@
 import type {
   CommandEvidence,
+  ConfigPatch,
   CreateInput,
   DispatchConfig,
-  EscalationStep,
   Finding,
   FindingRecommendation,
   FindingSeverity,
@@ -11,9 +11,6 @@ import type {
   LedgerKind,
   ModelConfig,
   MutationEvidence,
-  NotificationKind,
-  PolicyGate,
-  PolicyGateMode,
   Priority,
   TaskDoc,
   TaskRisk,
@@ -2573,40 +2570,11 @@ export interface ApiClient {
   /** Hides a run from the default Runs list, or brings it back. Nothing is deleted. */
   setRunArchived(runId: string, archived: boolean): Promise<RunMeta>;
 
-  /** Changes the settings a person is allowed to change. Structural config (statuses) is not
-   * editable here — see the server's patchConfig for why. */
-  updateConfig(patch: {
-    verifyCommand?: string | null;
-    autoCommit?: boolean;
-    epicConcurrency?: number;
-    verifyTimeoutSec?: number;
-    maxConcurrency?: number;
-    runCostEstimateUsd?: number;
-    permissionMode?: string;
-    models?: Partial<ModelConfig>;
-    linear?: {
-      enabled?: boolean;
-      teamId?: string | null;
-      statusMap?: Record<string, string>;
-      intervalSec?: number;
-      direction?: 'both' | 'pull' | 'push';
-    };
-    maxTurns?: number | null;
-    maxBudgetUsd?: number | null;
-    fixLoop?: { cap?: number; escalation?: EscalationStep[] };
-    verify?: { command?: string; url?: string; notes?: string };
-    /** `webhook: null` (or '') clears the URL; `kinds` merges over what is on disk. */
-    notifications?: {
-      kinds?: Partial<Record<NotificationKind, boolean>>;
-      webhook?: string | null;
-    };
-    /** The autonomy policy: the ladder rung, plus per-gate pins where a
-     *  `null` pin clears the override so the rung decides again. */
-    policy?: {
-      rung?: number;
-      gates?: Partial<Record<PolicyGate, PolicyGateMode | null>>;
-    };
-  }): Promise<DispatchConfig>;
+  /** Changes settings. Mirrors core's ConfigPatch exactly — one type, so
+   *  what Settings can send is what the daemon accepts. Changing any needs
+   *  the decide tier; keys that run a command or send data off the machine
+   *  need operator (the server's patchConfig). */
+  updateConfig(patch: ConfigPatch): Promise<DispatchConfig>;
   // Linear sync. `connectLinear` posts the key once and never gets it back; every later
   // call reads `fetchLinearStatus`, which reports where a key was found but not what it is.
   fetchLinearStatus(): Promise<LinearStatus>;
