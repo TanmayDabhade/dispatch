@@ -228,6 +228,12 @@ is running; the Inbox badge counts only what is yours to answer, with teammates'
 asks under **Teammates**; and the dispatch dialog warns, by name, before you
 start work on files someone else's live run has claimed.
 
+The same controls are in the app under **Settings → Team**: invite by email with
+a tier and an expiry, copy the token and the address to send, see who is online
+and when each token was last used, and remove someone. The status strip's
+presence stack also says which task each person has open, and a task's header
+shows who else has it open right now.
+
     dispatch team invite ada --tier decide  # let Ada approve, too
     dispatch team tokens                    # who holds a credential
     dispatch team revoke ada                # her token stops working at once

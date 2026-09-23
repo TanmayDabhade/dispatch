@@ -35,6 +35,8 @@ interface FrameStatusStripProps {
   onOpenOverseer: () => void;
   /** Everyone on this daemon; the stack shows only once there are two. */
   presence?: PresenceEntry[];
+  /** A task's title by id, for the presence tooltip's "viewing …". */
+  taskTitle?: (id: string) => string | undefined;
   className?: string;
 }
 
@@ -69,6 +71,7 @@ export function FrameStatusStrip({
   onOpenSettings,
   onOpenOverseer,
   presence = [],
+  taskTitle,
   className,
 }: FrameStatusStripProps) {
   const sync = syncStatus !== null ? syncSummary(syncStatus) : null;
@@ -102,7 +105,7 @@ export function FrameStatusStrip({
         <TooltipContent side="top">Settings › Integrations</TooltipContent>
       </Tooltip>
 
-      <PresenceStack presence={presence} />
+      <PresenceStack presence={presence} taskTitle={taskTitle} />
 
       {sync !== null && (
         <Tooltip>

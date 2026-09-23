@@ -4239,6 +4239,9 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // listing holders tells it whose to go looking for. api/team.ts further
   // caps what a caller may issue or revoke at their own tier.
   { method: 'GET', segments: ['team', 'tokens'], tier: 'decide' },
+  // Where the daemon is reachable is only useful to someone handing out a
+  // token, and it names the operator's network addresses.
+  { method: 'GET', segments: ['team', 'address'], tier: 'decide' },
   { method: 'POST', segments: ['team', 'tokens'], tier: 'decide' },
   { method: 'DELETE', segments: ['team', 'tokens', '*'], tier: 'decide' },
 
@@ -4306,6 +4309,11 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   { method: 'POST', segments: ['git', 'stash', 'pop'], tier: 'operator' },
   { method: 'POST', segments: ['git', 'stash', 'drop'], tier: 'operator' },
 ];
+
+// A task id as the board mints them (`t-` or `e-` and a hex tag), with room
+// for a longer tag. Only a shape check: focus names a task someone has open,
+// and a task that does not exist is harmless there.
+const TASK_ID_SHAPE = /^[a-z]-[0-9a-z]{1,64}$/;
 
 function matchesRoute(
   pattern: readonly string[],
@@ -4540,6 +4548,48 @@ export async function handleApi(
           }))
         )
       );
+    }
+
+    // POST /api/presence/focus — which task this person has open, or null
+    // when they close it. Request tier, like the rest of the board: it says
+    // where someone is looking, which the board they can read already shows.
+    if (
+      segments[0] === 'presence' &&
+      segments[1] === 'focus' &&
+      segments.length === 2 &&
+      method === 'POST'
+    ) {
+      const parsed = await readJsonBody(req);
+      if (!parsed.ok) return parsed.response;
+      const taskId = (parsed.value as { taskId?: unknown }).taskId;
+      if (
+        taskId !== null &&
+        (typeof taskId !== 'string' || !TASK_ID_SHAPE.test(taskId))
+      ) {
+        return errorResponse(400, 'expected { taskId: string | null }');
+      }
+      if (ctx.caller === undefined) {
+        return errorResponse(401, 'credential resolves to no one');
+      }
+      if (ctx.presence.setFocus(ctx.caller.handle, taskId)) {
+        ctx.events.broadcast({ type: 'presence.changed' });
+      }
+      return jsonResponse({ ok: true });
+    }
+
+    // GET /api/team/address — where teammates reach this daemon, for the
+    // Team page to put beside a freshly issued token. Empty on loopback, which
+    // is the page's cue to explain `--host 0.0.0.0` instead.
+    if (
+      segments[0] === 'team' &&
+      segments[1] === 'address' &&
+      segments.length === 2 &&
+      method === 'GET'
+    ) {
+      return jsonResponse({
+        shared: ctx.shared,
+        origins: [...ctx.ownOrigins].sort(),
+      });
     }
 
     // GET /api/whoami — who the presented credential speaks for. The one

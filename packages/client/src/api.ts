@@ -1530,6 +1530,36 @@ export interface PresenceEntry {
   since: string;
   /** Live runs they dispatched. */
   runs: string[];
+  /** The task they have open, or null. */
+  viewing: string | null;
+}
+
+/** Someone holding a credential for this daemon, never the credential —
+ *  mirrors IssuedTokenSummary in packages/server/src/identity.ts. */
+export interface TeamTokenHolder {
+  handle: string;
+  tier: AuthTier;
+  /** The daemon's own pair, which belongs to whoever runs it. */
+  builtIn: boolean;
+  issuedAt: string | null;
+  expiresAt: string | null;
+  lastUsedAt: string | null;
+  expired: boolean;
+}
+
+/** A just-issued teammate credential: the only response that carries one. */
+export interface IssuedTeamToken {
+  handle: string;
+  tier: AuthTier;
+  token: string;
+  expiresAt: string | null;
+}
+
+/** Where teammates reach this daemon. `origins` is empty unless it is bound
+ *  beyond loopback. */
+export interface TeamAddress {
+  shared: boolean;
+  origins: string[];
 }
 
 /** One run's dev-server preview — mirrors PreviewState in
@@ -2256,6 +2286,23 @@ export interface ApiClient {
    *  safe to poll while a preview is coming up. */
   /** Who is connected right now, and what each is running. */
   fetchPresence(): Promise<PresenceEntry[]>;
+  /** Tells everyone which task this client has open, or null for none. */
+  setPresenceFocus(taskId: string | null): Promise<void>;
+  /** Decide-tier: who holds a credential. */
+  fetchTeamTokens(): Promise<TeamTokenHolder[]>;
+  /** Decide-tier, capped at the caller's own tier. `expiresInDays: null` is
+   *  never; absent is the daemon's default. */
+  issueTeamToken(input: {
+    email?: string;
+    handle?: string;
+    displayName?: string;
+    tier?: AuthTier;
+    expiresInDays?: number | null;
+  }): Promise<IssuedTeamToken>;
+  /** Decide-tier: revokes whatever token the handle holds. */
+  revokeTeamToken(handle: string): Promise<void>;
+  /** Decide-tier: where teammates reach this daemon. */
+  fetchTeamAddress(): Promise<TeamAddress>;
   /** Who this client's credential speaks for. */
   fetchWhoami(): Promise<{
     handle: string;
@@ -2924,6 +2971,24 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       request(target, `/api/runs/${runId}/resume`, { method: 'POST' }),
     fetchRunDiff: (runId) => request(target, `/api/runs/${runId}/diff`),
     fetchPresence: () => request(target, '/api/presence'),
+    setPresenceFocus: async (taskId) => {
+      await request(target, '/api/presence/focus', {
+        method: 'POST',
+        ...jsonBody({ taskId }),
+      });
+    },
+    fetchTeamTokens: () => request(target, '/api/team/tokens'),
+    issueTeamToken: (input) =>
+      request(target, '/api/team/tokens', {
+        method: 'POST',
+        ...jsonBody(input),
+      }),
+    revokeTeamToken: async (handle) => {
+      await request(target, `/api/team/tokens/${encodeURIComponent(handle)}`, {
+        method: 'DELETE',
+      });
+    },
+    fetchTeamAddress: () => request(target, '/api/team/address'),
     fetchWhoami: () => request(target, '/api/whoami'),
     fetchRunPreview: (runId) => request(target, `/api/runs/${runId}/preview`),
     startRunPreview: (runId) =>

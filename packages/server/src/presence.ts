@@ -20,6 +20,9 @@ export interface PresenceEntry {
   /** Runs they dispatched that are still live, so "who is here" also answers
    *  "and what are they running". */
   runs: string[];
+  /** The task they have open, or null. Declared by their client rather than
+   *  derived, but it cannot outlive them: it goes when they do. */
+  viewing: string | null;
 }
 
 /** The slice of a run presence needs. Kept structural so this module does
@@ -34,6 +37,7 @@ interface Tracked {
   ref: string;
   connections: number;
   since: string;
+  viewing: string | null;
 }
 
 export class PresenceTracker {
@@ -61,6 +65,7 @@ export class PresenceTracker {
         ref,
         connections: 1,
         since: this.now().toISOString(),
+        viewing: null,
       });
     } else {
       existing.connections += 1;
@@ -82,6 +87,22 @@ export class PresenceTracker {
     };
   }
 
+  /**
+   * Records which task someone has open, or none. Returns whether anything
+   * visible changed, so the caller broadcasts only real moves.
+   *
+   * Someone with no open connection is not present, and focus is part of
+   * presence, so it is dropped rather than held for a person nobody can see.
+   * Two clients of one person (the app and a tab) share one focus — the most
+   * recent — since presence is per person, not per window.
+   */
+  setFocus(handle: string, taskId: string | null): boolean {
+    const person = this.people.get(handle);
+    if (person === undefined || person.viewing === taskId) return false;
+    person.viewing = taskId;
+    return true;
+  }
+
   /** Everyone present, with the live runs each dispatched. Sorted by handle so
    *  the order a surface renders is stable across refetches. */
   list(runs: readonly PresenceRun[]): PresenceEntry[] {
@@ -95,6 +116,7 @@ export class PresenceTracker {
         runs: runs
           .filter((r) => r.live && r.dispatchedBy === person.ref)
           .map((r) => r.id),
+        viewing: person.viewing,
       }));
   }
 }

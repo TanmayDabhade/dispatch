@@ -94,6 +94,7 @@ test('the nav lists every page under a Project heading, and the page title is th
   expect(screen.getByText('Project')).toBeDefined();
   expect(navRows().map((row) => row.textContent)).toEqual([
     'General',
+    'Team',
     'Autonomy',
     'Agents',
     'Integrations',

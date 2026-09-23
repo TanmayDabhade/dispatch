@@ -26,6 +26,7 @@ import {
   type NotificationInbox,
   NotificationInboxProvider,
 } from './components/shell/NotificationInboxContext';
+import { AlsoViewing } from './components/shell/PresenceStack';
 import { ProjectSwitcher } from './components/shell/ProjectSwitcher';
 import { QuickCaptureDialog } from './components/shell/QuickCaptureDialog';
 import { SavedViewsProvider } from './components/shell/SavedViewsContext';
@@ -419,6 +420,16 @@ function App() {
       : { handle: session.handle, onSignOut: () => void signOutOfTeam() };
   }, []);
 
+  // Tells whoever else is on this daemon which task this window has open —
+  // the full view or the peek, whichever is showing. Best effort: a failed
+  // report costs a teammate one stale "viewing", never an error here.
+  const focusedTaskId = navState.activeTaskId ?? navState.peekTaskId;
+  const presenceClient = rawData.client;
+  useEffect(() => {
+    if (presenceClient === null) return;
+    presenceClient.setPresenceFocus(focusedTaskId).catch(() => {});
+  }, [presenceClient, focusedTaskId]);
+
   // Wrapped once, here, so a failed action says so instead of the button
   // appearing to do nothing. See lib/actionFeedback.ts for why this is not done
   // per handler.
@@ -711,6 +722,13 @@ function App() {
       client: data.client,
       port: data.port,
       fixLoopEscalation: data.config.fixLoop.escalation,
+      headerTrailing: (
+        <AlsoViewing
+          viewers={data.presence.filter(
+            (p) => p.viewing === doc.meta.id && p.ref !== data.me
+          )}
+        />
+      ),
     };
   };
 
@@ -1438,6 +1456,10 @@ function App() {
                     }
                     onOpenOverseer={() => setGlobalView('overseer')}
                     presence={activeProject !== null ? data.presence : []}
+                    taskTitle={(id) =>
+                      data.tasksIncludingArchived.find((t) => t.meta.id === id)
+                        ?.meta.title
+                    }
                   />
 
                   <QuickCaptureDialog

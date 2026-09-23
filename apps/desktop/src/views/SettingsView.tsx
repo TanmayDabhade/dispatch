@@ -8,6 +8,7 @@ import { GeneralSection } from '../components/settings/GeneralSection';
 import { IntegrationsSection } from '../components/settings/IntegrationsSection';
 import { NotificationsSection } from '../components/settings/NotificationsSection';
 import { PolicySection } from '../components/settings/PolicySection';
+import { TeamSection } from '../components/settings/TeamSection';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { SettingsPage } from '../lib/appNav';
 import { cn } from '@/lib/utils';
@@ -43,6 +44,7 @@ type SaveState =
  * page's H1. */
 const SETTINGS_PAGES: { id: SettingsPage; label: string }[] = [
   { id: 'general', label: 'General' },
+  { id: 'team', label: 'Team' },
   { id: 'autonomy', label: 'Autonomy' },
   { id: 'agents', label: 'Agents' },
   { id: 'integrations', label: 'Integrations' },
@@ -198,6 +200,7 @@ export function SettingsView({
             {page === 'general' && data.config !== null && (
               <GeneralSection config={data.config} onSave={save} />
             )}
+            {page === 'team' && <TeamSection data={data} />}
             {page === 'autonomy' && data.config !== null && (
               <PolicySection
                 config={data.config}

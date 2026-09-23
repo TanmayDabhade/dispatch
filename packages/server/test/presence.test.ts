@@ -77,4 +77,29 @@ describe('PresenceTracker', () => {
       expect.objectContaining({ handle: 'wyat', runs: ['r-3'] }),
     ]);
   });
+
+  test('focus is per person, and a move reports itself once', () => {
+    const { presence } = tracker();
+    presence.connect('ada', 'human:ada');
+
+    expect(presence.setFocus('ada', 't-abc123')).toBe(true);
+    // Saying the same thing again is not a change anyone needs to hear about.
+    expect(presence.setFocus('ada', 't-abc123')).toBe(false);
+    expect(presence.list([])[0]?.viewing).toBe('t-abc123');
+
+    expect(presence.setFocus('ada', null)).toBe(true);
+    expect(presence.list([])[0]?.viewing).toBeNull();
+  });
+
+  test('focus cannot outlive the person, nor be set for someone absent', () => {
+    const { presence } = tracker();
+    const { release } = presence.connect('ada', 'human:ada');
+    presence.setFocus('ada', 't-abc123');
+    release();
+
+    expect(presence.setFocus('ada', 't-abc123')).toBe(false);
+    presence.connect('ada', 'human:ada');
+    // Back, but looking at nothing until their client says otherwise.
+    expect(presence.list([])[0]?.viewing).toBeNull();
+  });
 });
