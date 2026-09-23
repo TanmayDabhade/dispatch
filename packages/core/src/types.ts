@@ -76,7 +76,7 @@ export interface TaskMeta {
   attachments?: TaskAttachment[];
   // Linear-parity fields, defaulted on read (see defaultTaskFields) so files
   // and rows written before them still parse.
-  /** Story points; null when unestimated. */
+  /** Story points; null when not estimated. */
   estimate: number | null;
   /** ISO date; a container's target date. */
   dueDate: string | null;

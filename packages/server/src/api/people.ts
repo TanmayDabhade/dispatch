@@ -14,7 +14,7 @@ import { humanActor } from './caller.js';
 import { jsonResponse } from './http.js';
 
 /** GET /api/people's body: everyone a picker offers, and who is asking. */
-export interface PeopleSnapshot {
+interface PeopleSnapshot {
   /** The caller's own ref; the legacy bare `human` assignee means this. */
   me: string;
   people: Person[];
