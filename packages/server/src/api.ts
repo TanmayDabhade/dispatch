@@ -325,6 +325,9 @@ export interface ApiContext {
   /** The daemon's own network origins in team-local mode, empty otherwise.
    *  The same Set instance the HTTP layer fills once the port is bound. */
   ownOrigins: ReadonlySet<string>;
+  /** Origins a session cookie is honoured from — ownOrigins plus this
+   *  daemon's own loopback origin. See session.ts. */
+  sessionOrigins: ReadonlySet<string>;
   /** Whether this daemon is bound beyond loopback — see shared.ts. */
   shared: boolean;
   /** Who made the request being handled, when their credential resolved.
@@ -4364,9 +4367,9 @@ function requiredTier(
  *  cookie. */
 function presentedCredential(
   req: Request,
-  ownOrigins: ReadonlySet<string>
+  sessionOrigins: ReadonlySet<string>
 ): string | null {
-  return bearerToken(req) ?? sessionToken(req, ownOrigins);
+  return bearerToken(req) ?? sessionToken(req, sessionOrigins);
 }
 
 /** The bearer token on a request, or null when the header is absent or malformed. */
@@ -4459,7 +4462,7 @@ export async function handleApi(
   const untrusted = rejectUntrustedOrigin(req, daemonCtx.ownOrigins);
   if (untrusted !== null) return untrusted;
 
-  const presented = presentedCredential(req, daemonCtx.ownOrigins);
+  const presented = presentedCredential(req, daemonCtx.sessionOrigins);
   const tier = requiredTier(method, segments);
   if (tier !== null) {
     const unauthorized = rejectUnauthorized(

@@ -49,6 +49,11 @@ const epicStarts: [string, EpicSessionOptions | undefined][] = [];
 
 // Only `createApiClient` is replaced — the rest of the module (ApiError, which
 // useOverseerSession's 404 veto instanceof-checks) has to stay real.
+// Lets a test hold the first presence fetch open, so a `hello` can land while
+// it is still in flight — the interleaving a real browser hits.
+let presenceGate: Promise<void> | null = null;
+let presenceFetches = 0;
+
 void mock.module('@dispatch/client', () => ({
   ...dispatchClient,
   createApiClient: () => ({
@@ -102,6 +107,13 @@ void mock.module('@dispatch/client', () => ({
         updatedAt: '2026-09-20T00:00:00Z',
       }),
     confirmPlan: () => Promise.resolve({ epicId: 'e-1', taskIds: ['t-1'] }),
+    fetchPresence: async () => {
+      presenceFetches += 1;
+      const gate = presenceGate;
+      presenceGate = null;
+      if (gate !== null) await gate;
+      return [];
+    },
     connectEvents: (
       onChange: () => void,
       options: ConnectEventsOptions = {}
@@ -187,6 +199,53 @@ test('hello invalidates every cached overseer record for this daemon', async () 
   expect(
     queryClient.getQueryState(overseerKey(PORT, 'w-1'))?.isInvalidated
   ).toBe(true);
+});
+
+// The daemon announces a socket's arrival before that socket joins the event
+// bus, so the newcomer never hears about itself. If its first presence fetch
+// raced ahead of the upgrade, `hello` is the only thing left to correct it —
+// without this a teammate could sit looking at a room that did not include
+// them, the stack hidden, until someone else came or went.
+test('hello refetches presence, since a socket never hears its own arrival', async () => {
+  const queryClient = await mountConnected();
+  queryClient.setQueryData(['dispatch-presence', PORT], []);
+  expect(
+    queryClient.getQueryState(['dispatch-presence', PORT])?.isInvalidated
+  ).toBe(false);
+
+  act(() => {
+    sink?.onEvent({ type: 'hello', version: '0.0.1' });
+  });
+
+  expect(
+    queryClient.getQueryState(['dispatch-presence', PORT])?.isInvalidated
+  ).toBe(true);
+});
+
+// The race itself, as a real browser hit it: the first presence fetch leaves
+// before the daemon has registered this socket, and `hello` arrives while it is
+// still in flight. react-query folds an invalidation during a query's first
+// fetch into that fetch rather than restarting it (query.js: it only cancels
+// when there is data), so the stale answer would land and stick.
+test('a hello during the first presence fetch still gets a fresh one', async () => {
+  let open!: () => void;
+  presenceGate = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  presenceFetches = 0;
+  await mountConnected();
+  await waitFor(() => {
+    expect(presenceFetches).toBe(1);
+  });
+
+  act(() => {
+    sink?.onEvent({ type: 'hello', version: '0.0.1' });
+  });
+  open();
+
+  await waitFor(() => {
+    expect(presenceFetches).toBe(2);
+  });
 });
 
 // The regression this pairs with: the invalidation used to sit in the first

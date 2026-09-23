@@ -113,7 +113,7 @@ import { PresenceTracker } from './presence.js';
 import { PreviewSupervisor } from './preview.js';
 import { isReceiptEvent, ReceiptsScheduler } from './receipts/scheduler.js';
 import { ReviewCommentStore } from './reviewComments.js';
-import { sessionToken } from './session.js';
+import { sessionOrigins, sessionToken } from './session.js';
 import type { SharedPageConfig } from './shared.js';
 import { bindModeFor, isLoopbackAddress, ownOrigins } from './shared.js';
 import { readProjectBackend, writeProjectBackend } from './storage.js';
@@ -782,6 +782,9 @@ async function bootServer(
   // Filled once the port is bound; empty in loopback mode, where nothing but
   // this machine's own origins is ever trusted.
   const ownOriginSet = new Set<string>();
+  // Where a session cookie may come from: the above plus this daemon's own
+  // loopback origin, exact port. Filled after bind too — see session.ts.
+  const sessionOriginSet = new Set<string>();
   // Which bundle to serve. Team-local mode needs the desktop app's build: it
   // is the one with a sign-in screen, where the frozen @dispatch/web UI
   // expects an injected token that shared mode will never inject. With no
@@ -1597,6 +1600,7 @@ async function bootServer(
     previews,
     presence: presenceTracker,
     ownOrigins: ownOriginSet,
+    sessionOrigins: sessionOriginSet,
     shared,
   };
 
@@ -1628,7 +1632,7 @@ async function bootServer(
         const wsToken =
           bearerToken(req) ??
           url.searchParams.get('token') ??
-          sessionToken(req, ownOriginSet);
+          sessionToken(req, sessionOriginSet);
         const unauthorized = rejectUnauthorized(
           req,
           tokens,
@@ -1777,6 +1781,9 @@ async function bootServer(
     console.log(
       `dispatchd: team-local mode — teammates open ${[...ownOriginSet].join(' or ')} and sign in with a token from \`dispatch team invite\``
     );
+  }
+  for (const origin of sessionOrigins(port, ownOriginSet)) {
+    sessionOriginSet.add(origin);
   }
 
   if (shouldWriteDaemonFile) {
