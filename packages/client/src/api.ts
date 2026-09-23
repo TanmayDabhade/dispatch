@@ -1555,6 +1555,22 @@ export interface IssuedTeamToken {
   expiresAt: string | null;
 }
 
+/** Board sync's state — mirrors SyncStatus in
+ *  packages/server/src/boardSync/service.ts. */
+export type BoardSyncStatus =
+  | { enabled: false }
+  | {
+      enabled: true;
+      replica: string;
+      remote: string;
+      branch: string;
+      lastSyncAt: string | null;
+      lastError: string | null;
+      pending: number;
+      applied: number;
+      problems: { task: string; message: string; at: string }[];
+    };
+
 /** Where teammates reach this daemon. `origins` is empty unless it is bound
  *  beyond loopback. */
 export interface TeamAddress {
@@ -2306,6 +2322,12 @@ export interface ApiClient {
   revokeTeamToken(handle: string): Promise<void>;
   /** Decide-tier: where teammates reach this daemon. */
   fetchTeamAddress(): Promise<TeamAddress>;
+  /** Board sync between replicas' databases (boardSync/ on the server);
+   *  `{ enabled: false }` when it is off. Not `fetchSyncStatus`, which is the
+   *  file backend's board syncer. */
+  fetchBoardSyncStatus(): Promise<BoardSyncStatus>;
+  /** Runs a board sync pass and answers with the state after it. */
+  syncBoardNow(): Promise<BoardSyncStatus>;
   /** Who this client's credential speaks for. */
   fetchWhoami(): Promise<{
     handle: string;
@@ -2992,6 +3014,9 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       });
     },
     fetchTeamAddress: () => request(target, '/api/team/address'),
+    fetchBoardSyncStatus: () => request(target, '/api/board-sync'),
+    syncBoardNow: () =>
+      request(target, '/api/board-sync/now', { method: 'POST' }),
     fetchWhoami: () => request(target, '/api/whoami'),
     fetchRunPreview: (runId) => request(target, `/api/runs/${runId}/preview`),
     startRunPreview: (runId) =>

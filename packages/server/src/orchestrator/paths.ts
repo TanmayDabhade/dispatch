@@ -181,6 +181,23 @@ export function receiptsDir(rootDir: string): string {
 }
 
 /**
+ * Where board sync keeps this replica's state: its identity, what it knows of
+ * every synced field, and its clone of the sync branch (see
+ * packages/server/src/boardSync). Machine-local by definition — it is this
+ * replica's view — so under DISPATCH_HOME beside the receipt log, never in
+ * the project.
+ */
+export function boardSyncDir(rootDir: string): string {
+  return join(
+    dispatchHome(),
+    '.dispatch',
+    'projects',
+    rootHash(rootDir),
+    'sync'
+  );
+}
+
+/**
  * Where issued teammate tokens live across a restart — as sha256 hashes, never
  * the tokens (see identity.ts). Beside the receipt log under `projects/`, and
  * outside the repo for the obvious reason: a credential file must never be

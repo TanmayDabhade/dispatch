@@ -105,9 +105,54 @@ export interface ReceiptsConfig {
    * relative path is resolved against the project root.
    */
   dir?: string;
+  /**
+   * Where to push the log after each export, so it survives the machine:
+   * one of the project's own remotes, by name (`origin`). Absent, with no
+   * `repo` either, keeps the log local, as it always was.
+   */
+  remote?: string;
+  /**
+   * Or a repository of its own: a git URL, or a path (relative to the
+   * project root). Mutually exclusive with `remote`.
+   */
+  repo?: string;
+  /** The branch the log is pushed to. */
+  branch?: string;
 }
 
 export const DEFAULT_RECEIPTS: ReceiptsConfig = { enabled: true };
+
+/** The branch receipts go to when `receipts.remote` names no other. */
+export const DEFAULT_RECEIPTS_BRANCH = 'dispatch-receipts';
+
+/**
+ * Two-way board sync between teammates' daemons over git
+ * (packages/server/src/sync). Off unless turned on: each daemon keeps its own
+ * database, and this is what lets several of them converge on one board.
+ */
+export interface SyncConfig {
+  enabled: boolean;
+  /** Which of the project's own remotes carries the sync branch, by name.
+   *  Ignored when `repo` is set. */
+  remote: string;
+  /**
+   * A repository of its own for the board instead: a git URL, or a path
+   * (relative to the project root). Set only when the config names one;
+   * mutually exclusive with `remote`.
+   */
+  repo?: string;
+  /** The branch the changes travel on. Nothing but sync writes to it. */
+  branch: string;
+  /** How often to sync when nothing local has changed. */
+  intervalSec: number;
+}
+
+export const DEFAULT_SYNC: SyncConfig = {
+  enabled: false,
+  remote: 'origin',
+  branch: 'dispatch-sync',
+  intervalSec: 30,
+};
 
 /** One named gate in the verify pipeline. */
 export interface VerifyStep {
@@ -145,6 +190,9 @@ export interface DispatchConfig {
    * not all have to be updated at once. Absent means DEFAULT_RECEIPTS.
    */
   receipts?: ReceiptsConfig;
+  /** Board sync. Optional for the same reason `receipts` is; absent means
+   *  DEFAULT_SYNC. Read it through `syncSettings()`. */
+  sync?: SyncConfig;
   /** Optional in the type, but `loadConfig` always populates it — the marker
    *  is for hand-built config objects (test fixtures) written before the block
    *  existed. Read it through `queueWeights()`, never directly: that is what

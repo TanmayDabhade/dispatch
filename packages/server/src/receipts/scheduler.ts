@@ -1,8 +1,11 @@
 import type { ActorContext, ProjectStores } from '@dispatch/core';
-import { loadConfig } from '@dispatch/core';
+import { DEFAULT_RECEIPTS_BRANCH, loadConfig } from '@dispatch/core';
 
+import type { PushTarget } from '../boardSync/repo.js';
+import { resolvePushTarget } from '../boardSync/repo.js';
 import type { EventBus, ServerEvent } from '../events.js';
-import type { GitRunner } from '../sync/worktree.js';
+import type { AsyncGitRunner, GitRunner } from '../sync/worktree.js';
+import { defaultAsyncGitRunner } from '../sync/worktree.js';
 import { markBlockingSection } from '../watchdog.js';
 import type { ReceiptsResult } from './exporter.js';
 import {
@@ -11,11 +14,21 @@ import {
   resolveReceiptsDir,
 } from './exporter.js';
 
+/** What the last push of the log to `receipts.remote` did. */
+export interface ReceiptsPush {
+  ok: boolean;
+  at: string;
+  detail: string;
+}
+
 export interface ReceiptsSchedulerDeps {
   rootDir: string;
   stores: ProjectStores;
   actor: ActorContext;
   run: GitRunner;
+  /** For the push to `receipts.remote`: a network call, so off the event
+   *  loop, unlike the local commits `run` makes. */
+  runAsync?: AsyncGitRunner;
   events: EventBus;
   /** Debounce for the export triggered by a record change. */
   debounceMs?: number;
@@ -81,6 +94,9 @@ export class ReceiptsScheduler {
   private stopped = false;
   private lastResultValue: ReceiptsResult | null = null;
   private lastExportedAtIso: string | null = null;
+  private pushing = false;
+  private pushAgain = false;
+  private lastPushValue: ReceiptsPush | null = null;
 
   constructor(private readonly deps: ReceiptsSchedulerDeps) {
     this.exporter = new ReceiptsExporter(deps.stores, deps.actor, deps.run);
@@ -155,7 +171,82 @@ export class ReceiptsScheduler {
       console.error(`receipts: export failed: ${result.detail}`);
     }
     this.deps.events.broadcast({ type: 'receipts.export', result });
+    // A log that changed goes to its remote, if it has one. The boot pass
+    // pushes even a clean log, so one committed while the remote was down is
+    // sent the next time the daemon starts.
+    if (result.state === 'committed' || this.lastPushValue === null) {
+      void this.push(dir);
+    }
     return result;
+  }
+
+  /**
+   * Pushes the log to `receipts.remote` (a branch on one of the project's
+   * remotes) or `receipts.repo` (a repository of its own), so the audit trail survives the
+   * machine. Never forced: the log is one machine's own history, and a branch
+   * two machines push to would have one overwrite the other — so a rejected
+   * push is reported, with what to do, rather than pushed over.
+   */
+  private async push(dir: string): Promise<void> {
+    if (this.pushing) {
+      this.pushAgain = true;
+      return;
+    }
+    let target: PushTarget = {};
+    let branch = DEFAULT_RECEIPTS_BRANCH;
+    try {
+      const receipts = loadConfig(this.deps.rootDir).receipts;
+      target = { remote: receipts?.remote, repo: receipts?.repo };
+      branch = receipts?.branch ?? DEFAULT_RECEIPTS_BRANCH;
+    } catch {
+      return;
+    }
+    if (target.remote === undefined && target.repo === undefined) return;
+    this.pushing = true;
+    try {
+      const git = this.deps.runAsync ?? defaultAsyncGitRunner;
+      const url = await resolvePushTarget(this.deps.rootDir, target, git);
+      if (url === null) {
+        this.lastPushValue = {
+          ok: false,
+          at: new Date().toISOString(),
+          detail: `receipts.remote "${target.remote}" is not a remote of this project; add it, or point receipts.repo at a repository of its own`,
+        };
+        return;
+      }
+      const res = await git(dir, ['push', '-q', url, `HEAD:${branch}`]);
+      const out = `${res.stdout}${res.stderr}`.trim();
+      this.lastPushValue =
+        res.status === 0
+          ? {
+              ok: true,
+              at: new Date().toISOString(),
+              detail: `${url} ${branch}`,
+            }
+          : {
+              ok: false,
+              at: new Date().toISOString(),
+              detail: /rejected|non-fast-forward|fetch first/i.test(out)
+                ? `${branch} on ${url} has history this log does not: another machine pushes its receipts there. Give each machine its own receipts.branch.`
+                : out === ''
+                  ? 'git push failed'
+                  : out,
+            };
+      if (!this.lastPushValue.ok) {
+        console.error(`receipts: push failed: ${this.lastPushValue.detail}`);
+      }
+    } finally {
+      this.pushing = false;
+      if (this.pushAgain) {
+        this.pushAgain = false;
+        void this.push(dir);
+      }
+    }
+  }
+
+  /** The most recent push's outcome, or `null` when none has run. */
+  lastPush(): ReceiptsPush | null {
+    return this.lastPushValue;
   }
 
   /** The most recent export's outcome, or `null` before the first one. */

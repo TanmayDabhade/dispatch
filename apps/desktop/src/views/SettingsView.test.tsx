@@ -1,4 +1,5 @@
 import type { ApiClient } from '@dispatch/client';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { expect, mock, test } from 'bun:test';
 import type { ReactNode } from 'react';
@@ -56,6 +57,18 @@ test('it opens on General and switches to Integrations', () => {
   expect(screen.getByRole('heading', { name: 'Linear' })).toBeDefined();
 });
 
+// Pages that read through react-query (the Daemon page's board sync line)
+// need the provider the app mounts at its root in main.tsx.
+// One client per call, so a rerender keeps the same cache.
+function withQueryClient() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  );
+}
+
 // `initialPage` is how the rail's Connect Linear and the strip's gear land on Integrations.
 test('initialPage opens on that page, and a new value while mounted switches to it', () => {
   const { rerender } = render(
@@ -63,7 +76,8 @@ test('initialPage opens on that page, and a new value while mounted switches to 
       activeProject={project}
       data={data}
       initialPage="integrations"
-    />
+    />,
+    { wrapper: withQueryClient() }
   );
   expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(
     'Integrations'

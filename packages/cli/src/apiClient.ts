@@ -654,7 +654,26 @@ export interface ApiClient {
   listTeamTokens(): Promise<TeamTokenHolder[]>;
   /** Revokes whatever token the handle holds; one per person. */
   revokeTeamToken(handle: string): Promise<void>;
+  /** Board sync's state — `{ enabled: false }` when it is off. */
+  getSyncStatus(): Promise<SyncStatus>;
+  /** Runs a sync pass and answers with the state after it. */
+  syncNow(): Promise<SyncStatus>;
 }
+
+/** Mirrors SyncStatus in packages/server/src/boardSync/service.ts. */
+export type SyncStatus =
+  | { enabled: false }
+  | {
+      enabled: true;
+      replica: string;
+      remote: string;
+      branch: string;
+      lastSyncAt: string | null;
+      lastError: string | null;
+      pending: number;
+      applied: number;
+      problems: { task: string; message: string; at: string }[];
+    };
 
 /** Mirrors AuthTier in packages/server/src/tiers.ts. */
 export type TeamTier = 'request' | 'decide' | 'operator';
@@ -806,6 +825,8 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
     issueTeamToken: (input) =>
       request(target, '/api/team/tokens', jsonBody(input)),
     listTeamTokens: () => request(target, '/api/team/tokens'),
+    getSyncStatus: () => request(target, '/api/board-sync'),
+    syncNow: () => request(target, '/api/board-sync/now', { method: 'POST' }),
     revokeTeamToken: async (handle) => {
       await request(target, `/api/team/tokens/${encodeURIComponent(handle)}`, {
         method: 'DELETE',

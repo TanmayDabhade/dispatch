@@ -1,12 +1,15 @@
 import {
   ActorContext,
   formatMigrationReport,
+  generateSyncedTaskId,
   hasLegacyState,
   importLegacyProject,
   initProjectStores,
   isMergeDriverResolvable,
   loadConfig,
   openProjectStores,
+  SqliteTaskStore,
+  syncSettings,
   TaskStore,
   totalImported,
 } from '@dispatch/core';
@@ -15,11 +18,12 @@ import type {
   ExecutorCommand,
   GitReader,
   ProjectStores,
+  SyncConfig,
   TaskStoreBackend,
   TaskStorePort,
 } from '@dispatch/core';
 import { existsSync } from 'node:fs';
-import { networkInterfaces } from 'node:os';
+import { networkInterfaces, userInfo } from 'node:os';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -34,6 +38,10 @@ import {
 } from './api.js';
 import type { ApiContext, DaemonTokenPair, DaemonTokens } from './api.js';
 import { spawnGitSync } from './blockingGit.js';
+import { SyncLedger } from './boardSync/ledger.js';
+import { resolvePushTarget, SyncRepo } from './boardSync/repo.js';
+import { BoardSyncService } from './boardSync/service.js';
+import { SyncedTaskStore } from './boardSync/syncedStore.js';
 import { BrowserRegistry } from './browser/registry.js';
 import { TaskCache } from './cache.js';
 import { ConversationStore } from './conversations.js';
@@ -84,7 +92,11 @@ import { Orchestrator } from './orchestrator/orchestrator.js';
 import { OverseerManager } from './orchestrator/overseer.js';
 import { ClaudeOverseer } from './orchestrator/overseers/claude.js';
 import { OverseerToolRegistry } from './orchestrator/overseerTools.js';
-import { scopeRequestsPath, teamTokensPath } from './orchestrator/paths.js';
+import {
+  boardSyncDir,
+  scopeRequestsPath,
+  teamTokensPath,
+} from './orchestrator/paths.js';
 import { PlanManager } from './orchestrator/plan.js';
 import { ClaudePlanner } from './orchestrator/planners/claude.js';
 import type { CommandRunner } from './orchestrator/pr.js';
@@ -384,6 +396,23 @@ export function registerCliExecutors(
   for (const [name, command] of Object.entries(commands)) {
     if (name === 'claude' || name === 'codex') continue;
     orchestrator.registerExecutor(name, new CliExecutor({ command }));
+  }
+}
+
+/**
+ * The sync settings this boot runs with, or null when sync is off. A config
+ * that will not parse costs the daemon its sync, not its boot — the same rule
+ * the executor and carto reads follow — and says so.
+ */
+function bootSyncSettings(rootDir: string): SyncConfig | null {
+  try {
+    const settings = syncSettings(loadConfig(rootDir));
+    return settings.enabled ? settings : null;
+  } catch (err) {
+    console.error(
+      `dispatchd: could not read sync settings, board sync is off: ${(err as Error).message}`
+    );
+    return null;
   }
 }
 
@@ -849,9 +878,21 @@ async function bootServer(
   // Attaching there instead would boot a daemon whose every write fails with
   // "no dispatch database for <root>".
   const backend = opts.storeBackend ?? resolveStoreBackend(rootDir);
+  // Board sync (boardSync/) is read once, here: it decides how ids are minted
+  // and which store everything below is handed, and both have to hold for the
+  // life of the process. Turning it on or off takes a restart. Only the
+  // database backend syncs this way — a file-backed board already travels in
+  // the repo itself.
+  const syncConfig = backend === 'sqlite' ? bootSyncSettings(rootDir) : null;
   const stores =
     backend === 'sqlite'
-      ? initProjectStores({ rootDir, backend })
+      ? initProjectStores({
+          rootDir,
+          backend,
+          ...(syncConfig === null
+            ? {}
+            : { generateTaskId: generateSyncedTaskId }),
+        })
       : openProjectStores({ rootDir, backend });
   // The first boot that lands this project on the database does two things,
   // in this order: import whatever markdown-and-JSONL state it still has, then
@@ -883,7 +924,23 @@ async function bootServer(
       );
     }
   }
-  const store = stores.tasks;
+  // With sync on, everything gets the store that records each write as a
+  // change for the other replicas; the board it writes to is the same one.
+  let boardSync: BoardSyncService | null = null;
+  const syncLedger =
+    syncConfig === null
+      ? null
+      : new SyncLedger(
+          join(boardSyncDir(rootDir), 'state.db'),
+          userInfo().username
+        );
+  const syncedStore =
+    syncLedger === null || !(stores.tasks instanceof SqliteTaskStore)
+      ? null
+      : new SyncedTaskStore(stores.tasks, syncLedger, () =>
+          boardSync?.notifyLocalChange()
+        );
+  const store: TaskStorePort = syncedStore ?? stores.tasks;
   const cache = new TaskCache();
   safeRebuild(store, cache);
   const events = new EventBus();
@@ -971,6 +1028,57 @@ async function bootServer(
   // write its receipt log still has a working board, and exportNow reports
   // rather than throws.
   receiptsScheduler?.exportNow();
+
+  // Board sync, when on: publish the board as it stands (once, the first
+  // time), then exchange changes with the other replicas on the remote. A
+  // remote that cannot be resolved costs the daemon its sync, not its boot.
+  if (syncConfig !== null && syncLedger !== null && syncedStore !== null) {
+    // A repository of its own when the config names one, else a branch on
+    // one of the project's own remotes.
+    const remoteUrl = await resolvePushTarget(
+      rootDir,
+      syncConfig.repo === undefined
+        ? { remote: syncConfig.remote }
+        : { repo: syncConfig.repo },
+      defaultAsyncGitRunner
+    );
+    if (remoteUrl === null) {
+      console.error(
+        `dispatchd: board sync is on but "${syncConfig.remote}" is not a remote of ${rootDir}; add it, or point sync.repo at a repository of its own. Sync is off until then.`
+      );
+    } else {
+      boardSync = new BoardSyncService({
+        store: syncedStore,
+        ledger: syncLedger,
+        repo: new SyncRepo(
+          join(boardSyncDir(rootDir), 'repo'),
+          remoteUrl,
+          syncConfig.branch,
+          syncLedger.replica,
+          defaultAsyncGitRunner
+        ),
+        remote: remoteUrl,
+        branch: syncConfig.branch,
+        intervalMs: syncConfig.intervalSec * 1000,
+        // A teammate's change lands like a local edit: the cache is rebuilt
+        // and every client told, so boards refresh without anyone reloading.
+        onBoardChanged: () => {
+          safeRebuild(store, cache);
+          events.broadcast({ type: 'task.changed' });
+        },
+      });
+      const published = syncedStore.bootstrap();
+      if (published > 0) {
+        console.log(
+          `dispatchd: board sync publishing ${published} existing tasks`
+        );
+      }
+      boardSync.start();
+      console.log(
+        `dispatchd: board sync on as ${syncLedger.replica}, via ${syncConfig.branch} on ${remoteUrl}`
+      );
+    }
+  }
   // Both ride the same `task.changed` signal LinearSync's push debounce does —
   // the watcher above is one source of it, API mutation handlers are
   // another, so an edit made through either path reaches the board and the
@@ -1622,6 +1730,7 @@ async function bootServer(
     watchdogStatus: () => watchdog.status(),
     previews,
     previewGateway,
+    boardSync,
     presence: presenceTracker,
     ownOrigins: ownOriginSet,
     sessionOrigins: sessionOriginSet,
@@ -1920,6 +2029,8 @@ async function bootServer(
       // Last: the database handle outlives every reader above, and closing it
       // while a request is still in flight would fail that request rather
       // than let it finish. A no-op on the file backend.
+      boardSync?.stop();
+      syncLedger?.close();
       stores.close();
     },
   };

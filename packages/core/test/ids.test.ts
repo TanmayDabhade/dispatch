@@ -1,10 +1,13 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, test } from 'bun:test';
 
 import {
   generateFindingId,
   generateLedgerId,
   generateRunId,
+  generateSyncedTaskId,
   generateTaskId,
+  isTaskId,
+  taskIdFromFilename,
 } from '../src/ids.js';
 import { slugify } from '../src/slug.js';
 
@@ -95,5 +98,49 @@ describe('slugify', () => {
     const s = slugify('word '.repeat(30));
     expect(s.length).toBeLessThanOrEqual(40);
     expect(s.endsWith('-')).toBe(false);
+  });
+});
+
+describe('synced task ids', () => {
+  test('a synced board mints eight hex characters', () => {
+    const id = generateSyncedTaskId(
+      'task',
+      'Fix login',
+      '2026-09-23T00:00:00Z'
+    );
+    expect(id).toMatch(/^t-[0-9a-f]{8}$/);
+    expect(isTaskId(id)).toBe(true);
+    expect(
+      generateSyncedTaskId('epic', 'Auth', '2026-09-23T00:00:00Z')
+    ).toMatch(/^e-[0-9a-f]{8}$/);
+  });
+
+  test('the id pattern takes both lengths and still nothing but hex', () => {
+    expect(isTaskId('t-abc123')).toBe(true);
+    expect(isTaskId('t-abc12345')).toBe(true);
+    expect(isTaskId('t-abc12')).toBe(false);
+    expect(isTaskId('t-abc123abc123a')).toBe(false);
+    // The guard exists to keep a hand-written id out of a filesystem path.
+    expect(isTaskId('t-../../x')).toBe(false);
+    expect(isTaskId('t-abc123/..')).toBe(false);
+  });
+});
+
+describe('taskIdFromFilename', () => {
+  test('reads six- and eight-character ids alike', () => {
+    expect(taskIdFromFilename('t-abc123-fix-login')).toBe('t-abc123');
+    expect(taskIdFromFilename('t-abc12345-fix-login')).toBe('t-abc12345');
+    expect(taskIdFromFilename('e-abc12345')).toBe('e-abc12345');
+  });
+
+  test('a slug that starts with hex is not read as part of the id', () => {
+    // The id's hex run ends at the dash, whatever the slug looks like.
+    expect(taskIdFromFilename('t-abc123-deadbeef')).toBe('t-abc123');
+  });
+
+  test('anything else is not a task file', () => {
+    expect(taskIdFromFilename('README')).toBeNull();
+    expect(taskIdFromFilename('t-xyz123-nope')).toBeNull();
+    expect(taskIdFromFilename('t-abc123x')).toBeNull();
   });
 });

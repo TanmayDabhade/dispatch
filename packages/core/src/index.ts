@@ -9,14 +9,18 @@ export {
 } from './attachments.js';
 export * from './subagents.js';
 export * from './preview.js';
+export { absoluteGitLocation } from './gitLocation.js';
 export {
   generateDraftId,
   generateFindingId,
   generateLedgerId,
   generateRunId,
+  generateSyncedTaskId,
   generateTaskId,
   isTaskId,
+  SYNCED_TASK_ID_HEX,
   TASK_ID_PATTERN,
+  taskIdFromFilename,
 } from './ids.js';
 export {
   FINDING_RECOMMENDATIONS,
@@ -187,6 +191,8 @@ export {
   DEFAULT_NOTIFICATIONS,
   DEFAULT_EXECUTOR_NAME,
   DEFAULT_RECEIPTS,
+  DEFAULT_RECEIPTS_BRANCH,
+  DEFAULT_SYNC,
   DEFAULT_REPO_DIGEST,
   EXECUTOR_MODEL_ROLES,
   EXECUTOR_PRICING_FIELDS,
@@ -199,6 +205,7 @@ export {
   DEFAULT_PREVIEW,
   NOTIFICATION_KINDS,
   previewSettings,
+  syncSettings,
   projectPolicy,
   queueWeights,
   SECRET_URL_MASK_SUFFIX,
@@ -249,6 +256,7 @@ export type {
   OrchestratorConfig,
   PreviewConfig,
   ReceiptsConfig,
+  SyncConfig,
   QueueConfig,
   QueueWeightsResult,
   RemoteConfig,
@@ -322,3 +330,16 @@ export {
   TEAM_GITATTRIBUTES_LINE,
   writeGitAttributes,
 } from './mergeDriverSetup.js';
+export type {
+  ApplyResult,
+  BoardOp,
+  HeldField,
+  MergeState,
+} from './boardSync.js';
+export {
+  applyOp,
+  assembleFromState,
+  diffTask,
+  HybridClock,
+  recordLocal,
+} from './boardSync.js';

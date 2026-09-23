@@ -9,7 +9,7 @@ import {
 import { dirname, join } from 'node:path';
 
 import type { CommandEvidence, MutationEvidence } from './evidence.js';
-import { isTaskId } from './ids.js';
+import { taskIdFromFilename } from './ids.js';
 import { importLegacyProject } from './migrate.js';
 import type { MigrationReport } from './migrate.js';
 import { SqliteTaskStore } from './sqliteTaskStore.js';
@@ -425,8 +425,8 @@ function pruneTaskFiles(
 ): string[] {
   return pruneFiles(tasksDir, '.md', TASKS_DIR, (name) => {
     if (expected.has(name)) return true;
-    const id = name.slice(0, 8);
-    return isTaskId(id) && keepIds.has(id);
+    const id = taskIdFromFilename(name);
+    return id !== null && keepIds.has(id);
   });
 }
 

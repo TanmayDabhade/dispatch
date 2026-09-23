@@ -345,6 +345,88 @@ This is plain HTTP on your network, like any dev server — run it on a network
 you trust, or put it behind a TLS-terminating proxy and name that origin with
 `--public-origin`.
 
+## Syncing the board between machines
+
+Each daemon keeps the board in its own database, so without help two people
+running Dispatch on the same repository have two boards. Board sync makes them
+one, through git — no server to run. The board travels one of two ways.
+
+**On a branch of the project's own repository** (the default). Nothing else to
+set up: everyone who can push the code can sync the board.
+
+    # .dispatch/config.yml, committed so everyone gets it
+    sync:
+      enabled: true
+      remote: origin          # the default; any of the project's remotes by name
+      branch: dispatch-sync   # the default; nothing but sync writes to it
+
+**In a repository of its own.** For when the board should not live next to the
+code: a code repository whose branches are locked down, people who plan the work
+but should not be able to push code, or boards for several projects kept in one
+place.
+
+    sync:
+      enabled: true
+      repo: git@github.com:acme/dispatch-board.git   # a URL, or a path
+      branch: dispatch-sync   # one board per branch — give each project its own
+
+`repo` takes any URL git does, or a path. A relative path is read from the
+project root, so `repo: ../dispatch-board.git` means the same on every machine
+whose checkouts sit side by side. `remote` and `repo` are two different places,
+so a config sets one or the other; `remote` only takes a name, and a URL there
+is refused with the `repo` line to write instead. Changing either later brings
+the board across: the next sync pushes everything this machine knows to the new
+place.
+
+Restart the daemon after changing it. From then on every change to a task is
+recorded, pushed to that branch, and applied on everyone else's daemon within
+the sync interval (30 seconds by default, sooner after an edit).
+`dispatch sync status` says how it is going, `dispatch sync now` does not wait,
+and the same is under **Settings → Daemon** in the app.
+
+How it merges, so nothing surprises you:
+
+- **Different fields merge.** You move a task to review while a teammate adds a
+  label: both happen, on both machines.
+- **The same field keeps the later change**, by a clock that stays consistent
+  even when machines' clocks disagree, so everyone lands on the same answer.
+- **Activity keeps everyone's lines**, in the same order everywhere.
+- **Deletes win over edits made before them**, and lose to edits made after.
+- **Offline is fine.** Work carries on locally, and goes out the next time the
+  remote is reachable.
+- **A new machine gets the whole board** on its first sync: clone, turn sync on,
+  start the daemon.
+- **Longer ids.** A synced board mints eight-character ids (`t-1a2b3c4d`) so two
+  machines picking the same one is vanishingly unlikely. Existing ids keep
+  working. If it happens anyway, neither task is overwritten: sync reports the
+  clash under **Settings → Daemon** for someone to rename one.
+
+Each machine only ever appends to its own file on the sync branch, so git never
+has a conflict to hand you and nothing is ever force-pushed. What travels is the
+tasks themselves. Findings, ledger entries, notes and run evidence stay on the
+machine that made them, and so do attachment files, although the task still
+lists them.
+
+### Keeping the audit log off the machine
+
+The receipt log (every task, finding, decision and piece of run evidence, as
+plain files in git) can be pushed after every change — to a branch of the
+project's own repository, or to a repository of its own, the same two choices
+board sync has:
+
+    receipts:
+      remote: origin              # one of the project's remotes, by name
+      branch: dispatch-receipts   # one machine per branch — its own history
+
+    receipts:
+      repo: git@github.com:acme/dispatch-audit.git   # or a repository of its own
+
+If that machine is lost, rebuild its board on a fresh checkout, with the daemon
+stopped. `--from` takes a remote's name, a URL or a path:
+
+    dispatch receipts restore --from origin
+    dispatch receipts restore --from git@github.com:acme/dispatch-audit.git
+
 ## MCP server
 
 `dispatch init` registers a stdio MCP server in the project's `.mcp.json`
