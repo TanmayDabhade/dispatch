@@ -39,7 +39,7 @@ afterEach(async () => {
 });
 
 /** A teammate: their own checkout and database, sync pointed at `remoteUrl`. */
-async function teammate(name: string, remoteUrl = remote) {
+async function teammate(name: string, remoteUrl = remote, intervalSec = 3600) {
   const root = tempDir(`dispatch-sync-${name}-`);
   runGitSync(root, ['init', '-q', '-b', 'main']);
   runGitSync(root, ['config', 'user.email', `${name}@example.com`]);
@@ -50,7 +50,7 @@ async function teammate(name: string, remoteUrl = remote) {
   // what each assertion sees does not depend on a timer.
   writeFileSync(
     join(root, '.dispatch', 'config.yml'),
-    `sync:\n  enabled: true\n  remote: ${remoteUrl}\n  intervalSec: 3600\n`
+    `sync:\n  enabled: true\n  remote: ${remoteUrl}\n  intervalSec: ${intervalSec}\n`
   );
   runGitSync(root, ['add', '-A']);
   runGitSync(root, ['commit', '-q', '-m', 'init']);
@@ -228,4 +228,29 @@ describe('board sync', () => {
     expect(res.status).toBe(200);
     expect(res.body).not.toHaveProperty('replica');
   });
+
+  it('with nobody pressing anything, a teammate’s board updates on its own', async () => {
+    // The path people actually use: an edit is pushed shortly after it is
+    // made, the other daemon pulls on its interval, and its clients hear
+    // task.changed and refetch — no sync command anywhere.
+    const ada = await teammate('ada', remote, 5);
+    const grace = await teammate('grace', remote, 5);
+    const events: string[] = [];
+    const ws = new WebSocket(
+      `ws://127.0.0.1:${grace.handle.port}/ws?token=${grace.handle.tokens.agentToken}`
+    );
+    ws.onmessage = (m) =>
+      events.push((JSON.parse(String(m.data)) as { type: string }).type);
+    await new Promise((resolve) => (ws.onopen = resolve));
+
+    const id = await ada.create('Arrives by itself');
+    let seen = null;
+    for (let i = 0; i < 60 && seen === null; i++) {
+      await Bun.sleep(500);
+      seen = await grace.get(id);
+    }
+    ws.close();
+    expect(seen?.meta.title).toBe('Arrives by itself');
+    expect(events).toContain('task.changed');
+  }, 40_000);
 });
