@@ -349,13 +349,34 @@ you trust, or put it behind a TLS-terminating proxy and name that origin with
 
 Each daemon keeps the board in its own database, so without help two people
 running Dispatch on the same repository have two boards. Board sync makes them
-one, through your git remote — no server to run:
+one, through git — no server to run. The board travels one of two ways.
+
+**On a branch of the project's own repository** (the default). Nothing else to
+set up: everyone who can push the code can sync the board.
 
     # .dispatch/config.yml, committed so everyone gets it
     sync:
       enabled: true
-      remote: origin          # or any git URL
-      branch: dispatch-sync   # nothing but sync writes to this branch
+      remote: origin          # the default; any of the project's remotes by name
+      branch: dispatch-sync   # the default; nothing but sync writes to it
+
+**In a repository of its own.** For when the board should not live next to the
+code: a code repository whose branches are locked down, people who plan the work
+but should not be able to push code, or boards for several projects kept in one
+place.
+
+    sync:
+      enabled: true
+      repo: git@github.com:acme/dispatch-board.git   # a URL, or a path
+      branch: dispatch-sync   # one board per branch — give each project its own
+
+`repo` takes any URL git does, or a path. A relative path is read from the
+project root, so `repo: ../dispatch-board.git` means the same on every machine
+whose checkouts sit side by side. `remote` and `repo` are two different places,
+so a config sets one or the other; `remote` only takes a name, and a URL there
+is refused with the `repo` line to write instead. Changing either later brings
+the board across: the next sync pushes everything this machine knows to the new
+place.
 
 Restart the daemon after changing it. From then on every change to a task is
 recorded, pushed to that branch, and applied on everyone else's daemon within
@@ -389,16 +410,22 @@ lists them.
 ### Keeping the audit log off the machine
 
 The receipt log (every task, finding, decision and piece of run evidence, as
-plain files in git) can be pushed after every change:
+plain files in git) can be pushed after every change — to a branch of the
+project's own repository, or to a repository of its own, the same two choices
+board sync has:
 
     receipts:
-      remote: origin
+      remote: origin              # one of the project's remotes, by name
       branch: dispatch-receipts   # one machine per branch — its own history
 
+    receipts:
+      repo: git@github.com:acme/dispatch-audit.git   # or a repository of its own
+
 If that machine is lost, rebuild its board on a fresh checkout, with the daemon
-stopped:
+stopped. `--from` takes a remote's name, a URL or a path:
 
     dispatch receipts restore --from origin
+    dispatch receipts restore --from git@github.com:acme/dispatch-audit.git
 
 ## MCP server
 

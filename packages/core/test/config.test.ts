@@ -652,17 +652,60 @@ describe('sync config', () => {
     });
   });
 
-  it('takes a remote, a branch and an interval', () => {
+  it('takes a branch on one of the project’s remotes, and an interval', () => {
     expect(
       load(
-        'sync:\n  enabled: true\n  remote: git@example.com:team/board.git\n  branch: board\n  intervalSec: 60\n'
+        'sync:\n  enabled: true\n  remote: upstream\n  branch: board\n  intervalSec: 60\n'
       ).sync
     ).toEqual({
       enabled: true,
-      remote: 'git@example.com:team/board.git',
+      remote: 'upstream',
       branch: 'board',
       intervalSec: 60,
     });
+    // Git allows a slash inside a remote's name, so that is still a name.
+    expect(load('sync:\n  remote: team/board\n').sync?.remote).toBe(
+      'team/board'
+    );
+  });
+
+  it('or a repository of its own, by URL or path', () => {
+    expect(
+      load('sync:\n  enabled: true\n  repo: git@example.com:team/board.git\n')
+        .sync
+    ).toEqual({
+      enabled: true,
+      remote: 'origin',
+      repo: 'git@example.com:team/board.git',
+      branch: 'dispatch-sync',
+      intervalSec: 30,
+    });
+    expect(load('sync:\n  repo: ../board.git\n').sync?.repo).toBe(
+      '../board.git'
+    );
+  });
+
+  it('refuses a config that names two places, or a URL where a name goes', () => {
+    expect(() =>
+      load('sync:\n  remote: origin\n  repo: git@example.com:t/b.git\n')
+    ).toThrow('sync.remote and sync.repo are two different places');
+    for (const url of [
+      'git@example.com:team/board.git',
+      'https://example.com/team/board.git',
+      '/srv/git/board.git',
+      '../board.git',
+      '~/board.git',
+    ]) {
+      expect(() => load(`sync:\n  remote: "${url}"\n`)).toThrow(
+        `set sync.repo: ${url}`
+      );
+    }
+    expect(() =>
+      load('receipts:\n  remote: https://example.com/audit.git\n')
+    ).toThrow('set receipts.repo');
+    expect(() => load('sync:\n  repo: "--upload-pack=x"\n')).toThrow(
+      'must not start with "-"'
+    );
   });
 
   it('refuses what would fail later as a confusing git error', () => {
@@ -681,6 +724,16 @@ describe('sync config', () => {
       enabled: true,
       dir: undefined,
       remote: 'origin',
+    });
+  });
+
+  it('or a repository of its own for the receipt log', () => {
+    expect(
+      load('receipts:\n  repo: git@example.com:team/audit.git\n').receipts
+    ).toEqual({
+      enabled: true,
+      dir: undefined,
+      repo: 'git@example.com:team/audit.git',
     });
   });
 });

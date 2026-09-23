@@ -106,12 +106,17 @@ export interface ReceiptsConfig {
    */
   dir?: string;
   /**
-   * Where to push the log after each export, so it survives the machine: a
-   * git URL, or the name of one of the project's own remotes (`origin`).
-   * Absent keeps the log local, as it always was.
+   * Where to push the log after each export, so it survives the machine:
+   * one of the project's own remotes, by name (`origin`). Absent, with no
+   * `repo` either, keeps the log local, as it always was.
    */
   remote?: string;
-  /** The branch on `remote` the log is pushed to. */
+  /**
+   * Or a repository of its own: a git URL, or a path (relative to the
+   * project root). Mutually exclusive with `remote`.
+   */
+  repo?: string;
+  /** The branch the log is pushed to. */
   branch?: string;
 }
 
@@ -127,8 +132,15 @@ export const DEFAULT_RECEIPTS_BRANCH = 'dispatch-receipts';
  */
 export interface SyncConfig {
   enabled: boolean;
-  /** A git URL, or the name of one of the project's remotes. */
+  /** Which of the project's own remotes carries the sync branch, by name.
+   *  Ignored when `repo` is set. */
   remote: string;
+  /**
+   * A repository of its own for the board instead: a git URL, or a path
+   * (relative to the project root). Set only when the config names one;
+   * mutually exclusive with `remote`.
+   */
+  repo?: string;
   /** The branch the changes travel on. Nothing but sync writes to it. */
   branch: string;
   /** How often to sync when nothing local has changed. */

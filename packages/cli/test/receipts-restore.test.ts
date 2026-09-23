@@ -7,7 +7,7 @@ import {
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import type { CliContext } from '../src/context.js';
 import { makeProgram } from '../src/program.js';
@@ -94,6 +94,42 @@ test('a fresh checkout rebuilds the board from a pushed receipt log', async () =
   // Marked, so the CLI and the next daemon read this board from the database.
   expect(readProjectBackend(fresh)).toBe('sqlite');
   expect(lines.join('\n')).toContain('Restored.');
+});
+
+test('--from reads a path from where you typed it, and a remote’s relative URL from the project', async () => {
+  // The clone runs in a temp dir, so a relative location has to be made
+  // absolute first — against the shell's directory for a path typed on the
+  // command line, against the project for a URL stored on one of its remotes.
+  const { remote, ids } = pushedLog();
+  const fresh = temp('dispatch-fresh-');
+  git(fresh, 'init', '-q', '-b', 'main');
+  const ctx: CliContext = { cwd: fresh, log: () => {} };
+  await makeProgram(ctx).parseAsync(
+    ['receipts', 'restore', '--from', join('..', basename(remote))],
+    { from: 'user' }
+  );
+  let stores = openProjectStores({ rootDir: fresh, backend: 'sqlite' });
+  try {
+    expect(stores.tasks.get(ids[0])?.meta.title).toBe('Fix the login redirect');
+  } finally {
+    stores.close();
+  }
+
+  const other = temp('dispatch-fresh-');
+  git(other, 'init', '-q', '-b', 'main');
+  git(other, 'remote', 'add', 'origin', join('..', basename(remote)));
+  await makeProgram({ cwd: other, log: () => {} }).parseAsync(
+    ['receipts', 'restore', '--from', 'origin'],
+    { from: 'user' }
+  );
+  stores = openProjectStores({ rootDir: other, backend: 'sqlite' });
+  try {
+    expect(stores.tasks.get(ids[1])?.meta.title).toBe(
+      'Write the release notes'
+    );
+  } finally {
+    stores.close();
+  }
 });
 
 test('a branch that is not there fails with where it looked', async () => {

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
@@ -38,10 +38,20 @@ afterEach(async () => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
-/** A teammate: their own checkout and database, sync pointed at `remoteUrl`. */
-async function teammate(name: string, remoteUrl = remote, intervalSec = 3600) {
+/**
+ * A teammate: their own checkout and database. `where` is the sync config's
+ * line saying where the board travels — by default a repository of its own
+ * (the bare `remote`); `setup` runs on the checkout before the daemon starts.
+ */
+async function teammate(
+  name: string,
+  where = `repo: ${remote}`,
+  intervalSec = 3600,
+  setup?: (root: string) => void
+) {
   const root = tempDir(`dispatch-sync-${name}-`);
   runGitSync(root, ['init', '-q', '-b', 'main']);
+  setup?.(root);
   runGitSync(root, ['config', 'user.email', `${name}@example.com`]);
   runGitSync(root, ['config', 'user.name', name]);
   writeFileSync(join(root, 'README.md'), `# ${name}\n`);
@@ -50,7 +60,7 @@ async function teammate(name: string, remoteUrl = remote, intervalSec = 3600) {
   // what each assertion sees does not depend on a timer.
   writeFileSync(
     join(root, '.dispatch', 'config.yml'),
-    `sync:\n  enabled: true\n  remote: ${remoteUrl}\n  intervalSec: ${intervalSec}\n`
+    `sync:\n  enabled: true\n${where === '' ? '' : `  ${where}\n`}  intervalSec: ${intervalSec}\n`
   );
   runGitSync(root, ['add', '-A']);
   runGitSync(root, ['commit', '-q', '-m', 'init']);
@@ -78,6 +88,7 @@ async function teammate(name: string, remoteUrl = remote, intervalSec = 3600) {
     };
   };
   return {
+    root,
     handle,
     api,
     sync: () => api('/api/board-sync/now', { method: 'POST' }),
@@ -172,6 +183,78 @@ describe('board sync', () => {
     expect(await ada.get(id)).toBeNull();
   });
 
+  it('by default the board rides a branch of the project’s own origin, and nothing else there moves', async () => {
+    // The zero-config setup: `sync: { enabled: true }` and the origin every
+    // checkout of the project already has — here added as a relative path,
+    // which git would read against the wrong directory if left as it is.
+    const withOrigin = (root: string) =>
+      runGitSync(root, [
+        'remote',
+        'add',
+        'origin',
+        join('..', basename(remote)),
+      ]);
+    const ada = await teammate('ada', '', 3600, withOrigin);
+    const grace = await teammate('grace', '', 3600, withOrigin);
+
+    const id = await ada.create('Next to the code');
+    expect((await ada.sync()).body?.lastError).toBeNull();
+    await grace.sync();
+    expect((await grace.get(id))?.meta.title).toBe('Next to the code');
+
+    // Only the sync branch was pushed; the project's own branches are theirs.
+    const heads = runGitSync(remote, ['for-each-ref', '--format=%(refname)']);
+    expect(heads.trim().split('\n')).toEqual(['refs/heads/dispatch-sync']);
+  });
+
+  it('or a repository of its own, named by a path relative to the project', async () => {
+    const where = `repo: ${join('..', basename(remote))}`;
+    const ada = await teammate('ada', where);
+    const grace = await teammate('grace', where);
+
+    const id = await ada.create('In a repo of its own');
+    expect((await ada.sync()).body?.lastError).toBeNull();
+    await grace.sync();
+    expect((await grace.get(id))?.meta.title).toBe('In a repo of its own');
+  });
+
+  it('moving the board to a new place brings it across on the next sync', async () => {
+    const ada = await teammate('ada');
+    const id = await ada.create('Made before the move');
+    await ada.sync();
+
+    // Ada's project moves its board to a repository of its own: same
+    // checkout, same database, a new place in config.yml, a restart.
+    const moved = tempDir('dispatch-sync-moved-');
+    runGitSync(moved, ['init', '-q', '--bare', '-b', 'main']);
+    await ada.handle.stop();
+    handles.splice(handles.indexOf(ada.handle), 1);
+    writeFileSync(
+      join(ada.root, '.dispatch', 'config.yml'),
+      `sync:\n  enabled: true\n  repo: ${moved}\n  intervalSec: 3600\n`
+    );
+    const again = await startServer({
+      rootDir: ada.root,
+      port: 0,
+      webDistDir: null,
+      storeBackend: 'sqlite',
+    });
+    handles.push(again);
+    const res = await rawFetch(
+      `http://127.0.0.1:${again.port}/api/board-sync/now`,
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${again.tokens.appToken}` },
+      }
+    );
+    expect(((await res.json()) as { lastError: unknown }).lastError).toBeNull();
+
+    // Someone who only ever knew the new place gets what was made before.
+    const grace = await teammate('grace', `repo: ${moved}`);
+    await grace.sync();
+    expect((await grace.get(id))?.meta.title).toBe('Made before the move');
+  });
+
   it('a new machine with an empty database gets the whole board', async () => {
     const ada = await teammate('ada');
     const ids = [await ada.create('One'), await ada.create('Two')];
@@ -191,7 +274,7 @@ describe('board sync', () => {
   it('while the remote is unreachable, work goes on and waits to be sent', async () => {
     const ada = await teammate(
       'ada',
-      join(tmpdir(), 'dispatch-no-such-remote-x', 'r.git')
+      `repo: ${join(tmpdir(), 'dispatch-no-such-remote-x', 'r.git')}`
     );
     const id = await ada.create('Written offline');
     const status = (await ada.sync()).body as {
@@ -236,8 +319,8 @@ describe('board sync', () => {
     // The path people actually use: an edit is pushed shortly after it is
     // made, the other daemon pulls on its interval, and its clients hear
     // task.changed and refetch — no sync command anywhere.
-    const ada = await teammate('ada', remote, 5);
-    const grace = await teammate('grace', remote, 5);
+    const ada = await teammate('ada', `repo: ${remote}`, 5);
+    const grace = await teammate('grace', `repo: ${remote}`, 5);
     const events: string[] = [];
     const ws = new WebSocket(
       `ws://127.0.0.1:${grace.handle.port}/ws?token=${grace.handle.tokens.agentToken}`

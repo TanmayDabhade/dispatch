@@ -1,7 +1,8 @@
 import type { ActorContext, ProjectStores } from '@dispatch/core';
 import { DEFAULT_RECEIPTS_BRANCH, loadConfig } from '@dispatch/core';
 
-import { resolveRemote } from '../boardSync/repo.js';
+import type { PushTarget } from '../boardSync/repo.js';
+import { resolvePushTarget } from '../boardSync/repo.js';
 import type { EventBus, ServerEvent } from '../events.js';
 import type { AsyncGitRunner, GitRunner } from '../sync/worktree.js';
 import { defaultAsyncGitRunner } from '../sync/worktree.js';
@@ -180,7 +181,8 @@ export class ReceiptsScheduler {
   }
 
   /**
-   * Pushes the log to `receipts.remote`, so the audit trail survives the
+   * Pushes the log to `receipts.remote` (a branch on one of the project's
+   * remotes) or `receipts.repo` (a repository of its own), so the audit trail survives the
    * machine. Never forced: the log is one machine's own history, and a branch
    * two machines push to would have one overwrite the other — so a rejected
    * push is reported, with what to do, rather than pushed over.
@@ -190,25 +192,25 @@ export class ReceiptsScheduler {
       this.pushAgain = true;
       return;
     }
-    let remote: string | undefined;
+    let target: PushTarget = {};
     let branch = DEFAULT_RECEIPTS_BRANCH;
     try {
       const receipts = loadConfig(this.deps.rootDir).receipts;
-      remote = receipts?.remote;
+      target = { remote: receipts?.remote, repo: receipts?.repo };
       branch = receipts?.branch ?? DEFAULT_RECEIPTS_BRANCH;
     } catch {
       return;
     }
-    if (remote === undefined) return;
+    if (target.remote === undefined && target.repo === undefined) return;
     this.pushing = true;
     try {
       const git = this.deps.runAsync ?? defaultAsyncGitRunner;
-      const url = await resolveRemote(this.deps.rootDir, remote, git);
+      const url = await resolvePushTarget(this.deps.rootDir, target, git);
       if (url === null) {
         this.lastPushValue = {
           ok: false,
           at: new Date().toISOString(),
-          detail: `receipts.remote "${remote}" is not a URL or a remote of this project`,
+          detail: `receipts.remote "${target.remote}" is not a remote of this project; add it, or point receipts.repo at a repository of its own`,
         };
         return;
       }

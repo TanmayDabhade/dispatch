@@ -51,15 +51,17 @@ export function BoardSyncGroup({ data }: BoardSyncGroupProps) {
     return (
       <SettingsGroup
         title="Board sync"
-        hint="Share this board with teammates' own daemons, through a branch on your git remote."
+        hint="Share this board with teammates' own daemons, through a branch of this project's repository or a repository of its own."
       >
         <SettingsRow
           title="Off"
           subtitle={
             <>
               Add <code className="font-mono">sync: {'{ enabled: true }'}</code>{' '}
-              to .dispatch/config.yml and restart the daemon. Everyone who does
-              the same on this repository shares one board.
+              to .dispatch/config.yml and restart the daemon; add{' '}
+              <code className="font-mono">repo: &lt;url&gt;</code> to keep the
+              board in a repository of its own. Everyone who does the same
+              shares one board.
             </>
           }
         />

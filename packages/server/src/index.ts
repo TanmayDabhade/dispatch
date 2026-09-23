@@ -39,7 +39,7 @@ import {
 import type { ApiContext, DaemonTokenPair, DaemonTokens } from './api.js';
 import { spawnGitSync } from './blockingGit.js';
 import { SyncLedger } from './boardSync/ledger.js';
-import { resolveRemote, SyncRepo } from './boardSync/repo.js';
+import { resolvePushTarget, SyncRepo } from './boardSync/repo.js';
 import { BoardSyncService } from './boardSync/service.js';
 import { SyncedTaskStore } from './boardSync/syncedStore.js';
 import { BrowserRegistry } from './browser/registry.js';
@@ -1023,14 +1023,18 @@ async function bootServer(
   // time), then exchange changes with the other replicas on the remote. A
   // remote that cannot be resolved costs the daemon its sync, not its boot.
   if (syncConfig !== null && syncLedger !== null && syncedStore !== null) {
-    const remoteUrl = await resolveRemote(
+    // A repository of its own when the config names one, else a branch on
+    // one of the project's own remotes.
+    const remoteUrl = await resolvePushTarget(
       rootDir,
-      syncConfig.remote,
+      syncConfig.repo === undefined
+        ? { remote: syncConfig.remote }
+        : { repo: syncConfig.repo },
       defaultAsyncGitRunner
     );
     if (remoteUrl === null) {
       console.error(
-        `dispatchd: board sync is on but remote "${syncConfig.remote}" is not a URL or a remote of ${rootDir}; sync is off until it is`
+        `dispatchd: board sync is on but "${syncConfig.remote}" is not a remote of ${rootDir}; add it, or point sync.repo at a repository of its own. Sync is off until then.`
       );
     } else {
       boardSync = new BoardSyncService({

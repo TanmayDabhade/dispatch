@@ -641,14 +641,44 @@ function parseReceiptsConfig(raw: unknown): ReceiptsConfig {
     );
   }
 
-  const remote = optionalName(obj.remote, 'receipts.remote');
+  const { remote, repo } = pushTarget(obj, 'receipts');
   const branch = optionalName(obj.branch, 'receipts.branch');
 
   return {
     enabled: enabled ?? DEFAULT_RECEIPTS.enabled,
     dir,
     ...(remote === undefined ? {} : { remote }),
+    ...(repo === undefined ? {} : { repo }),
     ...(branch === undefined ? {} : { branch }),
+  };
+}
+
+// Where a block pushes to: `remote`, one of the project's own remotes by
+// name, or `repo`, a repository of its own by URL or path — never both, and
+// never a URL under `remote`, so each key means one thing and a config reads
+// the same to everyone who opens it.
+function pushTarget(
+  obj: Record<string, unknown>,
+  block: 'receipts' | 'sync'
+): { remote?: string; repo?: string } {
+  const remote = optionalName(obj.remote, `${block}.remote`);
+  const repo = optionalName(obj.repo, `${block}.repo`);
+  if (remote !== undefined && repo !== undefined) {
+    throw new ConfigError(
+      `invalid .dispatch/config.yml: ${block}.remote and ${block}.repo are two different places — set one`
+    );
+  }
+  // Git allows `/` inside a remote's name (`team/board`), so only what can
+  // only be a URL or a path is turned away: a colon, a backslash, or a
+  // leading `/`, `.` or `~`.
+  if (remote !== undefined && /[:\\]|^[./~]/.test(remote)) {
+    throw new ConfigError(
+      `invalid .dispatch/config.yml: ${block}.remote names one of this project's remotes (like origin); for a repository of its own, set ${block}.repo: ${remote}`
+    );
+  }
+  return {
+    ...(remote === undefined ? {} : { remote }),
+    ...(repo === undefined ? {} : { repo }),
   };
 }
 
@@ -697,9 +727,11 @@ function parseSyncConfig(raw: unknown): SyncConfig {
       'invalid .dispatch/config.yml: sync.intervalSec must be a whole number of seconds, at least 5'
     );
   }
+  const { remote, repo } = pushTarget(obj, 'sync');
   return {
     enabled: obj.enabled ?? DEFAULT_SYNC.enabled,
-    remote: optionalName(obj.remote, 'sync.remote') ?? DEFAULT_SYNC.remote,
+    remote: remote ?? DEFAULT_SYNC.remote,
+    ...(repo === undefined ? {} : { repo }),
     branch: optionalName(obj.branch, 'sync.branch') ?? DEFAULT_SYNC.branch,
     intervalSec: interval ?? DEFAULT_SYNC.intervalSec,
   };

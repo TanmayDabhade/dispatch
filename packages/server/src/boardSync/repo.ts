@@ -1,4 +1,5 @@
 import type { BoardOp } from '@dispatch/core';
+import { absoluteGitLocation } from '@dispatch/core';
 import {
   appendFileSync,
   existsSync,
@@ -198,16 +199,31 @@ export class SyncRepo {
   }
 }
 
+/** A push target as the config names it: one of the project's remotes by
+ *  name, or a repository of its own. */
+export interface PushTarget {
+  remote?: string;
+  repo?: string;
+}
+
 /**
- * The URL `sync.remote` means: itself when it is a URL or a path, otherwise
- * the named remote of the project's own repository (`origin` by default).
+ * The location a push target points at, in a form git reads the same from
+ * any directory: `repo` itself, or the URL of the project's `remote`. Null
+ * when the remote is not one this project has.
+ *
+ * A relative path — `repo: ../board.git`, or an `origin` added as one — is
+ * made absolute against the project root, where the person meant it (see
+ * absoluteGitLocation).
  */
-export async function resolveRemote(
+export async function resolvePushTarget(
   rootDir: string,
-  remote: string,
+  target: PushTarget,
   git: AsyncGitRunner
 ): Promise<string | null> {
-  if (remote.includes(':') || remote.includes('/')) return remote;
-  const res = await git(rootDir, ['remote', 'get-url', remote]);
-  return res.status === 0 ? res.stdout.trim() : null;
+  if (target.repo !== undefined)
+    return absoluteGitLocation(rootDir, target.repo);
+  if (target.remote === undefined) return null;
+  const res = await git(rootDir, ['remote', 'get-url', target.remote]);
+  if (res.status !== 0) return null;
+  return absoluteGitLocation(rootDir, res.stdout.trim());
 }

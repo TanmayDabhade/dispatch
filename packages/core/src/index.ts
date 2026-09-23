@@ -9,6 +9,7 @@ export {
 } from './attachments.js';
 export * from './subagents.js';
 export * from './preview.js';
+export { absoluteGitLocation } from './gitLocation.js';
 export {
   generateDraftId,
   generateFindingId,

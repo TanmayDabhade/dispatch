@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
@@ -50,15 +50,12 @@ function remoteTree(remote: string): string {
   return res.stdout.toString();
 }
 
-it('pushes the log to receipts.remote, and each change after', async () => {
-  const remote = temp('dispatch-receipts-remote-');
-  runGitSync(remote, ['init', '-q', '--bare']);
-  const root = temp('dispatch-receipts-project-');
-  runGitSync(root, ['init', '-q', '-b', 'main']);
+/** A project with `receipts` set as given, served; returns a task-maker. */
+async function serve(root: string, receipts: string) {
   mkdirSync(join(root, '.dispatch'), { recursive: true });
   writeFileSync(
     join(root, '.dispatch', 'config.yml'),
-    `receipts:\n  enabled: true\n  remote: ${remote}\n`
+    `receipts:\n  enabled: true\n${receipts}`
   );
   handle = await startServer({
     rootDir: root,
@@ -67,20 +64,59 @@ it('pushes the log to receipts.remote, and each change after', async () => {
     storeBackend: 'sqlite',
     receiptsDebounceMs: 20,
   });
+  const port = handle.port;
+  const token = handle.tokens.appToken;
+  return async (title: string) => {
+    const res = await rawFetch(`http://127.0.0.1:${port}/api/tasks`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ title }),
+    });
+    return ((await res.json()) as { meta: { id: string } }).meta.id;
+  };
+}
 
-  const res = await rawFetch(`http://127.0.0.1:${handle.port}/api/tasks`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      authorization: `Bearer ${handle.tokens.appToken}`,
-    },
-    body: JSON.stringify({ title: 'Survives the laptop' }),
-  });
-  const { meta } = (await res.json()) as { meta: { id: string } };
-
-  for (let i = 0; i < 100 && !remoteTree(remote).includes(meta.id); i++) {
+async function waitForTask(remote: string, id: string): Promise<void> {
+  for (let i = 0; i < 100 && !remoteTree(remote).includes(id); i++) {
     await Bun.sleep(50);
   }
-  expect(remoteTree(remote)).toContain(meta.id);
+}
+
+function bareRemote(): string {
+  const remote = temp('dispatch-receipts-remote-');
+  runGitSync(remote, ['init', '-q', '--bare']);
+  return remote;
+}
+
+function project(): string {
+  const root = temp('dispatch-receipts-project-');
+  runGitSync(root, ['init', '-q', '-b', 'main']);
+  return root;
+}
+
+it('pushes the log to a repository of its own, and each change after', async () => {
+  const remote = bareRemote();
+  const create = await serve(project(), `  repo: ${remote}\n`);
+
+  const id = await create('Survives the laptop');
+  await waitForTask(remote, id);
+  expect(remoteTree(remote)).toContain(id);
   expect(remoteHas(remote, 'README.md')).toBe(true);
+});
+
+it('or to a branch on one of the project’s own remotes, even one added as a relative path', async () => {
+  // Git reads a relative remote URL against the directory it runs in, and
+  // the push runs from the log's own clone, far from the project — so the
+  // path is resolved against the project root first, where it was meant.
+  const remote = bareRemote();
+  const root = project();
+  runGitSync(root, ['remote', 'add', 'origin', join('..', basename(remote))]);
+  const create = await serve(root, '  remote: origin\n');
+
+  const id = await create('Pushed next to the code');
+  await waitForTask(remote, id);
+  expect(remoteTree(remote)).toContain(id);
 });

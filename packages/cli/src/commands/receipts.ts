@@ -1,4 +1,5 @@
 import {
+  absoluteGitLocation,
   DEFAULT_RECEIPTS_BRANCH,
   formatMigrationReport,
   initProjectStores,
@@ -17,19 +18,18 @@ import { projectRoot } from '../projectRoot.js';
 import { findRunningDaemon } from './daemon.js';
 
 /**
- * The URL a `--from` names: itself when it is a URL or a path, otherwise one
- * of this project's remotes — the same reading `receipts.remote` gets.
+ * The location a `--from` names, absolute: one of this project's remotes when
+ * it is one (a relative URL on it read from the project root, where git reads
+ * it), otherwise a URL or a path — a path meaning from where you typed it.
+ * The clone runs in a temp dir, where a relative path would mean nothing.
  */
-function remoteUrl(root: string, from: string): string {
-  if (from.includes(':') || from.includes('/')) return from;
-  const res = spawnSync('git', ['remote', 'get-url', from], {
+function remoteUrl(root: string, cwd: string, from: string): string {
+  const res = spawnSync('git', ['remote', 'get-url', '--', from], {
     cwd: root,
     encoding: 'utf8',
   });
-  if (res.status !== 0) {
-    throw new CliError(`"${from}" is not a URL or a remote of this project`);
-  }
-  return res.stdout.trim();
+  if (res.status === 0) return absoluteGitLocation(root, res.stdout.trim());
+  return absoluteGitLocation(cwd, from);
 }
 
 export function registerReceiptsCommands(
@@ -57,7 +57,7 @@ export function registerReceiptsCommands(
             `dispatchd is running for this project (port ${daemon.port}); stop it first, then restore`
           );
         }
-        const url = remoteUrl(root, opts.from);
+        const url = remoteUrl(root, ctx.cwd, opts.from);
         const dir = mkdtempSync(join(tmpdir(), 'dispatch-receipts-restore-'));
         try {
           const cloned = spawnSync(
