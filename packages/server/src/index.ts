@@ -111,6 +111,10 @@ import {
 import type { ApprovalFloor } from './policyEngine.js';
 import { PresenceTracker } from './presence.js';
 import { PreviewSupervisor } from './preview.js';
+import {
+  previewRequestHeaders,
+  previewResponseHeaders,
+} from './previewHeaders.js';
 import { isReceiptEvent, ReceiptsScheduler } from './receipts/scheduler.js';
 import { ReviewCommentStore } from './reviewComments.js';
 import { sessionOrigins, sessionToken } from './session.js';
@@ -515,28 +519,6 @@ interface SocketData {
 // a full interval late.
 const PREVIEW_SWEEP_INTERVAL_MS = 30_000;
 
-// Hop-by-hop headers, which belong to one connection and must not be
-// forwarded to or from an upstream (RFC 9110 7.6.1). Forwarding
-// `connection`/`upgrade` in particular makes Bun's fetch reject the request.
-const HOP_BY_HOP = new Set([
-  'connection',
-  'keep-alive',
-  'proxy-authenticate',
-  'proxy-authorization',
-  'te',
-  'trailer',
-  'transfer-encoding',
-  'upgrade',
-]);
-
-function withoutHopByHop(headers: Headers): Headers {
-  const copy = new Headers();
-  headers.forEach((value, key) => {
-    if (!HOP_BY_HOP.has(key.toLowerCase())) copy.append(key, value);
-  });
-  return copy;
-}
-
 /**
  * Proxies `/preview/<runId>/...` to that run's dev server.
  *
@@ -578,7 +560,7 @@ async function proxyPreview(
   try {
     const upstream = await fetch(target, {
       method: req.method,
-      headers: withoutHopByHop(req.headers),
+      headers: previewRequestHeaders(req.headers),
       body: req.body,
       redirect: 'manual',
       // A dev server streams; buffering here would break hot reload's
@@ -588,7 +570,7 @@ async function proxyPreview(
     return new Response(upstream.body, {
       status: upstream.status,
       statusText: upstream.statusText,
-      headers: withoutHopByHop(upstream.headers),
+      headers: previewResponseHeaders(upstream.headers),
     });
   } catch {
     // The dev server died between the readiness probe and this request.
