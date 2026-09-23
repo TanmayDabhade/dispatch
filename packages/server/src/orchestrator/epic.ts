@@ -224,6 +224,15 @@ export class EpicEngine {
     ctx.orchestrator.onRunReviewed((meta) => this.onRunReviewed(meta));
   }
 
+  // Whether any epic is still dispatching work. A paused, stopped or complete
+  // epic waits on a human and can wait just as well in a restarted daemon.
+  hasActiveSession(): boolean {
+    for (const record of this.sessions.values()) {
+      if (record.state === 'active') return true;
+    }
+    return false;
+  }
+
   // FixLoop is constructed after this engine (its terminal hook must run
   // after the review runner's), so the phase reads bind to it late. Until
   // bound, no child ever reads as fixing/reviewing-by-loop/capped.

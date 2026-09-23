@@ -645,6 +645,57 @@ function initBareOrigin(): string {
   return dir;
 }
 
+// The 60s refresh tick authenticates to origin on every fetch, so a daemon
+// left running after its window closed must not keep fetching for nobody —
+// with an SSH agent that gates each signature (1Password), every fetch is an
+// unlock prompt.
+describe('MergeQueue refreshRemote', () => {
+  const noopClient = { send: () => {} };
+
+  function fetches(stub: StubRunner): string[][] {
+    return stub.calls
+      .filter((c) => c.cmd[0] === 'git' && c.cmd[1] === 'fetch')
+      .map((c) => c.cmd);
+  }
+
+  it('skips the fetch while the queue is empty and no client is connected', async () => {
+    const harness = makeHarness();
+    runGitSync(harness.rootDir, ['remote', 'add', 'origin', initBareOrigin()]);
+    const stub = new StubRunner();
+    const queue = makeQueue(harness, stub.run);
+
+    await queue.refreshRemote();
+
+    expect(fetches(stub)).toEqual([]);
+  });
+
+  it('fetches the base branch once a client is connected', async () => {
+    const harness = makeHarness();
+    runGitSync(harness.rootDir, ['remote', 'add', 'origin', initBareOrigin()]);
+    harness.events.add(noopClient);
+    const stub = new StubRunner();
+    const queue = makeQueue(harness, stub.run);
+
+    await queue.refreshRemote();
+
+    expect(fetches(stub)).toEqual([['git', 'fetch', 'origin', 'main']]);
+  });
+
+  it('stops fetching again after the last client disconnects', async () => {
+    const harness = makeHarness();
+    runGitSync(harness.rootDir, ['remote', 'add', 'origin', initBareOrigin()]);
+    harness.events.add(noopClient);
+    const stub = new StubRunner();
+    const queue = makeQueue(harness, stub.run);
+
+    await queue.refreshRemote();
+    harness.events.remove(noopClient);
+    await queue.refreshRemote();
+
+    expect(fetches(stub).length).toBe(1);
+  });
+});
+
 // Task 6: once the queue drains with at least one merge, it pushes origin's
 // copy of the base branch itself — the whole point is that a human never has
 // to remember to `git push` after every merge queue run.

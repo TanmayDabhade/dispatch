@@ -470,6 +470,14 @@ function releaseSpawn(rootDir: string): void {
   }
 }
 
+// How long a daemon this file spawns in the background may sit unused before
+// it exits on its own (dispatchd's `--idle-timeout`). Nothing owns a detached
+// daemon, so without a limit it ran until reboot — polling GitHub and, with
+// the desktop app attached, fetching origin — long after the last command
+// that needed it. Any request, connected client or live run resets the clock,
+// and the next command that needs a daemon simply starts a fresh one.
+const BACKGROUND_DAEMON_IDLE_TIMEOUT_S = 30 * 60;
+
 // Shared "get me a healthy daemon for this project, starting one if none is
 // running" logic — every command that needs to talk to dispatchd (`dispatch
 // ui`, and every Phase 7 orchestrate/plan/epic command) goes through this
@@ -504,7 +512,13 @@ export async function ensureDaemon(
   }
 
   const launcher = resolveDaemonLauncher();
-  const args = [...launcher.leadingArgs, '--root', rootDir];
+  const args = [
+    ...launcher.leadingArgs,
+    '--root',
+    rootDir,
+    '--idle-timeout',
+    String(BACKGROUND_DAEMON_IDLE_TIMEOUT_S),
+  ];
   if (opts.port !== undefined) args.push('--port', opts.port);
 
   // Detached + ignored stdio: this daemon should outlive the CLI invocation
