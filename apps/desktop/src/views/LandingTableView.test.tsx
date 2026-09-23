@@ -92,10 +92,10 @@ function renderLanding(data = dataWith()) {
   );
 }
 
-test('the header reads Project › Landing with Queue / Landed view tabs', () => {
+test('the header reads Project › Merge queue with Queue / Landed view tabs', () => {
   const { container } = renderLanding();
   const crumb = container.querySelector('[data-slot="page-header-crumb"]');
-  expect(crumb?.textContent).toBe('dispatch›Landing');
+  expect(crumb?.textContent).toBe('dispatch›Merge queue');
 
   const tabs = screen.getByRole('tablist');
   const names = within(tabs)
