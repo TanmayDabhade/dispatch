@@ -74,6 +74,9 @@ const DEFAULT_CHECK_MS = 1_000;
  * The label is deliberately the *last section entered*, not a stack: a
  * worker cannot read another thread's JS stack, and every blocking primitive
  * in this daemon is a call site that can name itself in one line.
+ *
+ * Every watchdog in the process shares one worker thread (see
+ * `sharedWorker`); each is a subscription on it with its own buffer.
  */
 export class EventLoopWatchdog {
   private readonly buffer = new SharedArrayBuffer(SHARED_BUFFER_BYTES);
@@ -98,7 +101,8 @@ export class EventLoopWatchdog {
   private readonly checkMs: number;
   private readonly onStall: ((report: StallReport) => void) | undefined;
   private readonly quiet: boolean;
-  private worker: Worker | null = null;
+  /** This watchdog's subscription on the shared worker; null when not running. */
+  private id: number | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private lifecycle: WatchdogStatus = 'idle';
 
@@ -111,47 +115,42 @@ export class EventLoopWatchdog {
   }
 
   start(): void {
-    if (this.worker !== null) return;
+    if (this.id !== null) return;
     this.beat();
-    // Both unref'd: a watchdog must never be the thing keeping a daemon (or a
-    // test process) alive after everything else has stopped.
+    // Unref'd, as is the shared worker: a watchdog must never be the thing
+    // keeping a daemon (or a test process) alive after everything else has
+    // stopped.
     this.timer = setInterval(() => this.beat(), this.heartbeatMs);
     this.timer.unref();
-    const worker = new Worker(workerUrl());
-    worker.unref();
-    worker.addEventListener('message', (event: MessageEvent) => {
-      // A report in flight when stop() ran belongs to a watchdog that no
-      // longer exists; dropping it keeps a stopped server silent.
-      if (this.worker !== worker) return;
-      const report = event.data as WatchdogReport;
-      if (report.type === 'ready') {
-        this.lifecycle = 'armed';
-      } else if (report.type === 'stall-ended') {
-        this.onStall?.({
-          stalledMs: report.stalledMs,
-          section: report.section,
-        });
-      }
-    });
-    worker.addEventListener('error', (event: ErrorEvent) => {
-      console.error(`dispatchd: event loop watchdog stopped: ${event.message}`);
-      // The worker is gone (a failed load is the common case: its module was
-      // not compiled into the binary). Forget it so stop() does not post to a
-      // dead thread and mark() stops writing labels nobody reads.
-      if (this.worker === worker) {
-        this.worker = null;
+    const worker = sharedWorker();
+    const id = nextSubscriptionId++;
+    subscriptions.set(id, {
+      receive: (report) => {
+        if (report.type === 'ready') {
+          this.lifecycle = 'armed';
+        } else {
+          this.onStall?.({
+            stalledMs: report.stalledMs,
+            section: report.section,
+          });
+        }
+      },
+      // Forget the subscription so mark() stops writing labels nobody reads.
+      fail: () => {
+        this.id = null;
         this.lifecycle = 'failed';
-      }
+      },
     });
     const init: WatchdogWorkerInit = {
       type: 'start',
+      id,
       buffer: this.buffer,
       thresholdMs: this.thresholdMs,
       checkMs: this.checkMs,
       quiet: this.quiet,
     };
     worker.postMessage(init);
-    this.worker = worker;
+    this.id = id;
     this.lifecycle = 'starting';
     setActiveWatchdog(this);
   }
@@ -161,21 +160,20 @@ export class EventLoopWatchdog {
   }
 
   /**
-   * Stops the heartbeat, terminates the worker and releases the marking seam.
-   * Idempotent, and safe to call on a watchdog that never started. The worker
-   * is asked to stop its own timer before being terminated: terminate() is
-   * not instantaneous, and a worker mid-tick with a heartbeat that has just
-   * stopped is exactly the shape it would otherwise report as a stall.
+   * Stops the heartbeat, ends this watchdog's subscription on the shared
+   * worker and releases the marking seam. Idempotent, and safe to call on a
+   * watchdog that never started. A report already in flight is dropped with
+   * the subscription, which keeps a stopped server silent.
    */
   stop(): void {
     if (this.timer !== null) clearInterval(this.timer);
     this.timer = null;
-    const worker = this.worker;
-    this.worker = null;
-    if (worker !== null) {
-      const command: WatchdogCommand = { type: 'stop' };
-      worker.postMessage(command);
-      worker.terminate();
+    const id = this.id;
+    this.id = null;
+    if (id !== null) {
+      subscriptions.delete(id);
+      const command: WatchdogCommand = { type: 'stop', id };
+      worker?.postMessage(command);
     }
     this.lifecycle = 'stopped';
     if (activeWatchdog === this) setActiveWatchdog(null);
@@ -188,7 +186,7 @@ export class EventLoopWatchdog {
    * enough to identify the call site.
    */
   mark(section: string): void {
-    if (this.worker === null) return;
+    if (this.id === null) return;
     const bytes = this.encoder.encode(section);
     const length = Math.min(bytes.length, LABEL_BYTES);
     // Length goes to zero first and back last, so a worker that reads
@@ -210,6 +208,43 @@ export class EventLoopWatchdog {
 function workerUrl(): URL {
   const extension = import.meta.url.endsWith('.ts') ? 'ts' : 'js';
   return new URL(`./watchdogWorker.${extension}`, import.meta.url);
+}
+
+interface Subscription {
+  receive(report: WatchdogReport): void;
+  fail(): void;
+}
+
+let worker: Worker | null = null;
+const subscriptions = new Map<number, Subscription>();
+let nextSubscriptionId = 1;
+
+/**
+ * The process's one watchdog worker, created on first use and never
+ * terminated: Bun 1.3 leaks a terminated Worker's event-loop fds, which
+ * exhausts the fd limit across the suite's thousands of server boots.
+ */
+function sharedWorker(): Worker {
+  if (worker !== null) return worker;
+  const created = new Worker(workerUrl());
+  created.unref();
+  created.addEventListener('message', (event: MessageEvent) => {
+    const report = event.data as WatchdogReport;
+    subscriptions.get(report.id)?.receive(report);
+  });
+  created.addEventListener('error', (event: ErrorEvent) => {
+    console.error(`dispatchd: event loop watchdog stopped: ${event.message}`);
+    // The worker is gone (a failed load is the common case: its module was
+    // not compiled into the binary). Every watchdog on it has failed; the next
+    // one to start tries a fresh worker.
+    if (worker === created) worker = null;
+    created.terminate();
+    const failed = [...subscriptions.values()];
+    subscriptions.clear();
+    for (const subscription of failed) subscription.fail();
+  });
+  worker = created;
+  return created;
 }
 
 let activeWatchdog: EventLoopWatchdog | null = null;

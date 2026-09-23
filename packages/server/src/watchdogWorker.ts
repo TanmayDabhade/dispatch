@@ -82,6 +82,7 @@ function watch(init: WatchdogWorkerInit): ReturnType<typeof setInterval> {
       }
       const report: WatchdogReport = {
         type: 'stall-ended',
+        id: init.id,
         stalledMs,
         section,
       };
@@ -93,16 +94,17 @@ function watch(init: WatchdogWorkerInit): ReturnType<typeof setInterval> {
   }, init.checkMs);
 }
 
-let timer: ReturnType<typeof setInterval> | null = null;
+// One polling timer per watchdog this thread is serving, by id.
+const timers = new Map<number, ReturnType<typeof setInterval>>();
 
 addEventListener('message', (event: MessageEvent) => {
   const command = event.data as WatchdogCommand;
   if (command.type === 'start') {
-    timer = watch(command);
-    const ready: WatchdogReport = { type: 'ready' };
+    timers.set(command.id, watch(command));
+    const ready: WatchdogReport = { type: 'ready', id: command.id };
     postMessage(ready);
-  } else if (timer !== null) {
-    clearInterval(timer);
-    timer = null;
+  } else {
+    clearInterval(timers.get(command.id));
+    timers.delete(command.id);
   }
 });
