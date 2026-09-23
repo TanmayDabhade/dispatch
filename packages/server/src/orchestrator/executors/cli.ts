@@ -149,6 +149,7 @@ export const CLI_EXECUTOR_PROFILE: ExecutorProfile = {
     GATED_MODES.has(permissionMode)
       ? `this agent is a plain CLI with no approval protocol, so it cannot run under "${permissionMode}" — dispatch it with an ungated mode, or use claude/codex for gated runs`
       : null,
+  dispatchMcp: false,
 };
 
 export interface CliExecutorOptions {

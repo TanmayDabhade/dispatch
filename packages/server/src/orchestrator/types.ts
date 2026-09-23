@@ -159,6 +159,9 @@ export interface ExecutorProfile {
   enforcesCaps: boolean;
   /** Why this executor cannot run under `permissionMode`, or null when it can. */
   permissionRefusal(permissionMode: string): string | null;
+  /** False when runs never get the dispatch MCP server, so the task prompt
+   * must not name its tools. Absent means they do. */
+  dispatchMcp?: boolean;
 }
 
 /** One registered executor as GET /api/executors reports it. */
