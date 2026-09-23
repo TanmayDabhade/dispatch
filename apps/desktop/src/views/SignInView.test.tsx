@@ -35,16 +35,16 @@ describe('verifyTeamToken', () => {
     });
   });
 
-  test('a revoked or mistyped token fails with a sentence, not a status code', async () => {
-    await expect(
-      verifyTeamToken('http://x', 'nope', answering(401))
-    ).rejects.toThrow('not recognised');
+  test('a revoked or mistyped token fails with a sentence, not a status code', () => {
+    expect(verifyTeamToken('http://x', 'nope', answering(401))).rejects.toThrow(
+      'not recognised'
+    );
   });
 
-  test('a daemon error says so', async () => {
-    await expect(
-      verifyTeamToken('http://x', 'tok', answering(503))
-    ).rejects.toThrow('503');
+  test('a daemon error says so', () => {
+    expect(verifyTeamToken('http://x', 'tok', answering(503))).rejects.toThrow(
+      '503'
+    );
   });
 
   test('sends the token as a bearer credential to whoami', async () => {
