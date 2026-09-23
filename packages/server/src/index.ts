@@ -135,6 +135,8 @@ import { WebhookDelivery } from './webhookDelivery.js';
 
 export interface ServerHandle {
   port: number;
+  // The HTTPS listener teammates use, when `tls` was given.
+  tlsPort?: number;
   // Minted at boot unless the caller supplied them. bin.ts prints `appToken`
   // on stdout; nothing else may log or persist either value.
   tokens: DaemonTokens;
@@ -177,6 +179,11 @@ export interface StartServerOptions {
   // Extra origins teammates load the app from in team-local mode — a hostname
   // or a reverse proxy — beyond the interface addresses found automatically.
   publicOrigins?: string[];
+  // Serve teammates over HTTPS. Needs `host: '0.0.0.0'`: TLS exists for the
+  // network, and with it the plain listener drops back to 127.0.0.1, where
+  // the CLI, MCP and the desktop sidecar reach it, so no token ever crosses
+  // the network in the clear. `port` is the HTTPS listener's; 0 picks one.
+  tls?: { certPath: string; keyPath: string; port?: number };
   // Tests pass false so parallel test runs don't fight over the one
   // per-rootDir daemon file.
   writeDaemonFile?: boolean;
@@ -761,6 +768,14 @@ async function bootServer(
   const bindMode = bindModeFor(bindHost);
   if (!bindMode.ok) throw new Error(bindMode.error);
   const shared = bindMode.mode === 'shared';
+  if (opts.tls !== undefined && !shared) {
+    throw new Error(
+      '--tls-cert and --tls-key serve teammates on the network, so they need --host 0.0.0.0'
+    );
+  }
+  // With TLS, loopback keeps the plain listener and the network gets only the
+  // encrypted one.
+  const plainHost = opts.tls === undefined ? bindHost : '127.0.0.1';
   // Filled once the port is bound; empty in loopback mode, where nothing but
   // this machine's own origins is ever trusted.
   const ownOriginSet = new Set<string>();
@@ -1586,178 +1601,199 @@ async function bootServer(
     shared,
   };
 
-  const server = Bun.serve<SocketData>({
-    port: opts.port ?? 0,
-    hostname: bindHost,
-    async fetch(req, srv) {
-      const url = new URL(req.url);
-      const origin = req.headers.get('origin');
-      // Named before any handler runs: a stall inside a synchronous handler
-      // is then attributed to the request that caused it.
-      watchdog.mark(`${req.method} ${url.pathname}`);
+  // Every listener serves the same routes off the same state; they differ
+  // only in where they bind and whether they speak TLS. Returned as a function
+  // so the HTTPS listener below is this, not a copy of it.
+  const listen = (
+    hostname: string,
+    listenPort: number,
+    tls?: {
+      cert: ReturnType<typeof Bun.file>;
+      key: ReturnType<typeof Bun.file>;
+    }
+  ) =>
+    Bun.serve<SocketData>({
+      port: listenPort,
+      hostname,
+      ...(tls === undefined ? {} : { tls }),
+      async fetch(req, srv) {
+        const url = new URL(req.url);
+        const origin = req.headers.get('origin');
+        // Named before any handler runs: a stall inside a synchronous handler
+        // is then attributed to the request that caused it.
+        watchdog.mark(`${req.method} ${url.pathname}`);
 
-      if (url.pathname === '/ws') {
-        // CORS never applies to a WebSocket, so without this an untrusted page
-        // could upgrade and read the whole event stream. A null Origin is a
-        // non-browser client, which the router's guard lets through too.
-        if (origin !== null && !isTrustedOrigin(origin, ownOriginSet)) {
+        if (url.pathname === '/ws') {
+          // CORS never applies to a WebSocket, so without this an untrusted page
+          // could upgrade and read the whole event stream. A null Origin is a
+          // non-browser client, which the router's guard lets through too.
+          if (origin !== null && !isTrustedOrigin(origin, ownOriginSet)) {
+            return withCors(
+              new Response('cross-origin websocket rejected', { status: 403 }),
+              origin,
+              ownOriginSet
+            );
+          }
+          // The browser WebSocket API cannot set request headers, so this is the
+          // one route that also takes the token as a query parameter. A
+          // teammate's page has neither — its credential is the session cookie,
+          // which the upgrade carries like any same-origin request.
+          const wsToken =
+            bearerToken(req) ??
+            url.searchParams.get('token') ??
+            sessionToken(req, sessionOriginSet);
+          const unauthorized = rejectUnauthorized(
+            req,
+            tokens,
+            'request',
+            wsToken
+          );
+          if (unauthorized !== null)
+            return withCors(unauthorized, origin, ownOriginSet);
+          // Carry who connected onto the socket: presence is read off open
+          // sockets, and the credential was just checked above, so resolving it
+          // again cannot fail here.
+          const who = tokens.registry.resolve(wsToken);
+          if (
+            srv.upgrade(req, {
+              data: { handle: who?.handle ?? null, ref: who?.ref ?? null },
+            })
+          ) {
+            return undefined;
+          }
           return withCors(
-            new Response('cross-origin websocket rejected', { status: 403 }),
+            new Response('expected websocket upgrade', { status: 400 }),
             origin,
             ownOriginSet
           );
         }
-        // The browser WebSocket API cannot set request headers, so this is the
-        // one route that also takes the token as a query parameter. A
-        // teammate's page has neither — its credential is the session cookie,
-        // which the upgrade carries like any same-origin request.
-        const wsToken =
-          bearerToken(req) ??
-          url.searchParams.get('token') ??
-          sessionToken(req, sessionOriginSet);
-        const unauthorized = rejectUnauthorized(
-          req,
-          tokens,
-          'request',
-          wsToken
-        );
-        if (unauthorized !== null)
-          return withCors(unauthorized, origin, ownOriginSet);
-        // Carry who connected onto the socket: presence is read off open
-        // sockets, and the credential was just checked above, so resolving it
-        // again cannot fail here.
-        const who = tokens.registry.resolve(wsToken);
-        if (
-          srv.upgrade(req, {
-            data: { handle: who?.handle ?? null, ref: who?.ref ?? null },
-          })
-        ) {
-          return undefined;
-        }
-        return withCors(
-          new Response('expected websocket upgrade', { status: 400 }),
-          origin,
-          ownOriginSet
-        );
-      }
 
-      // The desktop webview and the browser dev harness both fetch this daemon
-      // cross-origin (webview origin vs `http://127.0.0.1:<port>`), so trusted
-      // origins need CORS headers or the browser blocks the JS from reading the
-      // response ("TypeError: Failed to fetch") — which manifested as the UI
-      // hanging forever on "Loading board…". A JSON PATCH/POST triggers a
-      // preflight; answer it here (untrusted origins get no CORS header and are
-      // thus blocked).
-      if (req.method === 'OPTIONS') {
-        return withCors(
-          new Response(null, { status: 204 }),
-          origin,
-          ownOriginSet
-        );
-      }
-
-      // Before /api/ and the static fallback: this is the one path whose
-      // content belongs to someone else's server.
-      if (url.pathname.startsWith('/preview/')) {
-        // A preview has no credential of its own — an iframe cannot send one
-        // on every sub-resource — so on loopback it is exactly as private as
-        // the machine. In team-local mode that no longer holds, and a preview
-        // of unmerged agent work is not something to serve the whole network
-        // unauthenticated. Teammates review the diff and the share page; the
-        // live preview stays on the machine running it.
-        const peer = srv.requestIP(req)?.address ?? '';
-        if (shared && !isLoopbackAddress(peer)) {
-          return new Response(
-            'previews are only served to the machine running the daemon',
-            { status: 403 }
+        // The desktop webview and the browser dev harness both fetch this daemon
+        // cross-origin (webview origin vs `http://127.0.0.1:<port>`), so trusted
+        // origins need CORS headers or the browser blocks the JS from reading the
+        // response ("TypeError: Failed to fetch") — which manifested as the UI
+        // hanging forever on "Loading board…". A JSON PATCH/POST triggers a
+        // preflight; answer it here (untrusted origins get no CORS header and are
+        // thus blocked).
+        if (req.method === 'OPTIONS') {
+          return withCors(
+            new Response(null, { status: 204 }),
+            origin,
+            ownOriginSet
           );
         }
-        return await proxyPreview(url, req, previews);
-      }
 
-      if (url.pathname.startsWith('/api/')) {
-        // Bun's 10s idle timeout is shorter than a model turn, so raise it for
-        // every /api/ route rather than keeping a per-path list.
-        srv.timeout(req, 65);
-        return withCors(await handleApi(req, apiCtx), origin, ownOriginSet);
-      }
+        // Before /api/ and the static fallback: this is the one path whose
+        // content belongs to someone else's server.
+        if (url.pathname.startsWith('/preview/')) {
+          // A preview has no credential of its own — an iframe cannot send one
+          // on every sub-resource — so on loopback it is exactly as private as
+          // the machine. In team-local mode that no longer holds, and a preview
+          // of unmerged agent work is not something to serve the whole network
+          // unauthenticated. Teammates review the diff and the share page; the
+          // live preview stays on the machine running it.
+          const peer = srv.requestIP(req)?.address ?? '';
+          if (shared && !isLoopbackAddress(peer)) {
+            return new Response(
+              'previews are only served to the machine running the daemon',
+              { status: 403 }
+            );
+          }
+          return await proxyPreview(url, req, previews);
+        }
 
-      if (webDistDir !== null) {
-        const staticResponse = await serveStatic(
-          url.pathname,
-          webDistDir,
-          shared
-            ? { kind: 'shared', config: { root: rootDir, baseUrl: '' } }
-            : { kind: 'token', agentToken: tokens.agentToken }
+        if (url.pathname.startsWith('/api/')) {
+          // Bun's 10s idle timeout is shorter than a model turn, so raise it for
+          // every /api/ route rather than keeping a per-path list.
+          srv.timeout(req, 65);
+          return withCors(await handleApi(req, apiCtx), origin, ownOriginSet);
+        }
+
+        if (webDistDir !== null) {
+          const staticResponse = await serveStatic(
+            url.pathname,
+            webDistDir,
+            shared
+              ? { kind: 'shared', config: { root: rootDir, baseUrl: '' } }
+              : { kind: 'token', agentToken: tokens.agentToken }
+          );
+          if (staticResponse !== null)
+            return withCors(staticResponse, origin, ownOriginSet);
+        }
+
+        return withCors(
+          new Response('not found', { status: 404 }),
+          origin,
+          ownOriginSet
         );
-        if (staticResponse !== null)
-          return withCors(staticResponse, origin, ownOriginSet);
-      }
-
-      return withCors(
-        new Response('not found', { status: 404 }),
-        origin,
-        ownOriginSet
-      );
-    },
-    // Without this, an error escaping `fetch` falls to Bun's development
-    // error page, which embeds the stack trace, absolute paths, and source
-    // snippets in the response body. Loopback-only or not, responses must
-    // never carry stack traces — log server-side, return opaque JSON.
-    error(err) {
-      console.error(`dispatchd: unexpected error: ${(err as Error).message}`);
-      return new Response(JSON.stringify({ error: 'internal error' }), {
-        status: 500,
-        headers: {
-          'content-type': 'application/json; charset=utf-8',
-          // Bun's error handler has no access to the request; a 500 body is
-          // opaque anyway, so echo a wildcard-free permissive header only for
-          // the app's own dev/webview origins is not possible here — omit CORS.
-          // The browser will surface it as a network error, which is correct
-          // for an unexpected server fault.
+      },
+      // Without this, an error escaping `fetch` falls to Bun's development
+      // error page, which embeds the stack trace, absolute paths, and source
+      // snippets in the response body. Loopback-only or not, responses must
+      // never carry stack traces — log server-side, return opaque JSON.
+      error(err) {
+        console.error(`dispatchd: unexpected error: ${(err as Error).message}`);
+        return new Response(JSON.stringify({ error: 'internal error' }), {
+          status: 500,
+          headers: {
+            'content-type': 'application/json; charset=utf-8',
+            // Bun's error handler has no access to the request; a 500 body is
+            // opaque anyway, so echo a wildcard-free permissive header only for
+            // the app's own dev/webview origins is not possible here — omit CORS.
+            // The browser will surface it as a network error, which is correct
+            // for an unexpected server fault.
+          },
+        });
+      },
+      websocket: {
+        open(ws) {
+          // Presence is announced before this socket joins the bus: everyone
+          // else hears the arrival, and the newcomer does not get an event about
+          // itself wedged in ahead of `hello` — it learns who is here by
+          // fetching, like everything else it learns on connect.
+          const { handle, ref } = ws.data;
+          if (handle !== null && ref !== null) {
+            const presence = presenceTracker.connect(handle, ref);
+            ws.data.release = presence.release;
+            if (presence.changed)
+              events.broadcast({ type: 'presence.changed' });
+          }
+          events.add(ws);
+          ws.send(
+            JSON.stringify({ type: 'hello', version: packageJson.version })
+          );
         },
-      });
-    },
-    websocket: {
-      open(ws) {
-        // Presence is announced before this socket joins the bus: everyone
-        // else hears the arrival, and the newcomer does not get an event about
-        // itself wedged in ahead of `hello` — it learns who is here by
-        // fetching, like everything else it learns on connect.
-        const { handle, ref } = ws.data;
-        if (handle !== null && ref !== null) {
-          const presence = presenceTracker.connect(handle, ref);
-          ws.data.release = presence.release;
-          if (presence.changed) events.broadcast({ type: 'presence.changed' });
-        }
-        events.add(ws);
-        ws.send(
-          JSON.stringify({ type: 'hello', version: packageJson.version })
-        );
+        // The protocol is server -> client only; clients never send anything
+        // meaningful, so incoming messages are ignored.
+        message() {},
+        close(ws) {
+          events.remove(ws);
+          if (ws.data.release?.() === true) {
+            events.broadcast({ type: 'presence.changed' });
+          }
+        },
       },
-      // The protocol is server -> client only; clients never send anything
-      // meaningful, so incoming messages are ignored.
-      message() {},
-      close(ws) {
-        events.remove(ws);
-        if (ws.data.release?.() === true) {
-          events.broadcast({ type: 'presence.changed' });
-        }
-      },
-    },
-  });
+    });
+
+  const server = listen(plainHost, opts.port ?? 0);
+  const tlsServer =
+    opts.tls === undefined
+      ? null
+      : listen('0.0.0.0', opts.tls.port ?? 0, {
+          cert: Bun.file(opts.tls.certPath),
+          key: Bun.file(opts.tls.keyPath),
+        });
 
   // `Server.port` is typed optional (Bun also serves over unix sockets, which
   // have no port); we always bind a TCP hostname:port above, so it is always
   // defined in practice. Falling back to 0 keeps the types honest without an
   // assertion.
   const port = server.port ?? 0;
+  const tlsPort = tlsServer === null ? undefined : (tlsServer.port ?? 0);
   if (shared) {
-    for (const origin of ownOrigins(
-      port,
-      networkInterfaces(),
-      opts.publicOrigins
-    )) {
+    for (const origin of tlsPort === undefined
+      ? ownOrigins(port, networkInterfaces(), opts.publicOrigins)
+      : ownOrigins(tlsPort, networkInterfaces(), opts.publicOrigins, 'https')) {
       ownOriginSet.add(origin);
     }
     console.log(
@@ -1780,6 +1816,7 @@ async function bootServer(
 
   return {
     port,
+    ...(tlsPort === undefined ? {} : { tlsPort }),
     tokens,
     mergeQueue,
     orchestrator,
@@ -1817,6 +1854,7 @@ async function bootServer(
       // which removes it from `events` on the way out. See the note on
       // EventBus for why we don't also close each socket ourselves first.
       await server.stop(true);
+      await tlsServer?.stop(true);
       if (shouldWriteDaemonFile) removeDaemonFile(rootDir);
       // Last: the database handle outlives every reader above, and closing it
       // while a request is still in flight would fail that request rather

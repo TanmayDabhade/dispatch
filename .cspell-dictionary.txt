@@ -1,5 +1,6 @@
 acceptedits
 ACMR
+addext
 affordances
 analysability
 analysable
@@ -212,6 +213,7 @@ keycap
 keycaps
 keydowns
 keymap
+keyout
 kiro
 Lamport
 landable

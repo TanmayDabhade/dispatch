@@ -613,12 +613,24 @@ export function registerDaemonCommands(
       'team-local: extra comma-separated origins teammates load the app from'
     )
     .option('--web-dist <dir>', 'team-local: the built desktop bundle to serve')
+    .option(
+      '--tls-cert <file>',
+      'team-local: serve teammates over HTTPS with this certificate (PEM)'
+    )
+    .option('--tls-key <file>', 'team-local: the private key for --tls-cert')
+    .option(
+      '--tls-port <n>',
+      'team-local: port for the HTTPS listener (default: ephemeral)'
+    )
     .action(
       (opts: {
         port?: string;
         host?: string;
         publicOrigin?: string;
         webDist?: string;
+        tlsCert?: string;
+        tlsKey?: string;
+        tlsPort?: string;
       }) => {
         // requireInitialized, NOT requireStore: the latter demands
         // `.dispatch/tasks`, which a database-backed project does not have and
@@ -635,6 +647,12 @@ export function registerDaemonCommands(
           args.push('--public-origin', opts.publicOrigin);
         }
         if (opts.webDist !== undefined) args.push('--web-dist', opts.webDist);
+        if ((opts.tlsCert === undefined) !== (opts.tlsKey === undefined)) {
+          throw new CliError('--tls-cert and --tls-key go together');
+        }
+        if (opts.tlsCert !== undefined) args.push('--tls-cert', opts.tlsCert);
+        if (opts.tlsKey !== undefined) args.push('--tls-key', opts.tlsKey);
+        if (opts.tlsPort !== undefined) args.push('--tls-port', opts.tlsPort);
 
         const result = spawnSync(launcher.cmd, args, {
           stdio: 'inherit',

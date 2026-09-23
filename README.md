@@ -264,6 +264,19 @@ In the browser, the token is traded at sign-in for an HttpOnly session cookie:
 the page never keeps it where script can read it, and revoking or expiring the
 token ends the session too.
 
+On a network you do not fully trust, serve teammates over HTTPS so tokens and
+sessions never cross it in the clear:
+
+    dispatch serve --host 0.0.0.0 --tls-cert cert.pem --tls-key key.pem --tls-port 4772
+
+Teammates then open `https://<address>:4772`. The plain listener drops back to
+`127.0.0.1`, where the CLI, the MCP server and the desktop app reach it, so
+nothing on the network can talk to the daemon unencrypted. Any certificate your
+teammates' browsers trust works — one from your own CA, `mkcert`, or
+`tailscale cert` for a Tailscale machine name. With a TLS-terminating proxy in
+front instead (Caddy, `tailscale serve`), keep the daemon plain on loopback and
+name the proxy's address with `--public-origin`.
+
 What changes when the daemon is shared, and why:
 
 - **No token is ever put in the served page.** On loopback the page carries the

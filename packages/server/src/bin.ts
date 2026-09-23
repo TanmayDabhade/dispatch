@@ -435,6 +435,24 @@ const publicOrigins = readFlag(args, '--public-origin')
   .map((o) => o.trim())
   .filter((o) => o !== '');
 const webDistArg = readFlag(args, '--web-dist');
+// HTTPS for teammates: both files or neither, and a port for the listener.
+const tlsCert = readFlag(args, '--tls-cert');
+const tlsKey = readFlag(args, '--tls-key');
+const tlsPortArg = readFlag(args, '--tls-port');
+if ((tlsCert === undefined) !== (tlsKey === undefined)) {
+  console.error('dispatchd: --tls-cert and --tls-key go together');
+  process.exit(2);
+}
+const tlsPort = tlsPortArg === undefined ? undefined : Number(tlsPortArg);
+if (
+  tlsPort !== undefined &&
+  (!Number.isInteger(tlsPort) || tlsPort < 0 || tlsPort > 65535)
+) {
+  console.error(
+    `dispatchd: --tls-port must be a port number, not "${tlsPortArg}"`
+  );
+  process.exit(2);
+}
 
 const handle = await startServer({
   rootDir,
@@ -443,6 +461,15 @@ const handle = await startServer({
   ...(host === undefined ? {} : { host }),
   ...(publicOrigins === undefined ? {} : { publicOrigins }),
   ...(webDistArg === undefined ? {} : { webDistDir: resolve(webDistArg) }),
+  ...(tlsCert === undefined || tlsKey === undefined
+    ? {}
+    : {
+        tls: {
+          certPath: resolve(tlsCert),
+          keyPath: resolve(tlsKey),
+          ...(tlsPort === undefined ? {} : { port: tlsPort }),
+        },
+      }),
   // `--init` is the desktop's add-project spawn, which deliberately replaces
   // whatever daemon predates the project's tracker; `--replace` is the
   // explicit operator override.

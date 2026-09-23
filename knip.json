@@ -73,5 +73,13 @@
   // (core/client/cli/mcp) — knip's moonrepo plugin is root-only and checks
   // .moon/tasks/*.yml commands against the root package.json, which never lists
   // per-package build tools.
-  "ignoreBinaries": ["pgrep", "pkill", "carto", "codex", "noop", "tsdown"]
+  "ignoreBinaries": [
+    "pgrep",
+    "pkill",
+    "carto",
+    "codex",
+    "noop",
+    "tsdown",
+    "openssl"
+  ]
 }
