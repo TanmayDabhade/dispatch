@@ -26,6 +26,8 @@ import { initGitRepo, withBrokenRepo } from './helpers.js';
 
 let fakeHome: string;
 let repo: string;
+// Shut down in afterEach: an engine's retry timers outlive its test otherwise.
+const engines: EpicEngine[] = [];
 const originalDispatchHome = process.env.DISPATCH_HOME;
 
 beforeEach(() => {
@@ -35,6 +37,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  for (const engine of engines.splice(0)) engine.shutdown();
   if (originalDispatchHome === undefined) delete process.env.DISPATCH_HOME;
   else process.env.DISPATCH_HOME = originalDispatchHome;
   rmSync(fakeHome, { recursive: true, force: true });
@@ -105,6 +108,7 @@ function makeHarness(opts: HarnessOptions = {}): Harness {
     resumeDelayMs: opts.resumeDelayMs,
     eventDebounceMs: opts.eventDebounceMs ?? 0,
   });
+  engines.push(epics);
   return { orchestrator, epics, store, cache, events, received };
 }
 
@@ -585,6 +589,28 @@ describe('EpicEngine fill failure', () => {
     await h.epics.resume(epicId);
     await waitFor(() => awaiting(h, childIds).length === 1);
     expect(runsOn(h, childIds)).toHaveLength(2);
+  });
+
+  it('shutdown cancels a pending retry, so nothing fills or persists after it', async () => {
+    const h = makeHarness({ fillRetryDelayMs: 20 });
+    const { epicId, childIds } = createEpicWithChildren(h.store, 2);
+    await h.epics.start(epicId, { executor: 'fake', concurrency: 1 });
+    await waitFor(() => awaiting(h, childIds).length === 1);
+
+    const runId = awaiting(h, childIds)[0].id;
+    await withBrokenRepo(repo, async () => {
+      h.orchestrator.approve(runId, 'go', true);
+      await waitFor(() =>
+        activity(h, epicId).includes('[hook error] auto-dispatch failed')
+      );
+      h.epics.shutdown();
+      rmSync(epicSessionsPath(repo), { force: true });
+      // Past the whole retry budget: without shutdown this pauses and writes.
+      await sleep(150);
+    });
+    expect(existsSync(epicSessionsPath(repo))).toBe(false);
+    expect(h.epics.progress(epicId).session?.state).toBe('active');
+    expect(pausedEvents(h)).toHaveLength(0);
   });
 });
 

@@ -2018,6 +2018,7 @@ async function bootServer(
       // on is torn down — it can sit in a quiet window for minutes and ends by
       // starting an agent (see Orchestrator.shutdown).
       orchestrator.shutdown();
+      epicEngine.shutdown();
       watcher?.close();
       sourceWatcher.close();
       prManager.stopPolling();
