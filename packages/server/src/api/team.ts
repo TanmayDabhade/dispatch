@@ -25,6 +25,41 @@ import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 // the host by another name. The same cap applies to revoking, so a lead cannot
 // lock the operator's own teammate-issued operator tokens out either.
 
+// How long an invite lasts when the inviter does not say. Long enough that a
+// teammate on a project is not re-invited every sprint; short enough that a
+// token handed to a contractor and forgotten stops working on its own.
+const DEFAULT_EXPIRY_DAYS = 90;
+// A decade: anything longer is "never" said the hard way.
+const MAX_EXPIRY_DAYS = 3650;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** When an invite's token should stop working: the default when absent, a
+ *  number of days, or never (`null`). */
+function expiryFrom(
+  value: unknown,
+  now: Date
+): { ok: true; expiresAt: Date | null } | { ok: false; error: string } {
+  if (value === undefined) {
+    return {
+      ok: true,
+      expiresAt: new Date(now.getTime() + DEFAULT_EXPIRY_DAYS * DAY_MS),
+    };
+  }
+  if (value === null) return { ok: true, expiresAt: null };
+  if (
+    typeof value !== 'number' ||
+    !Number.isInteger(value) ||
+    value < 1 ||
+    value > MAX_EXPIRY_DAYS
+  ) {
+    return {
+      ok: false,
+      error: `expiresInDays must be a whole number from 1 to ${MAX_EXPIRY_DAYS}, or null for never`,
+    };
+  }
+  return { ok: true, expiresAt: new Date(now.getTime() + value * DAY_MS) };
+}
+
 const INVALID_TIER = `invalid tier: expected one of ${AUTH_TIERS.map((t) => `'${t}'`).join(', ')}`;
 
 /** Refuses a tier the caller does not hold themselves, or null to proceed.
@@ -89,12 +124,15 @@ export async function issueTeamToken(
     email?: unknown;
     displayName?: unknown;
     tier?: unknown;
+    expiresInDays?: unknown;
   };
 
   const tier = body.tier ?? 'request';
   if (!isAuthTier(tier)) return errorResponse(400, INVALID_TIER);
   const refused = exceedsCaller(ctx, tier);
   if (refused !== null) return refused;
+  const expiry = expiryFrom(body.expiresInDays, new Date());
+  if (!expiry.ok) return errorResponse(400, expiry.error);
 
   const roster = readRoster(ctx.rootDir);
   if (!roster.ok) {
@@ -140,8 +178,18 @@ export async function issueTeamToken(
     const replacing = exceedsCaller(ctx, current);
     if (replacing !== null) return replacing;
   }
-  const token = ctx.tokens.registry.issue(handle, tier);
-  return jsonResponse({ handle, tier, token }, 201);
+  const token = ctx.tokens.registry.issue(handle, tier, {
+    expiresAt: expiry.expiresAt,
+  });
+  return jsonResponse(
+    {
+      handle,
+      tier,
+      token,
+      expiresAt: expiry.expiresAt?.toISOString() ?? null,
+    },
+    201
+  );
 }
 
 // DELETE /api/team/tokens/:handle — revoke whatever that teammate holds. 404

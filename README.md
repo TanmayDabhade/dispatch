@@ -248,8 +248,15 @@ mint a shell. Inviting someone again replaces their token, which is also how you
 change their tier.
 
 Tokens are stored only as hashes, outside the repo, and are shown once — lose
-one and issue a new one. Every `team` command needs the daemon's app token
+one and issue a new one. They expire after 90 days unless you say otherwise
+(`--expires 30`, `--expires never`), and `dispatch team tokens` shows when each
+expires and when it was last used, so a token nobody has touched in months is
+easy to spot and revoke. Every `team` command needs the daemon's app token
 (`--token` or `DISPATCH_APP_TOKEN`), or a teammate token at `decide` or above.
+
+In the browser, the token is traded at sign-in for an HttpOnly session cookie:
+the page never keeps it where script can read it, and revoking or expiring the
+token ends the session too.
 
 What changes when the daemon is shared, and why:
 

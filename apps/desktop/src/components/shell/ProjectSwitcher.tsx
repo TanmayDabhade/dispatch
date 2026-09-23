@@ -2,6 +2,7 @@ import {
   ChevronDown,
   Cog,
   FolderGit2,
+  LogOut,
   Palette,
   Plus,
   Repeat2,
@@ -43,6 +44,9 @@ interface ProjectSwitcherProps {
   onOpenSettings: () => void;
   /** Dev-only; omitted in a production build. */
   onOpenGallery?: () => void;
+  /** Set only for a teammate on a team-local daemon: who they are signed in
+   *  as, and how to stop. Someone at their own machine has no session to end. */
+  teamSession?: { handle: string; onSignOut: () => void };
 }
 
 /**
@@ -61,6 +65,7 @@ export function ProjectSwitcher({
   onAddProject,
   onOpenSettings,
   onOpenGallery,
+  teamSession,
 }: ProjectSwitcherProps) {
   if (projectName === null) {
     return noProjectYet ? (
@@ -154,6 +159,17 @@ export function ProjectSwitcher({
           <FolderGit2 />
           <span className="min-w-0 flex-1 truncate">{projectPath}</span>
         </DropdownMenuItem>
+        {teamSession !== undefined && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={teamSession.onSignOut}>
+              <LogOut />
+              <span className="min-w-0 flex-1 truncate">
+                Sign out {teamSession.handle}
+              </span>
+            </DropdownMenuItem>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

@@ -42,6 +42,20 @@ describe('resolveDaemonAuth', () => {
     ).toEqual({ token: undefined, canDecide: false });
   });
 
+  test('a team-local session presents no token — the cookie is sent by the browser', () => {
+    const base = { port: 0, appToken: null, agentToken: null, baseUrl: '' };
+    expect(
+      resolveDaemonAuth({ ...base, session: { tier: 'request' } })
+    ).toEqual({ token: undefined, canDecide: false });
+    // Decide and operator both reach the Approve buttons.
+    expect(resolveDaemonAuth({ ...base, session: { tier: 'decide' } })).toEqual(
+      { token: undefined, canDecide: true }
+    );
+    expect(
+      resolveDaemonAuth({ ...base, session: { tier: 'operator' } })
+    ).toEqual({ token: undefined, canDecide: true });
+  });
+
   test('no connection yet means no credential and no decide tier', () => {
     expect(resolveDaemonAuth(undefined)).toEqual({
       token: undefined,

@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 
 import type { DaemonConnection } from './daemonAuth';
-import { injectedSharedConfig, readTeamCredential } from './teamLocal';
+import { injectedSharedConfig, readTeamSession } from './teamLocal';
 import type {
   DashboardStats,
   FileDiff,
@@ -158,19 +158,21 @@ export function ensureDispatchd(root: string): Promise<DaemonConnection> {
       });
     }
     // Team-local mode: the page came from the daemon, so the daemon is this
-    // page's own origin, and the credential is the teammate's own. Only a
-    // credential above the request tier is offered as the app token, so the
-    // Approve buttons show for exactly the people who can press them.
+    // page's own origin, and the credential is the teammate's session cookie,
+    // which the browser sends on its own. No token is handed over at all; the
+    // tier is carried so the Approve buttons show for exactly the people who
+    // can press them.
     if (injectedSharedConfig() !== undefined) {
-      const credential = readTeamCredential();
-      if (credential === null) {
+      const session = readTeamSession();
+      if (session === null) {
         return Promise.reject(new Error('sign in with your team token'));
       }
       return Promise.resolve({
         port: 0,
-        agentToken: credential.token,
-        appToken: credential.tier === 'request' ? null : credential.token,
+        agentToken: null,
+        appToken: null,
         baseUrl: window.location.origin,
+        session: { tier: session.tier },
       });
     }
     // Browser-dev fallback: the daemon is already running (started outside the

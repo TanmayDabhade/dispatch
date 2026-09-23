@@ -84,7 +84,11 @@ import {
   listRegisteredProjects,
   touchProjectOpened,
 } from './lib/tauri';
-import { isTeamLocalPage } from './lib/teamLocal';
+import {
+  isTeamLocalPage,
+  readTeamSession,
+  signOutOfTeam,
+} from './lib/teamLocal';
 import { checkForUpdate, installUpdateAndRelaunch } from './lib/updater';
 import { applyZoomFactor, loadZoomFactor, stepZoomFactor } from './lib/zoom';
 import { AllAgentsView } from './views/AllAgentsView';
@@ -405,6 +409,15 @@ function App() {
     selectedRunId: navState.activeRunId,
     onRunDispatched,
   });
+
+  // Only a teammate on a team-local page has a session to end. Read once:
+  // signing in and out both reload the page.
+  const teamSession = useMemo(() => {
+    const session = isTeamLocalPage() ? readTeamSession() : null;
+    return session === null
+      ? undefined
+      : { handle: session.handle, onSignOut: () => void signOutOfTeam() };
+  }, []);
 
   // Wrapped once, here, so a failed action says so instead of the button
   // appearing to do nothing. See lib/actionFeedback.ts for why this is not done
@@ -994,6 +1007,7 @@ function App() {
                       trafficLightInset={trafficLightInset}
                       switcher={
                         <ProjectSwitcher
+                          teamSession={teamSession}
                           projectName={activeProject?.name ?? null}
                           projectPath={activeProject?.path ?? null}
                           noProjectYet={noProjectYet}

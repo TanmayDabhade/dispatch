@@ -192,6 +192,130 @@ describe('TokenRegistry', () => {
   });
 });
 
+describe('expiry and last use', () => {
+  // A clock the test moves by hand.
+  function clockAt(iso: string) {
+    let now = new Date(iso);
+    return {
+      clock: () => now,
+      advance: (ms: number) => {
+        now = new Date(now.getTime() + ms);
+      },
+    };
+  }
+  const MINUTE = 60 * 1000;
+
+  test('an expired token stops working, and says it expired rather than vanishing', () => {
+    const t = clockAt('2026-01-01T00:00:00Z');
+    const reg = new TokenRegistry(BUILT_IN, 'wyat', undefined, t.clock);
+    const ada = reg.issue('ada', 'request', {
+      expiresAt: new Date('2026-01-02T00:00:00Z'),
+    });
+    expect(reg.resolve(ada)?.handle).toBe('ada');
+
+    t.advance(24 * 60 * MINUTE);
+
+    expect(reg.resolve(ada)).toBeNull();
+    expect(reg.lookup(ada)).toEqual({
+      kind: 'expired',
+      handle: 'ada',
+      expiredAt: '2026-01-02T00:00:00.000Z',
+    });
+    expect(reg.list().find((e) => e.handle === 'ada')?.expired).toBe(true);
+  });
+
+  test('no expiry means it never runs out', () => {
+    const t = clockAt('2026-01-01T00:00:00Z');
+    const reg = new TokenRegistry(BUILT_IN, 'wyat', undefined, t.clock);
+    const ada = reg.issue('ada', 'request');
+    t.advance(10 * 365 * 24 * 60 * MINUTE);
+    expect(reg.resolve(ada)?.handle).toBe('ada');
+  });
+
+  test('last use is recorded, but written to disk at most every fifteen minutes', () => {
+    const t = clockAt('2026-01-01T00:00:00Z');
+    let saves = 0;
+    const store: TokenStore = {
+      load: () => [],
+      save: () => {
+        saves += 1;
+      },
+    };
+    const reg = new TokenRegistry(BUILT_IN, 'wyat', store, t.clock);
+    const ada = reg.issue('ada', 'request');
+    const afterIssue = saves;
+
+    // The first use is written through; a burst after it is not.
+    reg.resolve(ada);
+    for (let i = 0; i < 50; i++) {
+      t.advance(1000);
+      reg.resolve(ada);
+    }
+    expect(saves).toBe(afterIssue + 1);
+    // …but memory is always current, which is what `list` reports.
+    expect(reg.list().find((e) => e.handle === 'ada')?.lastUsedAt).toBe(
+      '2026-01-01T00:00:50.000Z'
+    );
+
+    t.advance(15 * MINUTE);
+    reg.resolve(ada);
+    expect(saves).toBe(afterIssue + 2);
+  });
+
+  test('the built-in pair never records use, so it never writes', () => {
+    let saves = 0;
+    const store: TokenStore = { load: () => [], save: () => void saves++ };
+    const reg = new TokenRegistry(BUILT_IN, 'wyat', store);
+    reg.resolve('app-bbb');
+    reg.resolve('agent-aaa');
+    expect(saves).toBe(0);
+  });
+
+  test('a malformed expiry in the file drops the token instead of reading as never', () => {
+    const path = join(
+      mkdtempSync(join(tmpdir(), 'dispatch-tokens-')),
+      'team-tokens.json'
+    );
+    writeFileSync(
+      path,
+      JSON.stringify([
+        {
+          handle: 'ada',
+          tier: 'operator',
+          hash: 'a'.repeat(64),
+          issuedAt: 'x',
+          expiresAt: 'soon',
+        },
+        {
+          handle: 'grace',
+          tier: 'request',
+          hash: 'b'.repeat(64),
+          issuedAt: 'x',
+          expiresAt: 12,
+        },
+        {
+          handle: 'linus',
+          tier: 'request',
+          hash: 'c'.repeat(64),
+          issuedAt: 'x',
+          expiresAt: null,
+        },
+        {
+          handle: 'mary',
+          tier: 'request',
+          hash: 'd'.repeat(64),
+          issuedAt: 'x',
+        },
+      ])
+    );
+    expect(
+      fileTokenStore(path)
+        .load()
+        .map((t) => t.handle)
+    ).toEqual(['linus', 'mary']);
+  });
+});
+
 describe('fileTokenStore', () => {
   test('round-trips through a 0600 file', () => {
     const path = join(

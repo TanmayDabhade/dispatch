@@ -21,6 +21,26 @@ function tierFrom(value: string | undefined): TeamTier {
   return tier as TeamTier;
 }
 
+/** `--expires` as typed: a number of days, `never`, or absent for the
+ *  daemon's default (90 days). */
+function expiryFrom(value: string | undefined): number | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === 'never') return null;
+  const days = Number(value);
+  if (!Number.isInteger(days) || days < 1) {
+    throw new CliError(
+      `--expires takes a number of days or "never", not "${value}"`
+    );
+  }
+  return days;
+}
+
+/** A timestamp as a table cell: the date alone, which is what someone
+ *  scanning for stale or expiring tokens needs. */
+function day(iso: string | null): string {
+  return iso === null ? '-' : iso.slice(0, 10);
+}
+
 /**
  * A client on the app token, attached to the daemon already running. Every
  * team command is decide-tier — handing out a credential is an adjudication —
@@ -51,6 +71,10 @@ export function registerTeamCommands(program: Command, ctx: CliContext): void {
       '--tier <tier>',
       'request (default: board, dispatch, review, merge), decide (+ approvals, scope decisions, previews, invites) or operator (+ terminals, browser, file writes and git on this machine)'
     )
+    .option(
+      '--expires <days>',
+      'days until the token stops working, or "never" (default 90)'
+    )
     .option('--token <token>', 'the daemon app token (or DISPATCH_APP_TOKEN)')
     .option('--json')
     .action(
@@ -59,6 +83,7 @@ export function registerTeamCommands(program: Command, ctx: CliContext): void {
         opts: {
           name?: string;
           tier?: string;
+          expires?: string;
           token?: string;
           json?: boolean;
         }
@@ -69,10 +94,11 @@ export function registerTeamCommands(program: Command, ctx: CliContext): void {
           'dispatch team invite'
         );
         const tier = tierFrom(opts.tier);
+        const expiresInDays = expiryFrom(opts.expires);
         const issued = await client.issueTeamToken(
           who.includes('@')
-            ? { email: who, displayName: opts.name, tier }
-            : { handle: who, tier }
+            ? { email: who, displayName: opts.name, tier, expiresInDays }
+            : { handle: who, tier, expiresInDays }
         );
         if (opts.json === true) {
           ctx.log(JSON.stringify(issued, null, 2));
@@ -80,7 +106,9 @@ export function registerTeamCommands(program: Command, ctx: CliContext): void {
         }
         // Said once, plainly: the daemon keeps only a hash, so this line is
         // the only place the token will ever be shown.
-        ctx.log(`issued ${issued.tier} token for ${issued.handle}`);
+        ctx.log(
+          `issued ${issued.tier} token for ${issued.handle}, ${issued.expiresAt === null ? 'never expiring' : `expiring ${day(issued.expiresAt)}`}`
+        );
         ctx.log('');
         ctx.log(`  ${issued.token}`);
         ctx.log('');
@@ -108,12 +136,14 @@ export function registerTeamCommands(program: Command, ctx: CliContext): void {
       }
       ctx.log(
         formatTable([
-          ['HANDLE', 'TIER', 'KIND', 'ISSUED'],
+          ['HANDLE', 'TIER', 'KIND', 'ISSUED', 'EXPIRES', 'LAST USED'],
           ...holders.map((h) => [
             h.handle,
             h.tier,
             h.builtIn ? 'daemon' : 'issued',
-            h.issuedAt ?? '-',
+            day(h.issuedAt),
+            h.expired ? `expired ${day(h.expiresAt)}` : day(h.expiresAt),
+            day(h.lastUsedAt),
           ]),
         ])
       );

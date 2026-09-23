@@ -193,6 +193,11 @@ import {
 import type { AddCommentInput, ReviewComment } from './reviewComments.js';
 import type { ReviewTarget } from './reviewTarget.js';
 import { redactSecretUrls } from './secretUrls.js';
+import {
+  clearedSessionCookie,
+  sessionCookie,
+  sessionToken,
+} from './session.js';
 import type { SyncResult } from './sync/boardSyncer.js';
 import type { BoardSyncScheduler } from './sync/scheduler.js';
 import type { TerminalRegistry } from './terminals.js';
@@ -4328,6 +4333,15 @@ function requiredTier(
   ) {
     return null;
   }
+  // Signing in is how a browser gets a credential, so it cannot require one;
+  // it checks the token in its body itself. Signing out only clears a cookie.
+  if (
+    (method === 'POST' || method === 'DELETE') &&
+    segments.length === 1 &&
+    segments[0] === 'session'
+  ) {
+    return null;
+  }
   for (const route of ELEVATED_ROUTES) {
     if (route.method === method && matchesRoute(route.segments, segments)) {
       return route.tier;
@@ -4336,15 +4350,15 @@ function requiredTier(
   return 'request';
 }
 
-// Who the presented token speaks for, or null if it matches nothing. The
-// comparison itself moved to TokenRegistry (see identity.ts), which is now the
-// one place a credential is checked — the tiers it returns for the built-in
-// pair are exactly what this function returned before.
-function resolveCaller(
-  presented: string | null,
-  tokens: DaemonTokens
-): TokenIdentity | null {
-  return tokens.registry.resolve(presented);
+/** The credential a request presents: a bearer header, or failing that a
+ *  team-local session cookie sent from the daemon's own page (session.ts). The
+ *  header wins so the CLI, MCP and desktop app are never affected by a stray
+ *  cookie. */
+function presentedCredential(
+  req: Request,
+  ownOrigins: ReadonlySet<string>
+): string | null {
+  return bearerToken(req) ?? sessionToken(req, ownOrigins);
 }
 
 /** The bearer token on a request, or null when the header is absent or malformed. */
@@ -4401,7 +4415,15 @@ export function rejectUnauthorized(
   if (presented === null) {
     return authErrorResponse(401, MISSING_TOKEN_MESSAGE, 'auth_missing_token');
   }
-  const caller = resolveCaller(presented, tokens);
+  const found = tokens.registry.lookup(presented);
+  if (found.kind === 'expired') {
+    return authErrorResponse(
+      401,
+      `this token for ${found.handle} expired on ${found.expiredAt}. Ask whoever runs the daemon to invite you again (\`dispatch team invite ${found.handle}\`).`,
+      'auth_token_expired'
+    );
+  }
+  const caller = found.kind === 'valid' ? found.identity : null;
   if (caller === null) {
     return authErrorResponse(401, INVALID_TOKEN_MESSAGE, 'auth_invalid_token');
   }
@@ -4429,16 +4451,22 @@ export async function handleApi(
   const untrusted = rejectUntrustedOrigin(req, daemonCtx.ownOrigins);
   if (untrusted !== null) return untrusted;
 
+  const presented = presentedCredential(req, daemonCtx.ownOrigins);
   const tier = requiredTier(method, segments);
   if (tier !== null) {
-    const unauthorized = rejectUnauthorized(req, daemonCtx.tokens, tier);
+    const unauthorized = rejectUnauthorized(
+      req,
+      daemonCtx.tokens,
+      tier,
+      presented
+    );
     if (unauthorized !== null) return unauthorized;
   }
 
   // Every handler below sees who made this request. A shallow copy per
   // request, so the daemon-wide context is never mutated with one caller's
   // identity and a concurrent request can never read someone else's.
-  const caller = daemonCtx.tokens.registry.resolve(bearerToken(req));
+  const caller = daemonCtx.tokens.registry.resolve(presented);
   const ctx: ApiContext =
     caller === null ? daemonCtx : { ...daemonCtx, caller };
 
@@ -4519,13 +4547,44 @@ export async function handleApi(
     // claims and attribution all need a caller to be identifiable before they
     // can mean anything, and this is how a client checks that it is.
     if (segments[0] === 'whoami' && segments.length === 1 && method === 'GET') {
-      const caller = ctx.tokens.registry.resolve(bearerToken(req));
-      // requiredTier already rejected an unusable credential, so a null here
-      // would be a bug rather than an unauthenticated caller.
-      if (caller === null) {
+      // requiredTier already rejected an unusable credential, so a missing
+      // caller here would be a bug rather than an unauthenticated one.
+      if (ctx.caller === undefined) {
         return errorResponse(401, 'credential resolves to no one');
       }
-      return jsonResponse(caller);
+      return jsonResponse(ctx.caller);
+    }
+
+    // POST /api/session — a teammate's browser trades the token it was given
+    // for an HttpOnly session cookie, so the page never has to hold it.
+    // DELETE clears it. Both sit behind rejectUntrustedOrigin above, so a
+    // page on another origin can neither sign someone in nor out.
+    if (segments[0] === 'session' && segments.length === 1) {
+      if (method === 'DELETE') {
+        const res = jsonResponse({ ok: true });
+        res.headers.set('set-cookie', clearedSessionCookie(req));
+        return res;
+      }
+      if (method === 'POST') {
+        const parsed = await readJsonBody(req);
+        if (!parsed.ok) return parsed.response;
+        const token = (parsed.value as { token?: unknown }).token;
+        if (typeof token !== 'string' || token === '') {
+          return errorResponse(400, 'expected { token }');
+        }
+        const unauthorized = rejectUnauthorized(
+          req,
+          ctx.tokens,
+          'request',
+          token
+        );
+        if (unauthorized !== null) return unauthorized;
+        const who = ctx.tokens.registry.resolve(token);
+        if (who === null) return errorResponse(401, 'token not recognized');
+        const res = jsonResponse(who);
+        res.headers.set('set-cookie', sessionCookie(req, token));
+        return res;
+      }
     }
 
     if (segments[0] === 'config' && segments.length === 1 && method === 'GET') {

@@ -113,6 +113,7 @@ import { PresenceTracker } from './presence.js';
 import { PreviewSupervisor } from './preview.js';
 import { isReceiptEvent, ReceiptsScheduler } from './receipts/scheduler.js';
 import { ReviewCommentStore } from './reviewComments.js';
+import { sessionToken } from './session.js';
 import type { SharedPageConfig } from './shared.js';
 import { bindModeFor, isLoopbackAddress, ownOrigins } from './shared.js';
 import { readProjectBackend, writeProjectBackend } from './storage.js';
@@ -1621,8 +1622,13 @@ async function bootServer(
           );
         }
         // The browser WebSocket API cannot set request headers, so this is the
-        // one route that also takes the token as a query parameter.
-        const wsToken = bearerToken(req) ?? url.searchParams.get('token');
+        // one route that also takes the token as a query parameter. A
+        // teammate's page has neither — its credential is the session cookie,
+        // which the upgrade carries like any same-origin request.
+        const wsToken =
+          bearerToken(req) ??
+          url.searchParams.get('token') ??
+          sessionToken(req, ownOriginSet);
         const unauthorized = rejectUnauthorized(
           req,
           tokens,

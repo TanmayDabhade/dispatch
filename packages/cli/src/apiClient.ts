@@ -647,6 +647,9 @@ export interface ApiClient {
     handle?: string;
     displayName?: string;
     tier?: TeamTier;
+    /** Days until it stops working; `null` for never; absent for the
+     *  daemon's default. */
+    expiresInDays?: number | null;
   }): Promise<IssuedTeamToken>;
   listTeamTokens(): Promise<TeamTokenHolder[]>;
   /** Revokes whatever token the handle holds; one per person. */
@@ -662,6 +665,7 @@ interface IssuedTeamToken {
   handle: string;
   tier: TeamTier;
   token: string;
+  expiresAt: string | null;
 }
 
 /** Who holds a credential, without it — mirrors IssuedTokenSummary in
@@ -671,6 +675,9 @@ interface TeamTokenHolder {
   tier: TeamTier;
   builtIn: boolean;
   issuedAt: string | null;
+  expiresAt: string | null;
+  lastUsedAt: string | null;
+  expired: boolean;
 }
 
 // `token` is the credential every call presents — the agent token from the

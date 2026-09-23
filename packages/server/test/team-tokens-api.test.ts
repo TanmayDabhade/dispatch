@@ -301,3 +301,169 @@ describe('the tier ladder', () => {
     expect((await get('/api/whoami', ops)).status).toBe(200);
   });
 });
+
+describe('browser sessions', () => {
+  async function tokenFor(body: object): Promise<string> {
+    const res = await invite(body);
+    return ((await res.json()) as { token: string }).token;
+  }
+
+  function signIn(token: string, extra: Record<string, string> = {}) {
+    return rawFetch(`${baseUrl}/api/session`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...extra },
+      body: JSON.stringify({ token }),
+    });
+  }
+
+  function withCookie(cookie: string, site = 'same-origin') {
+    return { cookie, 'sec-fetch-site': site };
+  }
+
+  /** `name=value` from a Set-Cookie header, as a browser would send it back. */
+  function cookieFrom(res: Response): string {
+    const set = res.headers.get('set-cookie') ?? '';
+    return set.split(';')[0];
+  }
+
+  it('trades a token for an HttpOnly cookie that then authenticates', async () => {
+    const token = await tokenFor({ email: 'ada@example.com' });
+    const res = await signIn(token);
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { handle: string }).handle).toBe('ada');
+    const set = res.headers.get('set-cookie') ?? '';
+    expect(set).toContain('HttpOnly');
+    expect(set).toContain('SameSite=Strict');
+
+    const me = await rawFetch(`${baseUrl}/api/whoami`, {
+      headers: withCookie(cookieFrom(res)),
+    });
+    expect(me.status).toBe(200);
+    expect(((await me.json()) as { handle: string }).handle).toBe('ada');
+  });
+
+  it('the cookie does nothing from another site', async () => {
+    const cookie = cookieFrom(
+      await signIn(await tokenFor({ email: 'ada@example.com' }))
+    );
+    const me = await rawFetch(`${baseUrl}/api/whoami`, {
+      headers: withCookie(cookie, 'cross-site'),
+    });
+    expect(me.status).toBe(401);
+  });
+
+  it('a bad token gets no cookie', async () => {
+    const res = await signIn('not-a-token');
+    expect(res.status).toBe(401);
+    expect(res.headers.get('set-cookie')).toBeNull();
+  });
+
+  it('a page on another origin cannot sign anyone in', async () => {
+    const token = await tokenFor({ email: 'ada@example.com' });
+    const res = await signIn(token, { origin: 'http://evil.example' });
+    expect(res.status).toBe(403);
+  });
+
+  it('revoking the token ends every session it opened', async () => {
+    const cookie = cookieFrom(
+      await signIn(await tokenFor({ email: 'ada@example.com' }))
+    );
+    await rawFetch(`${baseUrl}/api/team/tokens/ada`, {
+      method: 'DELETE',
+      headers: headers(handle.tokens.appToken),
+    });
+    const me = await rawFetch(`${baseUrl}/api/whoami`, {
+      headers: withCookie(cookie),
+    });
+    expect(me.status).toBe(401);
+  });
+
+  it('signing out clears the cookie', async () => {
+    const res = await rawFetch(`${baseUrl}/api/session`, {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('set-cookie')).toContain('Max-Age=0');
+  });
+
+  it('an expired token is refused with the date and who to ask', async () => {
+    // Issued straight on the registry, since the API floors expiry at a day.
+    const token = handle.tokens.registry.issue('ada', 'request', {
+      expiresAt: new Date('2020-01-01T00:00:00Z'),
+    });
+    const res = await rawFetch(`${baseUrl}/api/whoami`, {
+      headers: headers(token),
+    });
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as { code: string; error: string };
+    expect(body.code).toBe('auth_token_expired');
+    expect(body.error).toContain('2020-01-01');
+    expect(body.error).toContain('dispatch team invite ada');
+  });
+});
+
+describe('invite expiry', () => {
+  function expiresAtOf(body: object) {
+    return invite(body).then(
+      async (res) =>
+        [
+          res.status,
+          ((await res.json()) as { expiresAt?: string | null }).expiresAt,
+        ] as const
+    );
+  }
+
+  it('defaults to ninety days', async () => {
+    const [status, expiresAt] = await expiresAtOf({ email: 'ada@example.com' });
+    expect(status).toBe(201);
+    const days = (Date.parse(expiresAt ?? '') - Date.now()) / 86_400_000;
+    expect(days).toBeGreaterThan(89.9);
+    expect(days).toBeLessThan(90.1);
+  });
+
+  it('takes a number of days, or null for never', async () => {
+    const [, week] = await expiresAtOf({
+      email: 'ada@example.com',
+      expiresInDays: 7,
+    });
+    expect((Date.parse(week ?? '') - Date.now()) / 86_400_000).toBeCloseTo(
+      7,
+      1
+    );
+    const [, never] = await expiresAtOf({
+      email: 'grace@example.com',
+      expiresInDays: null,
+    });
+    expect(never).toBeNull();
+  });
+
+  it('refuses a nonsense expiry rather than guessing', async () => {
+    for (const expiresInDays of [0, -3, 1.5, '30', 10_000]) {
+      const res = await invite({ email: 'ada@example.com', expiresInDays });
+      expect(res.status).toBe(400);
+    }
+  });
+
+  it('shows expiry and last use when listing, never the token', async () => {
+    const token = (
+      (await (await invite({ email: 'ada@example.com' })).json()) as {
+        token: string;
+      }
+    ).token;
+    await rawFetch(`${baseUrl}/api/whoami`, { headers: headers(token) });
+    const list = (await (
+      await rawFetch(`${baseUrl}/api/team/tokens`, {
+        headers: headers(handle.tokens.appToken),
+      })
+    ).json()) as {
+      handle: string;
+      expiresAt: string | null;
+      lastUsedAt: string | null;
+    }[];
+    const ada = list.find((e) => e.handle === 'ada');
+    expect(ada?.expiresAt).not.toBeNull();
+    expect(ada?.lastUsedAt).not.toBeNull();
+    expect(JSON.stringify(list)).not.toContain(token);
+  });
+});
