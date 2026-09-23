@@ -384,6 +384,20 @@ if (portArg !== undefined && Number.isNaN(port)) {
   process.exit(1);
 }
 
+// `--idle-timeout <seconds>`: exit once nothing has used this daemon for that
+// long (see IdleShutdown). The CLI passes it when it spawns a daemon in the
+// background; without it the daemon runs until it is stopped, as before.
+const idleTimeoutArg = readFlag(args, '--idle-timeout');
+const idleTimeoutSeconds =
+  idleTimeoutArg !== undefined ? Number(idleTimeoutArg) : undefined;
+if (
+  idleTimeoutSeconds !== undefined &&
+  !(Number.isFinite(idleTimeoutSeconds) && idleTimeoutSeconds > 0)
+) {
+  console.error(`invalid --idle-timeout: ${idleTimeoutArg}`);
+  process.exit(1);
+}
+
 // The desktop app's add-project flow can spawn a daemon for a folder that
 // hasn't run `dispatch init` yet — init lives here (rather than requiring the
 // caller to shell out to the CLI first) so that logic stays in TS and this
@@ -488,6 +502,14 @@ const handle = await startServer({
   // fake executor doesn't silently also fake out gh for a CLI e2e run.
   prCommandRunner:
     process.env.DISPATCH_FAKE_GH === '1' ? makeFakeGhRunner() : undefined,
+  idleTimeoutMs:
+    idleTimeoutSeconds !== undefined ? idleTimeoutSeconds * 1000 : undefined,
+  onIdle: () => {
+    console.log(
+      `dispatchd: unused for ${idleTimeoutSeconds}s with no live work, exiting`
+    );
+    void shutdown();
+  },
 });
 console.log(`dispatchd listening on http://127.0.0.1:${handle.port}`);
 
