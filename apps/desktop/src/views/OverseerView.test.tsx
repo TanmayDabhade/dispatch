@@ -151,7 +151,7 @@ test('the header carries the crumb and the reset as a ghost action', () => {
   });
   render(<OverseerView data={DAEMON_UP} overseer={overseer} />);
   const header = screen
-    .getByText('Overseer')
+    .getByText('Assistant')
     .closest('[data-slot=page-header]');
   expect(header).not.toBeNull();
   const reset = screen.getByRole('button', { name: /New conversation/ });

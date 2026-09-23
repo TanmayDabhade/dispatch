@@ -1,6 +1,8 @@
 import type {
   CommandEvidence,
   CreateInput,
+  Finding,
+  LedgerEntry,
   MutationEvidence,
   TaskDoc,
   UpdatePatch,
@@ -40,6 +42,8 @@ export interface RunMeta {
   turns?: number;
   sessionId?: string;
   error?: string;
+  /** ActorRef of the human who dispatched this run — see the server's RunMeta. */
+  dispatchedBy?: string;
   model?: string;
   reviewedAt?: string;
   reviewAction?: 'merge' | 'discard' | 'pr';
@@ -602,6 +606,12 @@ export interface ApiClient {
   ): Promise<RunMeta>;
   cancelRun(runId: string): Promise<void>;
   getRunDiff(runId: string): Promise<DiffResult>;
+  /** Findings raised against one task. `dispatch share` folds them into a
+   *  run's page; nothing else in the CLI reads them yet. */
+  getTaskFindings(taskId: string): Promise<Finding[]>;
+  /** Every recorded decision and ruling. Unfiltered: the ledger is
+   *  project-wide, and the share page shows what applies to the run's task. */
+  getLedger(): Promise<LedgerEntry[]>;
   reviewRun(
     runId: string,
     action: 'merge' | 'discard' | 'pr'
@@ -631,6 +641,32 @@ export interface ApiClient {
     granted: boolean,
     reason: string
   ): Promise<ScopeRequest>;
+  /** Decide-tier: build the client on the app token. */
+  issueTeamToken(input: {
+    email?: string;
+    handle?: string;
+    displayName?: string;
+    tier?: 'request' | 'decide';
+  }): Promise<IssuedTeamToken>;
+  listTeamTokens(): Promise<TeamTokenHolder[]>;
+  revokeTeamToken(handle: string, tier: 'request' | 'decide'): Promise<void>;
+}
+
+/** A freshly issued teammate credential — the only response that ever carries
+ *  one. Mirrors issueTeamToken in packages/server/src/api/team.ts. */
+interface IssuedTeamToken {
+  handle: string;
+  tier: 'request' | 'decide';
+  token: string;
+}
+
+/** Who holds a credential, without it — mirrors IssuedTokenSummary in
+ *  packages/server/src/identity.ts. */
+interface TeamTokenHolder {
+  handle: string;
+  tier: 'request' | 'decide';
+  builtIn: boolean;
+  issuedAt: string | null;
 }
 
 // `token` is the credential every call presents — the agent token from the
@@ -662,6 +698,9 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
     cancelRun: (runId) =>
       request(target, `/api/runs/${runId}/cancel`, { ...jsonBody({}) }),
     getRunDiff: (runId) => request(target, `/api/runs/${runId}/diff`),
+    getTaskFindings: (taskId) =>
+      request(target, `/api/findings?taskId=${encodeURIComponent(taskId)}`),
+    getLedger: () => request(target, '/api/ledger'),
     reviewRun: (runId, action) =>
       request(target, `/api/runs/${runId}/review`, {
         ...jsonBody({ action }),
@@ -753,5 +792,15 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
         `/api/runs/${runId}/scope-requests/${requestId}/decide`,
         jsonBody({ granted, reason })
       ),
+    issueTeamToken: (input) =>
+      request(target, '/api/team/tokens', jsonBody(input)),
+    listTeamTokens: () => request(target, '/api/team/tokens'),
+    revokeTeamToken: async (handle, tier) => {
+      await request(
+        target,
+        `/api/team/tokens/${encodeURIComponent(handle)}/${tier}`,
+        { method: 'DELETE' }
+      );
+    },
   };
 }

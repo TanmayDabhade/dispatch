@@ -180,6 +180,84 @@ Each agent gets its own clone of the task, its own worktree and its own branch,
 so comparing them is the review you already do — one diff each — and merging the
 winner is merging that task.
 
+## Sharing a run
+
+    dispatch share r-abc123
+    dispatch share r-abc123 --out review.html
+
+Writes a self-contained HTML page of one run — summary, diff, findings,
+decisions, evidence and transcript — with no scripts, no remote assets and no
+link back to the project. It is a file you can attach to a ticket, hand to a
+reviewer who has never installed Dispatch, or keep as the receipt for what an
+agent did. `--json` prints the assembled data instead, for feeding a different
+template.
+
+## Previewing a run
+
+A run's work is a diff until you can look at it. `dispatch serve` will start a
+dev server inside a finished run's own worktree and proxy it at
+`/preview/<runId>/`, which the desktop app shows in the task's **Preview** tab.
+The command is detected from the worktree's `package.json` (`dev`, else
+`start`); set `preview.command` in `.dispatch/config.yml` to name one yourself,
+and `preview.installCommand` for a fresh worktree that needs dependencies first:
+
+    preview:
+      enabled: true
+      command: pnpm run dev
+      installCommand: pnpm install
+      readyTimeoutSec: 180
+      idleTimeoutSec: 900
+
+Previews start only when asked for, stop with the daemon, and are swept once
+they have had no request for `idleTimeoutSec`.
+
+## Working as a team on one daemon
+
+A daemon is yours by default: it binds `127.0.0.1` and nothing else can reach
+it. Team-local mode lets teammates on your network use the same board from a
+browser, each as themselves.
+
+    moonx desktop:build                     # the bundle teammates are served
+    dispatch serve --host 0.0.0.0           # prints the address to share
+    dispatch team invite ada@example.com    # prints Ada's token, once
+
+Ada opens the printed address, pastes her token, and is signed in. From then on
+her findings, notes, scope decisions and dispatched runs are credited to
+`human:ada`, not to you; the status strip shows who is connected and what each
+is running; the Inbox badge counts only what is yours to answer, with teammates'
+asks under **Teammates**; and the dispatch dialog warns, by name, before you
+start work on files someone else's live run has claimed.
+
+    dispatch team invite ada --decide       # let Ada approve and merge too
+    dispatch team tokens                    # who holds a credential
+    dispatch team revoke ada                # her token stops working at once
+
+Tokens are stored only as hashes, outside the repo, and are shown once — lose
+one and issue a new one, which replaces it. A new teammate gets the `request`
+tier (drive the board, dispatch, review) until you grant `decide`. Grant it only
+to someone you would hand a shell on this machine: besides approvals and merges,
+`decide` opens terminals, drives the browser and writes files directly, all as
+you. Every `team` command needs the daemon's app token (`--token` or
+`DISPATCH_APP_TOKEN`).
+
+What changes when the daemon is shared, and why:
+
+- **No token is ever put in the served page.** On loopback the page carries the
+  daemon's agent token; on a shared bind that would hand it to anyone who can
+  reach the port, so teammates sign in with their own.
+- **Only the daemon's own address is a trusted origin**, never whatever a Host
+  header claims, so a DNS-rebinding page cannot pass for a teammate.
+- **Live previews stay on your machine.** A preview has no credential of its
+  own, so it is served only to loopback; teammates see the diff and can be sent
+  a `dispatch share` page instead.
+- `--host` accepts `127.0.0.1` or `0.0.0.0` only. A single interface address
+  would stop the daemon answering on loopback, where the CLI, MCP server and app
+  reach it.
+
+This is plain HTTP on your network, like any dev server — run it on a network
+you trust, or put it behind a TLS-terminating proxy and name that origin with
+`--public-origin`.
+
 ## MCP server
 
 `dispatch init` registers a stdio MCP server in the project's `.mcp.json`

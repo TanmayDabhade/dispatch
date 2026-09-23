@@ -77,13 +77,13 @@ export function QuickCaptureDialog({
         initialFocus={textareaRef}
       >
         <DialogChrome>
-          <span>Brain dump</span>
+          <span>Notes</span>
           <span aria-hidden>›</span>
           <span className="text-(--text-secondary)">Quick capture</span>
         </DialogChrome>
         <DialogTitle className="sr-only">Quick capture</DialogTitle>
         <DialogDescription className="sr-only">
-          Capture quick thoughts, one per line, into the Brain dump inbox.
+          Capture quick thoughts, one per line, into the Notes inbox.
         </DialogDescription>
         <DialogBody className="gap-2 pt-0">
           <Textarea
@@ -124,7 +124,7 @@ export function QuickCaptureDialog({
               onOpenBrainDump();
             }}
           >
-            Open Brain dump
+            Open Notes
           </Button>
           <Button
             size="sm"

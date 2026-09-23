@@ -46,6 +46,51 @@ export const DEFAULT_REPO_DIGEST: RepoDigestConfig = {
 };
 
 /**
+ * Per-run dev-server previews: what turns a finished run from a diff you read
+ * into an app you look at. The daemon starts the command inside the run's own
+ * worktree, so a preview shows that run's work and nothing else.
+ */
+export interface PreviewConfig {
+  /** False stops the daemon starting any preview at all. */
+  enabled: boolean;
+  /** Shell command to start this project's dev server, run inside the run's
+   *  worktree. Absent means autodetect from the worktree's package.json — see
+   *  `detectPreviewCommand`. A repo with neither simply has no preview, which
+   *  is an ordinary state, not an error. */
+  command?: string;
+  /** Command that installs dependencies, run once before `command` when the
+   *  worktree has no `node_modules`. A run's worktree is a fresh checkout, so
+   *  without this most dev servers fail to boot at all. */
+  installCommand?: string;
+  /** How long the dev server has to answer on its port before the daemon
+   *  gives up and reports the preview as failed. Generous by default: a cold
+   *  worktree may install first. */
+  readyTimeoutSec: number;
+  /** How long a preview may sit with no request before the daemon sweeps it. Dev
+   *  servers are expensive and a reviewer looks at one for a minute, so an
+   *  idle preview is pure cost. */
+  idleTimeoutSec: number;
+}
+
+// Defaults chosen for a cold worktree: 180s covers an install plus a dev
+// server's first boot, and 15 minutes of idle is far longer than a review
+// takes while still reclaiming a preview left open in a background tab.
+export const DEFAULT_PREVIEW: PreviewConfig = {
+  enabled: true,
+  readyTimeoutSec: 180,
+  idleTimeoutSec: 900,
+};
+
+/** The preview settings a config implies. The single reader of the optional
+ *  `preview` block, so no caller has to remember that a hand-built config
+ *  (test fixtures, mostly) may not carry one. Returns a fresh object every
+ *  call — DEFAULT_PREVIEW is a shared module constant, and handing it out by
+ *  reference would let one caller's mutation change every later read. */
+export function previewSettings(config: DispatchConfig): PreviewConfig {
+  return { ...DEFAULT_PREVIEW, ...(config.preview ?? {}) };
+}
+
+/**
  * The git-versioned audit trail the daemon exports outside the project repo.
  *
  * On by default, because the receipt log is what keeps the project's history
@@ -114,6 +159,11 @@ export interface DispatchConfig {
    *  literals (test fixtures) predating the block stay valid. Read it through
    *  `projectPolicy()`, never directly, so the default rung applies. */
   policy?: PolicyConfig;
+  /** Per-run dev-server previews. `loadConfig` always populates it; optional
+   *  only so hand-built config literals predating the block stay valid. Read
+   *  it through `previewSettings()`, never directly, so a partial block still
+   *  carries the default timeouts. */
+  preview?: PreviewConfig;
 }
 
 /** The policy a config implies. The single reader of the optional `policy`

@@ -29,6 +29,10 @@ export interface InboxInput {
   pendingApprovals: ReadonlyMap<string, { toolName: string }>;
   openQuestions: ReadonlyMap<string, RunQuestion[]>;
   fixLoops: ReadonlyMap<string, FixLoopState>;
+  /** This window's ActorRef. When set, asks on runs someone else dispatched are
+   * that person's to answer: still listed, under Teammates, but not in Needs you
+   * and not in the badge. Absent means everything is yours — a solo project. */
+  me?: string | null;
 }
 
 interface InboxSection {
@@ -46,8 +50,13 @@ export interface InboxData {
   readyToLand: FeedRowModel[];
   /** Open repo PRs no local run claims — reviewable, but only on GitHub. */
   prs: RepoPr[];
-  /** Rows across sections, ready-to-land, and unclaimed PRs — the sidebar badge. */
+  /** Rows across sections, ready-to-land, and unclaimed PRs — the sidebar badge.
+   * Excludes rows a teammate owns: their parked approval is theirs to answer. */
   total: number;
+  /** runId → the teammate who dispatched it, for runs that are not yours.
+   * `buildInbox` always sets it; optional only so hand-built InboxData literals
+   * (test fixtures) predating it stay valid, the same rule config blocks use. */
+  teammateOwners?: ReadonlyMap<string, string>;
 }
 
 /**
@@ -86,14 +95,32 @@ export function buildInbox(input: InboxInput): InboxData {
 
   const readyToLand = collectReadyToLand(input);
 
+  // The "whose attention" axis. A run someone else dispatched is theirs to
+  // answer for: its asks stay visible, the way a recorded gate stays in the
+  // ledger, but they stop demanding anything of you.
+  const me = input.me ?? null;
+  const teammateOwners = new Map<string, string>();
+  if (me !== null) {
+    for (const run of input.runs) {
+      if (run.dispatchedBy !== undefined && run.dispatchedBy !== me) {
+        teammateOwners.set(run.id, run.dispatchedBy);
+      }
+    }
+  }
+  const mine = (row: FeedRowModel) => !teammateOwners.has(row.runId);
+
   return {
     sections,
     readyToLand,
     prs,
     total:
-      sections.reduce((count, section) => count + section.rows.length, 0) +
-      readyToLand.length +
+      sections.reduce(
+        (count, section) => count + section.rows.filter(mine).length,
+        0
+      ) +
+      readyToLand.filter(mine).length +
       prs.length,
+    teammateOwners,
   };
 }
 
@@ -156,18 +183,25 @@ function collectReadyToLand(input: InboxInput): FeedRowModel[] {
  * item shape the list can render, filter, group and mark read without caring which it has.
  */
 export type InboxItem =
-  | { kind: 'ask'; key: string; ts: string; row: FeedRowModel }
-  | { kind: 'landing'; key: string; ts: string; row: FeedRowModel }
+  | { kind: 'ask'; key: string; ts: string; row: FeedRowModel; owner?: string }
+  | {
+      kind: 'landing';
+      key: string;
+      ts: string;
+      row: FeedRowModel;
+      owner?: string;
+    }
   | { kind: 'pr'; key: string; ts: string; pr: RepoPr }
   | { kind: 'notification'; key: string; ts: string; entry: InboxEntry };
 
 /** The list-pane filter: everything, only what is still waiting on you, or only what
  * already happened. */
-export type InboxFilter = 'all' | 'needs-you' | 'earlier';
+export type InboxFilter = 'all' | 'needs-you' | 'teammates' | 'earlier';
 
 export const INBOX_FILTER_LABEL: Record<InboxFilter, string> = {
   all: 'All',
   'needs-you': 'Needs you',
+  teammates: 'Teammates',
   earlier: 'Earlier',
 };
 
@@ -175,6 +209,20 @@ export const INBOX_FILTER_LABEL: Record<InboxFilter, string> = {
 // comes back unread — the same task, a new thing to look at.
 function rowKey(row: FeedRowModel): string {
   return `${row.state}:${row.taskId}:${row.runId}`;
+}
+
+// Spread into an ask or landing item: `{ owner }` when a teammate owns its run,
+// nothing otherwise, so a solo project's items keep exactly their old shape.
+function ownerOf(data: InboxData, row: FeedRowModel): { owner?: string } {
+  const owner = data.teammateOwners?.get(row.runId);
+  return owner === undefined ? {} : { owner };
+}
+
+/** The teammate an item belongs to, or undefined when it is yours (or no one's). */
+export function teammateOf(item: InboxItem): string | undefined {
+  return item.kind === 'ask' || item.kind === 'landing'
+    ? item.owner
+    : undefined;
 }
 
 /** Flattens the inbox into list items: asks in the feed's priority order, then ready-to-land,
@@ -186,11 +234,23 @@ export function buildInboxItems(
   const items: InboxItem[] = [];
   for (const section of data.sections) {
     for (const row of section.rows) {
-      items.push({ kind: 'ask', key: rowKey(row), ts: row.since, row });
+      items.push({
+        kind: 'ask',
+        key: rowKey(row),
+        ts: row.since,
+        row,
+        ...ownerOf(data, row),
+      });
     }
   }
   for (const row of data.readyToLand) {
-    items.push({ kind: 'landing', key: rowKey(row), ts: row.since, row });
+    items.push({
+      kind: 'landing',
+      key: rowKey(row),
+      ts: row.since,
+      row,
+      ...ownerOf(data, row),
+    });
   }
   for (const pr of data.prs) {
     items.push({ kind: 'pr', key: `pr:${pr.number}`, ts: pr.updatedAt, pr });
@@ -212,7 +272,12 @@ export function filterInboxItems(
 ): InboxItem[] {
   if (filter === 'all') return [...items];
   if (filter === 'needs-you') {
-    return items.filter((item) => item.kind !== 'notification');
+    return items.filter(
+      (item) => item.kind !== 'notification' && teammateOf(item) === undefined
+    );
+  }
+  if (filter === 'teammates') {
+    return items.filter((item) => teammateOf(item) !== undefined);
   }
   return items.filter((item) => item.kind === 'notification');
 }

@@ -252,3 +252,60 @@ describe('buildDispatchPreview', () => {
     expect(p.summary).toBe('Nothing selected.');
   });
 });
+
+describe('overlaps with live runs', () => {
+  const t1 = task('t-1', 'Widget', ['src/widget.ts']);
+
+  test("names the teammate whose live run already claims a task's files", () => {
+    const p = buildDispatchPreview({
+      tasks: [t1],
+      readyIds: new Set(['t-1']),
+      runningNow: 1,
+      concurrency: 3,
+      liveClaims: [
+        {
+          runId: 'r-9',
+          taskId: 't-9',
+          claims: ['src/widget.ts'],
+          dispatchedBy: 'human:ada',
+        },
+      ],
+    });
+    expect(p.overlaps).toEqual([
+      { taskId: 't-1', taskTitle: 'Widget', runId: 'r-9', holder: 'human:ada' },
+    ]);
+  });
+
+  test('a live run on the same task is a redispatch, not an overlap', () => {
+    const p = buildDispatchPreview({
+      tasks: [t1],
+      readyIds: new Set(['t-1']),
+      runningNow: 1,
+      concurrency: 3,
+      liveClaims: [{ runId: 'r-1', taskId: 't-1', claims: ['src/widget.ts'] }],
+    });
+    expect(p.overlaps).toEqual([]);
+  });
+
+  test('disjoint files do not overlap', () => {
+    const p = buildDispatchPreview({
+      tasks: [t1],
+      readyIds: new Set(['t-1']),
+      runningNow: 1,
+      concurrency: 3,
+      liveClaims: [{ runId: 'r-9', taskId: 't-9', claims: ['src/other.ts'] }],
+    });
+    expect(p.overlaps).toEqual([]);
+  });
+
+  test('a task that cannot start is not warned about', () => {
+    const p = buildDispatchPreview({
+      tasks: [t1],
+      readyIds: new Set(),
+      runningNow: 0,
+      concurrency: 3,
+      liveClaims: [{ runId: 'r-9', taskId: 't-9', claims: ['src/widget.ts'] }],
+    });
+    expect(p.overlaps).toEqual([]);
+  });
+});

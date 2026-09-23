@@ -182,7 +182,7 @@ export function PrReviewView({
           ...(projectName !== undefined && projectName !== null
             ? [projectName]
             : []),
-          'Landing',
+          'Merge queue',
           `#${prNumber} ${title}`,
         ]}
         actions={

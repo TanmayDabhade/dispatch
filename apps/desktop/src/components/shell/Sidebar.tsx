@@ -44,45 +44,64 @@ import {
 import { Sidebar as SidebarRoot } from '@/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
+type ViewRow<Id> = { id: Id; label: string; icon: typeof Inbox };
+
 /**
- * The Workspace section, in the order work moves through the app: capture, plan, the
- * agents work, you land it. Inbox is not here — it leads the fixed top group above.
+ * Work: what you are building, in the order it moves — where things stand, the
+ * tasks themselves, the plans behind them, and the notes that have not become
+ * either yet. Inbox is not here; it leads the fixed top group above.
+ *
+ * Labels are the plain word for what the page does. "Control room" and "Brain
+ * dump" were names this team knew and nobody else could parse, and a first run
+ * met nine different nouns for "your work" before it had any.
  */
-const WORKSPACE_VIEWS: {
-  id: ProjectView;
-  label: string;
-  icon: typeof Inbox;
-}[] = [
-  { id: 'overview', label: 'Control room', icon: LayoutDashboard },
-  { id: 'brain-dump', label: 'Brain dump', icon: Brain },
-  { id: 'plans', label: 'Plans', icon: NotebookPen },
+const WORK_VIEWS: ViewRow<ProjectView>[] = [
+  { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   // Board, list and milestones are header view tabs inside Tasks now, not rail rows.
   { id: 'board', label: 'Tasks', icon: ListChecks },
-  // Blast radius of a file, run, or task's declared writes.
-  { id: 'impact', label: 'Impact', icon: Waypoints },
-  { id: 'branches', label: 'Git', icon: GitBranch },
-  { id: 'files', label: 'Files', icon: FileCode2 },
-  { id: 'design', label: 'Design', icon: Crosshair },
-  { id: 'terminals', label: 'Terminals', icon: TerminalSquare },
-  // Every open PR with its gates plus what already landed.
-  { id: 'landing', label: 'Landing', icon: GitMerge },
+  { id: 'plans', label: 'Plans', icon: NotebookPen },
+  { id: 'brain-dump', label: 'Notes', icon: Brain },
 ];
 
-/** Every project destination in rail order — Inbox first, then Workspace — which is also the
- * ⌘N order: ⌘1 is the first row, and so on. App indexes into this for `goto-N`. */
+/** Code: the repository itself, rather than the work being done to it — its
+ *  history, its files, a shell on it, the running app, and what a change would
+ *  touch. */
+const CODE_VIEWS: ViewRow<ProjectView>[] = [
+  { id: 'branches', label: 'Git', icon: GitBranch },
+  { id: 'files', label: 'Files', icon: FileCode2 },
+  { id: 'terminals', label: 'Terminals', icon: TerminalSquare },
+  { id: 'design', label: 'Design', icon: Crosshair },
+  // Blast radius of a file, run, or task's declared writes.
+  { id: 'impact', label: 'Impact', icon: Waypoints },
+];
+
+/** Runs: agents at work and what they are landing. `landing` is a project view
+ *  and the other two are global ones — they sit together because that is how
+ *  someone thinks about them, and `handleSelect` routes each by its id. "Merge
+ *  queue" says what the page is; "Landing" read as an airport. */
+const RUN_PROJECT_VIEWS: ViewRow<ProjectView>[] = [
+  // Every open PR with its gates plus what already landed.
+  { id: 'landing', label: 'Merge queue', icon: GitMerge },
+];
+
+const RUN_GLOBAL_VIEWS: ViewRow<GlobalView>[] = [
+  { id: 'sessions', label: 'Sessions', icon: Play },
+  { id: 'all-agents', label: 'All agents', icon: Radar },
+];
+
+/** Every project destination in rail order — Inbox first, then the sections as
+ * they are rendered — which is also the ⌘N order: ⌘1 is the first row, and so
+ * on. App indexes into this for `goto-N`. */
 export const PROJECT_NAV_VIEWS: PaletteView[] = [
   { id: 'inbox', label: 'Inbox' },
-  ...WORKSPACE_VIEWS.map(({ id, label }) => ({ id, label })),
+  ...[...WORK_VIEWS, ...RUN_PROJECT_VIEWS, ...CODE_VIEWS].map(
+    ({ id, label }) => ({ id, label })
+  ),
 ];
 
 export const PROJECT_VIEW_ORDER: ProjectView[] = PROJECT_NAV_VIEWS.map(
   (v) => v.id
 );
-
-const FLEET_VIEWS: { id: GlobalView; label: string; icon: typeof Radar }[] = [
-  { id: 'all-agents', label: 'All agents', icon: Radar },
-  { id: 'sessions', label: 'Sessions', icon: Play },
-];
 
 // Persists whether the rail is hidden, so the choice survives a reload.
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'dispatch:sidebar-collapsed';
@@ -114,6 +133,7 @@ export function useSidebarCollapsed(): [boolean, (next: boolean) => void] {
 export type SidebarSectionId =
   | 'favorites'
   | 'workspace'
+  | 'code'
   | 'fleet'
   | 'live'
   | 'try';
@@ -343,7 +363,7 @@ export function Sidebar({
       },
       {
         id: 'overseer',
-        label: 'Overseer',
+        label: 'Assistant',
         icon: <Shield strokeWidth={2} />,
         count: overseerPendingCount > 0 ? overseerPendingCount : undefined,
         state: overseerPendingCount > 0 ? 'attention' : undefined,
@@ -351,20 +371,28 @@ export function Sidebar({
     ],
   };
 
-  const workspace: SidebarNavSection = {
+  // One row from a view definition. Shared by all three sections so a row
+  // looks and disables the same wherever it sits.
+  const rowFor = (view: ViewRow<ProjectView | GlobalView>): SidebarNavItem => {
+    const Icon = view.icon;
+    return {
+      id: view.id,
+      label: view.label,
+      icon: <Icon strokeWidth={2} />,
+      disabled: !hasActiveProject,
+    } satisfies SidebarNavItem;
+  };
+
+  const work: SidebarNavSection = {
+    // The persisted id stays `workspace`: it is a localStorage key, and
+    // renaming it would collapse the section for everyone who had it open.
     id: 'workspace',
-    label: 'Workspace',
+    label: 'Work',
     collapsible: true,
     collapsed: sections.collapsed('workspace'),
     onToggle: () => sections.toggle('workspace'),
-    items: WORKSPACE_VIEWS.flatMap((view) => {
-      const Icon = view.icon;
-      const row = {
-        id: view.id,
-        label: view.label,
-        icon: <Icon strokeWidth={2} />,
-        disabled: !hasActiveProject,
-      } satisfies SidebarNavItem;
+    items: WORK_VIEWS.flatMap((view) => {
+      const row = rowFor(view);
       if (view.id !== 'board') return [row];
       // The saved views nest under Tasks, the 16px-indented rows of a team's `Views`.
       return [
@@ -381,6 +409,15 @@ export function Sidebar({
         ),
       ];
     }),
+  };
+
+  const code: SidebarNavSection = {
+    id: 'code',
+    label: 'Code',
+    collapsible: true,
+    collapsed: sections.collapsed('code'),
+    onToggle: () => sections.toggle('code'),
+    items: CODE_VIEWS.map(rowFor),
   };
 
   const favoritesSection: SidebarNavSection | null =
@@ -405,24 +442,25 @@ export function Sidebar({
         }
       : null;
 
-  const fleet: SidebarNavSection = {
+  const runs: SidebarNavSection = {
+    // Persisted id stays `fleet` for the same reason `workspace` does.
     id: 'fleet',
-    label: 'Fleet',
+    label: 'Runs',
     collapsible: true,
     collapsed: sections.collapsed('fleet'),
     onToggle: () => sections.toggle('fleet'),
-    items: FLEET_VIEWS.map((view) => {
-      const Icon = view.icon;
-      return {
-        id: view.id,
-        label: view.label,
-        icon: <Icon strokeWidth={2} />,
-        count:
-          view.id === 'all-agents' && liveAgentCount > 0
-            ? liveAgentCount
-            : undefined,
-      } satisfies SidebarNavItem;
-    }),
+    // The merge queue leads: "what is landing" is the question someone opens
+    // this section to answer, and the agent lists are how it gets there.
+    items: [...RUN_PROJECT_VIEWS, ...RUN_GLOBAL_VIEWS].map((view) => ({
+      ...rowFor(view),
+      // Only the global agent rows are reachable with no project open, and
+      // only one of them carries a count.
+      disabled: view.id === 'landing' ? !hasActiveProject : false,
+      count:
+        view.id === 'all-agents' && liveAgentCount > 0
+          ? liveAgentCount
+          : undefined,
+    })),
   };
 
   const live: SidebarNavSection | null =
@@ -468,8 +506,9 @@ export function Sidebar({
   const navSections: SidebarNavSection[] = [
     topGroup,
     ...(favoritesSection !== null ? [favoritesSection] : []),
-    workspace,
-    fleet,
+    work,
+    runs,
+    code,
     ...(live !== null ? [live] : []),
     tryBlock,
   ];

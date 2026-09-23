@@ -148,7 +148,10 @@ export type ServerEvent =
   // state, mergeable, review decision, checks, draft-ness, or updatedAt) —
   // refetch GET /api/landing. No payload: the cache itself is the source of
   // truth, same "go refetch" contract as task.changed.
-  | { type: 'landing.changed' };
+  | { type: 'landing.changed' }
+  // Someone arrived or left — their first client connected or their last one
+  // closed. Same "go refetch" contract as the rest; GET /api/presence says who.
+  | { type: 'presence.changed' };
 
 // The subset of Bun's ServerWebSocket used here, kept minimal so tests can
 // pass plain mock objects instead of real sockets.

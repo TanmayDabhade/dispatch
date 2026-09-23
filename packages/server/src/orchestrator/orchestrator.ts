@@ -520,11 +520,26 @@ export class Orchestrator {
 
   // Every live run's current claims, for GET /api/runs/claims and the epic
   // scheduler. A terminal run holds no claims — see TERMINAL_RUN_STATES.
-  liveClaims(): { runId: string; taskId: string; claims: string[] }[] {
+  // `dispatchedBy` rides along so an agent reading GET /api/runs/claims (or a
+  // teammate's dialog) can see whose work a claim is, not just which run's —
+  // "src/api.ts is ada's" is something a person can act on.
+  liveClaims(): {
+    runId: string;
+    taskId: string;
+    claims: string[];
+    dispatchedBy?: string;
+  }[] {
     return this.registry
       .list()
       .filter((r) => !TERMINAL_RUN_STATES.has(r.state))
-      .map((r) => ({ runId: r.id, taskId: r.taskId, claims: r.claims ?? [] }));
+      .map((r) => ({
+        runId: r.id,
+        taskId: r.taskId,
+        claims: r.claims ?? [],
+        ...(r.dispatchedBy === undefined
+          ? {}
+          : { dispatchedBy: r.dispatchedBy }),
+      }));
   }
 
   // Every approval request currently waiting on a human, flattened into one
@@ -703,6 +718,9 @@ export class Orchestrator {
 
     this.worktrees.add(wtPath, branch, baseBranch);
 
+    const actor = opts.actor ?? this.ctx.actorContext?.humanRef;
+    const dispatchedBy =
+      actor !== undefined && actor.startsWith('human:') ? actor : undefined;
     const meta: RunMeta = {
       id: runId,
       taskId,
@@ -715,6 +733,10 @@ export class Orchestrator {
       createdAt: now,
       updatedAt: now,
       model: opts.model,
+      // Only a human ref is recorded: 'none' is how an automatic caller says
+      // nobody pressed dispatch for this task, and crediting that to anyone
+      // would be inventing an owner.
+      ...(dispatchedBy === undefined ? {} : { dispatchedBy }),
       // Seeded from the task's own declared write-set — see RunMeta.claims.
       claims: [...task.meta.writes],
       // Spread in only for a genuinely stacked run, so an unblocked run's

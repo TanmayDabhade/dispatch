@@ -61,58 +61,60 @@ function navRows(): string[] {
 }
 
 test('the exported view order is the ⌘N order App.tsx indexes into', () => {
+  // Rail order, which is also ⌘N order: Inbox, then Work, then the merge
+  // queue that leads Runs, then Code — the sections as they render.
   expect(PROJECT_VIEW_ORDER).toEqual([
     'inbox',
     'overview',
-    'brain-dump',
-    'plans',
     'board',
-    'impact',
+    'plans',
+    'brain-dump',
+    'landing',
     'branches',
     'files',
-    'design',
     'terminals',
-    'landing',
+    'design',
+    'impact',
   ]);
   expect(PROJECT_NAV_VIEWS.map((v) => v.label)).toEqual([
     'Inbox',
-    'Control room',
-    'Brain dump',
-    'Plans',
+    'Overview',
     'Tasks',
-    'Impact',
+    'Plans',
+    'Notes',
+    'Merge queue',
     'Git',
     'Files',
-    'Design',
     'Terminals',
-    'Landing',
+    'Design',
+    'Impact',
   ]);
 });
 
-test('sections come in Linear order: fixed top group, then Workspace, Fleet, Live agents, Try', () => {
+test('sections come in Linear order: fixed top group, then Work, Runs, Code, Live agents, Try', () => {
   mount(true);
   expect(navRows()).toEqual([
     'inbox',
     'drafts',
     'overseer',
     'overview',
-    'brain-dump',
-    'plans',
     'board',
-    'impact',
+    'plans',
+    'brain-dump',
+    'landing',
+    'sessions',
+    'all-agents',
     'branches',
     'files',
-    'design',
     'terminals',
-    'landing',
-    'all-agents',
-    'sessions',
+    'design',
+    'impact',
     'try-plan',
     'try-capture',
     'try-linear',
   ]);
   // The headings are sentence-case buttons with a chevron — collapsible.
-  for (const heading of ['Workspace', 'Fleet', 'Live agents', 'Try']) {
+  for (const heading of ['Work', 'Runs', 'Code', 'Live agents', 'Try']) {
     const button = screen.getByRole('button', { name: heading });
     expect(button.getAttribute('aria-expanded')).toBe('true');
   }
@@ -147,7 +149,7 @@ test('counts are plain text with no keycap hints, no ⌘K footer, no sync text',
   expect(within(inbox).getByText('2').tagName).toBe('SPAN');
   expect(within(inbox).getByText('2').className).not.toContain('font-mono');
   expect(
-    within(screen.getByRole('button', { name: /^Overseer/ })).getByText('5')
+    within(screen.getByRole('button', { name: /^Assistant/ })).getByText('5')
   ).toBeTruthy();
   expect(
     within(screen.getByRole('button', { name: /^All agents/ })).getByText('3')
@@ -178,10 +180,10 @@ test('Tasks has no nested Board/List/Milestones rows', () => {
 
 test('a section heading collapses its rows and the choice persists', () => {
   const first = mount(true);
-  fireEvent.click(screen.getByRole('button', { name: 'Fleet' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Runs' }));
   expect(screen.queryByRole('button', { name: /^All agents/ })).toBeNull();
   expect(
-    screen.getByRole('button', { name: 'Fleet' }).getAttribute('aria-expanded')
+    screen.getByRole('button', { name: 'Runs' }).getAttribute('aria-expanded')
   ).toBe('false');
   expect(
     JSON.parse(window.localStorage.getItem('dispatch:sidebar-sections') ?? '{}')
@@ -190,7 +192,7 @@ test('a section heading collapses its rows and the choice persists', () => {
 
   mount(true);
   expect(screen.queryByRole('button', { name: /^All agents/ })).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: 'Fleet' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Runs' }));
   expect(screen.getByRole('button', { name: /^All agents/ })).toBeTruthy();
 });
 
@@ -256,11 +258,12 @@ test('saved views nest under Tasks as indented rows and select through onSelectS
     },
   });
   const rows = navRows();
+  // The saved views sit between Tasks and whatever follows it in Work.
   expect(rows.slice(rows.indexOf('board'), rows.indexOf('board') + 4)).toEqual([
     'board',
     'view-v-1',
     'view-v-2',
-    'impact',
+    'plans',
   ]);
   const row = screen.getByRole('button', { name: 'Blocked urgent' });
   expect(row.className).toContain('pl-6');
@@ -303,7 +306,7 @@ test('the Favorites section is absent when nothing is starred', () => {
   expect(navRows().filter((id) => id.startsWith('fav-'))).toEqual([]);
 });
 
-test('Favorites lists starred views and tasks above Workspace and opens them', () => {
+test('Favorites lists starred views and tasks above Work and opens them', () => {
   const opened: { kind: string; id: string }[] = [];
   mount(true, {
     favorites: [
@@ -392,7 +395,7 @@ test('the hidden preference round-trips through its long-standing key', () => {
 test('project rows are disabled until a project resolves; fleet rows are not', () => {
   mount(true, { hasActiveProject: false });
   expect(
-    screen.getByRole<HTMLButtonElement>('button', { name: /^Control room/ })
+    screen.getByRole<HTMLButtonElement>('button', { name: /^Overview/ })
       .disabled
   ).toBe(true);
   expect(

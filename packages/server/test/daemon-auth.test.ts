@@ -479,3 +479,31 @@ describe('overseer confirm tier', () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe('GET /api/whoami', () => {
+  it('names who the credential speaks for, and its tier', async () => {
+    // Both built-in tokens authenticate as the operator — the person whose
+    // machine this daemon runs on — so a solo project is unchanged. What is
+    // new is that the answer exists at all: presence, claims and attribution
+    // all need a caller to be identifiable first.
+    const asApp = await json<{ handle: string; ref: string; tier: string }>(
+      await rawFetch(`${baseUrl}/api/whoami`, { headers: auth(appToken) })
+    );
+    expect(asApp.tier).toBe('decide');
+    expect(asApp.ref).toBe(`human:${asApp.handle}`);
+
+    const asAgent = await json<{ handle: string; tier: string }>(
+      await rawFetch(`${baseUrl}/api/whoami`, { headers: auth(agentToken) })
+    );
+    expect(asAgent.tier).toBe('request');
+    // Same person, different capability — the split that already existed.
+    expect(asAgent.handle).toBe(asApp.handle);
+  });
+
+  it('401s without a credential rather than answering anonymously', async () => {
+    const res = await rawFetch(`${baseUrl}/api/whoami`, {
+      headers: auth(null),
+    });
+    expect(res.status).toBe(401);
+  });
+});

@@ -16,6 +16,7 @@ import '@dispatch/tokens/tokens.css';
 import './styles/pierreTheme.css';
 import './styles/markdown.css';
 import './styles/global.css';
+import { TeamLocalGate } from './components/shell/TeamLocalGate';
 import { ToastProvider } from './components/shell/Toasts';
 
 const queryClient = new QueryClient({
@@ -30,7 +31,10 @@ createRoot(document.getElementById('root')).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
-        <App />
+        {/* A no-op outside team-local mode; see TeamLocalGate. */}
+        <TeamLocalGate>
+          <App />
+        </TeamLocalGate>
       </ToastProvider>
     </QueryClientProvider>
   </StrictMode>

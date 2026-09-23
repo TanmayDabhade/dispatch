@@ -1,7 +1,8 @@
-import type { SyncStatus } from '@dispatch/client';
+import type { PresenceEntry, SyncStatus } from '@dispatch/client';
 import { CircleHelp, Cog, History } from 'lucide-react';
 
 import { formatUsd } from '../../lib/epicSession';
+import { PresenceStack } from './PresenceStack';
 import { syncSummary, type SyncTone } from './SyncChip';
 import { cn } from '@/lib/utils';
 import { IconButton } from '@/ui/ai/icon-button';
@@ -32,6 +33,8 @@ interface FrameStatusStripProps {
   /** The gear after `?` — App lands it on Settings › Integrations. */
   onOpenSettings: () => void;
   onOpenOverseer: () => void;
+  /** Everyone on this daemon; the stack shows only once there are two. */
+  presence?: PresenceEntry[];
   className?: string;
 }
 
@@ -54,7 +57,7 @@ export function liveCeilingsLabel(ceilings: LiveCeilings): string {
 /**
  * The 36px strip under the inset panel (Linear §1): `?`, a Settings gear and the sync
  * pill bottom-left of the frame, today's spend, the live milestones' spend against
- * their ceilings, and an Overseer link bottom-right. Everything here is glanceable
+ * their ceilings, and an Assistant link bottom-right. Everything here is glanceable
  * context, which is why it sits on the frame rather than inside any view.
  */
 export function FrameStatusStrip({
@@ -65,6 +68,7 @@ export function FrameStatusStrip({
   onOpenShortcuts,
   onOpenSettings,
   onOpenOverseer,
+  presence = [],
   className,
 }: FrameStatusStripProps) {
   const sync = syncStatus !== null ? syncSummary(syncStatus) : null;
@@ -97,6 +101,8 @@ export function FrameStatusStrip({
         </TooltipTrigger>
         <TooltipContent side="top">Settings › Integrations</TooltipContent>
       </Tooltip>
+
+      <PresenceStack presence={presence} />
 
       {sync !== null && (
         <Tooltip>
@@ -174,7 +180,7 @@ export function FrameStatusStrip({
         className="text-muted-foreground rounded-control flex h-7 items-center gap-1.5 px-2 text-[12px] font-medium transition-colors duration-100 hover:text-(--text-secondary)"
       >
         <History className="size-3.5" />
-        Overseer
+        Assistant
       </button>
     </div>
   );

@@ -23,7 +23,7 @@ import type {
   VerifyConfig,
 } from '@dispatch/core';
 import type { ActorContext, TaskDoc, TaskStorePort } from '@dispatch/core';
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
 import type { AiTaskFilterPort } from './aiTaskFilter.js';
@@ -47,6 +47,7 @@ import {
   screenshotBrowser,
   startBrowserPick,
 } from './api/browser.js';
+import { humanActor } from './api/caller.js';
 import { fanoutTask } from './api/fanout.js';
 import {
   listDirectory,
@@ -87,6 +88,7 @@ import {
   listScopeRequests,
   requestScope,
 } from './api/scopeRequests.js';
+import { issueTeamToken, listTeamTokens, revokeTeamToken } from './api/team.js';
 import {
   closeTerminal,
   createTerminal,
@@ -118,6 +120,7 @@ import type { GitOutcome } from './git/commands.js';
 import { GitRepo } from './git/commands.js';
 import { CommitMessageGenerator } from './git/commitMessage.js';
 import type { GitBranch } from './git/parse.js';
+import type { TokenIdentity, TokenRegistry } from './identity.js';
 import type { InboxKind } from './inbox.js';
 import { INBOX_KINDS, type InboxStore } from './inbox.js';
 import {
@@ -178,6 +181,8 @@ import {
 } from './orchestrator/types.js';
 import type { RunMeta } from './orchestrator/types.js';
 import type { VerificationRunner } from './orchestrator/verify.js';
+import type { PresenceTracker } from './presence.js';
+import type { PreviewSupervisor } from './preview.js';
 import type { ReceiptsScheduler } from './receipts/scheduler.js';
 import {
   formatCommentsForAgent,
@@ -303,6 +308,21 @@ export interface ApiContext {
   // watch for: a compiled daemon whose worker module was left out of the
   // build boots fine and reports that here, and nowhere else.
   watchdogStatus: () => WatchdogStatus;
+  // Per-run dev-server previews. Held by the daemon rather than the
+  // orchestrator because its lifetime is the daemon's, not any one run's:
+  // the idle sweep and the shutdown stop belong to the process that owns the
+  // port allocations.
+  previews: PreviewSupervisor;
+  /** Who is connected right now; see presence.ts. */
+  presence: PresenceTracker;
+  /** The daemon's own network origins in team-local mode, empty otherwise.
+   *  The same Set instance the HTTP layer fills once the port is bound. */
+  ownOrigins: ReadonlySet<string>;
+  /** Whether this daemon is bound beyond loopback — see shared.ts. */
+  shared: boolean;
+  /** Who made the request being handled, when their credential resolved.
+   *  Set per request by handleApi — never on the daemon-wide context. */
+  caller?: TokenIdentity;
 }
 
 // Mirrors the CLI's own enum check (packages/cli/src/commands/task.ts
@@ -570,10 +590,10 @@ async function updateTask(
 
   // PATCH /api/tasks/:id is only ever reached by a human — the web/desktop
   // task drawer, or a direct API call — so any Activity line it appends is
-  // credited to this daemon's human, never whatever the client sent (an
-  // untrusted body must not be able to forge attribution).
+  // credited to the human whose credential made the call, never whatever the
+  // client sent (an untrusted body must not be able to forge attribution).
   if (typeof patch.appendActivity === 'string' && patch.appendActivity !== '') {
-    patch.activityActor = ctx.actorContext.humanRef;
+    patch.activityActor = humanActor(ctx);
   }
 
   const doc = ctx.store.update(id, patch);
@@ -685,8 +705,49 @@ async function createRun(
     executor: typeof executorField === 'string' ? executorField : undefined,
     model: typeof modelField === 'string' ? modelField : undefined,
     fresh: freshField === true,
+    // Whoever pressed dispatch, so the run — and its claims, and the
+    // decisions it later parks on — is theirs rather than the operator's.
+    actor: humanActor(ctx),
   });
   return jsonResponse(meta, 201);
+}
+
+/**
+ * The one run-preview endpoint, three methods.
+ *
+ * GET reports what the daemon is holding for this run and never starts
+ * anything, so a UI can poll it without side effects. POST is the only thing
+ * that starts a dev server, and it is deliberately the reviewer opening the
+ * pane rather than the run finishing: a dev server per finished run would
+ * install and boot checkouts nobody asked to look at.
+ *
+ * A refusal ("this repo has no dev script", "previews are off") comes back
+ * 200 with a reason rather than as an error. It is an ordinary fact about a
+ * repo, and a surface should render it as an empty state, not a failure.
+ */
+async function handleRunPreview(
+  ctx: ApiContext,
+  runId: string,
+  method: string
+): Promise<Response> {
+  if (method === 'GET') {
+    return jsonResponse({ preview: ctx.previews.get(runId) ?? null });
+  }
+  if (method === 'DELETE') {
+    ctx.previews.stop(runId);
+    return jsonResponse({ ok: true });
+  }
+  if (method !== 'POST') {
+    return errorResponse(405, `method not allowed: ${method}`);
+  }
+  const run = ctx.orchestrator.getRun(runId);
+  if (run === null) return errorResponse(404, `run not found: ${runId}`);
+
+  const result = await ctx.previews.ensure(runId, run.meta.worktreePath);
+  if (!result.ok) {
+    return jsonResponse({ preview: null, reason: result.refusal.reason });
+  }
+  return jsonResponse({ preview: result.preview });
 }
 
 async function approveRun(
@@ -4053,24 +4114,36 @@ const READ_ONLY_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 // Origins allowed to drive this daemon — the same set resolveCorsOrigin in
 // index.ts uses to decide whether a response may be read.
-export function isTrustedOrigin(origin: string): boolean {
+export function isTrustedOrigin(
+  origin: string,
+  // The daemon's own network origins, non-empty only in team-local mode (see
+  // shared.ts). A teammate's page loaded from http://192.168.1.5:4771 makes
+  // same-origin requests from exactly that origin; nothing else is added.
+  own: ReadonlySet<string> = NO_OWN_ORIGINS
+): boolean {
   return (
     origin === 'tauri://localhost' ||
     origin === 'https://tauri.localhost' ||
     origin === 'http://tauri.localhost' ||
-    /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+    /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ||
+    own.has(origin)
   );
 }
+
+const NO_OWN_ORIGINS: ReadonlySet<string> = new Set();
 
 // CORS cannot stop a body-less cross-origin POST (no preflight, and headers go
 // on only after the handler ran). Kept alongside the token guard below as
 // defence in depth: Origin rejects the browser case, the token the co-resident
 // case.
-function rejectUntrustedOrigin(req: Request): Response | null {
+function rejectUntrustedOrigin(
+  req: Request,
+  own: ReadonlySet<string>
+): Response | null {
   if (READ_ONLY_METHODS.has(req.method)) return null;
   const origin = req.headers.get('origin');
   // Browsers always send Origin on a state change; the CLI, MCP and curl never do.
-  if (origin === null || isTrustedOrigin(origin)) return null;
+  if (origin === null || isTrustedOrigin(origin, own)) return null;
   return errorResponse(403, 'cross-origin request rejected');
 }
 
@@ -4085,15 +4158,27 @@ function rejectUntrustedOrigin(req: Request): Response | null {
  * emitted once on stdout and never persisted, so there is no file to read it
  * out of.
  */
-export interface DaemonTokens {
+export interface DaemonTokenPair {
   agentToken: string;
   appToken: string;
+}
+
+/**
+ * The pair plus the registry that says who each credential speaks for.
+ *
+ * Minting stays dumb — it makes two random strings and knows nothing about
+ * people — and the registry is assembled in `bootServer`, which is where the
+ * operator's identity is resolved. That split is why a caller may preset one
+ * token (the Playwright harness does) without the registry going stale.
+ */
+export interface DaemonTokens extends DaemonTokenPair {
+  registry: TokenRegistry;
 }
 
 /** `request` covers everything the daemon does; `decide` adds adjudication. */
 export type AuthTier = 'request' | 'decide';
 
-export function mintDaemonTokens(): DaemonTokens {
+export function mintDaemonTokens(): DaemonTokenPair {
   return {
     agentToken: randomBytes(32).toString('hex'),
     appToken: randomBytes(32).toString('hex'),
@@ -4153,6 +4238,20 @@ const DECIDE_TIER_ROUTES: ReadonlyArray<{
   { method: 'POST', segments: ['terminals', '*', 'input'] },
   { method: 'POST', segments: ['terminals', '*', 'resize'] },
   { method: 'POST', segments: ['terminals', '*', 'close'] },
+  // Starting a preview runs a command out of the run's own worktree — a
+  // worktree the agent just wrote to, including its package.json. On the
+  // request tier an agent holding the on-disk agent token could use this to
+  // execute code of its own choosing in the daemon's process group, outside
+  // the sandbox its run was given. Stopping one is paired with it so the
+  // control surface is not half-privileged.
+  { method: 'POST', segments: ['runs', '*', 'preview'] },
+  { method: 'DELETE', segments: ['runs', '*', 'preview'] },
+  // Handing out a credential is an adjudication: on the request tier an agent
+  // holding the on-disk agent token could mint itself a second identity, and
+  // listing holders tells it whose to go looking for.
+  { method: 'GET', segments: ['team', 'tokens'] },
+  { method: 'POST', segments: ['team', 'tokens'] },
+  { method: 'DELETE', segments: ['team', 'tokens', '*', '*'] },
 ];
 
 function matchesRoute(
@@ -4189,22 +4288,15 @@ function requiredTier(
   return 'request';
 }
 
-// Length-independent comparison, so a mismatch never leaks where it diverged.
-function tokenMatches(presented: string, expected: string): boolean {
-  const a = Buffer.from(presented, 'utf8');
-  const b = Buffer.from(expected, 'utf8');
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
-// Highest tier the presented token grants, or null if it matches neither.
-function grantedTier(
+// Who the presented token speaks for, or null if it matches nothing. The
+// comparison itself moved to TokenRegistry (see identity.ts), which is now the
+// one place a credential is checked — the tiers it returns for the built-in
+// pair are exactly what this function returned before.
+function resolveCaller(
   presented: string | null,
   tokens: DaemonTokens
-): AuthTier | null {
-  if (presented === null) return null;
-  if (tokenMatches(presented, tokens.appToken)) return 'decide';
-  if (tokenMatches(presented, tokens.agentToken)) return 'request';
-  return null;
+): TokenIdentity | null {
+  return tokens.registry.resolve(presented);
 }
 
 /** The bearer token on a request, or null when the header is absent or malformed. */
@@ -4254,11 +4346,11 @@ export function rejectUnauthorized(
   if (presented === null) {
     return authErrorResponse(401, MISSING_TOKEN_MESSAGE, 'auth_missing_token');
   }
-  const granted = grantedTier(presented, tokens);
-  if (granted === null) {
+  const caller = resolveCaller(presented, tokens);
+  if (caller === null) {
     return authErrorResponse(401, INVALID_TOKEN_MESSAGE, 'auth_invalid_token');
   }
-  if (required === 'decide' && granted !== 'decide') {
+  if (required === 'decide' && caller.tier !== 'decide') {
     return authErrorResponse(403, WRONG_TIER_MESSAGE, 'auth_insufficient_tier');
   }
   return null;
@@ -4266,7 +4358,7 @@ export function rejectUnauthorized(
 
 export async function handleApi(
   req: Request,
-  ctx: ApiContext
+  daemonCtx: ApiContext
 ): Promise<Response> {
   const url = new URL(req.url);
   const segments = url.pathname
@@ -4275,14 +4367,21 @@ export async function handleApi(
     .filter(Boolean);
   const method = req.method;
 
-  const untrusted = rejectUntrustedOrigin(req);
+  const untrusted = rejectUntrustedOrigin(req, daemonCtx.ownOrigins);
   if (untrusted !== null) return untrusted;
 
   const tier = requiredTier(method, segments);
   if (tier !== null) {
-    const unauthorized = rejectUnauthorized(req, ctx.tokens, tier);
+    const unauthorized = rejectUnauthorized(req, daemonCtx.tokens, tier);
     if (unauthorized !== null) return unauthorized;
   }
+
+  // Every handler below sees who made this request. A shallow copy per
+  // request, so the daemon-wide context is never mutated with one caller's
+  // identity and a concurrent request can never read someone else's.
+  const caller = daemonCtx.tokens.registry.resolve(bearerToken(req));
+  const ctx: ApiContext =
+    caller === null ? daemonCtx : { ...daemonCtx, caller };
 
   try {
     if (segments[0] === 'health' && segments.length === 1 && method === 'GET') {
@@ -4325,6 +4424,49 @@ export async function handleApi(
         models: loadConfig(ctx.rootDir).models,
         watchdog: ctx.watchdogStatus(),
       });
+    }
+
+    if (segments[0] === 'team' && segments[1] === 'tokens') {
+      if (segments.length === 2 && method === 'GET') return listTeamTokens(ctx);
+      if (segments.length === 2 && method === 'POST') {
+        return await issueTeamToken(req, ctx);
+      }
+      if (segments.length === 4 && method === 'DELETE') {
+        return revokeTeamToken(ctx, segments[2], segments[3]);
+      }
+    }
+
+    // GET /api/presence — who is here and what they are running. Derived on
+    // every read from open sockets and live runs, so there is nothing to go
+    // stale.
+    if (
+      segments[0] === 'presence' &&
+      segments.length === 1 &&
+      method === 'GET'
+    ) {
+      return jsonResponse(
+        ctx.presence.list(
+          ctx.orchestrator.list().map((run) => ({
+            id: run.id,
+            dispatchedBy: run.dispatchedBy,
+            live: !TERMINAL_RUN_STATES.has(run.state),
+          }))
+        )
+      );
+    }
+
+    // GET /api/whoami — who the presented credential speaks for. The one
+    // endpoint that exists purely because tokens now name people: presence,
+    // claims and attribution all need a caller to be identifiable before they
+    // can mean anything, and this is how a client checks that it is.
+    if (segments[0] === 'whoami' && segments.length === 1 && method === 'GET') {
+      const caller = ctx.tokens.registry.resolve(bearerToken(req));
+      // requiredTier already rejected an unusable credential, so a null here
+      // would be a bug rather than an unauthenticated caller.
+      if (caller === null) {
+        return errorResponse(401, 'credential resolves to no one');
+      }
+      return jsonResponse(caller);
     }
 
     if (segments[0] === 'config' && segments.length === 1 && method === 'GET') {
@@ -4775,6 +4917,9 @@ export async function handleApi(
       ) {
         await ctx.orchestrator.cancel(segments[1]);
         return jsonResponse({ ok: true });
+      }
+      if (segments.length === 3 && segments[2] === 'preview') {
+        return await handleRunPreview(ctx, segments[1], method);
       }
       // POST /api/runs/:id/stop — the graceful counterpart to cancel: the agent
       // finishes what it is doing and then stops, so its work is committed.

@@ -138,7 +138,7 @@ test('rows carry an icon, a sans task id, and keycaps — never the kind text', 
 test('the input shows the Ask Overseer Tab hint and is described by it', () => {
   mount();
   const hint = document.querySelector('[data-slot="command-input-hint"]');
-  expect(hint?.textContent).toContain('Ask Overseer');
+  expect(hint?.textContent).toContain('Ask the Assistant');
   expect(hint?.querySelector('[data-slot="kbd"]')?.textContent).toBe('Tab');
   expect(hint?.id).not.toBe('');
   expect(input().getAttribute('aria-describedby')).toBe(hint?.id);

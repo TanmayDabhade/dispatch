@@ -440,10 +440,23 @@ const tokens =
     ? { ...mintDaemonTokens(), appToken: presetAppToken }
     : undefined;
 
+// Team-local mode (see shared.ts): `--host 0.0.0.0` makes the daemon
+// reachable by teammates, `--public-origin` names extra origins they load it
+// from (comma-separated), `--web-dist` points at a built desktop bundle.
+const host = readFlag(args, '--host');
+const publicOrigins = readFlag(args, '--public-origin')
+  ?.split(',')
+  .map((o) => o.trim())
+  .filter((o) => o !== '');
+const webDistArg = readFlag(args, '--web-dist');
+
 const handle = await startServer({
   rootDir,
   port,
   tokens,
+  ...(host === undefined ? {} : { host }),
+  ...(publicOrigins === undefined ? {} : { publicOrigins }),
+  ...(webDistArg === undefined ? {} : { webDistDir: resolve(webDistArg) }),
   // `--init` is the desktop's add-project spawn, which deliberately replaces
   // whatever daemon predates the project's tracker; `--replace` is the
   // explicit operator override.

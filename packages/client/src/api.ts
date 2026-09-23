@@ -154,6 +154,8 @@ export interface RunMeta {
   error?: string;
   /** The Claude model this run was dispatched with, if one was chosen. */
   model?: string;
+  /** ActorRef of the human who dispatched this run — see the server's RunMeta. */
+  dispatchedBy?: string;
   // The approval this run is parked on while `state` is 'awaiting-approval',
   // so a client that connects after the `approval.requested` event fired (a
   // reload, a relaunched app, the CLI) can still answer it. The daemon
@@ -778,7 +780,9 @@ export type ServerEvent =
   // refetch GET /api/landing. No payload: the cache itself is the source of
   // truth, same "go refetch" contract as task.changed. Mirrors
   // packages/server/src/events.ts exactly.
-  | { type: 'landing.changed' };
+  | { type: 'landing.changed' }
+  // Someone arrived or left; refetch GET /api/presence.
+  | { type: 'presence.changed' };
 
 // Mirrors RunQuestion in packages/server/src/orchestrator/questions.ts: one
 // question an agent is blocked on until the human answers it.
@@ -812,6 +816,8 @@ export interface RunClaim {
   runId: string;
   taskId: string;
   claims: string[];
+  /** ActorRef of who dispatched the run holding these claims, when anyone did. */
+  dispatchedBy?: string;
 }
 
 // Mirrors PlannedTask in packages/server/src/orchestrator/planner.ts.
@@ -1510,6 +1516,43 @@ export interface LandingRow {
   checklist?: { passed: number; total: number; weak: string[] };
 }
 
+/** One person connected to this daemon — mirrors PresenceEntry in
+ * packages/server/src/presence.ts. */
+export interface PresenceEntry {
+  handle: string;
+  ref: string;
+  /** How many of their clients are open; two means app plus a tab. */
+  connections: number;
+  since: string;
+  /** Live runs they dispatched. */
+  runs: string[];
+}
+
+/** One run's dev-server preview — mirrors PreviewState in
+ * packages/server/src/preview.ts. */
+export interface RunPreview {
+  runId: string;
+  status: 'starting' | 'ready' | 'failed' | 'stopped';
+  port: number;
+  /** Daemon-relative, e.g. `/preview/r-abc123/`. Resolve it against the
+   *  daemon's base URL; the dev server's own port is never the address. */
+  url: string;
+  command: string;
+  error?: string;
+  startedAt: string;
+  lastRequestedAt: string;
+}
+
+/** Why there is no preview, when there is none. `disabled` and `no-command`
+ *  are ordinary states a surface renders as an empty state rather than an
+ *  error — most repos that are not web apps answer `no-command`. */
+export type RunPreviewReason = 'disabled' | 'no-command' | 'no-worktree';
+
+export interface RunPreviewResult {
+  preview: RunPreview | null;
+  reason?: RunPreviewReason;
+}
+
 /** A finished run's diff judged against its task's requirements — mirrors
  * RunChecklist in packages/server/src/judgments/landingChecklist.ts. */
 export interface RunChecklist {
@@ -2205,6 +2248,23 @@ export interface ApiClient {
   // agent instead, and the run's Activity/transcript say so.
   resumeRun(runId: string): Promise<RunMeta>;
   fetchRunDiff(runId: string): Promise<DiffResult>;
+  /** What the daemon is holding for this run, without starting anything —
+   *  safe to poll while a preview is coming up. */
+  /** Who is connected right now, and what each is running. */
+  fetchPresence(): Promise<PresenceEntry[]>;
+  /** Who this client's credential speaks for. */
+  fetchWhoami(): Promise<{
+    handle: string;
+    ref: string;
+    tier: 'request' | 'decide';
+  }>;
+  fetchRunPreview(runId: string): Promise<RunPreviewResult>;
+  /** Starts this run's dev server if it has none. Decide-tier: it runs a
+   *  command out of the run's own worktree. Resolves with `preview: null` and
+   *  a reason when the repo has no dev script or previews are switched off —
+   *  an ordinary empty state, not an error. */
+  startRunPreview(runId: string): Promise<RunPreviewResult>;
+  stopRunPreview(runId: string): Promise<void>;
   /** The run's requirement checklist; 404s until the finish hook wrote one. */
   fetchRunChecklist(runId: string): Promise<RunChecklist>;
   reviewRun(
@@ -2859,6 +2919,14 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     resumeRun: (runId) =>
       request(target, `/api/runs/${runId}/resume`, { method: 'POST' }),
     fetchRunDiff: (runId) => request(target, `/api/runs/${runId}/diff`),
+    fetchPresence: () => request(target, '/api/presence'),
+    fetchWhoami: () => request(target, '/api/whoami'),
+    fetchRunPreview: (runId) => request(target, `/api/runs/${runId}/preview`),
+    startRunPreview: (runId) =>
+      request(target, `/api/runs/${runId}/preview`, { method: 'POST' }),
+    stopRunPreview: async (runId) => {
+      await request(target, `/api/runs/${runId}/preview`, { method: 'DELETE' });
+    },
     fetchRunChecklist: (runId) =>
       request(target, `/api/runs/${runId}/checklist`),
     reviewRun: (runId, action) =>

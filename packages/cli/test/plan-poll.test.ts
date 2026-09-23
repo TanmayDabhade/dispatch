@@ -40,6 +40,11 @@ function makeClient(getPlan: ApiClient['getPlan']): ApiClient {
     browserScreenshot: () => Promise.reject(new Error('not used')),
     browserStartPick: () => Promise.reject(new Error('not used')),
     browserPickResult: () => Promise.reject(new Error('not used')),
+    getTaskFindings: () => Promise.reject(new Error('not used')),
+    getLedger: () => Promise.reject(new Error('not used')),
+    issueTeamToken: () => Promise.reject(new Error('not used')),
+    listTeamTokens: () => Promise.reject(new Error('not used')),
+    revokeTeamToken: () => Promise.reject(new Error('not used')),
   };
 }
 

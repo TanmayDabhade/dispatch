@@ -5,6 +5,7 @@ import { type ChangeEvent, useId, useMemo, useState } from 'react';
 import {
   buildDispatchPreview,
   DEFAULT_RUN_COST_USD,
+  type LiveClaim,
 } from '@/lib/dispatchPreview';
 import { concurrencyChoices } from '@/lib/epicConcurrency';
 import {
@@ -41,6 +42,9 @@ interface DispatchDialogProps {
   readyIds: ReadonlySet<string>;
   /** Agents already working, which is what eats into the concurrency budget. */
   runningNow: number;
+  /** Live runs and their claimed files, so the preview can warn before this dispatch
+   * lands on someone else's work. Optional: without it no overlap is checked. */
+  liveClaims?: LiveClaim[];
   /** Starting concurrency, from the project's config. */
   defaultConcurrency: number;
   /** The most agents the picker offers — the project's `orchestrator.maxConcurrency`.
@@ -139,6 +143,7 @@ export function DispatchDialog({
   tasks,
   readyIds,
   runningNow,
+  liveClaims,
   defaultConcurrency,
   maxConcurrency = MAX_CONCURRENCY_HARD_CAP,
   runCostEstimateUsd = DEFAULT_RUN_COST_USD,
@@ -193,8 +198,17 @@ export function DispatchDialog({
         concurrency,
         runCostEstimateUsd,
         ceilingUsd,
+        liveClaims,
       }),
-    [tasks, readyIds, runningNow, concurrency, runCostEstimateUsd, ceilingUsd]
+    [
+      tasks,
+      readyIds,
+      runningNow,
+      concurrency,
+      runCostEstimateUsd,
+      ceilingUsd,
+      liveClaims,
+    ]
   );
 
   const agents = preview.startsNow + preview.queued;
@@ -215,6 +229,17 @@ export function DispatchDialog({
     const n = preview.undeclaredWrites;
     hints.push(
       `${n} task${n === 1 ? ' declares' : 's declare'} no writes — ${n === 1 ? 'it' : 'they'} will run one at a time`
+    );
+  }
+  // One line per overlap, naming the person when there is one: "wyat's run"
+  // tells you who to talk to, a run id tells you where to look.
+  for (const overlap of preview.overlaps) {
+    const whose =
+      overlap.holder === undefined
+        ? `run ${overlap.runId}`
+        : `${overlap.holder.replace(/^human:/, '')}'s run ${overlap.runId}`;
+    hints.push(
+      `${overlap.taskTitle} writes files ${whose} has claimed — it will start anyway`
     );
   }
   if (fixLoopAuto !== undefined) {

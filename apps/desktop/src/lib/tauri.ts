@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 
 import type { DaemonConnection } from './daemonAuth';
+import { injectedSharedConfig, readTeamCredential } from './teamLocal';
 import type {
   DashboardStats,
   FileDiff,
@@ -123,7 +124,9 @@ export function hasDispatch(root: string): Promise<boolean> {
   // or if a `port` param points at an already-running daemon.
   if (!isTauri()) {
     return Promise.resolve(
-      injectedDemoConfig() !== undefined || browserParam('port') !== null
+      injectedDemoConfig() !== undefined ||
+        injectedSharedConfig() !== undefined ||
+        browserParam('port') !== null
     );
   }
   return invoke('has_dispatch', { root });
@@ -152,6 +155,22 @@ export function ensureDispatchd(root: string): Promise<DaemonConnection> {
         appToken: demo.appToken,
         agentToken: demo.agentToken,
         baseUrl: demo.baseUrl,
+      });
+    }
+    // Team-local mode: the page came from the daemon, so the daemon is this
+    // page's own origin, and the credential is the teammate's own. Only a
+    // decide-tier credential is offered as the app token, so the Approve
+    // buttons show for exactly the people who can press them.
+    if (injectedSharedConfig() !== undefined) {
+      const credential = readTeamCredential();
+      if (credential === null) {
+        return Promise.reject(new Error('sign in with your team token'));
+      }
+      return Promise.resolve({
+        port: 0,
+        agentToken: credential.token,
+        appToken: credential.tier === 'decide' ? credential.token : null,
+        baseUrl: window.location.origin,
       });
     }
     // Browser-dev fallback: the daemon is already running (started outside the
@@ -201,7 +220,11 @@ export function currentProjectRoot(): Promise<string | null> {
   // `null` (same "no project yet" contract as the packaged app), matching
   // this function's return type rather than rejecting.
   if (!isTauri()) {
-    return Promise.resolve(injectedDemoConfig()?.root ?? browserParam('root'));
+    return Promise.resolve(
+      injectedDemoConfig()?.root ??
+        injectedSharedConfig()?.root ??
+        browserParam('root')
+    );
   }
   return invoke('current_project_root');
 }

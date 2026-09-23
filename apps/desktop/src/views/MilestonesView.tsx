@@ -40,6 +40,7 @@ import {
   type OpenPicker,
   TaskListRow,
 } from './TaskListRow';
+import { liveClaimsFrom } from '@/lib/dispatchPreview';
 import { GroupHeader } from '@/ui/ai/group-header';
 import { LabelPill } from '@/ui/ai/pill';
 import { EmptyState } from '@/ui/chrome';
@@ -314,6 +315,7 @@ export function MilestonesView({
         }
         readyIds={data.readyIds}
         runningNow={data.liveRunStateByTaskId.size}
+        liveClaims={liveClaimsFrom(data.runs)}
         defaultConcurrency={data.config?.orchestrator.epicConcurrency ?? 3}
         maxConcurrency={data.config?.orchestrator.maxConcurrency}
         runCostEstimateUsd={data.config?.orchestrator.runCostEstimateUsd}

@@ -1,4 +1,5 @@
 import type { ApiContext } from '../api.js';
+import { humanActor } from './caller.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 
 // POST /api/tasks/:id/amend — records a correction to a task's spec: what
@@ -49,7 +50,7 @@ export async function amendTask(
       source === null
         ? `${body.overrides} — ${body.reason}`
         : `${body.overrides} — ${body.reason} (source: ${source})`,
-    authoredBy: ctx.actorContext.humanRef,
+    authoredBy: humanActor(ctx),
   });
 
   ctx.events.broadcast({ type: 'task.changed' });

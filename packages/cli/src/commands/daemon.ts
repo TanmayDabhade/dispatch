@@ -618,34 +618,55 @@ export function registerDaemonCommands(
     .command('serve')
     .description('Run dispatchd (REST + WebSocket + web UI) in the foreground')
     .option('--port <n>', 'port to listen on (default: ephemeral)')
-    .action((opts: { port?: string }) => {
-      // requireInitialized, NOT requireStore: the latter demands
-      // `.dispatch/tasks`, which a database-backed project does not have and
-      // never will. Gating on it made this command refuse to start the daemon
-      // in exactly the projects that CANNOT be used without one — the CLI
-      // sends them here ("Start it with: dispatch serve") and this sent them
-      // back with "not initialized".
-      requireInitialized(ctx);
-      const launcher = resolveDaemonLauncher();
-      const args = [...launcher.leadingArgs, '--root', projectRoot(ctx.cwd)];
-      if (opts.port !== undefined) args.push('--port', opts.port);
-
-      const result = spawnSync(launcher.cmd, args, {
-        stdio: 'inherit',
-        env: childEnvFor(launcher),
-      });
-      if (result.error !== undefined) {
-        if ((result.error as NodeJS.ErrnoException).code === 'ENOENT') {
-          throw new CliError(
-            launcher.usesBun
-              ? 'dispatch serve requires bun (https://bun.sh)'
-              : `dispatch serve could not launch the daemon binary: ${launcher.cmd}`
-          );
+    .option(
+      '--host <addr>',
+      '127.0.0.1 (default, this machine) or 0.0.0.0 (team-local: teammates sign in with `dispatch team invite` tokens)'
+    )
+    .option(
+      '--public-origin <urls>',
+      'team-local: extra comma-separated origins teammates load the app from'
+    )
+    .option('--web-dist <dir>', 'team-local: the built desktop bundle to serve')
+    .action(
+      (opts: {
+        port?: string;
+        host?: string;
+        publicOrigin?: string;
+        webDist?: string;
+      }) => {
+        // requireInitialized, NOT requireStore: the latter demands
+        // `.dispatch/tasks`, which a database-backed project does not have and
+        // never will. Gating on it made this command refuse to start the daemon
+        // in exactly the projects that CANNOT be used without one — the CLI
+        // sends them here ("Start it with: dispatch serve") and this sent them
+        // back with "not initialized".
+        requireInitialized(ctx);
+        const launcher = resolveDaemonLauncher();
+        const args = [...launcher.leadingArgs, '--root', projectRoot(ctx.cwd)];
+        if (opts.port !== undefined) args.push('--port', opts.port);
+        if (opts.host !== undefined) args.push('--host', opts.host);
+        if (opts.publicOrigin !== undefined) {
+          args.push('--public-origin', opts.publicOrigin);
         }
-        throw result.error;
+        if (opts.webDist !== undefined) args.push('--web-dist', opts.webDist);
+
+        const result = spawnSync(launcher.cmd, args, {
+          stdio: 'inherit',
+          env: childEnvFor(launcher),
+        });
+        if (result.error !== undefined) {
+          if ((result.error as NodeJS.ErrnoException).code === 'ENOENT') {
+            throw new CliError(
+              launcher.usesBun
+                ? 'dispatch serve requires bun (https://bun.sh)'
+                : `dispatch serve could not launch the daemon binary: ${launcher.cmd}`
+            );
+          }
+          throw result.error;
+        }
+        process.exitCode = result.status ?? 0;
       }
-      process.exitCode = result.status ?? 0;
-    });
+    );
 
   program
     .command('ui')

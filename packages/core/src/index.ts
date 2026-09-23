@@ -8,6 +8,7 @@ export {
   sanitizeAttachmentName,
 } from './attachments.js';
 export * from './subagents.js';
+export * from './preview.js';
 export {
   generateDraftId,
   generateFindingId,
@@ -195,7 +196,9 @@ export {
   isMaskedSecretUrl,
   LINEAR_DIRECTIONS,
   MODEL_ROLES,
+  DEFAULT_PREVIEW,
   NOTIFICATION_KINDS,
+  previewSettings,
   projectPolicy,
   queueWeights,
   SECRET_URL_MASK_SUFFIX,
@@ -244,6 +247,7 @@ export type {
   NotificationKind,
   NotificationsConfig,
   OrchestratorConfig,
+  PreviewConfig,
   ReceiptsConfig,
   QueueConfig,
   QueueWeightsResult,

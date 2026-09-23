@@ -10,6 +10,7 @@ import {
   DEFAULT_LINEAR,
   DEFAULT_MODELS,
   DEFAULT_NOTIFICATIONS,
+  DEFAULT_PREVIEW,
   DEFAULT_RECEIPTS,
   DEFAULT_REPO_DIGEST,
   loadConfig,
@@ -65,6 +66,7 @@ describe('loadConfig', () => {
       notifications: DEFAULT_NOTIFICATIONS,
       receipts: DEFAULT_RECEIPTS,
       policy: DEFAULT_POLICY,
+      preview: DEFAULT_PREVIEW,
       queue: { weights: DEFAULT_QUEUE_WEIGHTS },
     });
   });

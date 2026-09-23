@@ -17,6 +17,7 @@ import type {
   NotificationKind,
   NotificationsConfig,
   OrchestratorConfig,
+  PreviewConfig,
   QueueConfig,
   ReceiptsConfig,
   RemoteConfig,
@@ -31,6 +32,7 @@ import {
   DEFAULT_LINEAR,
   DEFAULT_MODELS,
   DEFAULT_NOTIFICATIONS,
+  DEFAULT_PREVIEW,
   DEFAULT_RECEIPTS,
   DEFAULT_REPO_DIGEST,
   EXECUTOR_MODEL_ROLES,
@@ -114,6 +116,7 @@ const DEFAULTS: DispatchConfig = {
   statuses: [...STATUSES],
   autoCommit: false,
   orchestrator: { ...DEFAULT_ORCHESTRATOR },
+  preview: { ...DEFAULT_PREVIEW },
   models: { ...DEFAULT_MODELS },
   executors: {},
   remotes: {},
@@ -643,6 +646,69 @@ function parseReceiptsConfig(raw: unknown): ReceiptsConfig {
 // only `undefined` falls back to defaults. An unknown gate key or mode is a
 // ConfigError rather than silently ignored: a typo'd override would otherwise
 // leave a gate on the rung's behavior while the file reads as pinning it.
+// Validates the optional `preview:` block. Same contract as every other block
+// here: absent means the defaults, a malformed one throws rather than being
+// silently dropped, and a partial one layers over the defaults so a config
+// naming only `command` still gets both timeouts.
+function parsePreviewConfig(raw: unknown): PreviewConfig {
+  if (raw === undefined) return { ...DEFAULT_PREVIEW };
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: preview must be an object'
+    );
+  }
+  const obj = raw as Record<string, unknown>;
+
+  const { enabled } = obj;
+  if (enabled !== undefined && typeof enabled !== 'boolean') {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: preview.enabled must be a boolean'
+    );
+  }
+
+  // Both commands are rejected when present-but-empty rather than coerced to
+  // absent: an empty string in a config file is a mistake someone should hear
+  // about, and silently autodetecting instead hides it.
+  for (const key of ['command', 'installCommand'] as const) {
+    const value = obj[key];
+    if (
+      value !== undefined &&
+      (typeof value !== 'string' || value.trim() === '')
+    ) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: preview.${key} must be a non-empty string`
+      );
+    }
+  }
+
+  for (const key of ['readyTimeoutSec', 'idleTimeoutSec'] as const) {
+    const value = obj[key];
+    if (
+      value !== undefined &&
+      (typeof value !== 'number' || !Number.isFinite(value) || value <= 0)
+    ) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: preview.${key} must be a positive number`
+      );
+    }
+  }
+
+  return {
+    ...DEFAULT_PREVIEW,
+    ...(enabled === undefined ? {} : { enabled }),
+    ...(obj.command === undefined ? {} : { command: obj.command as string }),
+    ...(obj.installCommand === undefined
+      ? {}
+      : { installCommand: obj.installCommand as string }),
+    ...(obj.readyTimeoutSec === undefined
+      ? {}
+      : { readyTimeoutSec: obj.readyTimeoutSec as number }),
+    ...(obj.idleTimeoutSec === undefined
+      ? {}
+      : { idleTimeoutSec: obj.idleTimeoutSec as number }),
+  };
+}
+
 function parsePolicyConfig(raw: unknown): PolicyConfig {
   if (raw === undefined) return { ...DEFAULT_POLICY, gates: {} };
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -1061,6 +1127,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
       notifications: cloneNotifications(DEFAULTS.notifications),
       receipts: { ...DEFAULT_RECEIPTS },
       policy: { ...DEFAULT_POLICY, gates: {} },
+      preview: { ...DEFAULT_PREVIEW },
       queue: defaultQueue(),
     };
   }
@@ -1145,6 +1212,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
     notifications: parseNotificationsConfig(raw.notifications),
     receipts: parseReceiptsConfig(raw.receipts),
     policy: parsePolicyConfig(raw.policy),
+    preview: parsePreviewConfig(raw.preview),
     queue: parseQueueConfig(raw.queue),
     prWorktreeDir: raw.prWorktreeDir,
   };

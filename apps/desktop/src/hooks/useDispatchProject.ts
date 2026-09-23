@@ -16,6 +16,7 @@ import type {
   MergeQueueSnapshot,
   PlanProposal,
   PlanRecord,
+  PresenceEntry,
   ReadinessReading,
   RepoPr,
   ReviewComment,
@@ -207,6 +208,18 @@ export interface DispatchProjectData {
   /** The active project's dispatchd port, `undefined` until it resolves — exposed so a view
    * can scope its own query keys (e.g. `useGit`) the same way this hook's queries do. */
   port: number | undefined;
+  /** The daemon's HTTP base, or `null` before one resolves. Exposed for the
+   *  few things that address the daemon directly rather than through
+   *  `client` — a run preview's iframe is one, since a browser frame loads a
+   *  URL and cannot go through the API client at all. Honours the web demo's
+   *  proxy base the same way every API call does. */
+  daemonBaseUrl: string | null;
+  /** Everyone connected to this daemon right now, you included. One entry on
+   *  a solo project; more once teammates hold their own tokens. */
+  presence: PresenceEntry[];
+  /** This window's own ActorRef (`human:<handle>`), or `null` until the daemon
+   *  has said. While null, nothing is treated as a teammate's. */
+  me: string | null;
   portLoading: boolean;
   portError: boolean;
   portErrorDetail: unknown;
@@ -739,6 +752,8 @@ export function useDispatchProject(
   const configQueryKey = useMemo(() => dispatchConfigKey(port), [port]);
   const readyQueryKey = useMemo(() => ['dispatch-ready-tasks', port], [port]);
   const runsQueryKey = useMemo(() => ['dispatch-runs', port], [port]);
+  const presenceQueryKey = useMemo(() => ['dispatch-presence', port], [port]);
+  const whoamiQueryKey = useMemo(() => ['dispatch-whoami', port], [port]);
   const runDetailQueryKey = useMemo(
     () => ['dispatch-run', port, selectedRunId],
     [port, selectedRunId]
@@ -930,6 +945,28 @@ export function useDispatchProject(
     queryFn: () => {
       if (client === null) throw new Error('dispatchd client not ready');
       return client.fetchReadyTasks();
+    },
+    enabled: client !== null,
+  });
+  // Who this window is, as the daemon sees its credential. Fetched once per
+  // connection — a credential does not change identity mid-session — and read
+  // wherever the app has to tell "mine" from "a teammate's".
+  const { data: whoami } = useQuery({
+    queryKey: whoamiQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchWhoami();
+    },
+    enabled: client !== null,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+  // Who else is on this daemon. Refetched on `presence.changed` (someone
+  // arrived or left) and `run.changed` (what they are running moved).
+  const { data: presence } = useQuery({
+    queryKey: presenceQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchPresence();
     },
     enabled: client !== null,
   });
@@ -1291,8 +1328,11 @@ export function useDispatchProject(
             void queryClient.invalidateQueries({
               queryKey: overseerKeyPrefix(port),
             });
+          } else if (event.type === 'presence.changed') {
+            void queryClient.invalidateQueries({ queryKey: presenceQueryKey });
           } else if (event.type === 'run.changed') {
             void queryClient.invalidateQueries({ queryKey: runsQueryKey });
+            void queryClient.invalidateQueries({ queryKey: presenceQueryKey });
             void queryClient.invalidateQueries({
               queryKey: ['dispatch-run', port],
             });
@@ -1625,6 +1665,7 @@ export function useDispatchProject(
     configQueryKey,
     readyQueryKey,
     runsQueryKey,
+    presenceQueryKey,
     notesQueryKey,
     draftsQueryKey,
     agentSessionsQueryKey,
@@ -2691,6 +2732,9 @@ export function useDispatchProject(
   return {
     client,
     port,
+    daemonBaseUrl: connection === undefined ? null : daemonBaseUrl(connection),
+    presence: presence ?? [],
+    me: whoami?.ref ?? null,
     portLoading,
     portError,
     portErrorDetail,

@@ -235,6 +235,7 @@ materializer
 mathml
 mdurl
 mdxjs
+Menlo
 Merge's
 mergebasesha
 mergedsha
@@ -395,8 +396,10 @@ scim
 screenful
 screenshotted
 scriptable
+Segoe
 seqs
 serde
+serialised
 serialises
 serialising
 sess
@@ -431,6 +434,7 @@ SUBDIRS
 sublabel
 subline
 subtokenize
+subview
 Sugiyama
 summarised
 summarises
@@ -483,6 +487,7 @@ unbuilt
 unbulleted
 unbypassable
 unclosable
+unconfident
 unconfig
 unconfigured
 undecorate
@@ -507,6 +512,7 @@ unjudged
 unkeyed
 unlayered
 unlisten
+unlistened
 unobservably
 unpadded
 unparented
@@ -579,7 +585,3 @@ Yegge's
 ypes
 zombied
 zwitch
-serialised
-unconfident
-subview
-unlistened

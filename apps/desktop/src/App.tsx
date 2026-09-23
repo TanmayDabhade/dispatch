@@ -93,6 +93,7 @@ import { BranchesView } from './views/BranchesView';
 import { DesignView } from './views/DesignView';
 import { DraftView } from './views/DraftView';
 import { FilesView } from './views/FilesView';
+import { FirstRunView } from './views/FirstRunView';
 import { GalleryView } from './views/GalleryView';
 import { GetStartedView } from './views/GetStartedView';
 import { ImpactView } from './views/ImpactView';
@@ -558,12 +559,14 @@ function App() {
         pendingApprovals: data.pendingApprovals,
         openQuestions: data.openQuestions,
         fixLoops: data.fixLoops,
+        me: data.me,
       }),
     [
       data.runs,
       data.tasks,
       data.epics,
       data.repoPrs,
+      data.me,
       data.mergeQueue,
       data.pendingApprovals,
       data.openQuestions,
@@ -951,6 +954,16 @@ function App() {
     resolutionError === null &&
     !noProjectYet &&
     (root === undefined || rootHasDispatch === undefined);
+  // An initialized project with nothing on its board opens on the prompt box
+  // rather than an empty Control room. Gated on `overview` — the view it lands
+  // on — so navigating anywhere deliberately leaves the first run behind
+  // instead of trapping someone who came to look around. Archived tasks count:
+  // a board someone emptied is not a fresh project.
+  const showFirstRun =
+    navState.section === 'project' &&
+    navState.projectView === 'overview' &&
+    data.tasksReady &&
+    data.tasksIncludingArchived.length === 0;
 
   return (
     <TooltipProvider>
@@ -1102,6 +1115,17 @@ function App() {
                             </div>
                           ) : showGetStarted ? (
                             <GetStartedView projectPath={root} />
+                          ) : showFirstRun ? (
+                            <FirstRunView
+                              projectName={activeProject?.name ?? null}
+                              onStartDraft={rawData.handleStartDraft}
+                              onBrowseBoard={() =>
+                                dispatchNav({
+                                  type: 'setProjectView',
+                                  view: 'board',
+                                })
+                              }
+                            />
                           ) : navState.section === 'global' ? (
                             <>
                               {navState.globalView === 'all-agents' && (
@@ -1395,6 +1419,7 @@ function App() {
                       setGlobalView('settings', { page: 'integrations' })
                     }
                     onOpenOverseer={() => setGlobalView('overseer')}
+                    presence={activeProject !== null ? data.presence : []}
                   />
 
                   <QuickCaptureDialog

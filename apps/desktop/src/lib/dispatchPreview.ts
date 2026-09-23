@@ -1,6 +1,9 @@
+import type { RunMeta } from '@dispatch/client';
+import { claimConflictsWithWrites } from '@dispatch/core/browser';
 import type { TaskDoc } from '@dispatch/core/browser';
 
 import { formatUsd } from './epicSession';
+import { isTerminalRunState } from './runState';
 
 /**
  * What a bulk dispatch is actually about to do.
@@ -43,6 +46,47 @@ export interface DispatchPreview {
   /** Whether even the low estimate clears the spend ceiling, so the session would pause
    * before every task has run. */
   overCeiling: boolean;
+  /** Tasks about to run whose declared writes overlap a run already live on another
+   * task — on a shared daemon, usually a teammate's. Surfaced as a warning, never a
+   * refusal: the person dispatching decides, and nobody's live run is ever touched. */
+  overlaps: DispatchOverlap[];
+}
+
+/** One task about to run into someone else's live claim. */
+interface DispatchOverlap {
+  taskId: string;
+  taskTitle: string;
+  runId: string;
+  /** ActorRef of whoever dispatched the live run, when anyone did. */
+  holder?: string;
+}
+
+/** The slice of a live run the overlap check reads. */
+export interface LiveClaim {
+  runId: string;
+  taskId: string;
+  claims: string[];
+  dispatchedBy?: string;
+}
+
+/** The live claims in a run list: every run not yet terminal, with the files it has
+ * claimed and who dispatched it. The three dispatch surfaces all hand the dialog this
+ * from the same `data.runs`, so it lives here rather than in each of them. A missing list
+ * reads as no live runs — the views' test fixtures build partial project data, and no
+ * overlap check is better than a dialog that cannot open. */
+export function liveClaimsFrom(
+  runs: readonly RunMeta[] | undefined
+): LiveClaim[] {
+  return (runs ?? [])
+    .filter((run) => !isTerminalRunState(run.state))
+    .map((run) => ({
+      runId: run.id,
+      taskId: run.taskId,
+      claims: run.claims ?? [],
+      ...(run.dispatchedBy === undefined
+        ? {}
+        : { dispatchedBy: run.dispatchedBy }),
+    }));
 }
 
 export interface BuildDispatchPreviewInput {
@@ -58,6 +102,9 @@ export interface BuildDispatchPreviewInput {
   runCostEstimateUsd?: number;
   /** The spend ceiling the dispatch will carry; `null` or absent means none. */
   ceilingUsd?: number | null;
+  /** Runs live right now and the files each has claimed. Absent means no overlap
+   * check — the raise dialog, for one, has no tasks to check. */
+  liveClaims?: LiveClaim[];
 }
 
 // The estimate is a range around the midpoint — half to one-and-a-half — since a run's
@@ -119,6 +166,7 @@ export function buildDispatchPreview(
     concurrency,
     runCostEstimateUsd = DEFAULT_RUN_COST_USD,
     ceilingUsd = null,
+    liveClaims = [],
   } = input;
   // A concurrency of 0 or less would silently start nothing; treat it as at least one so the
   // preview and the dispatch agree about what the button will do.
@@ -154,6 +202,26 @@ export function buildDispatchPreview(
     (task, i) =>
       rows[i]?.disposition !== 'not-ready' && task.meta.writes.length === 0
   ).length;
+  // Same predicate the epic scheduler uses to keep its own runs apart
+  // (claimConflictsWithWrites in core), so the dialog and the scheduler agree
+  // on what an overlap is. A run on the task itself is not an overlap — that
+  // is a redispatch, and the orchestrator resumes it rather than colliding.
+  const overlaps: DispatchOverlap[] = [];
+  tasks.forEach((task, i) => {
+    if (rows[i]?.disposition === 'not-ready') return;
+    for (const live of liveClaims) {
+      if (live.taskId === task.meta.id) continue;
+      if (!claimConflictsWithWrites(live.claims, task.meta.writes)) continue;
+      overlaps.push({
+        taskId: task.meta.id,
+        taskTitle: task.meta.title,
+        runId: live.runId,
+        ...(live.dispatchedBy === undefined
+          ? {}
+          : { holder: live.dispatchedBy }),
+      });
+    }
+  });
   const cost = costClauses(estimateUsd, perRun, ceilingUsd);
 
   return {
@@ -167,5 +235,6 @@ export function buildDispatchPreview(
     estimateUsd,
     undeclaredWrites,
     overCeiling: ceilingUsd !== null && estimateUsd.low > ceilingUsd,
+    overlaps,
   };
 }
