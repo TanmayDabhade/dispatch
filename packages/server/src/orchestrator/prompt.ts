@@ -132,7 +132,7 @@ export function buildTaskPrompt(
       'uncommitted worktree cannot be reviewed or merged.'
   );
 
-  // On by default, opted out per-task with `self-review: false` in frontmatter.
+  // Opt-in for new tasks (see TaskMeta.selfReview); files without the key read as on.
   if (task.meta.selfReview) {
     sections.push(
       'Before finishing: self-review your work. Re-read the full diff of your changes, ' +
