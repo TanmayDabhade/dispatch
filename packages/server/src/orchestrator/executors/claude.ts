@@ -14,6 +14,8 @@ import { floorCheckForToolInput } from '../../floor.js';
 import { openClaudeQuery, rewriteMissingCliError } from '../claudeCli.js';
 import type { StdioServerSpec } from '../dispatchMcp.js';
 import { cartoMcpSpec, cartoSpecFor, dispatchMcpSpec } from '../dispatchMcp.js';
+import { activeExperiments } from '../experiments.js';
+import type { ExperimentName } from '../experiments.js';
 import type {
   ApprovalDecision,
   Executor,
@@ -120,6 +122,50 @@ export const UNUSABLE_IN_DISPATCHED_RUN = [
   'EnterWorktree',
   'ExitWorktree',
 ] as const;
+
+// The `lean-tools` experiment's further exclusions: tools that work in a
+// dispatched run but that few runs need, each resent in every request's
+// prompt prefix. Kept behind the experiment until run telemetry shows that
+// dropping them does not cost completed tasks.
+//
+// - Workflow: multi-agent orchestration; its own description reserves it for
+//   an explicit opt-in a task brief rarely carries. About 21.5 KB of schema,
+//   by far the largest tool definition.
+// - EnterPlanMode / ExitPlanMode: a plan-then-approve loop; a dispatched run
+//   already starts from a brief, and ExitPlanMode parks on a human approval.
+// - ReportFindings: the reporting channel of the code-review skill.
+// - NotebookEdit: Jupyter notebooks only.
+// - ListMcpResourcesTool / ReadMcpResourceTool / ReadMcpResourceDirTool: the
+//   dispatch MCP server's one resource is an onboarding brief the task prompt
+//   already covers.
+export const LEAN_TOOL_EXCLUSIONS = [
+  'Workflow',
+  'EnterPlanMode',
+  'ExitPlanMode',
+  'ReportFindings',
+  'NotebookEdit',
+  'ListMcpResourcesTool',
+  'ReadMcpResourceTool',
+  'ReadMcpResourceDirTool',
+] as const;
+
+// The SDK options each active experiment changes. `env` replaces the CLI's
+// environment wholesale rather than merging into it (sdk.d.ts), which is why
+// it starts from process.env.
+function experimentOptions(
+  experiments: readonly ExperimentName[]
+): Pick<Options, 'disallowedTools' | 'env'> {
+  const disallowed: string[] = [...UNUSABLE_IN_DISPATCHED_RUN];
+  if (experiments.includes('lean-tools')) {
+    disallowed.push(...LEAN_TOOL_EXCLUSIONS);
+  }
+  return {
+    disallowedTools: disallowed,
+    ...(experiments.includes('cache-1h')
+      ? { env: { ...process.env, ENABLE_PROMPT_CACHING_1H: '1' } }
+      : {}),
+  };
+}
 
 /**
  * What a tool call is refused with once the user has asked this run to stop.
@@ -542,7 +588,13 @@ export class ClaudeExecutor implements Executor {
   // test is what actually exercises) — this is the seam that makes
   // consume()'s own message-handling logic (e.g. M7's session-id capture)
   // unit-testable.
-  constructor(private readonly queryFn: typeof query = query) {}
+  //
+  // `experiments` is read once per run; tests pin it rather than depend on the
+  // daemon's DISPATCH_EXPERIMENTS.
+  constructor(
+    private readonly queryFn: typeof query = query,
+    private readonly experiments: () => ExperimentName[] = activeExperiments
+  ) {}
 
   // Opens the SDK query, resolving the Claude Code CLI the SDK spawns
   // robustly via the shared openClaudeQuery() (see claudeCli.ts for the exact
@@ -615,6 +667,10 @@ export class ClaudeExecutor implements Executor {
     };
 
     const queue = new MessageQueue(opts.prompt);
+    const experiments = this.experiments();
+    // Only stamped on runs that ran under at least one, so a default run's
+    // finish keeps exactly the shape it had before experiments existed.
+    const experimentStamp = experiments.length > 0 ? { experiments } : {};
     const sdkOptions: Options = {
       cwd: opts.cwd,
       permissionMode: opts.permissionMode as PermissionMode,
@@ -642,7 +698,7 @@ export class ClaudeExecutor implements Executor {
       // these to actually find.
       systemPrompt: { type: 'preset', preset: 'claude_code' },
       settingSources: ['user', 'project', 'local'],
-      disallowedTools: [...UNUSABLE_IN_DISPATCHED_RUN],
+      ...experimentOptions(experiments),
       // Bug fix (fix/executor-mcp-wiring): `query()` does NOT auto-load a
       // project's committed `.mcp.json` the way the interactive `claude` CLI
       // does — without this, a dispatched run has no dispatch MCP tools at
@@ -770,6 +826,7 @@ export class ClaudeExecutor implements Executor {
                   }
                 ),
                 usage: usageMeter.fromResult(message),
+                ...experimentStamp,
               });
             }
             break;
@@ -781,6 +838,7 @@ export class ClaudeExecutor implements Executor {
             error: 'agent session ended without a final result',
             sessionId,
             usage: usageMeter.fromStream(),
+            ...experimentStamp,
           });
         }
       } catch (err) {
@@ -797,6 +855,7 @@ export class ClaudeExecutor implements Executor {
                 : 'agent session error',
             sessionId,
             usage: usageMeter.fromStream(),
+            ...experimentStamp,
           });
         }
       } finally {

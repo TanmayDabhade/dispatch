@@ -52,6 +52,7 @@ interface TranscriptStateLine {
   costUsd?: number;
   turns?: number;
   usage?: RunUsage;
+  experiments?: string[];
   sessionId?: string;
   error?: string;
   // C2's review marker (see RunMeta) rides along on a state line exactly
@@ -168,6 +169,7 @@ export class Transcript {
       costUsd?: number;
       turns?: number;
       usage?: RunUsage;
+      experiments?: string[];
       sessionId?: string;
       error?: string;
       reviewedAt?: string;
@@ -266,6 +268,7 @@ export function replayTranscript(path: string): RunDetail | null {
         costUsd: line.costUsd ?? meta.costUsd,
         turns: line.turns ?? meta.turns,
         usage: line.usage ?? meta.usage,
+        experiments: line.experiments ?? meta.experiments,
         sessionId: line.sessionId ?? meta.sessionId,
         error: line.error ?? meta.error,
         reviewedAt: line.reviewedAt ?? meta.reviewedAt,

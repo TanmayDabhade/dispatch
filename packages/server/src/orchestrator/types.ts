@@ -117,6 +117,8 @@ export interface ExecutorEvents {
     error?: string;
     // Token spend by billing type; absent when the executor measures none.
     usage?: RunUsage;
+    // The harness experiments (experiments.ts) the run ran under, when any.
+    experiments?: string[];
   }): void;
 }
 
@@ -260,6 +262,10 @@ export interface RunMeta {
   // costUsd. Absent for runs recorded before it existed and for executors
   // that measure no tokens.
   usage?: RunUsage;
+  // The harness experiments this run ran under (see experiments.ts), so runs
+  // can be split by arm when comparing cost per completed task. Absent for a
+  // run under the defaults.
+  experiments?: string[];
   sessionId?: string;
   error?: string;
   // The Claude model this run was dispatched with, if one was chosen (see

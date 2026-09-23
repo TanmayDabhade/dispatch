@@ -4163,6 +4163,7 @@ export class Orchestrator {
       costUsd?: number;
       turns?: number;
       usage?: RunUsage;
+      experiments?: string[];
       sessionId?: string;
       error?: string;
       reviewedAt?: string;
@@ -4415,6 +4416,7 @@ export class Orchestrator {
       costUsd?: number;
       turns?: number;
       usage?: RunUsage;
+      experiments?: string[];
       sessionId?: string;
       error?: string;
     }
@@ -4464,6 +4466,7 @@ export class Orchestrator {
       costUsd: effectiveFinish.costUsd,
       turns: effectiveFinish.turns,
       usage: effectiveFinish.usage,
+      experiments: effectiveFinish.experiments,
       sessionId: effectiveFinish.sessionId,
       error: effectiveFinish.error,
     });
