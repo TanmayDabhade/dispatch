@@ -134,7 +134,7 @@ export function NumberSetting({
               }}
             />
             {suffix !== undefined && (
-              <span className="text-muted-foreground text-[13px]">
+              <span className="text-[13px] text-(--text-secondary)">
                 {suffix}
               </span>
             )}
