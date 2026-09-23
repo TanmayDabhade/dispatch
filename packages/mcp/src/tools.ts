@@ -135,6 +135,15 @@ const taskMetaShape = {
   model: z.string().nullable(),
   // Only present once a reconciler decided the task's merge landed.
   archivedAt: z.string().optional(),
+  // Linear-parity fields. Optional so a daemon older than them still
+  // validates.
+  estimate: z.number().nullable().optional(),
+  dueDate: z.string().nullable().optional(),
+  startDate: z.string().nullable().optional(),
+  relatedTo: z.array(z.string()).optional(),
+  duplicateOf: z.string().nullable().optional(),
+  initiatives: z.array(z.string()).optional(),
+  creator: z.string().nullable().optional(),
 };
 
 function toSummary(doc: TaskDoc) {

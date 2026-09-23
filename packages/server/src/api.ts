@@ -5,6 +5,7 @@ import {
   ConfigError,
   describeValue,
   getSection,
+  isValidAssignee,
   loadConfig,
   PRIORITIES,
   TaskParseError,
@@ -423,6 +424,54 @@ function validateStringOrNullField(
   return null;
 }
 
+// The Linear-parity fields (see TaskMeta): nullable scalars, string lists,
+// and the cycle object. `creator` is create-only in spirit but harmless here.
+function validateLinearFields(value: Record<string, unknown>): string | null {
+  for (const key of [
+    'dueDate',
+    'startDate',
+    'duplicateOf',
+    'color',
+    'icon',
+  ] as const) {
+    const error = validateStringOrNullField(value[key], key);
+    if (error) return error;
+  }
+  for (const key of ['relatedTo', 'initiatives'] as const) {
+    const error = validateStringArrayField(value[key], key);
+    if (error) return error;
+  }
+  const { estimate, creator, cycle } = value;
+  if (
+    estimate !== undefined &&
+    estimate !== null &&
+    (typeof estimate !== 'number' || !Number.isFinite(estimate))
+  ) {
+    return 'invalid estimate: expected a number or null';
+  }
+  if (
+    creator !== undefined &&
+    creator !== null &&
+    (typeof creator !== 'string' || !isValidAssignee(creator))
+  ) {
+    return 'invalid creator: expected an actor ref or null';
+  }
+  if (cycle !== undefined && cycle !== null) {
+    const c = cycle as Record<string, unknown>;
+    if (
+      typeof cycle !== 'object' ||
+      typeof c.id !== 'string' ||
+      typeof c.number !== 'number' ||
+      typeof c.startsAt !== 'string' ||
+      typeof c.endsAt !== 'string' ||
+      (c.name !== undefined && c.name !== null && typeof c.name !== 'string')
+    ) {
+      return 'invalid cycle: expected { id, number, name, startsAt, endsAt } or null';
+    }
+  }
+  return null;
+}
+
 // Validates every field createTask/updateTask accept beyond title, entirely
 // before either one touches the store — a request that fails here writes no
 // file. `includeKind` is create-only: UpdatePatch has no `kind` field, since
@@ -487,6 +536,8 @@ function validateTaskFields(
     'archivedAt'
   );
   if (archivedAtError) return archivedAtError;
+  const linearFieldsError = validateLinearFields(value);
+  if (linearFieldsError) return linearFieldsError;
   // Free-text body sections — validated as optional strings before they reach
   // setSection, which would otherwise `.trim()` a non-string and throw.
   const descriptionError = validateStringField(
@@ -528,7 +579,12 @@ async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
   );
   if (fieldsError) return errorResponse(400, fieldsError);
 
-  const doc = ctx.store.create(input);
+  // Credit whoever made the request unless the caller names a creator (a
+  // sync importing someone else's issue).
+  const doc = ctx.store.create({
+    ...input,
+    creator: input.creator ?? humanActor(ctx),
+  });
   ctx.cache.rebuild(ctx.store);
   ctx.events.broadcast({ type: 'task.changed', ids: [doc.meta.id] });
   return jsonResponse(doc, 201);

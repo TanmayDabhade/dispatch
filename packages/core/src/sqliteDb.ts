@@ -210,7 +210,7 @@ function adaptDriver(
  * be migrated through. Stored in SQLite's own `user_version` pragma, so the
  * schema carries its version without a table of its own.
  */
-export const DISPATCH_DB_VERSION = 2;
+export const DISPATCH_DB_VERSION = 3;
 
 /**
  * Where a project's database lives by default.
@@ -235,6 +235,21 @@ export function dispatchDbPath(rootDir: string): string {
 // rather than nullable, so NULL here means "no key" and 0 means "explicitly
 // off". `self_review` and `exercised` are always present, so they are plain
 // 0/1.
+// The Linear-parity columns schema v3 added, all nullable: NULL reads back as
+// each field's default, so older rows need no backfill.
+const V3_TASK_COLUMNS = [
+  'estimate REAL',
+  'due_date TEXT',
+  'start_date TEXT',
+  'cycle TEXT',
+  'related_to TEXT',
+  'duplicate_of TEXT',
+  'initiatives TEXT',
+  'creator TEXT',
+  'color TEXT',
+  'icon TEXT',
+];
+
 const DDL = `
 CREATE TABLE IF NOT EXISTS tasks (
   id           TEXT PRIMARY KEY,
@@ -259,6 +274,16 @@ CREATE TABLE IF NOT EXISTS tasks (
   exercised    INTEGER NOT NULL,
   derived_from TEXT,
   attachments  TEXT,
+  estimate     REAL,
+  due_date     TEXT,
+  start_date   TEXT,
+  cycle        TEXT,
+  related_to   TEXT,
+  duplicate_of TEXT,
+  initiatives  TEXT,
+  creator      TEXT,
+  color        TEXT,
+  icon         TEXT,
   slug         TEXT NOT NULL,
   body         TEXT NOT NULL
 );
@@ -374,6 +399,11 @@ export function openDispatchDb(dbPath: string): SqliteDatabase {
   // every column from the DDL; a file an older build stamped takes the ALTERs
   // its version is missing, one per bump, before the DDL adds any new tables.
   if (existing === 1) db.exec('ALTER TABLE tasks ADD COLUMN attachments TEXT');
+  if (existing >= 1 && existing < 3) {
+    for (const column of V3_TASK_COLUMNS) {
+      db.exec(`ALTER TABLE tasks ADD COLUMN ${column}`);
+    }
+  }
   db.exec(DDL);
   db.exec(`PRAGMA user_version = ${DISPATCH_DB_VERSION}`);
   return db;

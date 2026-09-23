@@ -1,4 +1,5 @@
 import type { TaskDoc } from '@dispatch/core/browser';
+import { defaultTaskFields } from '@dispatch/core/browser';
 import { describe, expect, it } from 'bun:test';
 
 import { isMilestoneFinished, rollupMilestoneStatus } from './milestoneRollup';
@@ -24,6 +25,7 @@ function task(status: string): TaskDoc {
       risk: 'routine',
       model: null,
       exercised: false,
+      ...defaultTaskFields(),
     },
     body: '',
   };

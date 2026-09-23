@@ -27,6 +27,7 @@ import { KINDS, PRIORITIES, TASK_RISKS } from './types.js';
 import type {
   Priority,
   TaskAttachment,
+  TaskCycle,
   TaskDoc,
   TaskKind,
   TaskMeta,
@@ -73,8 +74,50 @@ interface TaskRow {
   exercised: number;
   derived_from: string | null;
   attachments: string | null;
+  estimate: number | null;
+  due_date: string | null;
+  start_date: string | null;
+  cycle: string | null;
+  related_to: string | null;
+  duplicate_of: string | null;
+  initiatives: string | null;
+  creator: string | null;
+  color: string | null;
+  icon: string | null;
   slug: string;
   body: string;
+}
+
+// Reads the `cycle` JSON column; null stays null.
+function parseCycleColumn(
+  value: string | null,
+  rowId: string
+): TaskCycle | null {
+  if (value === null) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new SqliteRowError('tasks', rowId, 'cycle', 'is not valid JSON');
+  }
+  const c = parsed as Partial<TaskCycle> | null;
+  if (
+    c === null ||
+    typeof c !== 'object' ||
+    typeof c.id !== 'string' ||
+    typeof c.number !== 'number' ||
+    typeof c.startsAt !== 'string' ||
+    typeof c.endsAt !== 'string'
+  ) {
+    throw new SqliteRowError('tasks', rowId, 'cycle', 'is not a cycle');
+  }
+  return {
+    id: c.id,
+    number: c.number,
+    name: c.name ?? null,
+    startsAt: c.startsAt,
+    endsAt: c.endsAt,
+  };
 }
 
 // Reads the `attachments` JSON column back into the list of TaskAttachments
@@ -167,6 +210,23 @@ function metaFromRow(row: TaskRow): TaskMeta {
     ...(row.attachments === null
       ? {}
       : { attachments: parseAttachments(row.attachments, id) }),
+    // Columns added in schema v3: NULL on older rows reads as the default.
+    estimate: row.estimate,
+    dueDate: row.due_date,
+    startDate: row.start_date,
+    cycle: parseCycleColumn(row.cycle, id),
+    relatedTo:
+      row.related_to === null
+        ? []
+        : parseStringArray(row.related_to, 'tasks', id, 'related_to'),
+    duplicateOf: row.duplicate_of,
+    initiatives:
+      row.initiatives === null
+        ? []
+        : parseStringArray(row.initiatives, 'tasks', id, 'initiatives'),
+    creator: row.creator,
+    color: row.color,
+    icon: row.icon,
   };
 }
 
@@ -204,6 +264,18 @@ function rowValuesFromDoc(doc: TaskDoc, slug: string): SqlValue[] {
     meta.attachments === undefined || meta.attachments.length === 0
       ? null
       : JSON.stringify(meta.attachments),
+    meta.estimate,
+    meta.dueDate,
+    meta.startDate,
+    meta.cycle === null ? null : JSON.stringify(meta.cycle),
+    meta.relatedTo.length === 0 ? null : serializeStringArray(meta.relatedTo),
+    meta.duplicateOf,
+    meta.initiatives.length === 0
+      ? null
+      : serializeStringArray(meta.initiatives),
+    meta.creator,
+    meta.color,
+    meta.icon,
     slug,
     doc.body,
   ];
@@ -212,10 +284,11 @@ function rowValuesFromDoc(doc: TaskDoc, slug: string): SqlValue[] {
 const TASK_COLUMNS = `
   id, title, status, kind, parent, milestone, blocked_by, labels, priority,
   assignee, created, updated, external, self_review, fix_loop, writes, risk,
-  model, archived_at, exercised, derived_from, attachments, slug, body
+  model, archived_at, exercised, derived_from, attachments, estimate,
+  due_date, start_date, cycle, related_to, duplicate_of, initiatives, creator,
+  color, icon, slug, body
 `;
-const TASK_PLACEHOLDERS =
-  '?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?';
+const TASK_PLACEHOLDERS = Array.from({ length: 34 }, () => '?').join(', ');
 
 // Claims an id or reports that someone else already holds it, in one
 // statement. A `SELECT` followed by an `INSERT` leaves a window in between —
@@ -252,6 +325,16 @@ ON CONFLICT (id) DO UPDATE SET
   exercised = excluded.exercised,
   derived_from = excluded.derived_from,
   attachments = excluded.attachments,
+  estimate = excluded.estimate,
+  due_date = excluded.due_date,
+  start_date = excluded.start_date,
+  cycle = excluded.cycle,
+  related_to = excluded.related_to,
+  duplicate_of = excluded.duplicate_of,
+  initiatives = excluded.initiatives,
+  creator = excluded.creator,
+  color = excluded.color,
+  icon = excluded.icon,
   slug = excluded.slug,
   body = excluded.body
 `;

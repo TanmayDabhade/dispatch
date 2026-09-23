@@ -24,6 +24,7 @@ import { TaskStore } from '../src/store.js';
 import type { TaskStorePort } from '../src/store.js';
 import { getSection, serializeTaskFile } from '../src/taskfile.js';
 import type { TaskDoc } from '../src/types.js';
+import { defaultTaskFields } from '../src/types.js';
 
 let root: string;
 const openDbs: SqliteDatabase[] = [];
@@ -839,6 +840,7 @@ function blankDoc(id: string, title: string): TaskDoc {
       risk: 'routine',
       model: null,
       exercised: false,
+      ...defaultTaskFields(),
     },
     body: '\n## Description\n\n\n## Acceptance Criteria\n\n## Activity\n',
   };

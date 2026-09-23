@@ -4,6 +4,7 @@ import type {
   TaskDoc,
   UpdatePatch,
 } from '@dispatch/core/browser';
+import { defaultTaskFields } from '@dispatch/core/browser';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
@@ -49,6 +50,7 @@ function task(
       risk: 'routine',
       model: null,
       exercised: false,
+      ...defaultTaskFields(),
       ...overrides,
     },
     body,

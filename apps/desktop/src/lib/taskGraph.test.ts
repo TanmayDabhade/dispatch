@@ -1,4 +1,5 @@
 import type { TaskDoc } from '@dispatch/core/browser';
+import { defaultTaskFields } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
 import { computeBlockedIds } from './taskGraph';
@@ -28,6 +29,7 @@ function makeTask(
       risk: 'routine',
       model: null,
       exercised: false,
+      ...defaultTaskFields(),
     },
     body: '',
   };

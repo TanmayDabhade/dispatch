@@ -20,6 +20,7 @@ import type {
 } from '../src/linearMap.js';
 import type { Priority, TaskDoc } from '../src/types.js';
 import { PRIORITIES, STATUSES } from '../src/types.js';
+import { defaultTaskFields } from '../src/types.js';
 
 const STATES: LinearWorkflowState[] = [
   { id: 's-backlog', name: 'Backlog', type: 'draft' },
@@ -74,6 +75,7 @@ function task(overrides: Partial<TaskDoc['meta']> = {}): TaskDoc {
       risk: 'routine',
       model: null,
       exercised: false,
+      ...defaultTaskFields(),
       ...overrides,
     },
     body: '\n## Description\n\nThe PR review page blocks on a serial fetch.\n\n## Activity\n',

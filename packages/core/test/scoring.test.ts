@@ -10,6 +10,7 @@ import {
   UNBLOCKING_HALF_VALUE,
 } from '../src/scoring.js';
 import type { TaskDoc, TaskMeta } from '../src/types.js';
+import { defaultTaskFields } from '../src/types.js';
 
 const NOW = '2026-03-01T00:00:00.000Z';
 
@@ -34,6 +35,7 @@ function make(partial: Partial<TaskMeta>): TaskDoc {
       risk: 'routine',
       model: null,
       exercised: false,
+      ...defaultTaskFields(),
       ...partial,
     },
     body: '',

@@ -74,6 +74,67 @@ export interface TaskMeta {
   // bytes live gitignored under `.dispatch/attachments/<taskId>/` on the
   // machine that took the upload. Absent when the task has none.
   attachments?: TaskAttachment[];
+  // Linear-parity fields, defaulted on read (see defaultTaskFields) so files
+  // and rows written before them still parse.
+  /** Story points; null when unestimated. */
+  estimate: number | null;
+  /** ISO date; a container's target date. */
+  dueDate: string | null;
+  /** ISO date; containers only, in practice. */
+  startDate: string | null;
+  cycle: TaskCycle | null;
+  /** Ids of related tasks (Linear's "related" relation, symmetric). */
+  relatedTo: string[];
+  /** The task this one duplicates, or null. */
+  duplicateOf: string | null;
+  /** Extra initiative ids a project belongs to; `parent` holds the first. */
+  initiatives: string[];
+  /** Who created it, as an actor ref; null when unknown (older tasks). */
+  creator: Assignee | null;
+  /** Display color for a container (`#rrggbb`), or null. */
+  color: string | null;
+  /** Display icon name for a container, or null. */
+  icon: string | null;
+}
+
+/** A Linear-style cycle (sprint) a task is scheduled into. */
+export interface TaskCycle {
+  id: string;
+  number: number;
+  name: string | null;
+  startsAt: string;
+  endsAt: string;
+}
+
+/** The Linear-parity fields of TaskMeta, as a task without them reads. */
+export type TaskFieldDefaults = Pick<
+  TaskMeta,
+  | 'estimate'
+  | 'dueDate'
+  | 'startDate'
+  | 'cycle'
+  | 'relatedTo'
+  | 'duplicateOf'
+  | 'initiatives'
+  | 'creator'
+  | 'color'
+  | 'icon'
+>;
+
+/** Fresh defaults for the Linear-parity fields (new arrays each call). */
+export function defaultTaskFields(): TaskFieldDefaults {
+  return {
+    estimate: null,
+    dueDate: null,
+    startDate: null,
+    cycle: null,
+    relatedTo: [],
+    duplicateOf: null,
+    initiatives: [],
+    creator: null,
+    color: null,
+    icon: null,
+  };
 }
 
 export interface TaskAttachment {

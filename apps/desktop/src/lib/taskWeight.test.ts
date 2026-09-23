@@ -1,4 +1,5 @@
 import type { TaskDoc } from '@dispatch/core/browser';
+import { defaultTaskFields } from '@dispatch/core/browser';
 import { describe, expect, it } from 'bun:test';
 
 import { computeTaskWeights, describeWeight } from './taskWeight';
@@ -29,6 +30,7 @@ function makeTask(
       risk: 'routine',
       model: null,
       exercised: false,
+      ...defaultTaskFields(),
       ...overrides,
     },
     body: '',

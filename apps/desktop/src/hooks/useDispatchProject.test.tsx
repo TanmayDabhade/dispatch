@@ -8,6 +8,7 @@ import type {
 } from '@dispatch/client';
 import * as dispatchClient from '@dispatch/client';
 import type { TaskDoc, TaskListItem } from '@dispatch/core/browser';
+import { defaultTaskFields } from '@dispatch/core/browser';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { expect, mock, test } from 'bun:test';
@@ -308,6 +309,7 @@ function taskDoc(id: string, title: string, updated: string): TaskDoc {
       risk: 'routine',
       model: null,
       exercised: false,
+      ...defaultTaskFields(),
     },
     body: `${title} body`,
   };

@@ -30,11 +30,13 @@ import type {
   Assignee,
   Priority,
   TaskAttachment,
+  TaskCycle,
   TaskDoc,
   TaskKind,
   TaskMeta,
   TaskRisk,
 } from './types.js';
+import { defaultTaskFields } from './types.js';
 
 export const DISPATCH_DIR = '.dispatch';
 
@@ -72,6 +74,18 @@ export interface CreateInput {
   // What this task was synthesized from (see TaskMeta.derivedFrom). Set only
   // by the code that synthesizes one; a person creating a task never passes it.
   derivedFrom?: string;
+  // Linear-parity fields (see TaskMeta); null/[] clear them.
+  estimate?: number | null;
+  dueDate?: string | null;
+  startDate?: string | null;
+  cycle?: TaskCycle | null;
+  relatedTo?: string[];
+  duplicateOf?: string | null;
+  initiatives?: string[];
+  color?: string | null;
+  icon?: string | null;
+  /** Who is creating it, as an actor ref. */
+  creator?: Assignee | null;
 }
 
 export interface UpdatePatch {
@@ -92,6 +106,19 @@ export interface UpdatePatch {
   model?: string | null;
   // The id of this task in an external tracker (`linear:<uuid>`), or null to unlink it.
   external?: string | null;
+  // A kind change (e.g. promoting a task to a project); the id keeps its prefix.
+  kind?: TaskKind;
+  // Linear-parity fields (see TaskMeta); null/[] clear them.
+  estimate?: number | null;
+  dueDate?: string | null;
+  startDate?: string | null;
+  cycle?: TaskCycle | null;
+  relatedTo?: string[];
+  duplicateOf?: string | null;
+  initiatives?: string[];
+  color?: string | null;
+  icon?: string | null;
+
   // null clears archivedAt (unarchive); a string sets it; undefined leaves it untouched.
   archivedAt?: string | null;
   // Set once a verify run passes. Never cleared by a patch — a later failing
@@ -199,6 +226,21 @@ export function newTaskDoc(
     ...(input.derivedFrom === undefined
       ? {}
       : { derivedFrom: input.derivedFrom }),
+    ...defaultTaskFields(),
+    ...(input.estimate === undefined ? {} : { estimate: input.estimate }),
+    ...(input.dueDate === undefined ? {} : { dueDate: input.dueDate }),
+    ...(input.startDate === undefined ? {} : { startDate: input.startDate }),
+    ...(input.cycle === undefined ? {} : { cycle: input.cycle }),
+    ...(input.relatedTo === undefined ? {} : { relatedTo: input.relatedTo }),
+    ...(input.duplicateOf === undefined
+      ? {}
+      : { duplicateOf: input.duplicateOf }),
+    ...(input.initiatives === undefined
+      ? {}
+      : { initiatives: input.initiatives }),
+    ...(input.creator === undefined ? {} : { creator: input.creator }),
+    ...(input.color === undefined ? {} : { color: input.color }),
+    ...(input.icon === undefined ? {} : { icon: input.icon }),
   };
   // The initial description is caller-supplied, so it's escaped the same
   // way setSection escapes a later edit to the same section.
@@ -244,6 +286,7 @@ export function applyUpdatePatch(
   // Write boundary for the status alias layer: an API caller (or old UI)
   // speaking a pre-rename name lands in canonical form.
   meta.status = canonicalStatus(meta.status);
+  meta.kind = canonicalKind(meta.kind) as TaskKind;
   // archivedAt is string|undefined on TaskMeta, so null (clear) is handled
   // separately rather than spread in like the other fields.
   if (archivedAt === null) delete meta.archivedAt;

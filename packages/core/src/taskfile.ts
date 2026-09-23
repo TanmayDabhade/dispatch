@@ -8,7 +8,9 @@ import type {
   Assignee,
   Priority,
   TaskAttachment,
+  TaskCycle,
   TaskDoc,
+  TaskFieldDefaults,
   TaskKind,
   TaskMeta,
   TaskRisk,
@@ -103,6 +105,7 @@ export function parseTaskFile(content: string, file?: string): TaskDoc {
     }
   }
   const attachments = parseAttachments(raw.attachments, file);
+  const linearFields = parseLinearFields(raw, file);
   const meta: TaskMeta = {
     id: String(raw.id),
     title: String(raw.title),
@@ -132,8 +135,94 @@ export function parseTaskFile(content: string, file?: string): TaskDoc {
       ? {}
       : { derivedFrom: String(raw['derived-from']) }),
     ...(attachments.length === 0 ? {} : { attachments }),
+    ...linearFields,
   };
   return { meta, body: content.slice(m[0].length) };
+}
+
+// Reads the optional Linear-parity keys, defaulting each absent one so a file
+// written before them parses unchanged.
+function parseLinearFields(
+  raw: Record<string, unknown>,
+  file?: string
+): TaskFieldDefaults {
+  const fail = (key: string, expected: string): never => {
+    throw new TaskParseError(`invalid ${key}: expected ${expected}`, file);
+  };
+  const optionalString = (key: string): string | null => {
+    const value = raw[key];
+    if (value == null) return null;
+    // YAML reads an unquoted `2026-01-02` as a Date.
+    if (value instanceof Date) return value.toISOString().slice(0, 10);
+    return typeof value === 'string' ? value : fail(key, 'a string');
+  };
+  const stringList = (key: string): string[] => {
+    const value = raw[key];
+    if (value == null) return [];
+    if (!Array.isArray(value) || value.some((v) => typeof v !== 'string')) {
+      return fail(key, 'a list of strings');
+    }
+    return value as string[];
+  };
+  const estimate = raw.estimate;
+  if (
+    estimate != null &&
+    (typeof estimate !== 'number' || !Number.isFinite(estimate))
+  ) {
+    fail('estimate', 'a number');
+  }
+  const creator = optionalString('creator');
+  if (creator !== null && !isValidAssignee(creator)) {
+    fail('creator', 'an actor ref');
+  }
+  return {
+    estimate: (estimate as number | null | undefined) ?? null,
+    dueDate: optionalString('due-date'),
+    startDate: optionalString('start-date'),
+    cycle: parseCycle(raw.cycle, file),
+    relatedTo: stringList('related-to'),
+    duplicateOf: optionalString('duplicate-of'),
+    initiatives: stringList('initiatives'),
+    creator,
+    color: optionalString('color'),
+    icon: optionalString('icon'),
+  };
+}
+
+function parseCycle(raw: unknown, file?: string): TaskCycle | null {
+  if (raw == null) return null;
+  const item =
+    typeof raw === 'object' && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : null;
+  const at = (value: unknown): string | null =>
+    value instanceof Date
+      ? value.toISOString()
+      : typeof value === 'string'
+        ? value
+        : null;
+  const startsAt = at(item?.['starts-at']);
+  const endsAt = at(item?.['ends-at']);
+  if (
+    item === null ||
+    typeof item.id !== 'string' ||
+    typeof item.number !== 'number' ||
+    (item.name != null && typeof item.name !== 'string') ||
+    startsAt === null ||
+    endsAt === null
+  ) {
+    throw new TaskParseError(
+      'invalid cycle: expected id, number, starts-at and ends-at',
+      file
+    );
+  }
+  return {
+    id: item.id,
+    number: item.number,
+    name: item.name ?? null,
+    startsAt,
+    endsAt,
+  };
 }
 
 // Validates the frontmatter's `attachments:` list — maps carrying string
@@ -213,6 +302,28 @@ export function serializeTaskFile(doc: TaskDoc): string {
             'added-at': a.addedAt,
           })),
         }),
+    // Linear-parity keys: written only once set, so older files round-trip
+    // byte for byte.
+    ...(meta.estimate == null ? {} : { estimate: meta.estimate }),
+    ...(meta.dueDate == null ? {} : { 'due-date': meta.dueDate }),
+    ...(meta.startDate == null ? {} : { 'start-date': meta.startDate }),
+    ...(meta.cycle == null
+      ? {}
+      : {
+          cycle: {
+            id: meta.cycle.id,
+            number: meta.cycle.number,
+            name: meta.cycle.name,
+            'starts-at': meta.cycle.startsAt,
+            'ends-at': meta.cycle.endsAt,
+          },
+        }),
+    ...(meta.relatedTo.length === 0 ? {} : { 'related-to': meta.relatedTo }),
+    ...(meta.duplicateOf == null ? {} : { 'duplicate-of': meta.duplicateOf }),
+    ...(meta.initiatives.length === 0 ? {} : { initiatives: meta.initiatives }),
+    ...(meta.creator == null ? {} : { creator: meta.creator }),
+    ...(meta.color == null ? {} : { color: meta.color }),
+    ...(meta.icon == null ? {} : { icon: meta.icon }),
   };
   return `---\n${YAML.stringify(fm).trimEnd()}\n---\n${doc.body}`;
 }

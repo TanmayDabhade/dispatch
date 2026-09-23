@@ -1,5 +1,6 @@
 import type { LedgerEntry, TaskDoc } from '@dispatch/core';
 import { appendActivity } from '@dispatch/core';
+import { defaultTaskFields } from '@dispatch/core';
 import { describe, expect, it } from 'bun:test';
 
 import type { RepoOrientation } from '../../src/orchestrator/orientation.js';
@@ -65,6 +66,7 @@ function fixtureTask(): TaskDoc {
       risk: 'routine',
       model: null,
       exercised: false,
+      ...defaultTaskFields(),
     },
     body:
       '\n## Description\n\nAdd a rate limiter to the login endpoint.\n\n' +
@@ -94,6 +96,7 @@ function fixtureEpic(): TaskDoc {
       risk: 'routine',
       model: null,
       exercised: false,
+      ...defaultTaskFields(),
     },
     body: '\n## Description\n\nMake the auth system resistant to abuse.\n\n## Activity\n',
   };

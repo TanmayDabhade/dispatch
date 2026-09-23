@@ -8,6 +8,7 @@ import {
   readyTasks,
 } from '../src/graph.js';
 import type { TaskDoc, TaskMeta } from '../src/types.js';
+import { defaultTaskFields } from '../src/types.js';
 
 function make(partial: Partial<TaskMeta>): TaskDoc {
   return {
@@ -30,6 +31,7 @@ function make(partial: Partial<TaskMeta>): TaskDoc {
       risk: 'routine',
       model: null,
       exercised: false,
+      ...defaultTaskFields(),
       ...partial,
     },
     body: '',

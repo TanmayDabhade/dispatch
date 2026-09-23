@@ -1,4 +1,5 @@
 import type { TaskDoc, TaskMeta } from '@dispatch/core/browser';
+import { defaultTaskFields } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
 import { groupTasksByLane, groupTasksByStatus } from './boardGrouping';
@@ -27,6 +28,7 @@ function makeTask(
     risk: 'routine',
     model: null,
     exercised: false,
+    ...defaultTaskFields(),
     ...overrides,
   };
   return { meta, body: '' };
