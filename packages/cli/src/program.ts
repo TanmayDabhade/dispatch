@@ -13,6 +13,7 @@ import { Command } from 'commander';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { registerBoardSyncCommands } from './commands/boardSync.js';
 import { registerBrowserCommands } from './commands/browser.js';
 import {
   ensureDaemon,
@@ -26,6 +27,7 @@ import { registerMergeTeamCommand } from './commands/mergeTeam.js';
 import { registerMigrateCommand } from './commands/migrate.js';
 import { registerOrchestrateCommands } from './commands/orchestrate.js';
 import { registerPlanCommands } from './commands/plan.js';
+import { registerReceiptsCommands } from './commands/receipts.js';
 import { registerRemoteCommands } from './commands/remote.js';
 import { registerScopeCommands } from './commands/scope.js';
 import { registerShareCommands } from './commands/share.js';
@@ -228,6 +230,8 @@ export function makeProgram(ctx: CliContext): Command {
   registerWorktreeCommands(program, ctx);
   registerShareCommands(program, ctx);
   registerTeamCommands(program, ctx);
+  registerBoardSyncCommands(program, ctx);
+  registerReceiptsCommands(program, ctx);
   registerMigrateCommand(program, ctx);
 
   return program;

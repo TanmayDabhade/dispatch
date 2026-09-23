@@ -409,6 +409,35 @@ describe('round trip', () => {
     expect(rebuilt.tasks.get(ids.taskId)?.meta.parent).toBe(ids.epicId);
   });
 
+  it('keeps a synced board’s eight-character ids and their file names through a restore', () => {
+    // Synced boards mint longer ids (ids.ts). The restore reads each task's
+    // original slug back off its file name, so a fixed eight-character slice
+    // would key `t-abc12345-kept-slug` as `t-abc123`, lose the slug, and the
+    // next export would rename the file after the current title instead.
+    const source = projectStores('project');
+    const made = source.tasks.create({ title: 'Renamed later' });
+    const long = { ...made, meta: { ...made.meta, id: 't-abc12345' } };
+    (
+      source.tasks as unknown as { put: (d: typeof long, slug: string) => void }
+    ).put(long, 'kept-slug');
+    source.tasks.remove(made.meta.id);
+    const dir = receiptsDir();
+    materializeReceipts(source, dir);
+    expect(readdirSync(join(dir, '.dispatch', 'tasks'))).toEqual([
+      't-abc12345-kept-slug.md',
+    ]);
+
+    const rebuilt = projectStores('rebuilt');
+    restoreReceipts(dir, rebuilt);
+    expect(rebuilt.tasks.get('t-abc12345')?.meta.title).toBe('Renamed later');
+
+    const again = join(root, 'receipts-again');
+    materializeReceipts(rebuilt, again);
+    expect(readdirSync(join(again, '.dispatch', 'tasks'))).toEqual([
+      't-abc12345-kept-slug.md',
+    ]);
+  });
+
   it('re-exports from a restored database to a byte-identical log', () => {
     const source = projectStores('project');
     seed(source);

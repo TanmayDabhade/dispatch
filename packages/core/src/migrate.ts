@@ -7,7 +7,7 @@ import {
   FINDING_VERDICTS,
 } from './findings.js';
 import type { Finding } from './findings.js';
-import { isTaskId } from './ids.js';
+import { taskIdFromFilename } from './ids.js';
 import { scanFindingsJsonl, scanLedgerJsonl } from './jsonlRecords.js';
 import { LEDGER_KINDS } from './ledger.js';
 import type { LedgerEntry } from './ledger.js';
@@ -182,11 +182,11 @@ function taskSlugsByFile(tasksDir: string): Map<string, string> {
   for (const file of readdirSync(tasksDir)) {
     if (!file.endsWith('.md')) continue;
     const name = file.slice(0, -'.md'.length);
-    // Ids are `<t|e>-<6 hex>`, so the id is the first 8 characters and the
-    // slug is whatever follows the separating dash. Splitting on the first
+    // The id is the hex run after the kind prefix and the slug is whatever
+    // follows the next dash (see taskIdFromFilename). Splitting on the first
     // dash instead would cut the id itself in half.
-    const id = name.slice(0, 8);
-    if (!isTaskId(id)) continue;
+    const id = taskIdFromFilename(name);
+    if (id === null) continue;
     if (name.length === id.length) slugs.set(id, '');
     else if (name[id.length] === '-') slugs.set(id, name.slice(id.length + 1));
   }

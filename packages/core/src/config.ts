@@ -22,6 +22,7 @@ import type {
   ReceiptsConfig,
   RemoteConfig,
   RepoDigestConfig,
+  SyncConfig,
   VerifyConfig,
 } from './configTypes.js';
 import {
@@ -35,6 +36,7 @@ import {
   DEFAULT_PREVIEW,
   DEFAULT_RECEIPTS,
   DEFAULT_REPO_DIGEST,
+  DEFAULT_SYNC,
   EXECUTOR_MODEL_ROLES,
   EXECUTOR_PRICING_FIELDS,
   FIX_MODEL_TIERS,
@@ -639,7 +641,73 @@ function parseReceiptsConfig(raw: unknown): ReceiptsConfig {
     );
   }
 
-  return { enabled: enabled ?? DEFAULT_RECEIPTS.enabled, dir };
+  const remote = optionalName(obj.remote, 'receipts.remote');
+  const branch = optionalName(obj.branch, 'receipts.branch');
+
+  return {
+    enabled: enabled ?? DEFAULT_RECEIPTS.enabled,
+    dir,
+    ...(remote === undefined ? {} : { remote }),
+    ...(branch === undefined ? {} : { branch }),
+  };
+}
+
+// A remote or branch name, if given: a non-empty string that cannot be read
+// as a git option. Checked here so a typo fails at load with the key named,
+// not as a confusing git error on the first push.
+function optionalName(value: unknown, key: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new ConfigError(
+      `invalid .dispatch/config.yml: ${key} must be a non-empty string`
+    );
+  }
+  if (value.trim().startsWith('-')) {
+    throw new ConfigError(
+      `invalid .dispatch/config.yml: ${key} must not start with "-"`
+    );
+  }
+  return value.trim();
+}
+
+// Validates the optional `sync:` block, same contract as the others: only
+// `undefined` falls back to defaults, and a wrong type is an error naming the
+// key rather than a silent default.
+function parseSyncConfig(raw: unknown): SyncConfig {
+  if (raw === undefined) return { ...DEFAULT_SYNC };
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: sync must be an object'
+    );
+  }
+  const obj = raw as Record<string, unknown>;
+  if (obj.enabled !== undefined && typeof obj.enabled !== 'boolean') {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: sync.enabled must be a boolean'
+    );
+  }
+  const interval = obj.intervalSec;
+  if (
+    interval !== undefined &&
+    (typeof interval !== 'number' ||
+      !Number.isInteger(interval) ||
+      interval < 5)
+  ) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: sync.intervalSec must be a whole number of seconds, at least 5'
+    );
+  }
+  return {
+    enabled: obj.enabled ?? DEFAULT_SYNC.enabled,
+    remote: optionalName(obj.remote, 'sync.remote') ?? DEFAULT_SYNC.remote,
+    branch: optionalName(obj.branch, 'sync.branch') ?? DEFAULT_SYNC.branch,
+    intervalSec: interval ?? DEFAULT_SYNC.intervalSec,
+  };
+}
+
+/** A config's sync settings, defaulted for a hand-built config without them. */
+export function syncSettings(config: DispatchConfig): SyncConfig {
+  return config.sync ?? { ...DEFAULT_SYNC };
 }
 
 // Validates the optional `policy:` block, same contract as the blocks above —
@@ -1126,6 +1194,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
       repoDigest: { ...DEFAULTS.repoDigest },
       notifications: cloneNotifications(DEFAULTS.notifications),
       receipts: { ...DEFAULT_RECEIPTS },
+      sync: { ...DEFAULT_SYNC },
       policy: { ...DEFAULT_POLICY, gates: {} },
       preview: { ...DEFAULT_PREVIEW },
       queue: defaultQueue(),
@@ -1211,6 +1280,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
     repoDigest: parseRepoDigestConfig(raw.repoDigest),
     notifications: parseNotificationsConfig(raw.notifications),
     receipts: parseReceiptsConfig(raw.receipts),
+    sync: parseSyncConfig(raw.sync),
     policy: parsePolicyConfig(raw.policy),
     preview: parsePreviewConfig(raw.preview),
     queue: parseQueueConfig(raw.queue),

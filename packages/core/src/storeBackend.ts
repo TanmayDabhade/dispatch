@@ -16,6 +16,7 @@ import {
   TaskStore,
 } from './store.js';
 import type { TaskStorePort } from './store.js';
+import type { TaskKind } from './types.js';
 
 // Which backend a project's state lives in. Chosen once, when the stores are
 // opened, and never re-decided afterwards — everything downstream holds a
@@ -52,6 +53,10 @@ export interface OpenStoresOptions {
   backend?: TaskStoreBackend;
   /** Ignored unless `backend` is `sqlite`; defaults to `dispatchDbPath()`. */
   dbPath?: string;
+  /** How new task ids are minted, on `sqlite`. A synced board passes
+   *  generateSyncedTaskId for longer ids (see ids.ts); absent is the default
+   *  six-character generator. */
+  generateTaskId?: (kind: TaskKind, title: string, now: string) => string;
 }
 
 /**
@@ -75,7 +80,7 @@ export function openProjectStores(options: OpenStoresOptions): ProjectStores {
     };
   }
   const db = attachDispatchDb(options.dbPath ?? dispatchDbPath(rootDir));
-  return sqliteStores(rootDir, db);
+  return sqliteStores(rootDir, db, options.generateTaskId);
 }
 
 /** Creates a project's state if it is missing, then attaches to it. */
@@ -103,15 +108,16 @@ export function initProjectStores(options: OpenStoresOptions): ProjectStores {
   // IF NOT EXISTS), so unlike the file backend there is no separate create
   // step for the tables themselves — only for config.yml, above.
   const db = openDispatchDb(options.dbPath ?? dispatchDbPath(rootDir));
-  return sqliteStores(rootDir, db);
+  return sqliteStores(rootDir, db, options.generateTaskId);
 }
 
 // Wraps a handle (or the absence of one) in the four stores that share it.
 function sqliteStores(
   rootDir: string,
-  db: SqliteDatabase | null
+  db: SqliteDatabase | null,
+  generateTaskId?: OpenStoresOptions['generateTaskId']
 ): ProjectStores {
-  const tasks = new SqliteTaskStore(rootDir, db);
+  const tasks = new SqliteTaskStore(rootDir, db, generateTaskId);
   if (db === null) {
     return { backend: 'sqlite', tasks, records: null, close: () => {} };
   }

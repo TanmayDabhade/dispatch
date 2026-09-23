@@ -120,6 +120,7 @@ export type {
   RunKind,
   PresenceEntry,
   AuthTier,
+  BoardSyncStatus,
   IssuedTeamToken,
   TeamAddress,
   TeamTokenHolder,

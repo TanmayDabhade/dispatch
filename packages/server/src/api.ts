@@ -98,6 +98,7 @@ import {
   writeTerminalInput,
 } from './api/terminals.js';
 import { getTaskVerification, startTaskVerification } from './api/verify.js';
+import type { BoardSyncService } from './boardSync/service.js';
 import type { BrowserRegistry } from './browser/registry.js';
 import type { TaskCache } from './cache.js';
 import type { ConversationStore } from './conversations.js';
@@ -184,7 +185,7 @@ import type { VerificationRunner } from './orchestrator/verify.js';
 import type { PresenceTracker } from './presence.js';
 import type { PreviewState, PreviewSupervisor } from './preview.js';
 import type { PreviewGateway } from './previewGateway.js';
-import type { ReceiptsScheduler } from './receipts/scheduler.js';
+import type { ReceiptsPush, ReceiptsScheduler } from './receipts/scheduler.js';
 import {
   formatCommentsForAgent,
   resolveAnchor,
@@ -323,6 +324,8 @@ export interface ApiContext {
   previews: PreviewSupervisor;
   /** Teammates' way into previews, in team-local mode; null on loopback. */
   previewGateway: PreviewGateway | null;
+  /** Board sync between replicas (boardSync/); null when it is off. */
+  boardSync: BoardSyncService | null;
   /** Who is connected right now; see presence.ts. */
   presence: PresenceTracker;
   /** The daemon's own network origins in team-local mode, empty otherwise.
@@ -1096,6 +1099,8 @@ interface ReceiptsStatus {
   /** Records the export could not read out of the database. */
   problems: number;
   lastExportedAt: string | null;
+  /** The last push to `receipts.remote`; absent or null when there is none. */
+  lastPush?: ReceiptsPush | null;
 }
 
 // Reads the exporter's retained last result. Its own null-vs-result
@@ -1135,6 +1140,8 @@ function receiptsStatus(ctx: ApiContext): ReceiptsStatus {
     removed: last.removed,
     problems: last.problems,
     lastExportedAt: scheduler.lastExportedAt(),
+    // Null when receipts.remote is unset: the log stays on this machine.
+    lastPush: scheduler.lastPush(),
   };
 }
 
@@ -4593,6 +4600,28 @@ export async function handleApi(
         ctx.events.broadcast({ type: 'presence.changed' });
       }
       return jsonResponse({ ok: true });
+    }
+
+    // GET /api/board-sync — board sync's state: whether it is on, when it
+    // last ran, what is waiting to go, and anything it could not resolve
+    // alone. POST /api/board-sync/now runs a pass and answers once it is
+    // done, for a person who does not want to wait for the interval.
+    // Not /api/sync: that is the file backend's board syncer, already
+    // answered below and read by the app's status strip.
+    if (segments[0] === 'board-sync') {
+      if (segments.length === 1 && method === 'GET') {
+        return jsonResponse(ctx.boardSync?.status() ?? { enabled: false });
+      }
+      if (segments.length === 2 && segments[1] === 'now' && method === 'POST') {
+        if (ctx.boardSync === null) {
+          return errorResponse(
+            409,
+            'board sync is off: set `sync.enabled: true` in .dispatch/config.yml and restart the daemon'
+          );
+        }
+        await ctx.boardSync.syncNow();
+        return jsonResponse(ctx.boardSync.status());
+      }
     }
 
     // GET /api/team/address — where teammates reach this daemon, for the

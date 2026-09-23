@@ -345,6 +345,61 @@ This is plain HTTP on your network, like any dev server — run it on a network
 you trust, or put it behind a TLS-terminating proxy and name that origin with
 `--public-origin`.
 
+## Syncing the board between machines
+
+Each daemon keeps the board in its own database, so without help two people
+running Dispatch on the same repository have two boards. Board sync makes them
+one, through your git remote — no server to run:
+
+    # .dispatch/config.yml, committed so everyone gets it
+    sync:
+      enabled: true
+      remote: origin          # or any git URL
+      branch: dispatch-sync   # nothing but sync writes to this branch
+
+Restart the daemon after changing it. From then on every change to a task is
+recorded, pushed to that branch, and applied on everyone else's daemon within
+the sync interval (30 seconds by default, sooner after an edit).
+`dispatch sync status` says how it is going, `dispatch sync now` does not wait,
+and the same is under **Settings → Daemon** in the app.
+
+How it merges, so nothing surprises you:
+
+- **Different fields merge.** You move a task to review while a teammate adds a
+  label: both happen, on both machines.
+- **The same field keeps the later change**, by a clock that stays consistent
+  even when machines' clocks disagree, so everyone lands on the same answer.
+- **Activity keeps everyone's lines**, in the same order everywhere.
+- **Deletes win over edits made before them**, and lose to edits made after.
+- **Offline is fine.** Work carries on locally, and goes out the next time the
+  remote is reachable.
+- **A new machine gets the whole board** on its first sync: clone, turn sync on,
+  start the daemon.
+- **Longer ids.** A synced board mints eight-character ids (`t-1a2b3c4d`) so two
+  machines picking the same one is vanishingly unlikely. Existing ids keep
+  working. If it happens anyway, neither task is overwritten: sync reports the
+  clash under **Settings → Daemon** for someone to rename one.
+
+Each machine only ever appends to its own file on the sync branch, so git never
+has a conflict to hand you and nothing is ever force-pushed. What travels is the
+tasks themselves. Findings, ledger entries, notes and run evidence stay on the
+machine that made them, and so do attachment files, although the task still
+lists them.
+
+### Keeping the audit log off the machine
+
+The receipt log (every task, finding, decision and piece of run evidence, as
+plain files in git) can be pushed after every change:
+
+    receipts:
+      remote: origin
+      branch: dispatch-receipts   # one machine per branch — its own history
+
+If that machine is lost, rebuild its board on a fresh checkout, with the daemon
+stopped:
+
+    dispatch receipts restore --from origin
+
 ## MCP server
 
 `dispatch init` registers a stdio MCP server in the project's `.mcp.json`

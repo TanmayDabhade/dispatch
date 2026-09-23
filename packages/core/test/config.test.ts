@@ -13,6 +13,7 @@ import {
   DEFAULT_PREVIEW,
   DEFAULT_RECEIPTS,
   DEFAULT_REPO_DIGEST,
+  DEFAULT_SYNC,
   loadConfig,
   queueWeights,
 } from '../src/config.js';
@@ -65,6 +66,7 @@ describe('loadConfig', () => {
       repoDigest: DEFAULT_REPO_DIGEST,
       notifications: DEFAULT_NOTIFICATIONS,
       receipts: DEFAULT_RECEIPTS,
+      sync: DEFAULT_SYNC,
       policy: DEFAULT_POLICY,
       preview: DEFAULT_PREVIEW,
       queue: { weights: DEFAULT_QUEUE_WEIGHTS },
@@ -629,5 +631,56 @@ describe('queue.weights', () => {
     if (loaded.queue !== undefined) loaded.queue.weights.urgency = 99;
     const reloaded = queueWeights(loadConfig(dir));
     expect(reloaded.ok && reloaded.weights.urgency).toBe(4);
+  });
+});
+
+describe('sync config', () => {
+  function load(yaml: string) {
+    const dir = mkdtempSync(join(tmpdir(), 'dispatch-sync-config-'));
+    mkdirSync(join(dir, '.dispatch'), { recursive: true });
+    writeFileSync(join(dir, '.dispatch', 'config.yml'), yaml);
+    return loadConfig(dir);
+  }
+
+  it('is off by default and travels on its own branch of origin', () => {
+    expect(load('statuses: [ready]\n').sync).toEqual(DEFAULT_SYNC);
+    expect(DEFAULT_SYNC).toEqual({
+      enabled: false,
+      remote: 'origin',
+      branch: 'dispatch-sync',
+      intervalSec: 30,
+    });
+  });
+
+  it('takes a remote, a branch and an interval', () => {
+    expect(
+      load(
+        'sync:\n  enabled: true\n  remote: git@example.com:team/board.git\n  branch: board\n  intervalSec: 60\n'
+      ).sync
+    ).toEqual({
+      enabled: true,
+      remote: 'git@example.com:team/board.git',
+      branch: 'board',
+      intervalSec: 60,
+    });
+  });
+
+  it('refuses what would fail later as a confusing git error', () => {
+    expect(() => load('sync:\n  enabled: yes please\n')).toThrow(
+      'sync.enabled'
+    );
+    expect(() => load('sync:\n  remote: "--upload-pack=x"\n')).toThrow(
+      'must not start with "-"'
+    );
+    expect(() => load('sync:\n  intervalSec: 1\n')).toThrow('at least 5');
+    expect(() => load('receipts:\n  branch: ""\n')).toThrow('receipts.branch');
+  });
+
+  it('lets the receipt log name a remote to push to', () => {
+    expect(load('receipts:\n  remote: origin\n').receipts).toEqual({
+      enabled: true,
+      dir: undefined,
+      remote: 'origin',
+    });
   });
 });

@@ -2,6 +2,7 @@ import { AlertCircle } from 'lucide-react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { describeDaemonError } from '../shell/DaemonUnavailable';
+import { BoardSyncGroup } from './BoardSyncGroup';
 import { SettingsGroup, SettingsRow } from './SettingsGroup';
 import { cn } from '@/lib/utils';
 import { Pill } from '@/ui/ai/pill';
@@ -74,6 +75,8 @@ export function DaemonSection({ activeProject, data }: DaemonSectionProps) {
           </PanelRow>
         )}
       </SettingsGroup>
+
+      <BoardSyncGroup data={data} />
 
       {data.config !== null && (
         <SettingsGroup title="Tracker config">
