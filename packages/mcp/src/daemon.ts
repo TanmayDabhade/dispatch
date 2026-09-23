@@ -184,6 +184,42 @@ export async function liveDaemon(
   }
 }
 
+// Starts dispatchd for a project root and resolves once it answers. Only the
+// CLI knows how to launch one (bun script or compiled sibling binary), so
+// `dispatch mcp` hands its own `ensureDaemon` in through `runStdioServer`;
+// the standalone `dispatch-mcp` bin runs inside a daemon's own agent runs,
+// where a daemon is already up, and passes nothing.
+export type DaemonStarter = (rootDir: string) => Promise<void>;
+
+// Process-wide because a process serves exactly one MCP server over stdio;
+// threading it through every tool function would touch each of them for a
+// value that never differs between calls.
+let daemonStarter: DaemonStarter | null = null;
+
+export function setDaemonStarter(starter: DaemonStarter | null): void {
+  daemonStarter = starter;
+}
+
+// A daemon the CLI started in the background exits after it sits unused
+// (dispatchd's `--idle-timeout`), so an agent session that goes quiet for a
+// while comes back to find none. Where a tool has no way forward without one,
+// this starts a replacement and probes again. Null when this process has no
+// starter or the start failed; the failure goes to stderr (the MCP client's
+// log) rather than being thrown, so every caller keeps its existing
+// "dispatchd not running" answer.
+export async function startDaemon(rootDir: string): Promise<LiveDaemon | null> {
+  if (daemonStarter === null) return null;
+  try {
+    await daemonStarter(rootDir);
+  } catch (err) {
+    console.error(
+      `dispatch mcp: could not start dispatchd: ${(err as Error).message}`
+    );
+    return null;
+  }
+  return liveDaemon(rootDir);
+}
+
 // How long `liveDaemon` keeps re-probing a daemon whose pid is alive but whose
 // health check stalls before reporting it as unreachable. Bounded, so a
 // daemon that wedged for good still reads as unreachable rather than holding

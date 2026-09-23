@@ -63,6 +63,7 @@ import type { FindingStorePort } from './findings.js';
 import { floorCheckForToolInput } from './floor.js';
 import { GitRepo } from './git/commands.js';
 import { fileTokenStore, TokenRegistry } from './identity.js';
+import { IdleShutdown } from './idleShutdown.js';
 import { InboxStore } from './inbox.js';
 import type { InboxClusterer } from './inboxClusterer.js';
 import { createJudgmentClient } from './judgments/client.js';
@@ -284,6 +285,15 @@ export interface StartServerOptions {
   // A main-thread heartbeat gap longer than this is logged as a stall, with
   // the section the daemon was in (see EventLoopWatchdog). Defaults to 5s.
   watchdogStallMs?: number;
+  // Exit on its own after this long with no requests, no connected client
+  // and no live work (see IdleShutdown for the full rule). Unset means never:
+  // only a daemon the CLI spawned in the background sets it, since a
+  // `dispatch serve` in a terminal or an in-process test server has an owner
+  // who stops it. `onIdle` is what "exit" means to the caller — bin.ts runs
+  // its normal shutdown.
+  idleTimeoutMs?: number;
+  idleCheckIntervalMs?: number;
+  onIdle?: () => void;
 }
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -1727,6 +1737,35 @@ async function bootServer(
     shared,
   };
 
+  const idle =
+    opts.idleTimeoutMs !== undefined && opts.onIdle !== undefined
+      ? new IdleShutdown({
+          timeoutMs: opts.idleTimeoutMs,
+          checkIntervalMs: opts.idleCheckIntervalMs,
+          onIdle: opts.onIdle,
+          // Everything that keeps working with no request in flight. Each is
+          // something a restart would interrupt or lose (a live agent, a
+          // queued merge, a shell), or a viewer that expects live events.
+          isBusy: () =>
+            events.hasClients() ||
+            orchestrator
+              .list()
+              .some((r) => !TERMINAL_RUN_STATES.has(r.state)) ||
+            mergeQueue.snapshot().entries.length > 0 ||
+            epicEngine.hasActiveSession() ||
+            fixLoop
+              .list()
+              .some(
+                (l) => l.state === 'implementing' || l.state === 'reviewing'
+              ) ||
+            planManager.list().some((p) => p.state === 'running') ||
+            planManager.listDrafts().some((d) => d.state === 'running') ||
+            overseerManager.list().some((o) => o.state === 'running') ||
+            terminals.list().some((t) => t.state === 'running') ||
+            browsers.list().length > 0,
+        })
+      : null;
+
   // Every listener serves the same routes off the same state; they differ
   // only in where they bind and whether they speak TLS. Returned as a function
   // so the HTTPS listener below is this, not a copy of it.
@@ -1832,7 +1871,11 @@ async function bootServer(
           // Bun's 10s idle timeout is shorter than a model turn, so raise it for
           // every /api/ route rather than keeping a per-path list.
           srv.timeout(req, 65);
-          return withCors(await handleApi(req, apiCtx), origin, ownOriginSet);
+          const response =
+            idle === null
+              ? await handleApi(req, apiCtx)
+              : await idle.track(() => handleApi(req, apiCtx));
+          return withCors(response, origin, ownOriginSet);
         }
 
         if (webDistDir !== null) {
@@ -1947,6 +1990,7 @@ async function bootServer(
     prWorktrees,
     async stop() {
       watchdog.stop();
+      idle?.stop();
       clearInterval(previewSweep);
       previews.stopAll();
       // stopAll closes each preview's listener through onStop; this catches

@@ -1923,8 +1923,17 @@ export class MergeQueue {
   // Keeps `origin/<base>` current independently of a drain (a teammate can
   // push to the shared base without ever touching this queue) and reconciles
   // archives off the freshly-fetched refs. Called on startAutoRefresh's tick.
+  //
+  // Skipped while the queue is empty and no client is connected. A daemon
+  // outlives the app that opened it (the CLI spawns it detached), and each
+  // fetch authenticates to origin — with an SSH agent that gates every
+  // signature (1Password, a hardware key), an idle daemon's tick turns into
+  // an unlock prompt every minute for a window nobody has open. Nothing is
+  // lost by waiting: a drain that rebases onto `origin/<base>` fetches it
+  // first on its own, and the next tick after a client reconnects catches the refs up.
   async refreshRemote(): Promise<void> {
     if (!this.hasOriginRemote()) return;
+    if (this.entries.length === 0 && !this.ctx.events.hasClients()) return;
     try {
       await this.fetchBase(this.ctx.orchestrator.defaultBaseBranch());
     } catch (err) {
