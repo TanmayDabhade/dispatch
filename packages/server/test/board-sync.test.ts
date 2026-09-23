@@ -63,10 +63,13 @@ async function teammate(name: string, remoteUrl = remote, intervalSec = 3600) {
   handles.push(handle);
   const base = `http://127.0.0.1:${handle.port}`;
   const auth = { authorization: `Bearer ${handle.tokens.appToken}` };
-  const api = async (path: string, init: RequestInit = {}) => {
+  const api = async (
+    path: string,
+    init: { method?: string; body?: string } = {}
+  ) => {
     const res = await rawFetch(`${base}${path}`, {
       ...init,
-      headers: { 'content-type': 'application/json', ...auth, ...init.headers },
+      headers: { 'content-type': 'application/json', ...auth },
     });
     const text = await res.text();
     return {

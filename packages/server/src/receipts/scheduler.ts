@@ -226,7 +226,9 @@ export class ReceiptsScheduler {
               at: new Date().toISOString(),
               detail: /rejected|non-fast-forward|fetch first/i.test(out)
                 ? `${branch} on ${url} has history this log does not: another machine pushes its receipts there. Give each machine its own receipts.branch.`
-                : out || 'git push failed',
+                : out === ''
+                  ? 'git push failed'
+                  : out,
             };
       if (!this.lastPushValue.ok) {
         console.error(`receipts: push failed: ${this.lastPushValue.detail}`);

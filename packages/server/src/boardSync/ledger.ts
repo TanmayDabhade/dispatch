@@ -43,7 +43,8 @@ export interface SyncProblem {
 /** A replica id: the operator's handle, so a log file says whose it is, and
  *  random hex, so two of one person's machines are still two replicas. */
 function newReplicaId(handle: string): string {
-  const safe = handle.replace(/[^a-z0-9._-]/gi, '').slice(0, 32) || 'replica';
+  const cleaned = handle.replace(/[^a-z0-9._-]/gi, '').slice(0, 32);
+  const safe = cleaned === '' ? 'replica' : cleaned;
   return `${safe}-${randomBytes(4).toString('hex')}`;
 }
 

@@ -151,7 +151,7 @@ export class SyncRepo {
     if (!fetched.ok) {
       // A branch nobody has pushed yet is not an error: this push creates it.
       if (/couldn't find remote ref|not found/i.test(fetched.out)) return null;
-      return fetched.out || 'git fetch failed';
+      return fetched.out === '' ? 'git fetch failed' : fetched.out;
     }
     const merged = await this.run([
       ...IDENTITY,

@@ -27,7 +27,7 @@ function temp(prefix: string): string {
 function git(cwd: string, ...args: string[]): void {
   const res = Bun.spawnSync({ cmd: ['git', ...args], cwd });
   if (res.exitCode !== 0)
-    throw new Error(`git ${args.join(' ')}: ${res.stderr}`);
+    throw new Error(`git ${args.join(' ')}: ${res.stderr.toString()}`);
 }
 
 beforeEach(() => {
