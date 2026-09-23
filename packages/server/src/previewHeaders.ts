@@ -1,4 +1,5 @@
-// Which headers cross the preview proxy, in each direction.
+// What crosses the preview proxy: where a request goes, and which headers
+// travel in each direction.
 //
 // A preview is a dev server running out of a run's worktree — code an agent
 // just wrote. The proxy sits between it and a browser that holds the daemon's
@@ -70,4 +71,20 @@ export function previewResponseHeaders(headers: Headers): Headers {
     copy.append(key, value);
   });
   return copy;
+}
+
+/** The dev server URL a proxied request goes to, or null when it would leave
+ *  the preview's port. The path is set on a URL whose host is already fixed:
+ *  resolving it against a base instead reads `//host/…` (or `/\\host/…`) as
+ *  protocol-relative and sends the daemon's fetch to whatever host it names. */
+export function previewUpstreamUrl(
+  port: number,
+  pathname: string,
+  search: string
+): URL | null {
+  const origin = `127.0.0.1:${port}`;
+  const target = new URL(`http://${origin}`);
+  target.pathname = pathname;
+  target.search = search;
+  return target.host === origin ? target : null;
 }

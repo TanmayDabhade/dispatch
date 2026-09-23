@@ -4,6 +4,7 @@ import type { PreviewSupervisor } from './preview.js';
 import {
   previewRequestHeaders,
   previewResponseHeaders,
+  previewUpstreamUrl,
 } from './previewHeaders.js';
 
 // Previews for teammates on a team-local daemon.
@@ -163,7 +164,8 @@ export class PreviewGateway {
       return new Response(null, {
         status: 303,
         headers: {
-          location: `${url.pathname}${url.search}`,
+          // One leading slash: a browser reads `//host/…` as another origin.
+          location: `${url.pathname.replace(/^\/+/, '/')}${url.search}`,
           'set-cookie': [
             `${cookieName}=${offered}`,
             'Path=/',
@@ -185,20 +187,18 @@ export class PreviewGateway {
       });
     }
     this.opts.previews.touch(runId);
+    const target = previewUpstreamUrl(preview.port, url.pathname, url.search);
+    if (target === null) {
+      return new Response('not a preview path', { status: 400 });
+    }
     try {
-      const upstream = await fetch(
-        new URL(
-          `${url.pathname}${url.search}`,
-          `http://127.0.0.1:${preview.port}`
-        ),
-        {
-          method: req.method,
-          headers: previewRequestHeaders(req.headers),
-          body: req.body,
-          redirect: 'manual',
-          ...{ duplex: 'half' },
-        }
-      );
+      const upstream = await fetch(target, {
+        method: req.method,
+        headers: previewRequestHeaders(req.headers),
+        body: req.body,
+        redirect: 'manual',
+        ...{ duplex: 'half' },
+      });
       return new Response(upstream.body, {
         status: upstream.status,
         statusText: upstream.statusText,

@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   previewRequestHeaders,
   previewResponseHeaders,
+  previewUpstreamUrl,
 } from '../src/previewHeaders.js';
 
 describe('previewRequestHeaders', () => {
@@ -48,5 +49,27 @@ describe('previewResponseHeaders', () => {
     // being folded into one comma-joined value it could not tell apart.
     expect(out.getSetCookie()).toEqual(['sid=app; Path=/; HttpOnly']);
     expect(out.get('content-type')).toBe('text/html');
+  });
+});
+
+describe('previewUpstreamUrl', () => {
+  test('keeps the path and query, on the preview’s own port', () => {
+    expect(previewUpstreamUrl(5173, '/src/main.ts', '?t=1')?.href).toBe(
+      'http://127.0.0.1:5173/src/main.ts?t=1'
+    );
+  });
+
+  test('a path that looks protocol-relative cannot change the host', () => {
+    for (const path of [
+      '//evil.example/x',
+      '/\\evil.example/x',
+      '\\\\evil.example/x',
+      '///evil.example',
+      '//127.0.0.1:1/x',
+    ]) {
+      const target = previewUpstreamUrl(5173, path, '?y=1');
+      expect(target?.host).toBe('127.0.0.1:5173');
+      expect(target?.search).toBe('?y=1');
+    }
   });
 });
