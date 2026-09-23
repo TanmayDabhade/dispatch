@@ -90,6 +90,37 @@ const AUTO_ALLOWED_EDIT_TOOLS = new Set([
 // make the user approve a tool call before being shown the question it asks.
 const ASK_USER_TOOL = 'mcp__dispatch__ask_user';
 
+// Claude Code tools that cannot do their job inside a dispatched run, removed
+// from the agent's tool list. Each was exercised through this executor
+// against the bundled CLI (SDK 0.3.207) and its result recorded:
+//
+// - AskUserQuestion: the answers come from the CLI's interactive picker,
+//   which a dispatched run does not have; even after a human approves the
+//   call, the agent is told "The user did not answer the questions."
+//   `mcp__dispatch__ask_user` is the channel that reaches the human.
+// - CronCreate / CronDelete / CronList / ScheduleWakeup: they schedule
+//   prompts into a session that outlives the current turn. A dispatched run
+//   ends at its result, so a cron job "dies when Claude exits" and a wakeup
+//   is refused outright ("Wakeup not scheduled").
+// - EnterWorktree / ExitWorktree: the run already lives in the worktree
+//   Dispatch created for it. EnterWorktree made a second worktree under the
+//   main checkout's `.claude/worktrees/` and moved the session there, so the
+//   agent's edits would land outside the branch Dispatch reviews and merges.
+//
+// Each tool definition is resent on every request, so dropping these also
+// removes about 20 KB of tool schema from every turn's prompt prefix.
+// `disallowedTools` is honored under every permission mode, including
+// `bypassPermissions`.
+export const UNUSABLE_IN_DISPATCHED_RUN = [
+  'AskUserQuestion',
+  'CronCreate',
+  'CronDelete',
+  'CronList',
+  'ScheduleWakeup',
+  'EnterWorktree',
+  'ExitWorktree',
+] as const;
+
 /**
  * What a tool call is refused with once the user has asked this run to stop.
  *
@@ -611,6 +642,7 @@ export class ClaudeExecutor implements Executor {
       // these to actually find.
       systemPrompt: { type: 'preset', preset: 'claude_code' },
       settingSources: ['user', 'project', 'local'],
+      disallowedTools: [...UNUSABLE_IN_DISPATCHED_RUN],
       // Bug fix (fix/executor-mcp-wiring): `query()` does NOT auto-load a
       // project's committed `.mcp.json` the way the interactive `claude` CLI
       // does — without this, a dispatched run has no dispatch MCP tools at

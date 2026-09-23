@@ -298,6 +298,34 @@ describe('ClaudeExecutor CLI-parity system prompt and setting sources', () => {
     });
     expect(captured?.settingSources).toEqual(['user', 'project', 'local']);
   });
+
+  // Each of these was exercised through this executor against the real CLI:
+  // AskUserQuestion's answers never arrive, cron jobs and wakeups die with
+  // the run, and EnterWorktree moves the agent out of the run's worktree.
+  it('removes the Claude Code tools that cannot work inside a dispatched run', () => {
+    let captured: Options | undefined;
+    const executor = new ClaudeExecutor((args: { options?: Options }) => {
+      captured = args.options;
+      return emptyMessages() as unknown as Query;
+    });
+
+    executor.start(
+      { cwd: '/tmp/dispatch-worktree-x', prompt: 'x', permissionMode: 'auto' },
+      noopEvents
+    );
+
+    expect(captured?.disallowedTools).toEqual([
+      'AskUserQuestion',
+      'CronCreate',
+      'CronDelete',
+      'CronList',
+      'ScheduleWakeup',
+      'EnterWorktree',
+      'ExitWorktree',
+    ]);
+    // Dispatch's own question channel is the one that reaches the human.
+    expect(captured?.disallowedTools).not.toContain('mcp__dispatch__ask_user');
+  });
 });
 
 // A minimal-but-valid stand-in for the second (`options`) argument
