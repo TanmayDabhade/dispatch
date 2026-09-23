@@ -162,8 +162,8 @@ function summaries(root: ParentNode): string[] {
   ).map((el) => el.textContent ?? '');
 }
 
-const payments = task('e-1', 'Payments', { kind: 'epic' });
-const shipped = task('e-2', 'Shipped', { kind: 'epic' });
+const payments = task('e-1', 'Payments', { kind: 'milestone' });
+const shipped = task('e-2', 'Shipped', { kind: 'milestone' });
 
 // A → B, A → C, B,C → D under Payments; passed in reverse so the layout, not the input,
 // decides the order.
@@ -182,9 +182,9 @@ describe('MilestoneBranchesView', () => {
           payments,
           ...diamond,
           task('t-x', 'Loose task'),
-          task('e-3', 'Empty milestone', { kind: 'epic' }),
+          task('e-3', 'Empty milestone', { kind: 'milestone' }),
         ],
-        [payments, task('e-3', 'Empty milestone', { kind: 'epic' })]
+        [payments, task('e-3', 'Empty milestone', { kind: 'milestone' })]
       )
     );
 

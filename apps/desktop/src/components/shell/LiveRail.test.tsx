@@ -125,7 +125,9 @@ function session(
 }
 
 function epicDoc(id: string, title: string): TaskDoc {
-  return { meta: { id, title, kind: 'epic', status: 'working' } } as TaskDoc;
+  return {
+    meta: { id, title, kind: 'milestone', status: 'working' },
+  } as TaskDoc;
 }
 
 function railProps(over: Partial<Parameters<typeof LiveRail>[0]> = {}) {

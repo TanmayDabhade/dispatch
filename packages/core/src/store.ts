@@ -11,6 +11,8 @@ import { join } from 'node:path';
 
 import { ATTACHMENTS_DIR } from './attachments.js';
 import { generateTaskId, isTaskId } from './ids.js';
+import { canonicalKind } from './kinds.js';
+import type { TaskKindInput } from './kinds.js';
 import { slugify } from './slug.js';
 import { canonicalStatus } from './status.js';
 import type { TaskStoreBackend } from './storeBackend.js';
@@ -52,7 +54,7 @@ autoCommit: true
 
 export interface CreateInput {
   title: string;
-  kind?: TaskKind;
+  kind?: TaskKindInput;
   status?: string;
   description?: string;
   parent?: string | null;
@@ -115,7 +117,7 @@ export interface UpdatePatch {
 
 export interface ListFilter {
   status?: string;
-  kind?: TaskKind;
+  kind?: TaskKindInput;
   parent?: string;
 }
 
@@ -405,7 +407,7 @@ export class TaskStore implements TaskStorePort {
   }
 
   create(input: CreateInput, now: string = new Date().toISOString()): TaskDoc {
-    const kind = input.kind ?? 'task';
+    const kind = canonicalKind(input.kind ?? 'task') as TaskKind;
     let id = generateTaskId(kind, input.title, now);
     for (let i = 0; i < 5 && this.taskFilePath(id); i++) {
       id = generateTaskId(kind, input.title, now);
@@ -467,7 +469,9 @@ export class TaskStore implements TaskStorePort {
           : true
       )
       .filter((d) =>
-        filter.kind !== undefined ? d.meta.kind === filter.kind : true
+        filter.kind !== undefined
+          ? d.meta.kind === canonicalKind(filter.kind)
+          : true
       )
       .filter((d) =>
         filter.parent !== undefined ? d.meta.parent === filter.parent : true

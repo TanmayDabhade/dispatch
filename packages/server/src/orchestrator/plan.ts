@@ -638,7 +638,7 @@ export class PlanManager {
     if (proposal.epic !== undefined) {
       const epicDoc = this.ctx.store.create({
         title: proposal.epic.title,
-        kind: 'epic',
+        kind: 'milestone',
         status: 'ready',
         description: proposal.epic.description,
       });

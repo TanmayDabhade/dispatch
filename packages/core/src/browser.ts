@@ -2,6 +2,7 @@
 // `node:*` import — so the desktop webview can import it in dev and in a build.
 
 export * from './status.js';
+export * from './kinds.js';
 export * from './types.js';
 export {
   ATTACHMENT_MAX_BYTES,

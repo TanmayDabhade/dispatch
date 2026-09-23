@@ -79,7 +79,7 @@ function fixtureEpic(): TaskDoc {
       id: 'e-def456',
       title: 'Harden auth',
       status: 'working',
-      kind: 'epic',
+      kind: 'milestone',
       parent: null,
       milestone: null,
       blockedBy: [],

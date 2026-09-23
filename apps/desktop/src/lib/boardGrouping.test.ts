@@ -65,7 +65,10 @@ describe('groupTasksByStatus', () => {
 
 describe('groupTasksByLane', () => {
   const statuses = ['ready', 'landed'];
-  const epic = makeTask('e-1', 'ready', { kind: 'epic', title: 'Payments' });
+  const epic = makeTask('e-1', 'ready', {
+    kind: 'milestone',
+    title: 'Payments',
+  });
   const tasks = [
     epic,
     makeTask('a', 'ready', { parent: 'e-1', priority: 'high' }),
@@ -107,7 +110,9 @@ describe('groupTasksByLane', () => {
     for (const lane of [...byAssignee, ...byPriority]) {
       expect(lane.epicId).toBeNull();
       for (const column of lane.columns) {
-        expect(column.tasks.some((t) => t.meta.kind === 'epic')).toBe(false);
+        expect(column.tasks.some((t) => t.meta.kind === 'milestone')).toBe(
+          false
+        );
       }
     }
   });

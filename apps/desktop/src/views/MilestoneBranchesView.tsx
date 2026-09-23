@@ -1,4 +1,5 @@
 import type { TaskListItem } from '@dispatch/core/browser';
+import { isContainerKind } from '@dispatch/core/browser';
 import { GitBranch, SearchX } from 'lucide-react';
 import type { FocusEvent, KeyboardEvent, ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -121,7 +122,11 @@ export function MilestoneBranchesView({
     const map = new Map<string, TaskListItem[]>();
     for (const doc of data.tasks) {
       const parent = doc.meta.parent;
-      if (doc.meta.kind === 'epic' || parent === null || !epicIds.has(parent)) {
+      if (
+        isContainerKind(doc.meta.kind) ||
+        parent === null ||
+        !epicIds.has(parent)
+      ) {
         continue;
       }
       const list = map.get(parent);

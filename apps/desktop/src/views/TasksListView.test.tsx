@@ -268,7 +268,7 @@ test('groups by status in config order by default, with a tinted header and a + 
 });
 
 test('a task under an epic in the same group nests 24px under it with a dimmer tree row', () => {
-  const epic = task('e-1', 'Payments epic', { kind: 'epic' });
+  const epic = task('e-1', 'Payments epic', { kind: 'milestone' });
   const { container } = renderList(
     dataWith([epic, task('t-1', 'Charge card', { parent: 'e-1' })], [], [epic])
   );
@@ -479,7 +479,7 @@ test('collapsing a group hides its rows and takes them out of the keyboard order
 });
 
 test('display prefs drive grouping and which properties a row shows', () => {
-  const epic = task('e-1', 'Payments epic', { kind: 'epic' });
+  const epic = task('e-1', 'Payments epic', { kind: 'milestone' });
   const Shell = shellWith(shellLog());
   const { container } = render(
     <Shell>

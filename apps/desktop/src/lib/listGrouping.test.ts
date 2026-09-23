@@ -92,7 +92,11 @@ describe('groupTasks by status (the default)', () => {
 
 describe('nested sub-tasks', () => {
   test('a child whose parent is in the same group indents under it', () => {
-    const epic = task('e-1', { kind: 'epic', status: 'ready' }, 'Payments');
+    const epic = task(
+      'e-1',
+      { kind: 'milestone', status: 'ready' },
+      'Payments'
+    );
     const child = task('t-1', { parent: 'e-1', status: 'ready' });
     const other = task('t-2', { status: 'ready' });
     const groups = groupTasks([other, child, epic], prefs(), {
@@ -110,7 +114,7 @@ describe('nested sub-tasks', () => {
   // The default prefs nest, and a task under a task under an epic is an ordinary shape — a
   // three-deep chain in one group must keep every row (the grandchild once fell off).
   test('a grandchild in the same group follows its parent, clamped to one indent', () => {
-    const epic = task('e-1', { kind: 'epic' });
+    const epic = task('e-1', { kind: 'milestone' });
     const member = task('t-1', { parent: 'e-1' });
     const sub = task('t-2', { parent: 't-1' });
     const loose = task('t-3');
@@ -136,7 +140,7 @@ describe('nested sub-tasks', () => {
   });
 
   test('a child in another group is its own top-level row', () => {
-    const epic = task('e-1', { kind: 'epic', status: 'ready' });
+    const epic = task('e-1', { kind: 'milestone', status: 'ready' });
     const child = task('t-1', { parent: 'e-1', status: 'working' });
     const groups = groupTasks([epic, child], prefs(), {
       statuses: STATUSES,
@@ -158,7 +162,7 @@ describe('nested sub-tasks', () => {
 
   // Epic members are not sub-tasks; only a task under another task is.
   test('showSubtasks off hides task-under-task children but keeps epic members', () => {
-    const epic = task('e-1', { kind: 'epic' });
+    const epic = task('e-1', { kind: 'milestone' });
     const member = task('t-1', { parent: 'e-1' });
     const sub = task('t-2', { parent: 't-1' });
     const groups = groupTasks(
@@ -171,7 +175,7 @@ describe('nested sub-tasks', () => {
 });
 
 describe('groupTasks by epic and milestone', () => {
-  const epic = task('e-1', { kind: 'epic' }, 'Payments');
+  const epic = task('e-1', { kind: 'milestone' }, 'Payments');
   const tasks = [
     epic,
     task('t-1', { parent: 'e-1' }),
@@ -200,7 +204,7 @@ describe('groupTasks by epic and milestone', () => {
   });
 
   test('milestone grouping wears the rolled-up status and sinks finished milestones', () => {
-    const done = task('e-2', { kind: 'epic' }, 'Shipped');
+    const done = task('e-2', { kind: 'milestone' }, 'Shipped');
     const groups = groupTasks(
       [
         done,

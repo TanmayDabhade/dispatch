@@ -606,7 +606,7 @@ describe('TaskPage', () => {
   });
 
   test('an epic shows its children as sub-task rows with a progress count and a + preset', () => {
-    const epic = task('e-1', 'Ship the pass', { kind: 'epic' });
+    const epic = task('e-1', 'Ship the pass', { kind: 'milestone' });
     const done = task('t-2', 'Tokens', { parent: 'e-1', status: 'landed' });
     const open = task('t-3', 'Shell', { parent: 'e-1' });
     const log = mountPage(epic, { tasks: [epic, done, open] });

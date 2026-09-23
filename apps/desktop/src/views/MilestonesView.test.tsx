@@ -258,8 +258,8 @@ function dialogTitle(): string | null {
   );
 }
 
-const payments = task('e-1', 'Payments', { kind: 'epic' });
-const shipped = task('e-2', 'Shipped', { kind: 'epic' });
+const payments = task('e-1', 'Payments', { kind: 'milestone' });
+const shipped = task('e-2', 'Shipped', { kind: 'milestone' });
 
 test('each milestone is a status-tinted GroupHeader with a ◔ n/m progress glyph over ListRows', () => {
   const { container } = renderMilestones(

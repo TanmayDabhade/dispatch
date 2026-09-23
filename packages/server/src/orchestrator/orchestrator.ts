@@ -2,12 +2,14 @@ import {
   DISPATCH_DIR,
   executorModels,
   generateRunId,
+  isContainerKind,
   loadConfig,
   nextSubagentStatus,
   slugify,
   summarizeSubagents,
   TaskParseError,
   TaskStore,
+  usesIntegrationBranch,
 } from '@dispatch/core';
 import type { SubagentStatus } from '@dispatch/core';
 import type {
@@ -1151,7 +1153,9 @@ export class Orchestrator {
   private ensureEpicBranchFor(task: TaskDoc): string | null {
     if (task.meta.parent === null) return null;
     const parent = this.ctx.store.get(task.meta.parent);
-    if (parent === null || parent.meta.kind !== 'epic') return null;
+    if (parent === null || !usesIntegrationBranch(parent.meta.kind)) {
+      return null;
+    }
     const branch = epicBranchName(parent.meta.id);
     if (!this.worktrees.hasBranch(branch)) {
       const from = this.worktrees.defaultBaseBranch();
@@ -1184,7 +1188,9 @@ export class Orchestrator {
     const task = this.ctx.store.get(meta.taskId);
     if (task === null || task.meta.parent === null) return null;
     const parent = this.ctx.store.get(task.meta.parent);
-    if (parent === null || parent.meta.kind !== 'epic') return null;
+    if (parent === null || !usesIntegrationBranch(parent.meta.kind)) {
+      return null;
+    }
     const branch = epicBranchName(parent.meta.id);
     return this.worktrees.hasBranch(branch) ? branch : null;
   }
@@ -2934,8 +2940,11 @@ export class Orchestrator {
     if (epic === null) {
       throw new OrchestratorNotFoundError(`epic not found: ${epicId}`);
     }
-    if (epic.meta.kind !== 'epic') {
-      throw new OrchestratorClientError(`not an epic: ${epicId}`);
+    if (
+      !isContainerKind(epic.meta.kind) &&
+      !this.ctx.cache.isContainer(epicId)
+    ) {
+      throw new OrchestratorClientError(`not a container: ${epicId}`);
     }
     return epic;
   }
@@ -2968,7 +2977,7 @@ export class Orchestrator {
     }
     const children = this.ctx.cache
       .query({ parent: epicId, includeArchived: true })
-      .filter((t) => t.meta.kind === 'task');
+      .filter((t) => !isContainerKind(t.meta.kind));
     const unfinished = children.filter(
       (c) => c.meta.status !== 'landed' && c.meta.status !== 'dropped'
     );

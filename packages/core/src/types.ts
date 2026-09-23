@@ -1,5 +1,9 @@
 export type { TaskStatus } from './status.js';
-export type TaskKind = 'task' | 'epic';
+import type { ContainerKind } from './kinds.js';
+
+// Linear's hierarchy: containers group tasks (see kinds.ts). Legacy `epic`
+// reads as `milestone`.
+export type TaskKind = 'task' | ContainerKind;
 export type Priority = 'urgent' | 'high' | 'medium' | 'low' | 'none';
 // A serialized ActorRef (see actor.ts): `none`, the legacy bare `human`/`agent`,
 // or a named `human:wyat` / `agent:wyat/claude`.
@@ -99,7 +103,12 @@ export const PRIORITIES: readonly Priority[] = [
   'low',
   'none',
 ];
-export const KINDS: readonly TaskKind[] = ['task', 'epic'];
+export const KINDS: readonly TaskKind[] = [
+  'task',
+  'milestone',
+  'project',
+  'initiative',
+];
 export const ASSIGNEES: readonly Assignee[] = ['agent', 'human', 'none'];
 export const TASK_RISKS: readonly TaskRisk[] = [
   'routine',

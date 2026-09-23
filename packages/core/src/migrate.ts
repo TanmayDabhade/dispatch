@@ -9,6 +9,7 @@ import {
 import type { Finding } from './findings.js';
 import { taskIdFromFilename } from './ids.js';
 import { scanFindingsJsonl, scanLedgerJsonl } from './jsonlRecords.js';
+import { isContainerKind } from './kinds.js';
 import { LEDGER_KINDS } from './ledger.js';
 import type { LedgerEntry } from './ledger.js';
 import { queryOne } from './sqliteDb.js';
@@ -198,7 +199,8 @@ function rowCounts(records: SqliteRecordStores): RowCounts {
     queryOne<{ n: number }>(records.db, sql, params)?.n ?? 0;
   return {
     tasks: count('SELECT COUNT(*) AS n FROM tasks WHERE kind = ?', ['task']),
-    epics: count('SELECT COUNT(*) AS n FROM tasks WHERE kind = ?', ['epic']),
+    // `epics` counts every container kind, legacy `epic` rows included.
+    epics: count("SELECT COUNT(*) AS n FROM tasks WHERE kind <> 'task'"),
     findings: count('SELECT COUNT(*) AS n FROM findings'),
     ledger: count('SELECT COUNT(*) AS n FROM ledger_entries'),
   };
@@ -345,7 +347,7 @@ function importTasks(
   }
   const slugs = taskSlugsByFile(source.tasksDir);
   for (const doc of docs) {
-    const tally = doc.meta.kind === 'epic' ? epics : tasks;
+    const tally = isContainerKind(doc.meta.kind) ? epics : tasks;
     tally.found += 1;
     // Check-then-write rather than an upsert, because put() OVERWRITES: a
     // re-run must not clobber a task the daemon has edited since the first

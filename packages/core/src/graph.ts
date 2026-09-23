@@ -1,5 +1,6 @@
 // This module must stay free of node:* imports — it is exported as the
 // browser-safe '@dispatch/core/graph' subpath consumed by the desktop webview.
+import { isContainer, parentIdsOf } from './kinds.js';
 import { isDoneStatus, isSatisfiedForDispatchStatus } from './status.js';
 import type { Priority, TaskDoc, TaskListItem } from './types.js';
 
@@ -43,9 +44,12 @@ function filterAndSortByReadiness(
   // undefined, and "dangling ids do not block" did the rest. Archiving is a
   // filing action and must never be a scheduling one.
   const byId = new Map(tasks.map((t) => [t.meta.id, t]));
+  // A container (by kind or by having children) is never itself ready work.
+  const parentIds = parentIdsOf(tasks);
   return (
     tasks
-      .filter((t) => t.meta.kind === 'task' && t.meta.status === 'ready')
+      .filter((t) => !isContainer(t.meta, parentIds))
+      .filter((t) => t.meta.status === 'ready')
       // Archived tasks are excluded HERE, as candidates, not by the caller —
       // that is the whole point of the note above. An archived task is never
       // ready work, but it is still a real blocker.

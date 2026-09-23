@@ -1,4 +1,5 @@
 import {
+  ACCEPTED_KINDS,
   ASSIGNEES,
   canonicalStatus,
   ConfigError,
@@ -460,7 +461,7 @@ async function taskList(
     config.statuses,
     'status'
   );
-  const kind = validate(args.kind, KINDS, 'kind');
+  const kind = validate(args.kind, ACCEPTED_KINDS, 'kind');
 
   if (route.via === 'daemon') {
     const query = new URLSearchParams();
@@ -586,7 +587,7 @@ async function taskSave(
     if (input.title === undefined || input.title.trim() === '') {
       throw new ToolError('title must not be empty');
     }
-    const kind = validate(input.kind, KINDS, 'kind');
+    const kind = validate(input.kind, ACCEPTED_KINDS, 'kind');
     const create = {
       title: input.title,
       kind,

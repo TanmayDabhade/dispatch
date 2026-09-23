@@ -300,7 +300,7 @@ function blankMeta(id: string): TaskMeta {
   const epoch = new Date(0).toISOString();
   return newTaskDoc(
     id,
-    id.startsWith('e-') ? 'epic' : 'task',
+    id.startsWith('e-') ? 'milestone' : 'task',
     { title: '' },
     epoch
   ).meta;

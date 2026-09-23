@@ -63,9 +63,16 @@ describe('readyTasks', () => {
     expect(ids).not.toContain('t-o00000'); // not todo
   });
   it('excludes epics and non-todo statuses', () => {
-    const epic = make({ id: 'e-100000', kind: 'epic' });
+    const epic = make({ id: 'e-100000', kind: 'milestone' });
     const review = make({ id: 't-200000', status: 'review' });
     expect(readyTasks([epic, review])).toEqual([]);
+  });
+  it('excludes any task with children, whatever its kind', () => {
+    const parent = make({ id: 't-300000' });
+    const child = make({ id: 't-400000', parent: 't-300000' });
+    expect(readyTasks([parent, child]).map((t) => t.meta.id)).toEqual([
+      't-400000',
+    ]);
   });
   it('treats dangling blocker ids as non-blocking', () => {
     const t = make({ id: 't-300000', blockedBy: ['t-ghost0'] });

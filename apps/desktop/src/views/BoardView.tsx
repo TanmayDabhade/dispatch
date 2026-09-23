@@ -1,4 +1,5 @@
 import type { TaskListItem } from '@dispatch/core/browser';
+import { isContainerKind } from '@dispatch/core/browser';
 import { Ellipsis, Layers, Star } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -405,7 +406,7 @@ export function BoardView({
   const countByStatus = useMemo(() => {
     const map = new Map<string, number>();
     for (const doc of boardTasks) {
-      if (doc.meta.kind === 'epic') continue;
+      if (isContainerKind(doc.meta.kind)) continue;
       map.set(doc.meta.status, (map.get(doc.meta.status) ?? 0) + 1);
     }
     return map;

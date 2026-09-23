@@ -477,7 +477,7 @@ describe('error paths', () => {
     });
     expect(res.status).toBe(400);
     expect((await json(res)).error).toBe(
-      'invalid kind: wombat (expected task|epic)'
+      'invalid kind: wombat (expected task|initiative|project|milestone|epic)'
     );
     expect(taskFileNames(root)).toEqual([]);
   });
@@ -549,7 +549,7 @@ describe('error paths', () => {
     });
     expect(res.status).toBe(201);
     const body = await json(res);
-    expect(body.meta.kind).toBe('epic');
+    expect(body.meta.kind).toBe('milestone');
     expect(body.meta.priority).toBe('high');
     expect(body.meta.assignee).toBe('agent');
     expect(taskFileNames(root)).toHaveLength(1);

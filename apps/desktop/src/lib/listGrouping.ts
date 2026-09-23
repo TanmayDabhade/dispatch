@@ -1,5 +1,9 @@
 import type { Assignee, Priority, TaskListItem } from '@dispatch/core/browser';
-import { isDoneStatus, PRIORITY_ORDER } from '@dispatch/core/browser';
+import {
+  isContainerKind,
+  isDoneStatus,
+  PRIORITY_ORDER,
+} from '@dispatch/core/browser';
 
 import { statusColor } from '../components/tasks/StatusIcon';
 import { rollupMilestoneStatus } from './milestoneRollup';
@@ -239,7 +243,7 @@ function byEpic(
     );
   }
   for (const doc of tasks) {
-    if (doc.meta.kind === 'epic') continue;
+    if (isContainerKind(doc.meta.kind)) continue;
     const parent = doc.meta.parent;
     if (parent === null) {
       noEpic.push(doc);

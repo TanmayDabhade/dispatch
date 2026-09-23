@@ -213,7 +213,7 @@ export const TaskListRow = memo(function TaskListRow({
           {...pickerProps('epic')}
         />
       )}
-      {doc.meta.kind === 'epic' && childCount > 0 && (
+      {childCount > 0 && (
         <Pill title={`${childCount} sub-tasks`}>
           <Play className="size-2.5 fill-current" />
           {childCount}

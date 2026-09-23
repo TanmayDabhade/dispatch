@@ -40,6 +40,7 @@ import type {
   TaskListItem,
   UpdatePatch,
 } from '@dispatch/core/browser';
+import { isContainer, parentIdsOf } from '@dispatch/core/browser';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
@@ -1255,10 +1256,12 @@ export function useDispatchProject(
     staleTime: 15_000,
   });
 
-  const epics = useMemo(
-    () => (tasks ?? []).filter((t) => t.meta.kind === 'epic'),
-    [tasks]
-  );
+  // Every container: a container kind, or any task with children.
+  const epics = useMemo(() => {
+    const all = tasks ?? [];
+    const parentIds = parentIdsOf(all);
+    return all.filter((t) => isContainer(t.meta, parentIds));
+  }, [tasks]);
 
   // Task 9: the archived subset of the archived-inclusive query.
   const archivedTasks = useMemo(

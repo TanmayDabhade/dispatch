@@ -731,7 +731,7 @@ describe('SqliteTaskStore rejects rows it cannot trust', () => {
 
   it('throws on an enum column outside its set', () => {
     for (const [column, bad] of [
-      ['kind', 'milestone'],
+      ['kind', 'saga'],
       ['priority', 'urgentish'],
       ['risk', 'spicy'],
     ]) {

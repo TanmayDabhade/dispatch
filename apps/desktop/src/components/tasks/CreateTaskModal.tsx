@@ -65,7 +65,7 @@ import { Textarea } from '@/ui/textarea';
 
 // Fixed, non-config-driven enums — see TaskDetailModal.tsx for why these
 // mirror core/types.ts's constants instead of importing them at runtime.
-const KINDS: TaskKind[] = ['task', 'epic'];
+const KINDS: TaskKind[] = ['task', 'milestone', 'project', 'initiative'];
 const PRIORITIES: Priority[] = ['urgent', 'high', 'medium', 'low', 'none'];
 const ASSIGNEES: Assignee[] = ['agent', 'human', 'none'];
 
@@ -442,7 +442,7 @@ export function CreateTaskModal({
   const kindOptions: ChipOption[] = KINDS.map((k) => ({
     value: k,
     label: kindLabel(k),
-    glyph: k === 'epic' ? <Layers /> : <SquareCheck />,
+    glyph: k === 'task' ? <SquareCheck /> : <Layers />,
   }));
 
   return (

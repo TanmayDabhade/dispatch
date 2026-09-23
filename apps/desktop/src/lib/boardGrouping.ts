@@ -1,5 +1,5 @@
 import type { Priority, TaskListItem } from '@dispatch/core/browser';
-import { PRIORITY_ORDER } from '@dispatch/core/browser';
+import { isContainerKind, PRIORITY_ORDER } from '@dispatch/core/browser';
 
 import { assigneeLabel, assigneeRef, priorityLabel } from './taskDisplay';
 import type { TasksSubGrouping } from './tasksPrefs';
@@ -84,7 +84,7 @@ export function groupTasksByEpicLane(
   for (const task of tasks) {
     // An epic is a lane heading, not a card inside one — including it as its own child would
     // double-count it against its own progress.
-    if (task.meta.kind === 'epic') continue;
+    if (isContainerKind(task.meta.kind)) continue;
     const parent = task.meta.parent;
     if (parent === null) {
       noEpic.push(task);
@@ -252,7 +252,7 @@ export function groupTasksByLane(
   if (subGrouping === 'epic') {
     return groupTasksByEpicLane(tasks, statuses, epics);
   }
-  const cards = tasks.filter((t) => t.meta.kind !== 'epic');
+  const cards = tasks.filter((t) => !isContainerKind(t.meta.kind));
   if (subGrouping === 'none') {
     return [laneOf('all', 'none', null, '', cards, statuses)];
   }

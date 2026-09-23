@@ -59,7 +59,7 @@ describe('rankTasks candidate set', () => {
     const blocker = make({ id: 't-aaaaaa', status: 'working' });
     const blocked = make({ id: 't-bbbbbb', blockedBy: ['t-aaaaaa'] });
     const free = make({ id: 't-cccccc' });
-    const epic = make({ id: 'e-dddddd', kind: 'epic' });
+    const epic = make({ id: 'e-dddddd', kind: 'milestone' });
     const backlog = make({ id: 't-eeeeee', status: 'draft' });
 
     const ranked = rankTasks([blocker, blocked, free, epic, backlog], {
@@ -218,7 +218,7 @@ describe('unblocking factor', () => {
     const root = make({ id: 't-aaaaaa' });
     const epic = make({
       id: 'e-bbbbbb',
-      kind: 'epic',
+      kind: 'milestone',
       blockedBy: ['t-aaaaaa'],
     });
     const derived = make({

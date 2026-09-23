@@ -6,6 +6,7 @@ import type {
   LandingSnapshot,
   RepoPr,
 } from '@dispatch/client';
+import { isContainerKind } from '@dispatch/core/browser';
 
 /** The Landing view's read model over `LandingSnapshot`. Zero React — happy-dom
  * can't exercise the table reliably, so filter/group/label logic lives here. */
@@ -325,7 +326,7 @@ export function landedFromTasks(
   cap = 30
 ): LandedTaskRow[] {
   return tasks
-    .filter((t) => t.meta.status === 'landed' && t.meta.kind !== 'epic')
+    .filter((t) => t.meta.status === 'landed' && !isContainerKind(t.meta.kind))
     .sort((a, b) => b.meta.updated.localeCompare(a.meta.updated))
     .slice(0, cap)
     .map((t) => ({

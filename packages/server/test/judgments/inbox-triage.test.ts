@@ -114,8 +114,8 @@ describe('triageCandidates', () => {
 describe('triageEpics', () => {
   test('lists open epics with a one-line summary', () => {
     const epics = triageEpics([
-      task('e1', 'Landing', { kind: 'epic' }, 'First line.\n\nMore.'),
-      task('e2', 'Old', { kind: 'epic', status: 'landed' }),
+      task('e1', 'Landing', { kind: 'milestone' }, 'First line.\n\nMore.'),
+      task('e2', 'Old', { kind: 'milestone', status: 'landed' }),
       task('t1', 'Not an epic'),
     ]);
     expect(epics).toEqual([

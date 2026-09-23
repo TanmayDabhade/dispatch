@@ -1,10 +1,10 @@
 import {
+  ACCEPTED_KINDS,
   ASSIGNEES,
   canonicalStatus,
   ConfigError,
   describeValue,
   getSection,
-  KINDS,
   loadConfig,
   PRIORITIES,
   TaskParseError,
@@ -434,7 +434,9 @@ function validateTaskFields(
   { includeKind, includeBody }: { includeKind: boolean; includeBody: boolean }
 ): string | null {
   if (includeKind) {
-    const kindError = validateEnumField(value.kind, KINDS, 'kind');
+    // ACCEPTED_KINDS keeps the legacy `epic` valid; the store reads it as a
+    // milestone.
+    const kindError = validateEnumField(value.kind, ACCEPTED_KINDS, 'kind');
     if (kindError) return kindError;
   }
   if (includeBody) {
@@ -4046,8 +4048,7 @@ async function convertInbox(req: Request, ctx: ApiContext): Promise<Response> {
       const description = restLines.join('\n').trim();
       const reading = triage?.items[id];
       const parent =
-        reading?.epicId != null &&
-        ctx.cache.get(reading.epicId)?.meta.kind === 'epic'
+        reading?.epicId != null && ctx.cache.isContainer(reading.epicId)
           ? reading.epicId
           : null;
       const duplicateOf = reading?.duplicates.find(

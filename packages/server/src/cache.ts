@@ -1,4 +1,9 @@
-import { canonicalStatus, readyTasks } from '@dispatch/core';
+import {
+  canonicalKind,
+  canonicalStatus,
+  CONTAINER_KINDS,
+  readyTasks,
+} from '@dispatch/core';
 import type {
   ListSafeError,
   TaskDoc,
@@ -14,9 +19,15 @@ export interface CacheFilter {
   status?: string;
   kind?: string;
   parent?: string;
+  // Only containers: a container kind, or any task some other task names as
+  // its parent (see core's isContainer).
+  containers?: boolean;
   // When false/omitted, query() excludes archived tasks (the default board view).
   includeArchived?: boolean;
 }
+
+// Cached rows hold canonical kinds, so the legacy `epic` never appears here.
+const CONTAINER_SQL = CONTAINER_KINDS.map((k) => `'${k}'`).join(', ');
 
 interface TaskRow {
   json: string;
@@ -133,11 +144,16 @@ export class TaskCache {
     }
     if (filter.kind !== undefined) {
       clauses.push('kind = $kind');
-      params.$kind = filter.kind;
+      params.$kind = canonicalKind(filter.kind);
     }
     if (filter.parent !== undefined) {
       clauses.push('parent = $parent');
       params.$parent = filter.parent;
+    }
+    if (filter.containers === true) {
+      clauses.push(
+        `(kind IN (${CONTAINER_SQL}) OR id IN (SELECT parent FROM tasks WHERE parent IS NOT NULL))`
+      );
     }
     if (filter.includeArchived !== true) {
       clauses.push('archived = 0');
@@ -149,6 +165,16 @@ export class TaskCache {
       )
       .all(params) as TaskRow[];
     return rows.map((row) => row.json);
+  }
+
+  // Whether `id` can fan out: a container kind, or a task with children.
+  isContainer(id: string): boolean {
+    const row = this.db
+      .query(
+        `SELECT 1 AS hit FROM tasks WHERE (id = $id AND kind IN (${CONTAINER_SQL})) OR parent = $id LIMIT 1`
+      )
+      .get({ $id: id });
+    return row !== null;
   }
 
   get(id: string): TaskDoc | null {

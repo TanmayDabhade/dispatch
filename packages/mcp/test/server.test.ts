@@ -336,7 +336,7 @@ describe('task_list', () => {
     })) as ToolCallResult;
     expect(result.isError).toBe(true);
     expect(callToolText(result)).toBe(
-      'invalid kind: story (expected task|epic)'
+      'invalid kind: story (expected task|initiative|project|milestone|epic)'
     );
   });
 

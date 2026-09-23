@@ -1,6 +1,7 @@
 import {
   claimConflictsWithWrites,
   dispatchableTasks,
+  isContainerKind,
   loadConfig,
   schedulableBatch,
 } from '@dispatch/core';
@@ -510,7 +511,7 @@ export class EpicEngine {
   // that shows a milestone.
   progressAll(): EpicProgress[] {
     return this.ctx.cache
-      .query({ kind: 'epic' })
+      .query({ containers: true })
       .map((epic) => epic.meta.id)
       .sort()
       .map((epicId) => this.progress(epicId));
@@ -917,7 +918,7 @@ export class EpicEngine {
   private childrenOf(epicId: string): TaskDoc[] {
     return this.ctx.cache
       .query({ parent: epicId, includeArchived: true })
-      .filter((t) => t.meta.kind === 'task');
+      .filter((t) => !isContainerKind(t.meta.kind));
   }
 
   private requireEpic(epicId: string): TaskDoc {
@@ -925,8 +926,11 @@ export class EpicEngine {
     if (epic === null) {
       throw new OrchestratorNotFoundError(`epic not found: ${epicId}`);
     }
-    if (epic.meta.kind !== 'epic') {
-      throw new OrchestratorClientError(`not an epic: ${epicId}`);
+    if (
+      !isContainerKind(epic.meta.kind) &&
+      !this.ctx.cache.isContainer(epicId)
+    ) {
+      throw new OrchestratorClientError(`not a container: ${epicId}`);
     }
     return epic;
   }

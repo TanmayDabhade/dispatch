@@ -12,7 +12,11 @@ import type {
   TaskListItem,
   UpdatePatch,
 } from '@dispatch/core/browser';
-import { parseExternal } from '@dispatch/core/browser';
+import {
+  isContainer,
+  parentIdsOf,
+  parseExternal,
+} from '@dispatch/core/browser';
 import {
   Archive,
   Ban,
@@ -324,7 +328,11 @@ export function TaskPage({
   );
   const { result: verification, error: verificationError } =
     useTaskVerification(client, port, doc.meta.id);
-  const isEpic = doc.meta.kind === 'epic';
+  // Any container fans out: a container kind, or a task with children.
+  const isEpic = useMemo(
+    () => isContainer(doc.meta, parentIdsOf(tasks)),
+    [doc.meta, tasks]
+  );
   // Only ever meaningful for an epic — `useEpicLedger` no-ops (empty, disabled) when
   // `epicId` is undefined, so this is safe on a plain task.
   const { entries: epicLedgerEntries, error: epicLedgerError } = useEpicLedger(
