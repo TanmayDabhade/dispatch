@@ -1,0 +1,108 @@
+import { describe, expect, it } from 'bun:test';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import {
+  formatMilestoneMigrationReport,
+  migrateLegacyMilestones,
+} from '../src/milestoneMigration.js';
+import { openDispatchDb } from '../src/sqliteDb.js';
+import { SqliteTaskStore } from '../src/sqliteTaskStore.js';
+import { TaskStore } from '../src/store.js';
+import type { TaskStorePort } from '../src/store.js';
+
+// A board as the legacy milestone field left it: two milestones, an epic
+// child that already has a parent, a task with none, and a stray project.
+function fixture(store: TaskStorePort) {
+  const epic = store.create({
+    title: 'Auth epic',
+    kind: 'epic',
+    milestone: 'v1',
+  });
+  const child = store.create({
+    title: 'Login',
+    parent: epic.meta.id,
+    milestone: 'v1',
+  });
+  const loose = store.create({ title: 'Docs', milestone: ' v1 ' });
+  const other = store.create({ title: 'Billing', milestone: 'v2' });
+  const plain = store.create({ title: 'No milestone' });
+  const project = store.create({
+    title: 'Elsewhere',
+    kind: 'project',
+    milestone: 'v2',
+  });
+  return { epic, child, loose, other, plain, project };
+}
+
+function eachBackend(run: (store: TaskStorePort) => void): void {
+  run(TaskStore.init(mkdtempSync(join(tmpdir(), 'dispatch-milestones-'))));
+  const db = openDispatchDb(':memory:');
+  run(new SqliteTaskStore(mkdtempSync(join(tmpdir(), 'dispatch-ms-')), db));
+  db.close();
+}
+
+describe('migrateLegacyMilestones', () => {
+  it('dry-runs without writing and reports the plan', () => {
+    eachBackend((store) => {
+      const f = fixture(store);
+      const before = JSON.stringify(store.list());
+      const report = migrateLegacyMilestones(store, { dryRun: true });
+      expect(JSON.stringify(store.list())).toBe(before);
+      expect(report.tasksBefore).toBe(6);
+      expect(report.tasksAfter).toBe(6);
+      expect(report.projects.map((p) => [p.name, p.created])).toEqual([
+        ['v1', true],
+        ['v2', true],
+      ]);
+      expect(report.projectsCreated).toEqual([]);
+      expect(report.reparented.map((r) => r.id).sort()).toEqual(
+        [f.epic.meta.id, f.loose.meta.id, f.other.meta.id].sort()
+      );
+      expect(report.skipped).toEqual([
+        {
+          id: f.child.meta.id,
+          milestone: 'v1',
+          reason: `already has parent ${f.epic.meta.id}`,
+        },
+        {
+          id: f.project.meta.id,
+          milestone: 'v2',
+          reason: 'a project cannot sit under a project',
+        },
+      ]);
+      expect(formatMilestoneMigrationReport(report)).toContain('Parity: ok');
+    });
+  });
+
+  it('migrates with count parity, then is a no-op on a second run', () => {
+    eachBackend((store) => {
+      const f = fixture(store);
+      const first = migrateLegacyMilestones(store, { status: 'ready' });
+      expect(first.tasksAfter).toBe(first.tasksBefore + 2);
+      expect(first.parity).toBe(true);
+      expect(first.projectsCreated).toHaveLength(2);
+      const v1 = first.projects.find((p) => p.name === 'v1')!.projectId!;
+      const v1Doc = store.get(v1)!;
+      expect(v1Doc.meta.kind).toBe('project');
+      expect(v1Doc.meta.title).toBe('v1');
+      expect(store.get(f.epic.meta.id)!.meta.parent).toBe(v1);
+      expect(store.get(f.loose.meta.id)!.meta.parent).toBe(v1);
+      // The legacy field is kept, not cleared.
+      expect(store.get(f.loose.meta.id)!.meta.milestone).toBe(' v1 ');
+      expect(store.get(f.child.meta.id)!.meta.parent).toBe(f.epic.meta.id);
+      expect(store.get(f.plain.meta.id)!.meta.parent).toBeNull();
+
+      const second = migrateLegacyMilestones(store);
+      expect(second.tasksAfter).toBe(second.tasksBefore);
+      expect(second.projectsCreated).toEqual([]);
+      expect(second.reparented).toEqual([]);
+      expect(second.projects.every((p) => !p.created)).toBe(true);
+      expect(
+        second.skipped.filter((s) => s.reason === 'already under its project')
+      ).toHaveLength(3);
+      expect(second.parity).toBe(true);
+    });
+  });
+});

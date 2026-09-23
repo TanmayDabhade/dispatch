@@ -87,6 +87,7 @@ import {
   readJsonBodyOptional,
 } from './api/http.js';
 import { getImpact } from './api/impact.js';
+import { migrateMilestones } from './api/migrations.js';
 import { listPeople } from './api/people.js';
 import { getQueue } from './api/queue.js';
 import { listTaskFindings, startTaskReview } from './api/review.js';
@@ -6129,6 +6130,15 @@ export async function handleApi(
     // enrich/"add detail" agents, task drafts, overseer chats), normalized for
     // the All agents page. Task runs are not repeated here: GET /api/runs
     // already lists them, and the client merges the two.
+    // POST /api/migrations/milestones — legacy milestone strings to projects.
+    if (
+      segments[0] === 'migrations' &&
+      segments[1] === 'milestones' &&
+      segments.length === 2 &&
+      method === 'POST'
+    ) {
+      return await migrateMilestones(req, ctx);
+    }
     // GET /api/people — the people registry pickers and avatars read.
     if (segments[0] === 'people' && segments.length === 1 && method === 'GET') {
       return listPeople(ctx);

@@ -359,6 +359,9 @@ reimplementation
 reindenting
 reinstallable
 renderable
+reparent
+reparented
+reparents
 reparsed
 replayable
 repoint

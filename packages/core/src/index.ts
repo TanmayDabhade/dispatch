@@ -4,6 +4,15 @@ export * from './kinds.js';
 export * from './comments.js';
 export * from './people.js';
 export {
+  formatMilestoneMigrationReport,
+  migrateLegacyMilestones,
+} from './milestoneMigration.js';
+export type {
+  MilestoneMigrationOptions,
+  MilestoneMigrationReport,
+  MilestoneProject,
+} from './milestoneMigration.js';
+export {
   FileCommentStore,
   generateCommentId,
   SqliteCommentStore,
