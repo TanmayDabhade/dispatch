@@ -1,6 +1,8 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 
+import type { DaemonStarter } from './daemon.js';
+import { setDaemonStarter } from './daemon.js';
 import { ONBOARDING_MARKDOWN } from './onboarding.js';
 import type { QuestionTiming, ScopeTiming } from './tools.js';
 import { registerDispatchTools } from './tools.js';
@@ -47,7 +49,15 @@ export function createDispatchMcpServer(
 // bin) and `dispatch mcp` (the CLI, via a dynamic import — see
 // packages/cli/src/program.ts) need, so neither has to depend on the SDK's
 // transport APIs directly.
-export async function runStdioServer(rootDir: string): Promise<void> {
+//
+// `startDaemon` lets a tool that cannot work without dispatchd start one when
+// none is running (see daemon.ts's `setDaemonStarter`). Only `dispatch mcp`
+// passes it.
+export async function runStdioServer(
+  rootDir: string,
+  opts: { startDaemon?: DaemonStarter } = {}
+): Promise<void> {
+  setDaemonStarter(opts.startDaemon ?? null);
   const server = createDispatchMcpServer(rootDir);
   await server.connect(new StdioServerTransport());
 }

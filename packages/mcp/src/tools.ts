@@ -28,6 +28,7 @@ import {
   liveDaemon,
   readDaemonFile,
   requestDeadline,
+  startDaemon,
 } from './daemon.js';
 
 // Thrown by validation/lookup helpers below. Every tool handler catches this
@@ -253,7 +254,12 @@ type StoreRoute =
 
 async function resolveStoreRoute(rootDir: string): Promise<StoreRoute> {
   const projRoot = projectRoot(rootDir);
-  const live = await liveDaemon(projRoot);
+  // Only a database-backed project needs one started: the file backend has
+  // always had a direct path, and spawning a daemon for a read it can do
+  // itself would be a change nobody asked for.
+  const live =
+    (await liveDaemon(projRoot)) ??
+    (daemonOwnsStore(projRoot) ? await startDaemon(projRoot) : null);
   if (live !== null) {
     return {
       via: 'daemon',
@@ -720,7 +726,9 @@ async function taskComment(
   // mcp` session (no DISPATCH_RUN_ID) skipped the proxy entirely and then
   // refused with "dispatchd is not running" on a database-backed project
   // while the daemon was, in fact, running.
-  const live = await liveDaemon(projRoot);
+  const live =
+    (await liveDaemon(projRoot)) ??
+    (daemonOwnsStore(projRoot) ? await startDaemon(projRoot) : null);
   // Why the daemon proxy failed, kept so the fallback below can report it.
   // Without this, a daemon that answered 401 or 500 was reported to the agent
   // as "dispatchd is not running" — advice that is both false and unactionable
@@ -1229,9 +1237,15 @@ async function dispatchNote(
   if (args.title.trim() === '') {
     return toolError('title must not be empty');
   }
-  const daemon = readDaemonFile(projectRoot(rootDir));
+  const projRoot = projectRoot(rootDir);
+  let daemon = readDaemonFile(projRoot);
   if (daemon === null || !(await isDaemonHealthy(daemon.port))) {
-    return toolError('dispatchd not running — cannot add a note');
+    // The inbox lives only in the daemon on every backend, so there is no
+    // direct path to fall back to — start one if this process can.
+    daemon = (await startDaemon(projRoot))?.info ?? null;
+    if (daemon === null) {
+      return toolError('dispatchd not running — cannot add a note');
+    }
   }
   // Writes to the brain-dump inbox, which replaced the notes store. The tool's own vocabulary
   // is kept (`kind`, `title`, `body`) so every agent prompt that already knows how to call it
