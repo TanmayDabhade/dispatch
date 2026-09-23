@@ -14,6 +14,7 @@ import {
   OVERSEER_TOOL_PREFIX,
   overseerSdkTools,
 } from '../../src/orchestrator/overseers/claude.js';
+import { floorDecision } from './helpers.js';
 
 // The exact text the Agent SDK throws when it can't resolve its own bundled
 // native CLI binary — mirrors claude-planner.test.ts's fixture for the same
@@ -146,6 +147,13 @@ describe('ClaudeOverseer session wiring', () => {
     expect(captured?.permissionMode).toBe('auto');
     expect(captured?.maxTurns).toBe(40);
     expect(captured?.maxBudgetUsd).toBe(2.5);
+    // Floor commands reach the canUseTool gate even where the CLI would
+    // otherwise skip it (bypassPermissions, a settings allow rule).
+    expect(
+      await floorDecision(captured?.hooks, 'Bash', {
+        command: 'gh release create v2.0.0',
+      })
+    ).toBe('ask');
   });
 
   it('leaves the caps and policy to the SDK defaults when the project sets none', async () => {

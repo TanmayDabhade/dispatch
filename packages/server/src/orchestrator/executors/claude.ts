@@ -16,6 +16,7 @@ import type { StdioServerSpec } from '../dispatchMcp.js';
 import { cartoMcpSpec, cartoSpecFor, dispatchMcpSpec } from '../dispatchMcp.js';
 import { activeExperiments } from '../experiments.js';
 import type { ExperimentName } from '../experiments.js';
+import { floorHooks } from '../floorHook.js';
 import type {
   ApprovalDecision,
   Executor,
@@ -679,6 +680,11 @@ export class ClaudeExecutor implements Executor {
       model: opts.model,
       resume: opts.resumeSessionId,
       canUseTool,
+      // Routes every irreversible call to canUseTool above, which parks it
+      // for a human. Without this the CLI skips canUseTool under
+      // bypassPermissions or on a matching settings allow rule — see
+      // floorHooks.
+      hooks: floorHooks('ask'),
       // Same "query() doesn't auto-load what the CLI does" class of bug as
       // the `.mcp.json` fix directly below: a dispatched run must behave
       // like a human running `claude` in this checkout, not like a bare SDK

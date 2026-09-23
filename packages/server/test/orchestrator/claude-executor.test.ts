@@ -24,7 +24,7 @@ import type {
   ExecutorEvents,
   NormalizedEntry,
 } from '../../src/orchestrator/types.js';
-import { initGitRepo } from './helpers.js';
+import { floorDecision, initGitRepo } from './helpers.js';
 
 // A no-op ExecutorEvents sink for tests below that only care about what
 // gets *sent* to the SDK's query() (the mcpServers wiring), not about any
@@ -297,6 +297,31 @@ describe('ClaudeExecutor CLI-parity system prompt and setting sources', () => {
       preset: 'claude_code',
     });
     expect(captured?.settingSources).toEqual(['user', 'project', 'local']);
+  });
+
+  // The CLI skips canUseTool under bypassPermissions and on a matching
+  // settings allow rule (verified against the bundled CLI); the hook sends
+  // every floor command to canUseTool anyway, in every permission mode.
+  it('routes floor commands to canUseTool through a PreToolUse hook in every permission mode', async () => {
+    for (const permissionMode of ['bypassPermissions', 'auto', 'acceptEdits']) {
+      let captured: Options | undefined;
+      const executor = new ClaudeExecutor((args: { options?: Options }) => {
+        captured = args.options;
+        return emptyMessages() as unknown as Query;
+      });
+      executor.start(
+        { cwd: '/tmp/dispatch-worktree-x', prompt: 'x', permissionMode },
+        noopEvents
+      );
+      expect(
+        await floorDecision(captured?.hooks, 'Bash', {
+          command: 'git push --force origin main',
+        })
+      ).toBe('ask');
+      expect(
+        await floorDecision(captured?.hooks, 'Bash', { command: 'bun test' })
+      ).toBeUndefined();
+    }
   });
 
   // Each of these was exercised through this executor against the real CLI:

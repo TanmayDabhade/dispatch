@@ -1,3 +1,4 @@
+import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import { mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -143,4 +144,30 @@ export async function withBrokenRepo<T>(
     rmSync(gitDir, { force: true });
     renameSync(parked, gitDir);
   }
+}
+
+// The PreToolUse decision a session's hooks give one tool call — what the
+// CLI acts on before any permission mode, allow rule or canUseTool.
+export async function floorDecision(
+  hooks: Options['hooks'],
+  toolName: string,
+  toolInput: unknown
+): Promise<unknown> {
+  const hook = hooks?.PreToolUse?.[0]?.hooks[0];
+  if (hook === undefined) return 'no PreToolUse hook';
+  const output = await hook(
+    {
+      hook_event_name: 'PreToolUse',
+      tool_name: toolName,
+      tool_input: toolInput,
+      tool_use_id: 'tu-1',
+      session_id: 's',
+      transcript_path: '/tmp/t.jsonl',
+      cwd: '/tmp',
+    } as never,
+    'tu-1',
+    { signal: new AbortController().signal }
+  );
+  return (output as { hookSpecificOutput?: { permissionDecision?: unknown } })
+    .hookSpecificOutput?.permissionDecision;
 }

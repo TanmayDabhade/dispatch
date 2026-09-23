@@ -1,9 +1,11 @@
+import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  generateRepoDigest,
   headCommit,
   readRepoDigest,
   RepoDigestCache,
@@ -15,7 +17,7 @@ import type {
   DigestResult,
   RepoDigest,
 } from '../../src/orchestrator/repoDigest.js';
-import { initGitRepo, runGitSync } from './helpers.js';
+import { floorDecision, initGitRepo, runGitSync } from './helpers.js';
 
 // See the same note in hotspots.test.ts — without this redirect every write
 // below lands in the developer's real ~/.dispatch.
@@ -51,6 +53,35 @@ function generated(
 ): Promise<DigestResult> {
   return Promise.resolve({ markdown, costUsd });
 }
+
+describe('generateRepoDigest', () => {
+  // The digest session has no canUseTool, but a settings allow rule still
+  // let a matching command run in plan mode (verified against the bundled
+  // CLI); the hook refuses a floor command before it can.
+  it('refuses floor commands in its read-only session', async () => {
+    let captured: Options | undefined;
+    const result = await generateRepoDigest('/tmp/does-not-matter', ((args: {
+      options?: Options;
+    }) => {
+      captured = args.options;
+      return (function* (): Generator<unknown> {
+        yield {
+          type: 'result',
+          subtype: 'success',
+          result: '# map',
+          total_cost_usd: 0.01,
+        };
+      })() as unknown as Query;
+    }) as never);
+    expect(result.markdown).toBe('# map');
+    expect(captured?.permissionMode).toBe('plan');
+    expect(
+      await floorDecision(captured?.hooks, 'Bash', {
+        command: 'git push --tags',
+      })
+    ).toBe('deny');
+  });
+});
 
 describe('readRepoDigest', () => {
   it('returns null when nothing has been cached yet', () => {

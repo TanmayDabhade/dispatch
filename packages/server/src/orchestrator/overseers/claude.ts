@@ -14,6 +14,7 @@ import type { z } from 'zod';
 
 import { openClaudeQuery, rewriteMissingCliError } from '../claudeCli.js';
 import { cartoMcpServers } from '../executors/claude.js';
+import { floorHooks } from '../floorHook.js';
 import type {
   OverseerBackend,
   OverseerToolDescriptor,
@@ -221,6 +222,10 @@ export class ClaudeOverseer implements OverseerBackend {
             reason !== undefined && reason !== '' ? reason : 'denied by user',
         };
       },
+      // Routes every irreversible call to the canUseTool gate above, the one
+      // place the overseer's floor holds it for a human, even where the CLI
+      // would otherwise skip that gate (see floorHooks).
+      hooks: floorHooks('ask'),
       mcpServers: {
         [SERVER_NAME]: createSdkMcpServer({
           name: SERVER_NAME,

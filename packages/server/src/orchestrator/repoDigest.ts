@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 
 import { spawnGitSync } from '../blockingGit.js';
 import { openClaudeQuery, rewriteMissingCliError } from './claudeCli.js';
+import { floorHooks } from './floorHook.js';
 import { runsDir } from './paths.js';
 
 /**
@@ -128,6 +129,10 @@ export async function generateRepoDigest(
     permissionMode: 'plan',
     systemPrompt: { type: 'preset', preset: 'claude_code' },
     settingSources: ['user', 'project', 'local'],
+    // No canUseTool here, but a settings allow rule still lets a matching
+    // command run in plan mode; an irreversible one is refused before it can
+    // (see floorHooks).
+    hooks: floorHooks('deny'),
   };
   const sdkQuery: Query = openClaudeQuery(queryFn, DIGEST_PROMPT, options);
   try {

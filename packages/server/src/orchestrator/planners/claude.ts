@@ -2,6 +2,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
 
 import { openClaudeQuery, rewriteMissingCliError } from '../claudeCli.js';
+import { floorHooks } from '../floorHook.js';
 import type {
   Planner,
   PlannerMode,
@@ -305,6 +306,10 @@ export class ClaudePlanner implements Planner {
       settingSources: ['project', 'local'],
       tools: PLANNER_TOOLS,
       allowedTools: PLANNER_TOOLS,
+      // Plan mode leaves Bash to the SDK's own classifier, and a planner has
+      // no human on hand to approve anything, so an irreversible command is
+      // refused before it can run (see floorHooks).
+      hooks: floorHooks('deny'),
       strictMcpConfig: true,
       skills: [],
       ...(resume !== undefined ? { resume } : {}),

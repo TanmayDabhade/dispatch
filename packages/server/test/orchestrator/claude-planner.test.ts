@@ -7,6 +7,7 @@ import {
   ClaudePlanner,
   EMPTY_TURN_MESSAGE,
 } from '../../src/orchestrator/planners/claude.js';
+import { floorDecision } from './helpers.js';
 
 // The exact text the Agent SDK throws when it can't resolve its own bundled
 // native CLI binary — mirrors claude-executor.test.ts's own fixture for the
@@ -91,6 +92,14 @@ describe('ClaudePlanner.start', () => {
     expect(captured?.allowedTools).toEqual(['Read', 'Grep', 'Glob', 'Bash']);
     expect(captured?.strictMcpConfig).toBe(true);
     expect(captured?.skills).toEqual([]);
+    // Plan mode hands Bash to the SDK's classifier and there is no human to
+    // ask, so a floor command is refused before it runs.
+    expect(
+      await floorDecision(captured?.hooks, 'Bash', { command: 'npm publish' })
+    ).toBe('deny');
+    expect(
+      await floorDecision(captured?.hooks, 'Bash', { command: 'git log -1' })
+    ).toBeUndefined();
   });
 
   it('rejects when the result message is an error subtype', async () => {
