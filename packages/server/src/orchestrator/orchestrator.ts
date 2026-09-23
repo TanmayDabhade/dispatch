@@ -100,6 +100,7 @@ import {
   runKind,
   TERMINAL_RUN_STATES,
 } from './types.js';
+import type { RunUsage } from './usage.js';
 import type { DiffResult } from './worktree.js';
 import { WorktreeManager } from './worktree.js';
 
@@ -4161,6 +4162,7 @@ export class Orchestrator {
     finish?: {
       costUsd?: number;
       turns?: number;
+      usage?: RunUsage;
       sessionId?: string;
       error?: string;
       reviewedAt?: string;
@@ -4412,6 +4414,7 @@ export class Orchestrator {
       state: 'finished' | 'failed';
       costUsd?: number;
       turns?: number;
+      usage?: RunUsage;
       sessionId?: string;
       error?: string;
     }
@@ -4460,6 +4463,7 @@ export class Orchestrator {
     this.transition(runId, effectiveFinish.state, {
       costUsd: effectiveFinish.costUsd,
       turns: effectiveFinish.turns,
+      usage: effectiveFinish.usage,
       sessionId: effectiveFinish.sessionId,
       error: effectiveFinish.error,
     });

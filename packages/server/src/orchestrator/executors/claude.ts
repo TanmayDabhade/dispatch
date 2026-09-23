@@ -22,6 +22,7 @@ import type {
   ExecutorStartOptions,
   NormalizedEntry,
 } from '../types.js';
+import { ClaudeUsageMeter } from './claudeUsage.js';
 import { isSubagentSpawn, SubagentTracker } from './subagentTracker.js';
 
 // The Agent SDK's shape of one provider-neutral stdio server spec (see
@@ -664,11 +665,15 @@ export class ClaudeExecutor implements Executor {
       // lifecycle messages, tool results) into `agent` entries — see the
       // tracker's own doc comment for why one object has to see all three.
       const subagents = new SubagentTracker();
+      // Token usage by billing type — see ClaudeUsageMeter for why it reads
+      // both the streamed messages and the terminal result.
+      const usageMeter = new ClaudeUsageMeter();
       try {
         for await (const message of sdkQuery) {
           if (interrupted) break;
           if (message.type === 'assistant') {
             sawAssistantOutput = true;
+            usageMeter.onAssistant(message);
             if (message.error !== undefined) {
               lastApiError = {
                 kind: message.error,
@@ -724,12 +729,16 @@ export class ClaudeExecutor implements Executor {
           } else if (message.type === 'result') {
             gotResult = true;
             if (!interrupted) {
-              events.onFinish(
-                guardZeroTurnFinish(finishFromResult(message, lastApiError), {
-                  sawAssistantOutput,
-                  resumed: opts.resumeSessionId !== undefined,
-                })
-              );
+              events.onFinish({
+                ...guardZeroTurnFinish(
+                  finishFromResult(message, lastApiError),
+                  {
+                    sawAssistantOutput,
+                    resumed: opts.resumeSessionId !== undefined,
+                  }
+                ),
+                usage: usageMeter.fromResult(message),
+              });
             }
             break;
           }
@@ -739,6 +748,7 @@ export class ClaudeExecutor implements Executor {
             state: 'failed',
             error: 'agent session ended without a final result',
             sessionId,
+            usage: usageMeter.fromStream(),
           });
         }
       } catch (err) {
@@ -754,6 +764,7 @@ export class ClaudeExecutor implements Executor {
                 ? rewriteMissingCliError(message)
                 : 'agent session error',
             sessionId,
+            usage: usageMeter.fromStream(),
           });
         }
       } finally {
