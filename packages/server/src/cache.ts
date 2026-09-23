@@ -1,5 +1,11 @@
 import { canonicalStatus, readyTasks } from '@dispatch/core';
-import type { ListSafeError, TaskDoc, TaskStorePort } from '@dispatch/core';
+import type {
+  ListSafeError,
+  TaskDoc,
+  TaskListItem,
+  TaskMeta,
+  TaskStorePort,
+} from '@dispatch/core';
 import { Database } from 'bun:sqlite';
 
 // Loose query shape (plain strings, not core's TaskKind/Priority unions) since
@@ -102,6 +108,21 @@ export class TaskCache {
   // id) so API responses stay consistent whether they hit the store directly
   // or the cache.
   query(filter: CacheFilter = {}): TaskDoc[] {
+    return this.select('json', filter).map(
+      (json) => JSON.parse(json) as TaskDoc
+    );
+  }
+
+  // query() without bodies: SQLite extracts `meta` from the stored blob, so a
+  // large board's list never serializes or parses its descriptions.
+  queryMeta(filter: CacheFilter = {}): TaskListItem[] {
+    return this.select("json_extract(json, '$.meta')", filter).map((json) => ({
+      meta: JSON.parse(json) as TaskMeta,
+    }));
+  }
+
+  // Runs one filtered, ordered SELECT of `column` (a JSON text expression).
+  private select(column: string, filter: CacheFilter): string[] {
     const clauses: string[] = [];
     const params: Record<string, string> = {};
     if (filter.status !== undefined) {
@@ -123,9 +144,11 @@ export class TaskCache {
     }
     const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
     const rows = this.db
-      .query(`SELECT json FROM tasks ${where} ORDER BY created, id`)
+      .query(
+        `SELECT ${column} AS json FROM tasks ${where} ORDER BY created, id`
+      )
       .all(params) as TaskRow[];
-    return rows.map((row) => JSON.parse(row.json) as TaskDoc);
+    return rows.map((row) => row.json);
   }
 
   get(id: string): TaskDoc | null {

@@ -63,6 +63,13 @@ describe('taskQueryString', () => {
     expect(taskQueryString({ archived: true })).toBe('?archived=1');
     expect(taskQueryString({ archived: false })).toBe('');
   });
+
+  it('appends fields=meta for the body-less list', () => {
+    expect(taskQueryString({}, true)).toBe('?fields=meta');
+    expect(taskQueryString({ archived: true }, true)).toBe(
+      '?archived=1&fields=meta'
+    );
+  });
 });
 
 describe('taskDraftToCreateInput', () => {

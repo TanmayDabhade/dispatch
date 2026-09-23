@@ -1,4 +1,4 @@
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch/core/browser';
 import { Plus, X } from 'lucide-react';
 
 import { StatusIcon } from '../StatusIcon';
@@ -18,7 +18,7 @@ export function BlockedByEditor({
   onOpenTask,
 }: {
   blockedBy: string[];
-  candidates: TaskDoc[];
+  candidates: TaskListItem[];
   onChange: (next: string[]) => void;
   /** Clicking a blocker's pill re-points the page at that task. */
   onOpenTask?: (taskId: string) => void;

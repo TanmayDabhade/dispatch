@@ -1,4 +1,4 @@
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch/core/browser';
 import { isDoneStatus } from '@dispatch/core/browser';
 
 /**
@@ -8,7 +8,7 @@ import { isDoneStatus } from '@dispatch/core/browser';
  * turns `landed` once every child is terminal (landed or dropped). A custom, non-built-in
  * open status counts at the `ready` tier: it's open work, just not one of the named stages.
  */
-export function rollupMilestoneStatus(children: TaskDoc[]): string {
+export function rollupMilestoneStatus(children: TaskListItem[]): string {
   if (children.length === 0) return 'draft';
   if (children.every((c) => isDoneStatus(c.meta.status))) return 'landed';
   const open = new Set(
@@ -28,6 +28,6 @@ export function rollupMilestoneStatus(children: TaskDoc[]): string {
 }
 
 /** True once every child is terminal — the "milestones show as finished" rule. */
-export function isMilestoneFinished(children: TaskDoc[]): boolean {
+export function isMilestoneFinished(children: TaskListItem[]): boolean {
   return children.length > 0 && rollupMilestoneStatus(children) === 'landed';
 }

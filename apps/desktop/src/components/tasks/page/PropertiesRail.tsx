@@ -1,5 +1,5 @@
 import type { LinearIssueLink, RunMeta } from '@dispatch/client';
-import type { TaskDoc, UpdatePatch } from '@dispatch/core/browser';
+import type { TaskListItem, UpdatePatch } from '@dispatch/core/browser';
 import { ArrowUpRight, Layers, Link2, X } from 'lucide-react';
 
 import { colorForLabel } from '../../../lib/labelColor';
@@ -30,11 +30,11 @@ export type RailPicker =
   | 'milestone';
 
 interface PropertiesRailProps {
-  doc: TaskDoc;
+  doc: TaskListItem;
   statuses: string[];
-  epics: TaskDoc[];
+  epics: TaskListItem[];
   /** Every task in the project — blocker candidates, label/milestone vocabularies, the stack. */
-  tasks: TaskDoc[];
+  tasks: TaskListItem[];
   run: RunMeta | undefined;
   latestRunByTaskId: Map<string, RunMeta>;
   /** Whether this task sits in a blockedBy chain — gates the Stack section. */

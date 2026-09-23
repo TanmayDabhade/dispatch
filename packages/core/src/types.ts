@@ -81,8 +81,13 @@ export interface TaskAttachment {
   addedAt: string;
 }
 
-export interface TaskDoc {
+// A task without its markdown body: what `GET /api/tasks?fields=meta` returns,
+// so list views skip shipping and parsing every description.
+export interface TaskListItem {
   meta: TaskMeta;
+}
+
+export interface TaskDoc extends TaskListItem {
   body: string;
 }
 

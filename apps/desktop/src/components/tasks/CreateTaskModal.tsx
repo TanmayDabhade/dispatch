@@ -2,8 +2,8 @@ import type {
   Assignee,
   CreateInput,
   Priority,
-  TaskDoc,
   TaskKind,
+  TaskListItem,
 } from '@dispatch/core/browser';
 import {
   Check,
@@ -78,7 +78,7 @@ export const CREATE_TASK_DESCRIPTION_KEY = 'dispatch:create-task-description';
 
 interface CreateTaskModalProps {
   statuses: string[];
-  epics: TaskDoc[];
+  epics: TaskListItem[];
   /** The crumb's project chip (`[project] › New task`); the app name until a project is open. */
   projectName?: string;
   /** Pre-selects the status — kept for callers that pass it directly; the shell's
@@ -89,7 +89,7 @@ interface CreateTaskModalProps {
   /** Resolves with the created doc so pending files can be attached to it; `undefined`
    * (what `withActionFeedback` yields on a failure it already toasted) or `null` leaves
    * the dialog open with its draft and files intact. */
-  onCreate: (input: CreateInput) => Promise<TaskDoc | null | undefined>;
+  onCreate: (input: CreateInput) => Promise<TaskListItem | null | undefined>;
   /** Given, the footer paperclip and paste/drop on the body collect files that are
    * uploaded once the task exists. */
   onUploadAttachments?: (taskId: string, files: File[]) => Promise<void>;

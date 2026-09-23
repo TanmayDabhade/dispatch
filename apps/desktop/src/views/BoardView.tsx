@@ -1,4 +1,4 @@
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch/core/browser';
 import { Ellipsis, Layers, Star } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -379,7 +379,8 @@ export function BoardView({
   const taskFilterFn = useMemo(
     () =>
       filtersActive
-        ? (doc: TaskDoc) => matchesTaskFilterSet(doc, filters, filterContext)
+        ? (doc: TaskListItem) =>
+            matchesTaskFilterSet(doc, filters, filterContext)
         : undefined,
     [filtersActive, filters, filterContext]
   );

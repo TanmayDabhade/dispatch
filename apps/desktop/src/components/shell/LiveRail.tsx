@@ -1,5 +1,5 @@
 import type { EpicProgress, RunMeta } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch/core/browser';
 import { Bot } from 'lucide-react';
 import { useMemo } from 'react';
 
@@ -30,7 +30,7 @@ interface LiveRailProps {
   sessions?: EpicProgress[];
   /** The epic docs (`data.epics`) a section row takes its title from; a milestone with no
    * doc here is named by its id. */
-  epics?: TaskDoc[];
+  epics?: TaskListItem[];
   /** Opens the milestone view on that epic — where a section row leads. */
   onOpenMilestone?: (epicId: string) => void;
 }

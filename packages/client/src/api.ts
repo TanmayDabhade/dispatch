@@ -13,6 +13,7 @@ import type {
   MutationEvidence,
   Priority,
   TaskDoc,
+  TaskListItem,
   TaskRisk,
   UpdatePatch,
 } from '@dispatch/core';
@@ -1958,12 +1959,17 @@ function workspaceQuery(path: string, scope: WorkspaceScope): string {
   return params.toString();
 }
 
-export function taskQueryString(filter: TaskFilter = {}): string {
+// `metaOnly` appends `fields=meta`, the body-less projection.
+export function taskQueryString(
+  filter: TaskFilter = {},
+  metaOnly = false
+): string {
   const params = new URLSearchParams();
   if (filter.status !== undefined) params.set('status', filter.status);
   if (filter.kind !== undefined) params.set('kind', filter.kind);
   if (filter.parent !== undefined) params.set('parent', filter.parent);
   if (filter.archived === true) params.set('archived', '1');
+  if (metaOnly) params.set('fields', 'meta');
   return params.size > 0 ? `?${params.toString()}` : '';
 }
 
@@ -2233,6 +2239,9 @@ export interface ApiClient {
   /** The board syncer's last attempt plus live pending counts — the sync chip's data source. */
   fetchSyncStatus(): Promise<SyncStatus>;
   fetchTasks(filter?: TaskFilter): Promise<TaskDoc[]>;
+  /** `fetchTasks` without bodies (`fields=meta`) — for list views, which
+   * fetch one task's body through `fetchTask` only when they show it. */
+  fetchTaskList(filter?: TaskFilter): Promise<TaskListItem[]>;
   /** Each doc carries `readiness` when the daemon has a judgment client. */
   fetchReadyTasks(): Promise<(TaskDoc & { readiness?: ReadinessReading })[]>;
   /** The cached readiness readings by task id, for the board — no judging
@@ -2885,6 +2894,8 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     fetchSyncStatus: () => request(target, '/api/sync'),
     fetchTasks: (filter = {}) =>
       request(target, `/api/tasks${taskQueryString(filter)}`),
+    fetchTaskList: (filter = {}) =>
+      request(target, `/api/tasks${taskQueryString(filter, true)}`),
     fetchReadyTasks: () => request(target, '/api/tasks/ready'),
     fetchReadiness: () => request(target, '/api/tasks/readiness'),
     fetchTask: (id) => request(target, `/api/tasks/${id}`),

@@ -1,5 +1,5 @@
 import type { EpicProgressChild } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch/core/browser';
 import { Target } from 'lucide-react';
 import type { KeyboardEvent } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -114,13 +114,13 @@ export function MilestonesView({
   const listRef = useRef<HTMLDivElement>(null);
 
   const epicById = useMemo(() => {
-    const map = new Map<string, TaskDoc>();
+    const map = new Map<string, TaskListItem>();
     for (const epic of data.epics) map.set(epic.meta.id, epic);
     return map;
   }, [data.epics]);
 
   const taskById = useMemo(() => {
-    const map = new Map<string, TaskDoc>();
+    const map = new Map<string, TaskListItem>();
     for (const doc of data.tasks) map.set(doc.meta.id, doc);
     return map;
   }, [data.tasks]);
@@ -239,7 +239,7 @@ export function MilestonesView({
 
   // A row under a milestone with a session opens where its phase points (a failed run's
   // transcript, a capped loop's ruling on details); any other row opens plainly.
-  function phaseFor(doc: TaskDoc) {
+  function phaseFor(doc: TaskListItem) {
     const parent = doc.meta.parent;
     if (parent === null) return undefined;
     return phaseByEpic.get(parent)?.get(doc.meta.id);

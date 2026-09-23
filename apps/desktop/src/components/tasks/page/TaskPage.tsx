@@ -9,6 +9,7 @@ import type {
 import type {
   EscalationStep,
   TaskDoc,
+  TaskListItem,
   UpdatePatch,
 } from '@dispatch/core/browser';
 import { parseExternal } from '@dispatch/core/browser';
@@ -97,6 +98,7 @@ import {
 } from '@/ui/dropdown-menu';
 
 export interface TaskDetailPanelProps {
+  /** The one full doc (body included) — lists only carry `TaskListItem`s. */
   doc: TaskDoc;
   /** The model a dispatch runs on when the picker is untouched — the project
    * config's `models.execute` resolved with the per-device override (see
@@ -112,10 +114,10 @@ export interface TaskDetailPanelProps {
    * them and let you jump into any session's log/review, not just the latest one. */
   runs: RunMeta[];
   /** All epics in the project, for the editable Epic (parent) picker. */
-  epics: TaskDoc[];
+  epics: TaskListItem[];
   /** All tasks in the project, for the editable Blocked-by picker (self is filtered out),
    * the sub-tasks block, and `StackRail`. */
-  tasks: TaskDoc[];
+  tasks: TaskListItem[];
   /** Every task's latest run, for the sub-task and stack rows' run marks. */
   latestRunByTaskId: Map<string, RunMeta>;
   onUpdate: (id: string, patch: UpdatePatch) => Promise<void>;

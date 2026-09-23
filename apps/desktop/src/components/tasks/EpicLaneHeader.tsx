@@ -1,5 +1,5 @@
 import type { EpicProgress } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch/core/browser';
 import { Milestone, Waypoints } from 'lucide-react';
 import { useState } from 'react';
 
@@ -28,7 +28,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 interface EpicLaneHeaderProps {
   /** The epic this lane belongs to, or `null` for the catch-all "No epic" lane — which still
    * collapses and still shows its count, it just has nothing to dispatch or graph. */
-  epic: TaskDoc | null;
+  epic: TaskListItem | null;
   /** Lane title: the epic's own, `No epic`, or a bare parent id that resolves to no known epic. */
   title: string;
   /** How many cards the lane holds, collapsed or not — the one count that never moves, so
@@ -42,7 +42,7 @@ interface EpicLaneHeaderProps {
   /** `orchestrator.epicConcurrency` from the project config, the picker's starting value. */
   concurrencyDefault: number;
   /** This epic's children — the dependency-graph modal's input and the rolled-up status. */
-  childTasks: TaskDoc[];
+  childTasks: TaskListItem[];
   /** Opens a task in the peek/detail dialog: the epic itself (its id chip) or one of its
    * children (from the graph modal). */
   onOpenTask: (taskId: string) => void;

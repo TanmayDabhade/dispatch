@@ -39,6 +39,21 @@ describe('rebuild + query', () => {
   });
 });
 
+describe('queryMeta', () => {
+  it('returns the same rows as query() with every body left out', () => {
+    store.create({ title: 'A' }, '2026-07-13T01:00:00Z');
+    store.create({ title: 'B', status: 'draft' }, '2026-07-13T02:00:00Z');
+    cache.rebuild(store);
+
+    expect(cache.queryMeta()).toEqual(
+      cache.query().map((doc) => ({ meta: doc.meta }))
+    );
+    expect(
+      cache.queryMeta({ status: 'draft' }).map((t) => t.meta.title)
+    ).toEqual(['B']);
+  });
+});
+
 describe('get', () => {
   it('returns a single cached doc by id, or null', () => {
     const a = store.create({ title: 'A' }, '2026-07-13T01:00:00Z');

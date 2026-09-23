@@ -19,6 +19,7 @@ import { useNotificationInbox } from '../components/shell/NotificationInboxConte
 import { useShellActions } from '../components/shell/ShellActionsContext';
 import { TaskSpecView } from '../components/tasks/TaskSpecView';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import { useTaskDoc, withBody } from '../hooks/useTaskDoc';
 import type { TaskTab } from '../lib/appNav';
 import type { FeedState } from '../lib/feedState';
 import { tintForState } from '../lib/feedState';
@@ -787,8 +788,11 @@ function TaskSummary({
   project: DispatchProjectData;
 }) {
   const tasks = project.tasksIncludingArchived ?? project.tasks ?? [];
-  const doc = tasks.find((t) => t.meta.id === taskId);
-  if (doc === undefined) {
+  const full = useTaskDoc(project.client, project.port, taskId);
+  const listed = tasks.some((t) => t.meta.id === taskId);
+  if (listed && full === undefined) return null;
+  const doc = withBody(tasks, taskId, full);
+  if (doc === null) {
     return (
       <EmptyState
         heading="Task not loaded"

@@ -1,4 +1,4 @@
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch/core/browser';
 
 import { EpicDagView } from './EpicDagView';
 import {
@@ -15,10 +15,10 @@ export interface EpicDagModalProps {
    * than a separate boolean, so each of this feature's three entry points (TasksListView's
    * group header, EpicLaneHeader, TaskPage) can own one small piece of state instead of
    * this needing to be threaded through App-level nav state. */
-  epic: TaskDoc | null;
+  epic: TaskListItem | null;
   /** The epic's children — already filtered by the caller (each entry point already has the
    * full project task list in scope), so this modal never recomputes it itself. */
-  tasks: TaskDoc[];
+  tasks: TaskListItem[];
   onOpenTask?: (taskId: string) => void;
   onClose: () => void;
 }

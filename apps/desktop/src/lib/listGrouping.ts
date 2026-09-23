@@ -1,4 +1,4 @@
-import type { Assignee, Priority, TaskDoc } from '@dispatch/core/browser';
+import type { Assignee, Priority, TaskListItem } from '@dispatch/core/browser';
 import { isDoneStatus, PRIORITY_ORDER } from '@dispatch/core/browser';
 
 import { statusColor } from '../components/tasks/StatusIcon';
@@ -31,7 +31,7 @@ export type GroupIcon =
   | null;
 
 export interface ListGroupRow {
-  doc: TaskDoc;
+  doc: TaskListItem;
   /** `1` nests the row under its parent, which is the row directly above it (or above its
    * indented siblings). */
   indent: 0 | 1;
@@ -60,16 +60,16 @@ export interface GroupContext {
   /** The project's statuses in config order — status groups follow it. */
   statuses: readonly string[];
   /** The project's epics in their own order — epic and milestone groups follow it. */
-  epics: readonly TaskDoc[];
+  epics: readonly TaskListItem[];
   /** Appended as a trailing `Archived` group when non-empty (the "Show archived" toggle). */
-  archivedTasks?: readonly TaskDoc[];
+  archivedTasks?: readonly TaskListItem[];
 }
 
 const NO_EPIC_KEY = 'epic:none';
 const ARCHIVED_KEY = 'archived';
 
 function byDateDesc(field: 'updated' | 'created') {
-  return (a: TaskDoc, b: TaskDoc) =>
+  return (a: TaskListItem, b: TaskListItem) =>
     Date.parse(b.meta[field]) - Date.parse(a.meta[field]);
 }
 
@@ -77,7 +77,7 @@ function byDateDesc(field: 'updated' | 'created') {
 // input order (the tracker's own file order).
 function comparatorFor(
   prefs: TasksDisplayPrefs
-): ((a: TaskDoc, b: TaskDoc) => number) | null {
+): ((a: TaskListItem, b: TaskListItem) => number) | null {
   switch (prefs.ordering) {
     case 'priority':
       return (a, b) =>
@@ -97,9 +97,9 @@ function comparatorFor(
  * sinks landed/dropped tasks to the bottom, most recently updated first. Stable: ties keep
  * their input order. */
 export function sortTasks(
-  tasks: TaskDoc[],
+  tasks: TaskListItem[],
   prefs: TasksDisplayPrefs
-): TaskDoc[] {
+): TaskListItem[] {
   const compare = comparatorFor(prefs);
   const sign = prefs.orderDir === 'desc' ? -1 : 1;
   const decorated = tasks.map((doc, index) => ({ doc, index }));
@@ -130,15 +130,15 @@ export function sortTasks(
  * descendant sits at the same indent as its parent, but never vanishes. A row whose parent
  * chain never reaches a top-level row (a cycle) falls back to the top level. */
 export function nestRows(
-  sorted: TaskDoc[],
+  sorted: TaskListItem[],
   prefs: TasksDisplayPrefs
 ): ListGroupRow[] {
   if (!prefs.nestedSubtasks) {
     return sorted.map((doc) => ({ doc, indent: 0 }));
   }
   const present = new Set(sorted.map((doc) => doc.meta.id));
-  const childrenByParent = new Map<string, TaskDoc[]>();
-  const top: TaskDoc[] = [];
+  const childrenByParent = new Map<string, TaskListItem[]>();
+  const top: TaskListItem[] = [];
   for (const doc of sorted) {
     const parent = doc.meta.parent;
     if (parent !== null && present.has(parent) && parent !== doc.meta.id) {
@@ -151,7 +151,7 @@ export function nestRows(
   }
   const rows: ListGroupRow[] = [];
   const emitted = new Set<string>();
-  const emit = (doc: TaskDoc, indent: 0 | 1) => {
+  const emit = (doc: TaskListItem, indent: 0 | 1) => {
     if (emitted.has(doc.meta.id)) return;
     emitted.add(doc.meta.id);
     rows.push({ doc, indent });
@@ -165,7 +165,7 @@ export function nestRows(
 // A sub-task is a task whose parent is another *task* — an epic's children are its members,
 // not sub-tasks (Linear's project members vs sub-issues), so `showSubtasks: false` leaves an
 // epic-grouped list intact.
-function isSubtask(doc: TaskDoc, epicIds: ReadonlySet<string>): boolean {
+function isSubtask(doc: TaskListItem, epicIds: ReadonlySet<string>): boolean {
   return doc.meta.parent !== null && !epicIds.has(doc.meta.parent);
 }
 
@@ -176,16 +176,19 @@ interface Bucket {
   icon: GroupIcon;
   preset: ListGroup['preset'];
   epicId: string | null;
-  tasks: TaskDoc[];
+  tasks: TaskListItem[];
 }
 
-function bucket(fields: Omit<Bucket, 'tasks'>, tasks: TaskDoc[] = []): Bucket {
+function bucket(
+  fields: Omit<Bucket, 'tasks'>,
+  tasks: TaskListItem[] = []
+): Bucket {
   return { ...fields, tasks };
 }
 
 // Buckets by status in config order, with a trailing bucket per status the config does not
 // list but a task still carries (a renamed status must not vanish from the list).
-function byStatus(tasks: TaskDoc[], ctx: GroupContext): Bucket[] {
+function byStatus(tasks: TaskListItem[], ctx: GroupContext): Bucket[] {
   const buckets = new Map<string, Bucket>();
   const add = (status: string) =>
     buckets.set(
@@ -211,13 +214,13 @@ function byStatus(tasks: TaskDoc[], ctx: GroupContext): Bucket[] {
 // docs themselves are the headers, not rows. `asMilestone` swaps the epic swatch for the
 // milestone target tinted by the rolled-up status and sinks finished milestones to the end.
 function byEpic(
-  tasks: TaskDoc[],
+  tasks: TaskListItem[],
   ctx: GroupContext,
   asMilestone: boolean
 ): Bucket[] {
   const kind = asMilestone ? 'milestone' : 'epic';
   const buckets = new Map<string, Bucket>();
-  const noEpic: TaskDoc[] = [];
+  const noEpic: TaskListItem[] = [];
   for (const epic of ctx.epics) {
     buckets.set(
       epic.meta.id,
@@ -293,7 +296,7 @@ function isFinishedBucket(b: Bucket): boolean {
 }
 
 // Agents first, then people by handle, then unassigned.
-function byAssignee(tasks: TaskDoc[]): Bucket[] {
+function byAssignee(tasks: TaskListItem[]): Bucket[] {
   const buckets = new Map<string, Bucket>();
   for (const doc of tasks) {
     const assignee = doc.meta.assignee;
@@ -323,7 +326,7 @@ function byAssignee(tasks: TaskDoc[]): Bucket[] {
   });
 }
 
-function byPriority(tasks: TaskDoc[]): Bucket[] {
+function byPriority(tasks: TaskListItem[]): Bucket[] {
   const order = Object.keys(PRIORITY_ORDER) as Priority[];
   const buckets = new Map<Priority, Bucket>(
     order.map((priority) => [
@@ -346,7 +349,7 @@ function byPriority(tasks: TaskDoc[]): Bucket[] {
  * `showEmptyGroups`; the `none` grouping yields one headerless group keyed `all`; archived
  * tasks (when given) trail as one read-only `archived` group. */
 export function groupTasks(
-  tasks: TaskDoc[],
+  tasks: TaskListItem[],
   prefs: TasksDisplayPrefs,
   ctx: GroupContext
 ): ListGroup[] {

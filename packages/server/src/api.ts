@@ -5024,14 +5024,17 @@ export async function handleApi(
         return await fanoutTask(req, ctx, segments[1]);
       }
       if (segments.length === 1 && method === 'GET') {
-        return jsonResponse(
-          ctx.cache.query({
-            status: url.searchParams.get('status') ?? undefined,
-            kind: url.searchParams.get('kind') ?? undefined,
-            parent: url.searchParams.get('parent') ?? undefined,
-            includeArchived: url.searchParams.get('archived') === '1',
-          })
-        );
+        const filter = {
+          status: url.searchParams.get('status') ?? undefined,
+          kind: url.searchParams.get('kind') ?? undefined,
+          parent: url.searchParams.get('parent') ?? undefined,
+          includeArchived: url.searchParams.get('archived') === '1',
+        };
+        // `fields=meta` drops every body — the shape list views want.
+        const fields = url.searchParams.get('fields');
+        if (fields === null) return jsonResponse(ctx.cache.query(filter));
+        if (fields === 'meta') return jsonResponse(ctx.cache.queryMeta(filter));
+        return errorResponse(400, `unknown fields: ${fields}`);
       }
       if (segments.length === 1 && method === 'POST') {
         return await createTask(req, ctx);

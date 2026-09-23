@@ -1,4 +1,4 @@
-import type { Assignee, Priority, TaskDoc } from '@dispatch/core/browser';
+import type { Assignee, Priority, TaskListItem } from '@dispatch/core/browser';
 import { Check, Milestone, Plus, Tag } from 'lucide-react';
 import { type ReactNode, useId } from 'react';
 
@@ -265,7 +265,7 @@ export function EpicControl({
   onOpenChange,
 }: {
   value: string | null;
-  epics: TaskDoc[];
+  epics: TaskListItem[];
   onChange: (parent: string | null) => void;
   variant?: ControlVariant;
 } & ControlledOpen) {

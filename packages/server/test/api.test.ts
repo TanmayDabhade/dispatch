@@ -390,6 +390,30 @@ describe('archived tasks', () => {
   });
 });
 
+describe('GET /api/tasks?fields=meta', () => {
+  it('returns each task without its body, honouring the other filters', async () => {
+    const created = await json(
+      await fetch(`${baseUrl}/api/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'Lean', description: 'Long prose' }),
+      })
+    );
+    const full = await json(await fetch(`${baseUrl}/api/tasks`));
+    const lean = await json(
+      await fetch(`${baseUrl}/api/tasks?fields=meta&archived=1`)
+    );
+    expect(full[0].body).toContain('Long prose');
+    expect(lean).toEqual([{ meta: created.meta }]);
+  });
+
+  it('400s an unknown projection', async () => {
+    const res = await fetch(`${baseUrl}/api/tasks?fields=body`);
+    expect(res.status).toBe(400);
+    expect((await json(res)).error).toMatch(/unknown fields/);
+  });
+});
+
 describe('error paths', () => {
   it('404s a missing task id', async () => {
     const res = await fetch(`${baseUrl}/api/tasks/t-000000`);

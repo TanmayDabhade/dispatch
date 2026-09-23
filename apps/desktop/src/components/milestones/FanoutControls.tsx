@@ -1,5 +1,5 @@
 import type { EpicProgress, EpicSession } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch/core/browser';
 import {
   ChevronsUp,
   GitMerge,
@@ -31,7 +31,7 @@ import { CountChip } from '@/ui/chrome/CountChip';
 import { StepStrip } from '@/ui/chrome/StepStrip';
 
 export interface FanoutControlsProps {
-  epic: TaskDoc;
+  epic: TaskListItem;
   /** `undefined` until the epic's progress fetch resolves — the verbs still render, read
    * as "no session". */
   progress: EpicProgress | undefined;

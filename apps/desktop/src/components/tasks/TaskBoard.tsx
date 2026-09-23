@@ -4,7 +4,7 @@ import type {
   RunMeta,
   RunState,
 } from '@dispatch/client';
-import type { TaskDoc, UpdatePatch } from '@dispatch/core/browser';
+import type { TaskListItem, UpdatePatch } from '@dispatch/core/browser';
 import {
   closestCenter,
   DndContext,
@@ -61,7 +61,7 @@ import {
 interface TaskBoardProps {
   /** The cards, already in the order a column shows them (`BoardView` sorts once with
    * `sortTasks` so its j/k cursor and these columns walk the same sequence). */
-  tasks: TaskDoc[];
+  tasks: TaskListItem[];
   /** The status columns to render, in config order — already narrowed by the Display
    * popover's `Show empty groups` and any session-hidden columns (see `visibleBoardColumns`). */
   statuses: string[];
@@ -82,7 +82,7 @@ interface TaskBoardProps {
   /** Default concurrency for a fresh epic dispatch session (config's `orchestrator.epicConcurrency`). */
   epicConcurrencyDefault: number;
   /** Every epic in the project — one lane per epic that has children, in this order. */
-  epics: TaskDoc[];
+  epics: TaskListItem[];
   /** The Display popover's model — the card properties, and `subGrouping` for the swim
    * lanes (`none` is the flat board with an epic crumb on each card). Defaults to
    * `DEFAULT_TASKS_DISPLAY`; the ordering is applied by the caller (see `tasks`). */
@@ -394,13 +394,13 @@ export function TaskBoard({
   }, [lanes, readyIds, archivedTaskIds]);
 
   const epicById = useMemo(() => {
-    const map = new Map<string, TaskDoc>();
+    const map = new Map<string, TaskListItem>();
     for (const epic of epics) map.set(epic.meta.id, epic);
     return map;
   }, [epics]);
 
   const taskById = useMemo(() => {
-    const map = new Map<string, TaskDoc>();
+    const map = new Map<string, TaskListItem>();
     for (const doc of tasks) map.set(doc.meta.id, doc);
     return map;
   }, [tasks]);
@@ -414,7 +414,7 @@ export function TaskBoard({
   // Every epic's children, bucketed in one pass — feeds `EpicLaneHeader`'s rolled-up status
   // and dependency-graph modal, which need the epic's own children, not the whole project.
   const childrenByEpicId = useMemo(() => {
-    const map = new Map<string, TaskDoc[]>();
+    const map = new Map<string, TaskListItem[]>();
     for (const doc of tasks) {
       if (doc.meta.parent === null) continue;
       const bucket = map.get(doc.meta.parent);

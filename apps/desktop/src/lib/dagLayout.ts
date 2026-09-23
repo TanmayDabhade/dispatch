@@ -1,4 +1,4 @@
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch/core/browser';
 
 /**
  * The minimal node shape the layout needs — deliberately not `TaskDoc`, so anything with
@@ -15,7 +15,7 @@ export interface DagTask {
 }
 
 /** Adapts a real task to the layout's minimal shape. */
-export function dagTaskFromDoc(doc: TaskDoc): DagTask {
+export function dagTaskFromDoc(doc: TaskListItem): DagTask {
   return {
     id: doc.meta.id,
     title: doc.meta.title,

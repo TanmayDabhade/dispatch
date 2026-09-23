@@ -1,5 +1,5 @@
 import type { RunMeta, RunQuestion } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch/core/browser';
 import { MessageSquare } from 'lucide-react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
@@ -15,7 +15,7 @@ const NO_QUESTIONS: RunQuestion[] = [];
 
 export interface TaskChatTabProps {
   data: DispatchProjectData;
-  doc: TaskDoc;
+  doc: TaskListItem;
   selectedRun: RunMeta | undefined;
   onDispatch: () => void;
 }

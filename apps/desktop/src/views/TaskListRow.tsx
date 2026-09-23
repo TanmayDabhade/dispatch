@@ -1,5 +1,5 @@
 import type { EpicProgressChild, FixLoopState } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch/core/browser';
 import { Milestone, Play } from 'lucide-react';
 import type { KeyboardEvent } from 'react';
 
@@ -74,14 +74,14 @@ export type ListRowPassthrough = Omit<
 >;
 
 export interface TaskListRowProps {
-  doc: TaskDoc;
+  doc: TaskListItem;
   data: DispatchProjectData;
   prefs: TasksDisplayPrefs;
   indent?: 0 | 1;
   /** Read-only: glyphs instead of pickers, no checkbox, dimmed. */
   archived?: boolean;
   /** The parent epic, resolved by the caller. */
-  epic?: TaskDoc;
+  epic?: TaskListItem;
   /** How many tasks sit under this row's task (an epic's `▶ N` pill). */
   childCount?: number;
   /** Hide the ` › epic` chip — under an epic/milestone header it is redundant. */

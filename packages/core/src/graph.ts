@@ -1,7 +1,7 @@
 // This module must stay free of node:* imports — it is exported as the
 // browser-safe '@dispatch/core/graph' subpath consumed by the desktop webview.
 import { isDoneStatus, isSatisfiedForDispatchStatus } from './status.js';
-import type { Priority, TaskDoc } from './types.js';
+import type { Priority, TaskDoc, TaskListItem } from './types.js';
 
 export const PRIORITY_ORDER: Record<Priority, number> = {
   urgent: 0,
@@ -11,7 +11,7 @@ export const PRIORITY_ORDER: Record<Priority, number> = {
   none: 4,
 };
 
-export function isDone(t: TaskDoc): boolean {
+export function isDone(t: TaskListItem): boolean {
   return isDoneStatus(t.meta.status);
 }
 
@@ -19,7 +19,7 @@ export function isDone(t: TaskDoc): boolean {
  * Whether a blocker no longer holds up *dispatching* its dependents — see
  * `isSatisfiedForDispatchStatus` in status.ts for the reasoning.
  */
-export function isSatisfiedForDispatch(t: TaskDoc): boolean {
+export function isSatisfiedForDispatch(t: TaskListItem): boolean {
   return isSatisfiedForDispatchStatus(t.meta.status);
 }
 
@@ -116,7 +116,7 @@ export function readyTasks(tasks: TaskDoc[]): TaskDoc[] {
  * with multiple overlapping cycles may surface more than one path touching
  * the same ids, which is fine for reporting purposes.
  */
-export function findDependencyCycles(tasks: TaskDoc[]): string[][] {
+export function findDependencyCycles(tasks: TaskListItem[]): string[][] {
   const byId = new Map(tasks.map((t) => [t.meta.id, t]));
   const UNVISITED = 0;
   const VISITING = 1;
@@ -166,7 +166,7 @@ export interface TaskStack {
  * one is not a stack).
  */
 export function computeStack(
-  tasks: TaskDoc[],
+  tasks: TaskListItem[],
   taskId: string
 ): TaskStack | null {
   const byId = new Map(tasks.map((t) => [t.meta.id, t]));

@@ -1,10 +1,10 @@
 import type { RunMeta } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch/core/browser';
 
 // Mirrors mergeQueue.ts's isDone-based checks server-side: a task counts as
 // resolved once it's done OR cancelled — the same semantics enqueueReady's
 // own-task guard and nextEligible's blocker check both use.
-function isTaskDone(task: TaskDoc): boolean {
+function isTaskDone(task: TaskListItem): boolean {
   return task.meta.status === 'landed' || task.meta.status === 'dropped';
 }
 
@@ -19,14 +19,14 @@ function isTaskDone(task: TaskDoc): boolean {
  * later, at pump time, via nextEligible's 'waiting-blockers' state — this
  * just avoids the button's count (and its one-shot enqueue) promising a
  * run that would immediately sit blocked in the queue. `tasks` must
- * include archived tasks (e.g. via `fetchTasks({ archived: true })`) or an
+ * include archived tasks (e.g. via `fetchTaskList({ archived: true })`) or an
  * archived own-task/blocker will be missing from `byId` and read as
  * "not done" here. Pure so the toolbar's count is unit-testable without a
  * live tasks/queue fetch.
  */
 export function countMergeReady(
   runs: RunMeta[],
-  tasks: TaskDoc[],
+  tasks: TaskListItem[],
   queued: Set<string>
 ): number {
   const byId = new Map(tasks.map((t) => [t.meta.id, t]));

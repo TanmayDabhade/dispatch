@@ -11,7 +11,7 @@ import type {
   CommandEvidence,
   LedgerEntry,
   MutationEvidence,
-  TaskDoc,
+  TaskListItem,
 } from '@dispatch/core/browser';
 import { computeStack, isDone } from '@dispatch/core/graph';
 import {
@@ -55,7 +55,7 @@ interface RunReviewViewProps {
   mergeQueue: MergeQueueSnapshot | null;
   /** Full project task list — used to compute this run's task's stack (see
    * `computeStack`) so the "Queue stack" action can show/hide itself and its count. */
-  tasks: TaskDoc[];
+  tasks: TaskListItem[];
   /** Per-task latest run, same map `StackRail` uses — lets the stack-count check below
    * look up every OTHER stack member's latest run without a second fetch. */
   latestRunByTaskId: Map<string, RunMeta>;

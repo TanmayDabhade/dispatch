@@ -1,5 +1,5 @@
 import type { RunMeta } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch/core/browser';
 import { ChevronDown, Plus } from 'lucide-react';
 import { useState } from 'react';
 
@@ -19,7 +19,7 @@ import { ProgressGlyph } from '@/ui/chrome';
 
 /** Whether a sub-task counts as done for the `◔ n/m` glyph: landed, or dropped (it needs
  * nothing more from anyone). */
-function isFinished(doc: TaskDoc): boolean {
+function isFinished(doc: TaskListItem): boolean {
   return doc.meta.status === 'landed' || doc.meta.status === 'dropped';
 }
 
@@ -37,9 +37,9 @@ export function SubtasksBlock({
   createPreset,
 }: {
   title?: string;
-  parent: TaskDoc;
+  parent: TaskListItem;
   /** The child rows, in the order to draw them. */
-  tasks: TaskDoc[];
+  tasks: TaskListItem[];
   latestRunByTaskId: Map<string, RunMeta>;
   onOpenTask?: (taskId: string) => void;
   /** What the `+` pre-fills; omitted hides the button (a `Blocks` list has no creator). */

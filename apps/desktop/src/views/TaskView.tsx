@@ -37,8 +37,8 @@ export interface TaskViewProps {
   onSelectRun: (runId: string) => void;
   onBack: () => void;
   /** The exact prop bundle `TaskPage` needs — shared with the peek dialog so both mounts
-   * render identically. `undefined` when the caller's own lookup of `taskId` came up empty;
-   * this component's `doc === null` branch below renders the same "gone" state first. */
+   * render identically. `undefined` when the caller's own lookup of `taskId` came up empty
+   * (the "gone" state below) or while the task's body is still loading. */
   panelProps: TaskDetailPanelProps | undefined;
   /** Opens the run's pull request on the PR review page. */
   onViewPr: (runId: string) => void;
@@ -78,6 +78,8 @@ export function TaskView({
     [data.runs, taskId]
   );
   const selectedRun = taskRuns.find((r) => r.id === activeRunId);
+  // Listed but body still loading: render nothing rather than the "gone" state.
+  if (doc !== null && panelProps === undefined) return null;
   if (doc === null || panelProps === undefined)
     return (
       <EmptyState

@@ -1,4 +1,4 @@
-import type { Assignee, Priority, TaskDoc } from '@dispatch/core/browser';
+import type { Assignee, Priority, TaskListItem } from '@dispatch/core/browser';
 import { PRIORITY_ORDER } from '@dispatch/core/browser';
 import {
   Archive,
@@ -75,7 +75,7 @@ interface TasksListViewProps {
   onSelectTask: (taskId: string) => void;
   /** The Tasks page's shared filters (status/priority facets), applied before grouping.
    * Omitted passes everything. */
-  taskFilter?: (doc: TaskDoc) => boolean;
+  taskFilter?: (doc: TaskListItem) => boolean;
   /** The Display popover's model — grouping, ordering, which properties a row shows. */
   display?: TasksDisplayPrefs;
   /** `f` on the list: the page header opens its filter menu. No-op until wired. */
@@ -138,7 +138,7 @@ export function TasksListView({
   const listRef = useRef<HTMLDivElement>(null);
 
   const epicById = useMemo(() => {
-    const map = new Map<string, TaskDoc>();
+    const map = new Map<string, TaskListItem>();
     for (const epic of data.epics) map.set(epic.meta.id, epic);
     return map;
   }, [data.epics]);
@@ -173,7 +173,7 @@ export function TasksListView({
 
   const groups = useMemo<ListGroup[]>(() => {
     if (data.config === null) return [];
-    const passes = (doc: TaskDoc) => taskFilter?.(doc) ?? true;
+    const passes = (doc: TaskListItem) => taskFilter?.(doc) ?? true;
     return groupTasks(data.tasks.filter(passes), prefs, {
       statuses: data.config.statuses,
       epics: data.epics,
@@ -192,7 +192,7 @@ export function TasksListView({
   ]);
 
   const docById = useMemo(() => {
-    const map = new Map<string, TaskDoc>();
+    const map = new Map<string, TaskListItem>();
     for (const g of groups)
       for (const r of g.rows) map.set(r.doc.meta.id, r.doc);
     return map;

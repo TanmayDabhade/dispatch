@@ -1,4 +1,4 @@
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch/core/browser';
 import { GitBranch, SearchX } from 'lucide-react';
 import type { FocusEvent, KeyboardEvent, ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -46,7 +46,7 @@ interface MilestoneBranchesViewProps {
   display?: TasksDisplayPrefs;
   /** The Tasks page's shared filters, applied before layout — a filtered-out blocker is
    * simply not an edge. Omitted passes everything. */
-  taskFilter?: (doc: TaskDoc) => boolean;
+  taskFilter?: (doc: TaskListItem) => boolean;
   onRequestFilter?: () => void;
   onRequestDisplay?: () => void;
   /** The empty state's `Plan work…`; omitted leaves only `New task`. */
@@ -57,7 +57,7 @@ interface MilestoneBranchesViewProps {
  * layout nodes, and the layout's path summary and row order (the j/k sequence). */
 interface MilestoneBranch {
   group: ListGroup;
-  children: TaskDoc[];
+  children: TaskListItem[];
   dagTasks: DagTask[];
   summary: BranchPathSummary;
   rowIds: string[];
@@ -118,7 +118,7 @@ export function MilestoneBranchesView({
     [data.epics]
   );
   const childrenByEpic = useMemo(() => {
-    const map = new Map<string, TaskDoc[]>();
+    const map = new Map<string, TaskListItem[]>();
     for (const doc of data.tasks) {
       const parent = doc.meta.parent;
       if (doc.meta.kind === 'epic' || parent === null || !epicIds.has(parent)) {
@@ -277,7 +277,7 @@ export function MilestoneBranchesView({
 
   // The trailing slot: a live run's mark first, else the assignee avatar when the Display
   // popover shows assignees.
-  function accessoryFor(id: string, doc: TaskDoc): ReactNode {
+  function accessoryFor(id: string, doc: TaskListItem): ReactNode {
     const run = data.latestRunByTaskId.get(id);
     if (run !== undefined && data.liveRunStateByTaskId.has(id)) {
       return <RunStatePill meta={run} compact />;

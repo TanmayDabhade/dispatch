@@ -5,7 +5,7 @@ import type {
   RunMeta,
   RunQuestion,
 } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskDoc, TaskListItem } from '@dispatch/core/browser';
 
 import type { TaskSpec } from '../components/tasks/TaskSpecView';
 import type { FeedRowModel } from './controlRoom';
@@ -22,8 +22,8 @@ import { parseTaskSections } from './taskDisplay';
  * and stacked one row per run instead of one per task). */
 export interface InboxInput {
   runs: RunMeta[];
-  tasks: TaskDoc[];
-  epics: TaskDoc[];
+  tasks: TaskListItem[];
+  epics: TaskListItem[];
   repoPrs: RepoPr[];
   mergeQueue: MergeQueueSnapshot | null;
   pendingApprovals: ReadonlyMap<string, { toolName: string }>;
@@ -519,7 +519,10 @@ export function saveReadIds(
 
 /** Projects a `TaskDoc` onto the spec shape: description and acceptance criteria come out
  * of the body's `##` sections, blockers resolve to titles through `tasks`. */
-export function specForTask(doc: TaskDoc, tasks: readonly TaskDoc[]): TaskSpec {
+export function specForTask(
+  doc: TaskDoc,
+  tasks: readonly TaskListItem[]
+): TaskSpec {
   const sections = parseTaskSections(doc.body);
   const titleById = new Map(tasks.map((t) => [t.meta.id, t.meta.title]));
   const criteria = (sections.get('Acceptance Criteria') ?? '')

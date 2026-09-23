@@ -36,7 +36,7 @@ import type {
   NotificationKind,
   PolicyGate,
   PolicyGateMode,
-  TaskDoc,
+  TaskListItem,
   UpdatePatch,
 } from '@dispatch/core/browser';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -89,6 +89,7 @@ import {
   useStopFixLoop,
 } from './useOrchestration';
 import { overseerKey, overseerKeyPrefix } from './useOverseerSession';
+import { tasksKey } from './useTaskDoc';
 import { useTransitionNotifications } from './useTransitionNotifications';
 
 // The approvals this window has seen live via the `approval.requested` WS
@@ -231,21 +232,21 @@ export interface DispatchProjectData {
   portErrorDetail: unknown;
   retryEnsureDispatchd: () => void;
 
-  tasks: TaskDoc[];
+  tasks: TaskListItem[];
   tasksLoading: boolean;
-  /** True once both task lists (plain and archived-inclusive) have been fetched for this
+  /** True once the task list has been fetched for this
    * connection — readiness, not an in-flight flag, since `isLoading` is false for a query
    * that is merely disabled (no daemon client yet). The deep-link router waits on this. */
   tasksReady: boolean;
   // Task 8 fix: the same task list as `tasks`, but including archived tasks
-  // (`fetchTasks({ archived: true })`) — feed this, not `tasks`, to
+  // (`fetchTaskList({ archived: true })`) — feed this, not `tasks`, to
   // countMergeReady, or an archived done own-task/blocker will be missing
   // from its lookup entirely. No other consumer here should use this; every
   // other surface wants the default board-view (archived-excluded) `tasks`.
-  tasksIncludingArchived: TaskDoc[];
+  tasksIncludingArchived: TaskListItem[];
   // Task 9: just the archived subset of `tasksIncludingArchived` (`archivedAt !== undefined`)
   // — feeds the Board/List "Archived (N)" toggle chip and its muted group/column rendering.
-  archivedTasks: TaskDoc[];
+  archivedTasks: TaskListItem[];
   // Task 9: whether archived tasks/runs are currently shown — persisted to localStorage.
   // Neither `runs` nor `tasks`/`tasksIncludingArchived` are filtered by this (callers combine
   // `tasks` with `archivedTasks` themselves when it's on, e.g. BoardView's column grouping) —
@@ -269,7 +270,7 @@ export interface DispatchProjectData {
   health: { pr: boolean } | undefined;
   readyIds: Set<string>;
   blockedIds: Set<string>;
-  epics: TaskDoc[];
+  epics: TaskListItem[];
   epicProgressById: Map<string, EpicProgress>;
   /** The epics with a fan-out session that is `active` or `paused` right now
    * — what the live rail groups under and the status strip sums ceilings
@@ -502,7 +503,7 @@ export interface DispatchProjectData {
   moveTaskStatus: (id: string, status: string) => Promise<void>;
   /** Resolves with the created doc (the create dialog attaches pending files to its id);
    * `null` without a client. */
-  handleCreate: (input: CreateInput) => Promise<TaskDoc | null>;
+  handleCreate: (input: CreateInput) => Promise<TaskListItem | null>;
   /** Multipart upload against a task; `task.changed` then refreshes the list. */
   handleUploadAttachments: (taskId: string, files: File[]) => Promise<void>;
   /** Every task draft currently held in memory, newest first — feeds the app-wide drafts
@@ -754,7 +755,7 @@ export function useDispatchProject(
     [connection, auth.token]
   );
 
-  const tasksQueryKey = useMemo(() => ['dispatch-tasks', port], [port]);
+  const tasksQueryKey = useMemo(() => tasksKey(port), [port]);
   const configQueryKey = useMemo(() => dispatchConfigKey(port), [port]);
   const readyQueryKey = useMemo(() => ['dispatch-ready-tasks', port], [port]);
   const runsQueryKey = useMemo(() => ['dispatch-runs', port], [port]);
@@ -806,13 +807,6 @@ export function useDispatchProject(
   const branchesQueryKey = useMemo(() => ['dispatch-branches', port], [port]);
   const questionsQueryKey = useMemo(() => ['dispatch-questions', port], [port]);
   const decisionsQueryKey = useMemo(() => ['dispatch-decisions', port], [port]);
-  // Task 8 fix: a *separate* archived-inclusive tasks query, used only for
-  // countMergeReady's own-task/blocker lookups — `tasks` below stays the
-  // default board-view (archived-excluded) list every other consumer here
-  // relies on. Without this, an archived done own-task or blocker would be
-  // missing from countMergeReady's lookup map entirely and read as
-  // "not done", wrongly inflating the "Merge all ready" count.
-  const allTasksQueryKey = useMemo(() => ['dispatch-tasks-all', port], [port]);
   const linearStatusQueryKey = useMemo(() => linearStatusKey(port), [port]);
   const linearTeamsQueryKey = useMemo(
     () => ['dispatch-linear-teams', port],
@@ -824,23 +818,25 @@ export function useDispatchProject(
   );
   const syncStatusQueryKey = useMemo(() => syncStatusKey(port), [port]);
 
-  const { data: tasks, isLoading: tasksLoading } = useQuery({
+  // One archived-inclusive, body-less list; `tasks` (active only) and
+  // `archivedTasks` are derived from it below rather than fetched separately.
+  const {
+    data: allTasksIncludingArchived,
+    isLoading: tasksLoading,
+    isFetched: allTasksFetched,
+  } = useQuery({
     queryKey: tasksQueryKey,
     queryFn: () => {
       if (client === null) throw new Error('dispatchd client not ready');
-      return client.fetchTasks();
+      return client.fetchTaskList({ archived: true });
     },
     enabled: client !== null,
   });
-  const { data: allTasksIncludingArchived, isFetched: allTasksFetched } =
-    useQuery({
-      queryKey: allTasksQueryKey,
-      queryFn: () => {
-        if (client === null) throw new Error('dispatchd client not ready');
-        return client.fetchTasks({ archived: true });
-      },
-      enabled: client !== null,
-    });
+  const tasks = useMemo(
+    () =>
+      allTasksIncludingArchived?.filter((t) => t.meta.archivedAt === undefined),
+    [allTasksIncludingArchived]
+  );
   const { data: config } = useQuery({
     queryKey: configQueryKey,
     queryFn: () => {
@@ -1243,9 +1239,7 @@ export function useDispatchProject(
     [tasks]
   );
 
-  // Task 9: the archived subset of the archived-inclusive query — derived here (rather than a
-  // second `fetchTasks({ archived: true })` call) since `allTasksIncludingArchived` already
-  // carries every archived task Task 8 needed for countMergeReady's lookups.
+  // Task 9: the archived subset of the archived-inclusive query.
   const archivedTasks = useMemo(
     () =>
       (allTasksIncludingArchived ?? []).filter(
@@ -1300,7 +1294,6 @@ export function useDispatchProject(
     return client.connectEvents(
       () => {
         void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
-        void queryClient.invalidateQueries({ queryKey: allTasksQueryKey });
         void queryClient.invalidateQueries({ queryKey: configQueryKey });
         void queryClient.invalidateQueries({ queryKey: readyQueryKey });
         void queryClient.invalidateQueries({ queryKey: epicProgressKeyPrefix });
@@ -1521,7 +1514,7 @@ export function useDispatchProject(
             // A stopped loop needs a human — a toast plus a durable inbox row,
             // worded from the stop reason.
             const liveTasks =
-              queryClient.getQueryData<TaskDoc[]>(allTasksQueryKey);
+              queryClient.getQueryData<TaskListItem[]>(tasksQueryKey);
             const taskTitle =
               liveTasks?.find((t) => t.meta.id === event.taskId)?.meta.title ??
               event.taskId;
@@ -1553,7 +1546,7 @@ export function useDispatchProject(
             // the ceiling — a toast plus a durable inbox row, worded from the
             // event's own numbers so neither waits on the refetch above.
             const liveTasks =
-              queryClient.getQueryData<TaskDoc[]>(allTasksQueryKey);
+              queryClient.getQueryData<TaskListItem[]>(tasksQueryKey);
             const epicTitle =
               liveTasks?.find((t) => t.meta.id === event.epicId)?.meta.title ??
               event.epicId;
@@ -1624,7 +1617,6 @@ export function useDispatchProject(
             // pushed origin (branches' pushedToOrigin flips) — refetch all
             // four rather than waiting on their own *.changed broadcasts.
             void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
-            void queryClient.invalidateQueries({ queryKey: allTasksQueryKey });
             void queryClient.invalidateQueries({ queryKey: runsQueryKey });
             void queryClient.invalidateQueries({
               queryKey: mergeQueueQueryKey,
@@ -1693,7 +1685,6 @@ export function useDispatchProject(
     client,
     queryClient,
     tasksQueryKey,
-    allTasksQueryKey,
     configQueryKey,
     readyQueryKey,
     runsQueryKey,
@@ -1858,8 +1849,8 @@ export function useDispatchProject(
       // call site) so every path that can move a task's status, board drag or the inline
       // status picker alike, is covered by one check rather than each caller remembering it.
       if (archivedTaskIds.has(id)) return;
-      const previous = queryClient.getQueryData<TaskDoc[]>(tasksQueryKey);
-      queryClient.setQueryData<TaskDoc[]>(tasksQueryKey, (old) =>
+      const previous = queryClient.getQueryData<TaskListItem[]>(tasksQueryKey);
+      queryClient.setQueryData<TaskListItem[]>(tasksQueryKey, (old) =>
         old?.map((doc) =>
           doc.meta.id === id ? { ...doc, meta: { ...doc.meta, status } } : doc
         )
@@ -1879,7 +1870,7 @@ export function useDispatchProject(
   );
 
   const handleCreate = useCallback(
-    async (input: CreateInput): Promise<TaskDoc | null> => {
+    async (input: CreateInput): Promise<TaskListItem | null> => {
       if (client === null) return null;
       const created = await client.createTask(input);
       void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
@@ -2684,7 +2675,6 @@ export function useDispatchProject(
       // A push-only pass never broadcasts task.changed (that only fires on a pull), so the
       // tasks caches need their own invalidation here too — same shape as handleImportLinear.
       void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
-      void queryClient.invalidateQueries({ queryKey: allTasksQueryKey });
       return result;
     },
     [
@@ -2693,7 +2683,6 @@ export function useDispatchProject(
       linearStatusQueryKey,
       linearLinksQueryKey,
       tasksQueryKey,
-      allTasksQueryKey,
     ]
   );
 
@@ -2704,7 +2693,6 @@ export function useDispatchProject(
       void queryClient.invalidateQueries({ queryKey: linearStatusQueryKey });
       void queryClient.invalidateQueries({ queryKey: linearLinksQueryKey });
       void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
-      void queryClient.invalidateQueries({ queryKey: allTasksQueryKey });
       return result;
     }, [
       client,
@@ -2712,7 +2700,6 @@ export function useDispatchProject(
       linearStatusQueryKey,
       linearLinksQueryKey,
       tasksQueryKey,
-      allTasksQueryKey,
     ]);
 
   const handleClusterInbox = useCallback(async () => {

@@ -108,7 +108,7 @@ describe('countMergeReady', () => {
     expect(countMergeReady(runs, tasks, new Set())).toBe(0);
   });
 
-  // `tasks` must be the archived-inclusive list (fetchTasks({ archived: true }))
+  // `tasks` must be the archived-inclusive list (fetchTaskList({ archived: true }))
   // — the default board-view fetch excludes archived tasks entirely, which
   // would make an archived own-task/blocker missing from `byId` rather than
   // correctly read as done. These two cases only pass when an archived task

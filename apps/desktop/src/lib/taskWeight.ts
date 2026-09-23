@@ -1,4 +1,4 @@
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch/core/browser';
 import { isDoneStatus } from '@dispatch/core/browser';
 
 /**
@@ -48,7 +48,7 @@ const MS_PER_DAY = 86_400_000;
  * the queue — and don't count as "blocked" for anyone's unblocking value.
  */
 export function computeTaskWeights(
-  tasks: TaskDoc[],
+  tasks: TaskListItem[],
   now: Date
 ): Map<string, TaskWeight> {
   // Open dependents per blocker id: only a non-terminal dependent is really waiting.

@@ -1,5 +1,5 @@
 import type { ReadinessReading, RunMeta, RunState } from '@dispatch/client';
-import type { TaskDoc, UpdatePatch } from '@dispatch/core/browser';
+import type { TaskListItem, UpdatePatch } from '@dispatch/core/browser';
 import type {
   DraggableAttributes,
   DraggableSyntheticListeners,
@@ -37,7 +37,7 @@ interface CardDragProps {
 }
 
 interface TaskCardTileProps {
-  doc: TaskDoc;
+  doc: TaskListItem;
   ready: boolean;
   blocked: boolean;
   /** State of this task's live (non-terminal) run, if it has one. */

@@ -58,6 +58,7 @@ import { useDispatchProject } from './hooks/useDispatchProject';
 import { useGlobalKeyboard } from './hooks/useGlobalKeyboard';
 import { useOverseerSession } from './hooks/useOverseerSession';
 import { useSavedViews } from './hooks/useSavedViews';
+import { useTaskDoc, withBody } from './hooks/useTaskDoc';
 import { withActionFeedback } from './lib/actionFeedback';
 import type {
   GlobalView,
@@ -657,22 +658,23 @@ function App() {
   });
 
   // Resolved from the archived-inclusive list: an archived task's Board card or List row
-  // must still open its detail dialog when the Archived toggle is on.
-  const selectedDoc =
-    navState.peekTaskId !== null
-      ? (data.tasksIncludingArchived.find(
-          (t) => t.meta.id === navState.peekTaskId
-        ) ?? null)
-      : null;
+  // must still open its detail dialog when the Archived toggle is on. The list carries no
+  // bodies, so the open task's own doc supplies one; `null` until it loads.
+  const peekBody = useTaskDoc(data.client, data.port, navState.peekTaskId);
+  const selectedDoc = withBody(
+    data.tasksIncludingArchived,
+    navState.peekTaskId,
+    peekBody
+  );
 
   // The task the full task view is showing, resolved the same way as `selectedDoc` — `null`
   // once a task has been deleted/archived out from under an open view.
-  const activeTaskDoc =
-    navState.activeTaskId !== null
-      ? (data.tasksIncludingArchived.find(
-          (t) => t.meta.id === navState.activeTaskId
-        ) ?? null)
-      : null;
+  const activeBody = useTaskDoc(data.client, data.port, navState.activeTaskId);
+  const activeTaskDoc = withBody(
+    data.tasksIncludingArchived,
+    navState.activeTaskId,
+    activeBody
+  );
 
   // Local consts so narrowing survives the closure (TaskDetailPanel has no `data` prop).
   // Raw `sendPlanMessage`, not the `data.` wrapper, which answers a different plan slot.

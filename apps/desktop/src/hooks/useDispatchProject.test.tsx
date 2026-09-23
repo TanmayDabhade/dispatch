@@ -7,7 +7,7 @@ import type {
   ServerEvent,
 } from '@dispatch/client';
 import * as dispatchClient from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch/core/browser';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { expect, mock, test } from 'bun:test';
@@ -409,8 +409,17 @@ test('epic.changed invalidates the bulk progress key', async () => {
 test('epic.paused records a durable inbox row from the event alone', async () => {
   const { queryClient, result } = await mountWithEpics(['e-1']);
   queryClient.setQueryData(
-    ['dispatch-tasks-all', PORT],
-    [{ meta: { id: 'e-1', title: 'Auth rewrite', kind: 'epic' } } as TaskDoc]
+    ['dispatch-tasks', PORT],
+    [
+      {
+        meta: {
+          id: 'e-1',
+          title: 'Auth rewrite',
+          kind: 'epic',
+          blockedBy: [],
+        },
+      } as unknown as TaskListItem,
+    ]
   );
   expect(result.current.notificationInbox.entries).toEqual([]);
 

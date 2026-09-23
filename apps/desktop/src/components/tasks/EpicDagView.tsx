@@ -1,4 +1,4 @@
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch/core/browser';
 import { useMemo } from 'react';
 
 import { dagTaskFromDoc } from '../../lib/dagLayout';
@@ -6,7 +6,7 @@ import { DependencyGraph } from '../graph/DependencyGraph';
 
 export interface EpicDagViewProps {
   /** The epic's children — see `DependencyGraph` for how edges outside this set are treated. */
-  tasks: TaskDoc[];
+  tasks: TaskListItem[];
   /** Opens the clicked node's task in the peek/detail dialog. Omitted renders every node as
    * plain, non-interactive text — matching StackRail's `onOpenTask`-optional convention. */
   onOpenTask?: (taskId: string) => void;
