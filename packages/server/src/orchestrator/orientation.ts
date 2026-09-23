@@ -137,8 +137,8 @@ export function collectWorkspaces(rootDir: string): WorkspacePackage[] {
   return found;
 }
 
-// AGENTS.md tells every agent to list `.agents/skills/*/SKILL.md` and read each
-// frontmatter description to decide what's relevant. That listing is fixed for
+// An agent picks skills by reading each `.agents/skills/*/SKILL.md` frontmatter
+// description to decide what's relevant. That listing is fixed for
 // a given commit, so it is rendered here once instead of being re-derived by
 // every run. `.claude/skills` is a symlink to the same directory, so only one
 // of the two is ever read.
