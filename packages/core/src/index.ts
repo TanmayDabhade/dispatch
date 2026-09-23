@@ -2,6 +2,7 @@ export const CORE_VERSION = '0.24.0';
 export * from './status.js';
 export * from './kinds.js';
 export * from './comments.js';
+export * from './people.js';
 export {
   FileCommentStore,
   generateCommentId,

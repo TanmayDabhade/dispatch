@@ -1,4 +1,5 @@
 import { DEFAULT_STATUS_MAP } from './linearMap.js';
+import type { Person } from './people.js';
 import type { PolicyConfig, PolicyGate, PolicyGateMode } from './policy.js';
 import { DEFAULT_POLICY } from './policy.js';
 import type { QueueWeights } from './scoring.js';
@@ -175,6 +176,8 @@ export interface DispatchConfig {
   /** Which status each lifecycle event writes. Absent means the defaults;
    *  read through `statusModelOf`. */
   statusRoles?: StatusRoles;
+  /** The people registry beyond team.yml (see people.ts); absent when none. */
+  people?: Person[];
   autoCommit: boolean;
   verifyCommand?: string;
   /** Verify as named steps rather than one opaque command, so a failure names
@@ -613,6 +616,8 @@ export interface ConfigPatch {
   statuses?: StatusEntryInput[];
   /** Replaces `statusRoles`; null removes it (defaults apply again). */
   statusRoles?: StatusRoles | null;
+  /** Replaces `people`; null or empty removes it. */
+  people?: Person[] | null;
   /** Named verify gates, replacing the list; null or empty removes it. */
   verifySteps?: VerifyStep[] | null;
   /** Per remote name: a config sets it, null removes it. */

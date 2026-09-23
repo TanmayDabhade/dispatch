@@ -87,6 +87,7 @@ import {
   readJsonBodyOptional,
 } from './api/http.js';
 import { getImpact } from './api/impact.js';
+import { listPeople } from './api/people.js';
 import { getQueue } from './api/queue.js';
 import { listTaskFindings, startTaskReview } from './api/review.js';
 import { listRunClaims } from './api/runClaims.js';
@@ -1224,6 +1225,14 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
       );
     }
     patch.statuses = statuses as ConfigPatch['statuses'];
+  }
+  if ('people' in body) {
+    const { people } = body;
+    if (people !== null && !Array.isArray(people)) {
+      return errorResponse(400, 'people must be a list or null');
+    }
+    // Core validates every entry before writing.
+    patch.people = people as ConfigPatch['people'];
   }
   if ('statusRoles' in body) {
     const roles = body.statusRoles;
@@ -6120,6 +6129,10 @@ export async function handleApi(
     // enrich/"add detail" agents, task drafts, overseer chats), normalized for
     // the All agents page. Task runs are not repeated here: GET /api/runs
     // already lists them, and the client merges the two.
+    // GET /api/people — the people registry pickers and avatars read.
+    if (segments[0] === 'people' && segments.length === 1 && method === 'GET') {
+      return listPeople(ctx);
+    }
     // GET /api/executors — what this daemon can dispatch on, so no client has
     // to hard-code executor names.
     if (

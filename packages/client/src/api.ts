@@ -12,6 +12,7 @@ import type {
   LedgerKind,
   ModelConfig,
   MutationEvidence,
+  Person,
   Priority,
   TaskComment,
   TaskDoc,
@@ -23,6 +24,7 @@ import type {
 // these types directly, the same way it already can with `ApiClient`.
 export type {
   CommentPatch,
+  Person,
   TaskComment,
   Finding,
   FindingRecommendation,
@@ -627,6 +629,13 @@ export interface CreateLedgerInput {
   title: string;
   detail: string;
   appliesTo?: string[];
+}
+
+// Mirrors GET /api/people: everyone pickers offer, and the caller's own ref
+// (what the legacy bare `human` assignee means).
+export interface PeopleSnapshot {
+  me: string;
+  people: Person[];
 }
 
 // Mirrors POST /api/tasks/:id/comments's body. `author` defaults to the
@@ -2278,6 +2287,8 @@ export interface ApiClient {
   /** Whether this daemon's machine has the blob (a HEAD), so Tauri can ask
    * before handing the path to the OS. */
   hasTaskAttachment(id: string, name: string): Promise<boolean>;
+  /** The people registry (team roster + config `people`) and who "me" is. */
+  fetchPeople(): Promise<PeopleSnapshot>;
   /** A task's comment thread, oldest first. */
   fetchTaskComments(id: string): Promise<TaskComment[]>;
   addTaskComment(id: string, input: NewCommentInput): Promise<TaskComment>;
@@ -2942,6 +2953,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
         ...jsonBody(input),
       }),
+    fetchPeople: () => request(target, '/api/people'),
     fetchTaskComments: (id) =>
       request(target, `/api/tasks/${encodeURIComponent(id)}/comments`),
     addTaskComment: (id, input) =>

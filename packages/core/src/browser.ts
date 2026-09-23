@@ -4,6 +4,7 @@
 export * from './status.js';
 export * from './kinds.js';
 export * from './comments.js';
+export * from './people.js';
 export * from './types.js';
 export {
   ATTACHMENT_MAX_BYTES,

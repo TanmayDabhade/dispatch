@@ -28,6 +28,8 @@ export type {
   ChatMessage,
   CommentPatch,
   NewCommentInput,
+  PeopleSnapshot,
+  Person,
   TaskComment,
   ConfirmResult,
   ConnectEventsOptions,

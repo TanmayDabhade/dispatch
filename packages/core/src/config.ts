@@ -47,6 +47,8 @@ import {
   NOTIFICATION_KINDS,
 } from './configTypes.js';
 import { describeValue } from './describe.js';
+import { personError } from './people.js';
+import type { Person } from './people.js';
 import type { PolicyConfig, PolicyGate, PolicyGateMode } from './policy.js';
 import {
   DEFAULT_POLICY,
@@ -1315,6 +1317,39 @@ function parseStatusRoles(
   return roles;
 }
 
+/** Validates `people:`, a list of { ref, name, email?, avatarUrl?, external? }. */
+function parsePeople(raw: unknown): Person[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: people must be a list'
+    );
+  }
+  const seen = new Set<string>();
+  return (raw as unknown[]).map((entry, index) => {
+    const error = personError(entry);
+    if (error !== null) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: people[${index}]: ${error}`
+      );
+    }
+    const p = entry as Person;
+    if (seen.has(p.ref)) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: people lists ${p.ref} twice`
+      );
+    }
+    seen.add(p.ref);
+    return {
+      ref: p.ref,
+      name: p.name.trim(),
+      email: p.email ?? null,
+      avatarUrl: p.avatarUrl ?? null,
+      external: p.external ?? null,
+    };
+  });
+}
+
 export function loadConfig(rootDir: string): DispatchConfig {
   const path = join(rootDir, DISPATCH_DIR, 'config.yml');
   if (!existsSync(path)) {
@@ -1380,6 +1415,7 @@ function parseConfig(parsed: unknown): DispatchConfig {
       }
     }
   }
+  const people = parsePeople((parsed as { people?: unknown } | null)?.people);
   const statusBlock = parseStatuses(raw.statuses);
   const statusRoles = parseStatusRoles(
     (parsed as { statusRoles?: unknown } | null)?.statusRoles,
@@ -1409,6 +1445,7 @@ function parseConfig(parsed: unknown): DispatchConfig {
   return {
     ...statusBlock,
     ...(statusRoles === undefined ? {} : { statusRoles }),
+    ...(people === undefined ? {} : { people }),
     autoCommit: raw.autoCommit ?? DEFAULTS.autoCommit,
     verifyCommand: raw.verifyCommand,
     verifySteps: raw.verifySteps,
@@ -1574,6 +1611,22 @@ function applyBlockPatches(doc: YAML.Document, patch: ConfigPatch): void {
             }
       )
     );
+  }
+  if (patch.people !== undefined) {
+    if (patch.people === null || patch.people.length === 0) {
+      doc.delete('people');
+    } else {
+      doc.set(
+        'people',
+        patch.people.map((p) => ({
+          ref: p.ref,
+          name: p.name,
+          ...(p.email == null ? {} : { email: p.email }),
+          ...(p.avatarUrl == null ? {} : { avatarUrl: p.avatarUrl }),
+          ...(p.external == null ? {} : { external: p.external }),
+        }))
+      );
+    }
   }
   if (patch.statusRoles !== undefined) {
     if (patch.statusRoles === null) doc.delete('statusRoles');

@@ -5,6 +5,7 @@ import type {
   Finding,
   LedgerEntry,
   MutationEvidence,
+  Person,
   TaskComment,
   TaskDoc,
   UpdatePatch,
@@ -427,6 +428,8 @@ export interface TaskApiClient {
   getTask(id: string): Promise<TaskDoc>;
   createTask(input: CreateInput): Promise<TaskDoc>;
   updateTask(id: string, patch: UpdatePatch): Promise<TaskDoc>;
+  /** `GET /api/people`: the people registry and the caller's own ref. */
+  listPeople(): Promise<{ me: string; people: Person[] }>;
   /** `GET /api/tasks/:id/comments`, oldest first. */
   listComments(id: string): Promise<TaskComment[]>;
   /** `POST /api/tasks/:id/comments`; `author` defaults to the caller. */
@@ -509,6 +512,7 @@ export function createTaskApiClient(
         ...jsonBody(patch),
         method: 'PATCH',
       }),
+    listPeople: () => request(target, '/api/people'),
     listComments: (id) =>
       request(target, `/api/tasks/${encodeURIComponent(id)}/comments`),
     addComment: (id, input) =>
