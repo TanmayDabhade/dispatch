@@ -18,6 +18,8 @@ import { initGitRepo, withBrokenRepo } from './helpers.js';
 
 let fakeHome: string;
 let repo: string;
+// Shut down in afterEach: an engine's retry timers outlive its test otherwise.
+const engines: EpicEngine[] = [];
 const originalDispatchHome = process.env.DISPATCH_HOME;
 
 beforeEach(() => {
@@ -27,6 +29,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  for (const engine of engines.splice(0)) engine.shutdown();
   if (originalDispatchHome === undefined) delete process.env.DISPATCH_HOME;
   else process.env.DISPATCH_HOME = originalDispatchHome;
   rmSync(fakeHome, { recursive: true, force: true });
@@ -85,6 +88,7 @@ function makeHarness(): Harness {
     events,
     orchestrator,
   });
+  engines.push(epics);
   return { orchestrator, epics, store, cache, events };
 }
 
@@ -945,6 +949,7 @@ describe('EpicEngine fill serialization', () => {
       events,
       orchestrator,
     });
+    engines.push(epics);
     const { epicId } = createEpicWithChildren(store, 6);
 
     await epics.start(epicId, { concurrency: 2, executor: 'fake' });
