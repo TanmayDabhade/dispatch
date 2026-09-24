@@ -1,5 +1,5 @@
-// The per-pass picture of the linked team: its workflow states mirrored into
-// the project's statuses, its users folded into the people registry, and the
+// The per-pass picture of the linked teams: their workflow states mirrored into
+// the project's statuses, their users folded into the people registry, and the
 // mapping context every field projection reads.
 import {
   defaultStatusRoles,
@@ -11,7 +11,7 @@ import {
   peopleIndex,
   reconcileStatusRoles,
   resolvePeople,
-  statusesFromWorkflowStates,
+  statusesFromTeams,
   statusModelOf,
   statusRenames,
   syncLinearLabels,
@@ -40,7 +40,7 @@ import type { LinearSyncState } from './state.js';
 export interface PassContext extends LinearMapContext {
   tasks: Map<string, TaskMeta>;
   taskByRemote: Map<string, string>;
-  labels: Map<string, LinearLabel>;
+  labels: Map<string, LinearLabel[]>;
   labelsById: Map<string, LinearLabel>;
   /** The label registry's colors by lowercased ref, for labels a push creates. */
   labelColors: ReadonlyMap<string, string>;
@@ -83,20 +83,22 @@ export interface StatusRegeneration {
 }
 
 /**
- * Makes the project's statuses the team's workflow states (names, types,
- * colors, order) and its roles the generated defaults plus any user override,
- * then moves every task whose status left the vocabulary onto its successor.
- * A migration is bookkeeping, so it keeps each task's `updated`.
+ * Makes the project's statuses the linked teams' workflow states (names,
+ * types, colors, order; merged across teams by name and type, see
+ * statusesFromTeams) and its roles the generated defaults plus any user
+ * override, then moves every task whose status left the vocabulary onto its
+ * successor. A migration is bookkeeping, so it keeps each task's `updated`.
  */
 export function regenerateStatuses(
   rootDir: string,
   store: TaskStorePort,
   docs: Map<string, TaskDoc>,
   state: LinearSyncState,
-  states: readonly LinearWorkflowState[]
+  teams: readonly (readonly LinearWorkflowState[])[]
 ): StatusRegeneration {
   const config = loadConfig(rootDir);
-  const generated = statusesFromWorkflowStates(states);
+  const states = teams.flat();
+  const generated = statusesFromTeams(teams);
   if (generated.definitions.length === 0) {
     return { config, configChanged: false, migrated: [] };
   }
@@ -200,6 +202,12 @@ export function syncLabels(
   };
 }
 
+/** The linked teams as a mapping context sees them, primary first. */
+export interface LinkedTeam {
+  id: string;
+  states: readonly LinearWorkflowState[];
+}
+
 /** The mapping context over the pass's task snapshot. */
 export function buildContext(
   rootDir: string,
@@ -208,7 +216,8 @@ export function buildContext(
   docs: Map<string, TaskDoc>,
   labels: readonly LinearLabel[],
   projectStatuses: readonly LinearProjectStatus[],
-  localRef: string
+  localRef: string,
+  teams: readonly LinkedTeam[]
 ): PassContext {
   const tasks = new Map<string, TaskMeta>();
   const taskByRemote = new Map<string, string>();
@@ -217,20 +226,21 @@ export function buildContext(
     const ref = parseLinearExternal(doc.meta.external);
     if (ref !== null) taskByRemote.set(ref.id, doc.meta.id);
   }
-  const statusByState = new Map(Object.entries(state.stateNames));
-  const stateByStatus = new Map(
-    Object.entries(state.stateNames).map(([id, name]) => [name, id])
-  );
   const people = resolvePeople(config.people ?? [], rosterMembers(rootDir));
+  const labelIndex = new Map<string, LinearLabel[]>();
+  const labelsById = new Map<string, LinearLabel>();
+  const ctx = { labels: labelIndex, labelsById };
+  for (const label of labels) trackLabel(ctx, label);
   return {
     tasks,
     taskByRemote,
-    statusByState,
-    stateByStatus,
+    statusByState: new Map(Object.entries(state.stateNames)),
+    teamStates: new Map(teams.map((t) => [t.id, t.states])),
+    defaultTeamId: teams[0]?.id ?? '',
     model: statusModelOf(config),
     people: peopleIndex(people, localRef),
-    labels: new Map(labels.map((l) => [labelKey(l).toLowerCase(), l])),
-    labelsById: new Map(labels.map((l) => [l.id, l])),
+    labels: labelIndex,
+    labelsById,
     includeAcceptanceCriteria: config.linear.includeAcceptanceCriteria,
     projectStatuses,
     labelColors: labelColorIndex(config.labels ?? []),
@@ -256,8 +266,19 @@ export function refreshPeople(
   );
 }
 
-/** Adds a label the pass created to the context. */
-export function trackLabel(ctx: PassContext, label: LinearLabel): void {
-  ctx.labels.set(labelKey(label).toLowerCase(), label);
+/** Adds (or refreshes) a label in the context's indexes. */
+export function trackLabel(
+  ctx: Pick<PassContext, 'labels' | 'labelsById'>,
+  label: LinearLabel
+): void {
+  const prior = ctx.labelsById.get(label.id);
+  if (prior !== undefined) {
+    const was = labelKey(prior).toLowerCase();
+    const rest = (ctx.labels.get(was) ?? []).filter((l) => l.id !== label.id);
+    if (rest.length === 0) ctx.labels.delete(was);
+    else ctx.labels.set(was, rest);
+  }
+  const key = labelKey(label).toLowerCase();
+  ctx.labels.set(key, [...(ctx.labels.get(key) ?? []), label]);
   ctx.labelsById.set(label.id, label);
 }

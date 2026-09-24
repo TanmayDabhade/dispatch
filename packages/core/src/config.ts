@@ -947,6 +947,13 @@ function parseVerifyConfig(raw: unknown): VerifyConfig | undefined {
   return result;
 }
 
+function isTeamIdList(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.every((id) => typeof id === 'string' && id.trim() !== '')
+  );
+}
+
 // Validates the optional `linear:` block, same contract as the blocks above. `statusMap`
 // merges over the default, so remapping one status does not unmap the other five.
 function parseLinearConfig(raw: unknown): LinearConfig {
@@ -975,6 +982,18 @@ function parseLinearConfig(raw: unknown): LinearConfig {
       'invalid .dispatch/config.yml: linear.teamId must be a string or null'
     );
   }
+  // `teamIds` wins when present; a legacy `teamId` alone is a one-team list.
+  const { teamIds } = obj;
+  if (teamIds !== undefined && teamIds !== null && !isTeamIdList(teamIds)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: linear.teamIds must be a list of team ids'
+    );
+  }
+  const linkedTeams = isTeamIdList(teamIds)
+    ? [...new Set(teamIds)]
+    : typeof teamId === 'string' && teamId.trim() !== ''
+      ? [teamId]
+      : [];
 
   const { intervalSec } = obj;
   if (
@@ -1033,7 +1052,8 @@ function parseLinearConfig(raw: unknown): LinearConfig {
 
   return {
     enabled: enabled ?? defaults.enabled,
-    teamId: teamId ?? defaults.teamId,
+    teamId: linkedTeams[0] ?? null,
+    teamIds: linkedTeams,
     statusMap: mergedStatusMap,
     intervalSec: intervalSec ?? defaults.intervalSec,
     direction: (direction as LinearConfig['direction']) ?? defaults.direction,
@@ -1560,11 +1580,27 @@ function applyLinearPatch(
     }
     doc.setIn(['linear', 'enabled'], patch.enabled);
   }
+  // Either key writes both: `teamIds` in full, and `teamId` as its first
+  // entry, which is all a build predating several teams reads.
+  let teams: string[] | undefined;
   if (patch.teamId !== undefined) {
     if (patch.teamId !== null && typeof patch.teamId !== 'string') {
       throw new ConfigError('invalid linear.teamId: must be a string or null');
     }
-    doc.setIn(['linear', 'teamId'], patch.teamId);
+    teams =
+      patch.teamId === null || patch.teamId.trim() === '' ? [] : [patch.teamId];
+  }
+  if (patch.teamIds !== undefined) {
+    if (!isTeamIdList(patch.teamIds)) {
+      throw new ConfigError(
+        'invalid linear.teamIds: must be a list of team ids'
+      );
+    }
+    teams = [...new Set(patch.teamIds)];
+  }
+  if (teams !== undefined) {
+    doc.setIn(['linear', 'teamIds'], teams);
+    doc.setIn(['linear', 'teamId'], teams[0] ?? null);
   }
   if (patch.intervalSec !== undefined) {
     if (!Number.isFinite(patch.intervalSec) || patch.intervalSec < 30) {

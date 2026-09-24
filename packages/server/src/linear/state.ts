@@ -1,3 +1,4 @@
+import { fieldHash, ISSUE_FIELDS } from '@dispatch/core';
 import type { FieldBase, LinearEntity, StatusRoles } from '@dispatch/core';
 import { createHash } from 'node:crypto';
 import {
@@ -48,6 +49,15 @@ interface WebhookRecord {
   secret: string;
   teamId: string;
   createdAt: string;
+  /** Hooks for the other linked teams, all signing with the same secret. */
+  more?: { teamId: string; id: string }[];
+}
+
+/** Every hook a registration holds, the primary team's first. */
+export function webhookHooks(
+  record: WebhookRecord
+): { teamId: string; id: string }[] {
+  return [{ teamId: record.teamId, id: record.id }, ...(record.more ?? [])];
 }
 
 export interface LinearSyncState {
@@ -94,6 +104,9 @@ export interface LinearSyncState {
   lastAuditAt: string | null;
   /** Linear label id -> the color both sides held after the last sync. */
   labelColors: Record<string, string | null>;
+  /** Which value spaces the stored bases were hashed in (see upgradeBases);
+   *  absent on a state written before the first upgrade. */
+  baseVersion?: number;
 }
 
 // Sync state is user-level, not project-level: `.dispatch/` is committed to the
@@ -247,4 +260,37 @@ export function writeBase(
     l: encode(base.local),
     r: encode(base.remote),
   };
+}
+
+/**
+ * Rewrites stored bases hashed in a value space a field has since left, once.
+ * v2: an issue's `state` compares as the status it generated, not the state
+ * id, so a move between linked teams is not a change; each stored hash is
+ * mapped id -> name, and one no current state explains is dropped (that field
+ * syncs as on first contact).
+ */
+export function upgradeBases(
+  state: LinearSyncState,
+  stateNames: Readonly<Record<string, string>>
+): void {
+  if ((state.baseVersion ?? 1) >= 2) return;
+  // Nothing to translate by until a team's states have been generated.
+  if (Object.keys(stateNames).length === 0) return;
+  const byHash = new Map<string, string>([[fieldHash(null), fieldHash(null)]]);
+  for (const [id, name] of Object.entries(stateNames)) {
+    byHash.set(fieldHash(id), fieldHash(name));
+  }
+  for (const taskId of Object.keys(state.bases)) {
+    const base = readBase(state, taskId, 'issue');
+    if (base === null) continue;
+    for (const side of [base.local, base.remote]) {
+      const hash = side.state;
+      if (hash === undefined) continue;
+      const next = byHash.get(hash);
+      if (next === undefined) delete side.state;
+      else side.state = next;
+    }
+    writeBase(state, taskId, 'issue', ISSUE_FIELDS, base);
+  }
+  state.baseVersion = 2;
 }

@@ -127,7 +127,11 @@ function missing(what: string, id: string): Promise<LinearFailure> {
  * what the push produced. No test using it opens a socket.
  */
 export class FakeLinearClient implements LinearClient {
+  /** The team-1 workflow, and every other team's unless `teamStates` names it. */
   states: LinearWorkflowState[] = STATES;
+  teamList: LinearTeam[] = [{ id: TEAM_ID, key: 'HYD', name: 'Hydrogen' }];
+  /** Workflows of teams beyond team-1, by team id. */
+  teamStates: Record<string, LinearWorkflowState[]> = {};
   labelList: LinearLabel[] = LABELS.map((l) => ({ ...l }));
   members: LinearUser[] = [VIEWER];
   viewerUser: LinearUser = VIEWER;
@@ -182,31 +186,51 @@ export class FakeLinearClient implements LinearClient {
   teams(): Promise<LinearResult<LinearTeam[]>> {
     const f = this.fail('teams');
     if (f !== null) return Promise.resolve(f);
-    return ok([{ id: TEAM_ID, key: 'HYD', name: 'Hydrogen' }]);
+    return ok([...this.teamList]);
   }
 
-  workflowStates(): Promise<LinearResult<LinearWorkflowState[]>> {
+  /** A team's workflow states. */
+  statesOf(teamId: string): LinearWorkflowState[] {
+    return this.teamStates[teamId] ?? this.states;
+  }
+
+  private teamOf(teamId: string): LinearTeam {
+    return (
+      this.teamList.find((t) => t.id === teamId) ?? {
+        id: teamId,
+        key: 'HYD',
+        name: 'Hydrogen',
+      }
+    );
+  }
+
+  workflowStates(teamId: string): Promise<LinearResult<LinearWorkflowState[]>> {
     const f = this.fail('workflowStates');
     if (f !== null) return Promise.resolve(f);
-    return ok(this.states);
+    return ok(this.statesOf(teamId));
   }
 
-  workspace(): Promise<LinearResult<LinearWorkspace>> {
+  workspace(teamId: string): Promise<LinearResult<LinearWorkspace>> {
     const f = this.fail('workspace');
     if (f !== null) return Promise.resolve(f);
     return ok({
       viewer: this.viewerUser,
-      team: { id: TEAM_ID, key: 'HYD', name: 'Hydrogen' },
-      states: this.states,
+      team: this.teamOf(teamId),
+      states: this.statesOf(teamId),
       members: this.members,
       projectStatuses: this.projectStatuses,
     });
   }
 
-  labels(): Promise<LinearResult<LinearLabel[]>> {
+  /** The team's labels plus the workspace's, as Linear scopes them. */
+  labels(teamId: string): Promise<LinearResult<LinearLabel[]>> {
     const f = this.fail('labels');
     if (f !== null) return Promise.resolve(f);
-    return ok(this.labelList.map((l) => ({ ...l })));
+    return ok(
+      this.labelList
+        .filter((l) => l.teamId == null || l.teamId === teamId)
+        .map((l) => ({ ...l }))
+    );
   }
 
   cycles(): Promise<LinearResult<TaskCycle[]>> {
@@ -708,8 +732,8 @@ export class FakeLinearClient implements LinearClient {
     if (input.priority !== undefined) next.priority = input.priority;
     if (input.estimate !== undefined) next.estimate = input.estimate;
     if (input.stateId !== undefined) {
-      next.state =
-        this.states.find((s) => s.id === input.stateId) ?? next.state;
+      const all = [...this.states, ...Object.values(this.teamStates).flat()];
+      next.state = all.find((s) => s.id === input.stateId) ?? next.state;
     }
     if (input.assigneeId !== undefined) next.assigneeId = input.assigneeId;
     if (input.labelIds !== undefined) {
@@ -730,7 +754,7 @@ export class FakeLinearClient implements LinearClient {
     }
     if (input.parentId !== undefined) next.parentId = input.parentId;
     if (input.teamId !== undefined) {
-      next.team = { id: input.teamId, key: 'HYD' };
+      next.team = { id: input.teamId, key: this.teamOf(input.teamId).key };
     }
     next.updatedAt = this.stamp();
     return next;

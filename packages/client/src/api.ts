@@ -1782,7 +1782,10 @@ export interface LinearStatus {
   enabled: boolean;
   connected: boolean;
   keySource: 'project' | 'env' | 'global' | null;
+  /** The primary linked team. */
   teamId: string | null;
+  /** Every linked team, primary first. Absent from older daemons. */
+  teamIds?: string[];
   direction: 'both' | 'pull' | 'push';
   intervalSec: number;
   statusMap: Record<string, string>;

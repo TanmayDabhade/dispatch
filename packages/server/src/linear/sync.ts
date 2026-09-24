@@ -30,8 +30,11 @@ import { TaskChangeBatch } from './batch.js';
 import type {
   LinearClient,
   LinearFailure,
+  LinearIssuePage,
+  LinearIssueRef,
   LinearPage,
   LinearProbe,
+  LinearResult,
   LinearWorkspace,
 } from './client.js';
 import { HttpLinearClient } from './client.js';
@@ -51,6 +54,8 @@ import {
   echoTtlMs,
   pruneEchoes,
   readLinearState,
+  upgradeBases,
+  webhookHooks,
   writeLinearState,
 } from './state.js';
 import {
@@ -81,7 +86,10 @@ export interface LinearStatus {
   enabled: boolean;
   connected: boolean;
   keySource: CredentialSource;
+  /** The primary linked team. */
   teamId: string | null;
+  /** Every linked team, primary first. */
+  teamIds: string[];
   direction: LinearConfig['direction'];
   intervalSec: number;
   statusMap: Record<string, string>;
@@ -176,9 +184,18 @@ interface Session {
   client: LinearClient;
   config: DispatchConfig;
   linear: LinearConfig;
+  /** The primary linked team: new records go here unless placed elsewhere. */
   teamId: string;
+  /** Every linked team, primary first. */
+  teamIds: string[];
+  /** The primary team's workspace: the viewer and project statuses. */
   workspace: LinearWorkspace;
+  /** Each linked team's workspace, primary first. */
+  teams: LinearWorkspace[];
+  /** The linked teams' labels plus the workspace's, primary team first. */
   labels: LinearLabel[];
+  /** Everyone on any linked team. */
+  members: LinearUser[];
 }
 
 /** Everything one pass holds while it runs. */
@@ -256,6 +273,89 @@ function earliest(a: string | null, b: string | null): string | null {
   return a < b ? a : b;
 }
 
+// One team-scoped page walk run for every linked team, the pages merged by
+// record id (a project shared by two linked teams comes back from both).
+async function acrossTeams<T extends { id: string }>(
+  teamIds: readonly string[],
+  walk: (teamId: string) => Promise<LinearResult<LinearPage<T>>>
+): Promise<LinearResult<LinearPage<T>>> {
+  const byId = new Map<string, T>();
+  let truncated = false;
+  for (const teamId of teamIds) {
+    const page = await walk(teamId);
+    if (!page.ok) return page;
+    for (const node of page.data.nodes) {
+      if (!byId.has(node.id)) byId.set(node.id, node);
+    }
+    truncated = truncated || page.data.truncated;
+  }
+  return { ok: true, data: { nodes: [...byId.values()], truncated } };
+}
+
+// Whether an issue sits in one of the linked teams (one with no team does).
+function inLinkedTeam(
+  issue: LinearIssue,
+  session: Pick<Session, 'teamIds'>
+): boolean {
+  return issue.team === null || session.teamIds.includes(issue.team.id);
+}
+
+// Every linked team's issue chips, for the audit.
+async function issueLinksAcrossTeams(
+  session: Pick<Session, 'client' | 'teamIds'>
+): Promise<LinearResult<LinearIssueRef[]>> {
+  const refs: LinearIssueRef[] = [];
+  for (const teamId of session.teamIds) {
+    const page = await session.client.issueLinks(teamId);
+    if (!page.ok) return page;
+    refs.push(...page.data);
+  }
+  return { ok: true, data: refs };
+}
+
+// Every linked team's issues updated since `since`, reporting a running count
+// across the teams for progress.
+async function issuesAcrossTeams(
+  session: Pick<Session, 'client' | 'teamIds'>,
+  since: string | null,
+  onPage: (fetched: number) => void
+): Promise<LinearResult<LinearIssuePage>> {
+  const issues: LinearIssue[] = [];
+  let truncated = false;
+  for (const teamId of session.teamIds) {
+    const before = issues.length;
+    const page = await session.client.issuesUpdatedSince(teamId, since, (n) =>
+      onPage(before + n)
+    );
+    if (!page.ok) return page;
+    issues.push(...page.data.issues);
+    truncated = truncated || page.data.truncated;
+  }
+  return { ok: true, data: { issues, truncated } };
+}
+
+// The idle probe for every linked team: a kind moved if it moved in any.
+async function probeTeams(
+  session: Pick<Session, 'client' | 'teamIds'>,
+  since: string
+): Promise<LinearResult<LinearProbe>> {
+  const out: LinearProbe = {
+    issues: false,
+    comments: false,
+    projects: false,
+    milestones: false,
+    initiatives: false,
+  };
+  for (const teamId of session.teamIds) {
+    const probed = await session.client.probe(teamId, since);
+    if (!probed.ok) return probed;
+    for (const key of Object.keys(out) as (keyof LinearProbe)[]) {
+      out[key] = out[key] || probed.data[key];
+    }
+  }
+  return { ok: true, data: out };
+}
+
 /**
  * Keeps a project's tasks and one Linear team as two faithful copies: every
  * field both ways, merged field by field against a per-field base in
@@ -294,9 +394,9 @@ export class LinearSync {
   // fresh engine assumes so.
   private localDirty = true;
   private workspaceCache: {
-    teamId: string;
+    key: string;
     at: number;
-    workspace: LinearWorkspace;
+    teams: LinearWorkspace[];
     labels: LinearLabel[];
   } | null = null;
 
@@ -327,6 +427,7 @@ export class LinearSync {
       connected: this.deps.client !== undefined || source !== null,
       keySource: source,
       teamId: linear.teamId,
+      teamIds: linear.teamIds,
       direction: linear.direction,
       intervalSec: linear.intervalSec,
       statusMap: linear.statusMap,
@@ -644,34 +745,51 @@ export class LinearSync {
     if (config === null) {
       return { ok: false, error: this.configError ?? 'invalid config' };
     }
-    const teamId = config.linear.teamId;
-    if (teamId === null || teamId.trim() === '') {
+    const teamIds = config.linear.teamIds;
+    const teamId = teamIds[0];
+    if (teamId === undefined) {
       return { ok: false, error: 'no Linear team selected' };
     }
     const client = this.client();
     if (client === null) {
       return { ok: false, error: 'no Linear API key configured' };
     }
+    const key = teamIds.join(',');
     const cached = this.workspaceCache;
     const fresh =
       !force &&
       cached !== null &&
-      cached.teamId === teamId &&
+      cached.key === key &&
       Date.now() - cached.at < WORKSPACE_TTL_MS;
     if (!fresh) {
-      const workspace = await client.workspace(teamId);
-      if (!workspace.ok) return { ok: false, error: this.note(workspace) };
-      const labels = await client.labels(teamId);
-      if (!labels.ok) return { ok: false, error: this.note(labels) };
+      const teams: LinearWorkspace[] = [];
+      const labels = new Map<string, LinearLabel>();
+      for (const id of teamIds) {
+        const workspace = await client.workspace(id);
+        if (!workspace.ok) return { ok: false, error: this.note(workspace) };
+        teams.push(workspace.data);
+        const teamLabels = await client.labels(id);
+        if (!teamLabels.ok) return { ok: false, error: this.note(teamLabels) };
+        for (const l of teamLabels.data)
+          if (!labels.has(l.id)) labels.set(l.id, l);
+      }
       this.workspaceCache = {
-        teamId,
+        key,
         at: Date.now(),
-        workspace: workspace.data,
-        labels: labels.data,
+        teams,
+        labels: [...labels.values()],
       };
     }
     const current = this.workspaceCache;
-    if (current === null) return { ok: false, error: 'no Linear workspace' };
+    const primary = current?.teams[0];
+    if (current === null || primary === undefined) {
+      return { ok: false, error: 'no Linear workspace' };
+    }
+    const members = new Map<string, LinearUser>();
+    for (const team of current.teams) {
+      for (const m of team.members)
+        if (!members.has(m.id)) members.set(m.id, m);
+    }
     return {
       ok: true,
       session: {
@@ -679,8 +797,11 @@ export class LinearSync {
         config,
         linear: config.linear,
         teamId,
-        workspace: current.workspace,
+        teamIds,
+        workspace: primary,
+        teams: current.teams,
         labels: current.labels,
+        members: [...members.values()],
       },
     };
   }
@@ -710,7 +831,7 @@ export class LinearSync {
         // Cursors sit a second behind the newest record seen; the probe asks
         // about anything after that record itself, or an idle team never looks idle.
         const seen = new Date(Date.parse(from) + 1000).toISOString();
-        const probed = await session.client.probe(session.teamId, seen);
+        const probed = await probeTeams(session, seen);
         if (!probed.ok) {
           summary.errors.push(this.note(probed));
           summary.rateLimited = probed.kind === 'rate-limit';
@@ -758,21 +879,22 @@ export class LinearSync {
       }
     );
 
-    // The team's workflow is the project's status vocabulary, and its users
-    // are the project's people; both are refreshed before anything maps.
+    // The teams' workflows are the project's status vocabulary, and their
+    // users are the project's people; both are refreshed before anything maps.
     const regenerated = regenerateStatuses(
       rootDir,
       store,
       docs,
       state,
-      session.workspace.states
+      session.teams.map((t) => t.states)
     );
     for (const id of regenerated.migrated) batch.add(id);
+    upgradeBases(state, state.stateNames);
     const localRef = this.deps.localHumanRef ?? 'human:me';
     const people = syncPeople(
       rootDir,
       regenerated.config,
-      session.workspace.members,
+      session.members,
       session.workspace.viewer.id,
       localRef
     );
@@ -796,13 +918,15 @@ export class LinearSync {
       docs,
       session.labels,
       session.workspace.projectStatuses,
-      localRef
+      localRef,
+      session.teams.map((t) => ({ id: t.team.id, states: t.states }))
     );
     const pass = new LinearPass({
       store,
       client: session.client,
       config,
       teamId: session.teamId,
+      teamByKey: new Map(session.teams.map((t) => [t.team.key, t.team.id])),
       state,
       summary,
       ctx,
@@ -922,7 +1046,7 @@ export class LinearSync {
     targets: WebhookTargets = emptyTargets()
   ): Promise<void> {
     const { pass, session, state, ctx, docs } = run;
-    const { client, teamId } = session;
+    const { client, teamIds } = session;
     const fetched: Fetched = {
       initiatives: [],
       projects: [],
@@ -932,10 +1056,15 @@ export class LinearSync {
     };
     if (targets.containers) {
       fetched.projects =
-        pass.take(await client.projects(teamId, state.cursor))?.nodes ?? [];
+        pass.take(
+          await acrossTeams(teamIds, (id) => client.projects(id, state.cursor))
+        )?.nodes ?? [];
       fetched.milestones =
-        pass.take(await client.projectMilestones(teamId, state.cursor))
-          ?.nodes ?? [];
+        pass.take(
+          await acrossTeams(teamIds, (id) =>
+            client.projectMilestones(id, state.cursor)
+          )
+        )?.nodes ?? [];
       fetched.initiatives =
         pass.take(await client.initiatives(state.cursor))?.nodes ?? [];
     }
@@ -962,64 +1091,77 @@ export class LinearSync {
   }
 
   /**
-   * Keeps the webhook registration in step with the daemon: registered while
-   * sync pulls and the daemon has a public HTTPS URL, re-registered when that
-   * URL or the team changes, removed otherwise. A failed registration (the
-   * key's user must be a workspace admin) waits an hour before retrying and
-   * leaves the sync polling meanwhile.
+   * Keeps the webhook registration in step with the daemon: one hook per
+   * linked team, all signing with one secret, registered while sync pulls and
+   * the daemon has a public HTTPS URL, re-registered when that URL or the set
+   * of teams changes, removed otherwise. A failed registration (the key's user
+   * must be a workspace admin) waits an hour before retrying, keeping any
+   * hooks that did register, and the sync polls meanwhile.
    */
   private async ensureWebhook(run: Run): Promise<void> {
     const { state, session, mayPull, pass } = run;
     const url = this.deps.webhookUrl ?? null;
-    const wanted = url !== null && mayPull;
-    const current = state.webhook;
-    if (
-      current !== null &&
-      wanted &&
-      current.url === url &&
-      current.teamId === session.teamId
-    ) {
+    if (this.webhookSettled(state, session)) {
+      if (url === null || !mayPull) {
+        state.webhookError = null;
+        state.webhookRetryAt = null;
+      }
       return;
     }
+    const current = state.webhook;
     if (current !== null) {
-      pass.take(await session.client.deleteWebhook(current.id));
+      for (const hook of webhookHooks(current)) {
+        pass.take(await session.client.deleteWebhook(hook.id));
+      }
       state.webhook = null;
     }
-    if (!wanted) {
+    if (url === null || !mayPull) {
       state.webhookError = null;
       state.webhookRetryAt = null;
       return;
     }
-    if (
+    if (this.retrying(state)) return;
+    const secret = randomBytes(32).toString('hex');
+    const hooks: { teamId: string; id: string }[] = [];
+    for (const teamId of session.teamIds) {
+      const created = await session.client.createWebhook({
+        url,
+        teamId,
+        secret,
+        label: 'Dispatch',
+        resourceTypes: WEBHOOK_RESOURCE_TYPES,
+      });
+      if (!created.ok) {
+        state.webhookError = this.note(created);
+        state.webhookRetryAt = new Date(
+          Date.now() + WEBHOOK_RETRY_MS
+        ).toISOString();
+        break;
+      }
+      hooks.push({ teamId, id: created.data });
+    }
+    const [first, ...more] = hooks;
+    if (first === undefined) return;
+    state.webhook = {
+      id: first.id,
+      url,
+      secret,
+      teamId: first.teamId,
+      createdAt: new Date().toISOString(),
+      ...(more.length === 0 ? {} : { more }),
+    };
+    if (hooks.length === session.teamIds.length) {
+      state.webhookError = null;
+      state.webhookRetryAt = null;
+    }
+  }
+
+  // Whether a failed registration is still waiting out its retry delay.
+  private retrying(state: LinearSyncState): boolean {
+    return (
       state.webhookRetryAt !== null &&
       Date.now() < Date.parse(state.webhookRetryAt)
-    ) {
-      return;
-    }
-    const secret = randomBytes(32).toString('hex');
-    const created = await session.client.createWebhook({
-      url,
-      teamId: session.teamId,
-      secret,
-      label: 'Dispatch',
-      resourceTypes: WEBHOOK_RESOURCE_TYPES,
-    });
-    if (!created.ok) {
-      state.webhookError = this.note(created);
-      state.webhookRetryAt = new Date(
-        Date.now() + WEBHOOK_RETRY_MS
-      ).toISOString();
-      return;
-    }
-    state.webhook = {
-      id: created.data,
-      url,
-      secret,
-      teamId: session.teamId,
-      createdAt: new Date().toISOString(),
-    };
-    state.webhookError = null;
-    state.webhookRetryAt = null;
+    );
   }
 
   // Moves comment changes noted since the last pass into the persisted queue.
@@ -1102,21 +1244,21 @@ export class LinearSync {
   private webhookSettled(state: LinearSyncState, session: Session): boolean {
     const url = this.deps.webhookUrl ?? null;
     const wanted = url !== null && session.linear.direction !== 'push';
-    if (!wanted) return state.webhook === null;
-    if (state.webhook !== null) {
-      return (
-        state.webhook.url === url && state.webhook.teamId === session.teamId
-      );
-    }
-    return (
-      state.webhookRetryAt !== null &&
-      Date.now() < Date.parse(state.webhookRetryAt)
-    );
+    const current = state.webhook;
+    if (!wanted) return current === null;
+    if (current === null) return this.retrying(state);
+    if (current.url !== url) return false;
+    const hooked = webhookHooks(current).map((h) => h.teamId);
+    const covers =
+      hooked.length === session.teamIds.length &&
+      session.teamIds.every((id) => hooked.includes(id));
+    // A partial registration stands until its retry is due.
+    return covers || this.retrying(state);
   }
 
   private async pull(run: Run): Promise<void> {
     const { pass, session, state, importing } = run;
-    const { client, teamId } = session;
+    const { client, teamIds } = session;
     const summary = pass.summary;
     let records = true;
     let comments = true;
@@ -1127,7 +1269,7 @@ export class LinearSync {
       // Cursors sit a second behind the newest record seen; the probe asks
       // about anything after that record itself, or an idle team never looks idle.
       const seen = new Date(Date.parse(probeFrom) + 1000).toISOString();
-      const probe = run.probe ?? pass.take(await client.probe(teamId, seen));
+      const probe = run.probe ?? pass.take(await probeTeams(session, seen));
       if (probe === null) return;
       records =
         probe.issues || probe.projects || probe.milestones || probe.initiatives;
@@ -1145,15 +1287,17 @@ export class LinearSync {
     let recordsOk = true;
     let issuesTruncated = false;
     if (records) {
-      const projects = pass.take(await client.projects(teamId, since));
+      const projects = pass.take(
+        await acrossTeams(teamIds, (id) => client.projects(id, since))
+      );
       const milestones = pass.take(
-        await client.projectMilestones(teamId, since)
+        await acrossTeams(teamIds, (id) => client.projectMilestones(id, since))
       );
       const initiatives = pass.take(await client.initiatives(since));
       if (importing)
         this.setProgress({ phase: 'issues', done: 0, total: null });
       const page = pass.take(
-        await client.issuesUpdatedSince(teamId, since, (n) => {
+        await issuesAcrossTeams(session, since, (n) => {
           if (importing) {
             this.setProgress({ phase: 'issues', done: n, total: null });
           }
@@ -1174,8 +1318,9 @@ export class LinearSync {
     }
     let commentPage: LinearPage<LinearComment> | null = null;
     if (comments && run.comments !== null) {
+      const from = importing ? null : state.commentCursor;
       commentPage = pass.take(
-        await client.comments(teamId, importing ? null : state.commentCursor)
+        await acrossTeams(teamIds, (id) => client.comments(id, from))
       );
       fetched.comments = commentPage?.nodes ?? [];
     }
@@ -1243,11 +1388,12 @@ export class LinearSync {
         (!known(i.projectMilestoneId) && !have.has(i.projectMilestoneId ?? ''))
     );
     if (wantsContainers) {
+      const { client, teamIds } = session;
       const projects = pass.take(
-        await session.client.projects(session.teamId, null)
+        await acrossTeams(teamIds, (id) => client.projects(id, null))
       );
       const milestones = pass.take(
-        await session.client.projectMilestones(session.teamId, null)
+        await acrossTeams(teamIds, (id) => client.projectMilestones(id, null))
       );
       const byId = new Map(fetched.projects.map((p) => [p.id, p]));
       for (const p of projects?.nodes ?? []) {
@@ -1273,7 +1419,7 @@ export class LinearSync {
         if (missing.includes(i.id)) fetched.initiatives.push(i);
       }
     }
-    // Only the team's initiatives: ones a team project belongs to, or already linked.
+    // Only the teams' initiatives: ones a team project belongs to, or already linked.
     fetched.initiatives = fetched.initiatives.filter(
       (i) => initiativeIds.has(i.id) || ctx.taskByRemote.has(i.id)
     );
@@ -1301,7 +1447,7 @@ export class LinearSync {
     if (ids.size === 0) return;
     const users = await session.client.users([...ids]);
     if (!users.ok || users.data.length === 0) return;
-    const merged: LinearUser[] = [...session.workspace.members, ...users.data];
+    const merged: LinearUser[] = [...session.members, ...users.data];
     const result = syncPeople(
       this.deps.rootDir,
       loadConfig(this.deps.rootDir),
@@ -1374,7 +1520,9 @@ export class LinearSync {
     for (const issue of sorted) {
       await yieldLoop();
       const taskId = ctx.taskByRemote.get(issue.id);
-      const inTeam = issue.team === null || issue.team.id === session.teamId;
+      // A move between linked teams is followed like any other change; only
+      // leaving all of them unlinks the task.
+      const inTeam = inLinkedTeam(issue, session);
       if (taskId === undefined) {
         if (issue.archivedAt !== null || !inTeam || !mayPull) continue;
         const returning = state.movedOut[issue.id];
@@ -1448,8 +1596,12 @@ export class LinearSync {
           const issue = byId.get(ref.id);
           if (issue === undefined) continue;
           const current = docs.get(doc.meta.id) ?? doc;
-          if (issue.team !== null && issue.team.id !== session.teamId) {
-            pass.unlinkMoved(current, issue.id, issue.team.key);
+          if (!inLinkedTeam(issue, session)) {
+            pass.unlinkMoved(
+              current,
+              issue.id,
+              issue.team?.key ?? 'another team'
+            );
             continue;
           }
           await pass.reconcileIssue(current, issue, {
@@ -1510,10 +1662,12 @@ export class LinearSync {
     mode: ReconcileMode
   ): Promise<void> {
     const { pass, session, docs } = run;
-    const { client, teamId } = session;
+    const { client, teamIds } = session;
     const [projects, milestones, initiatives] = [
-      pass.take(await client.projects(teamId, null)),
-      pass.take(await client.projectMilestones(teamId, null)),
+      pass.take(await acrossTeams(teamIds, (id) => client.projects(id, null))),
+      pass.take(
+        await acrossTeams(teamIds, (id) => client.projectMilestones(id, null))
+      ),
       pass.take(await client.initiatives(null)),
     ];
     const byId = new Map<string, RemoteRecord>();
@@ -1549,8 +1703,9 @@ export class LinearSync {
 
   /**
    * Every so often (and on every import) checks each linked issue is still in
-   * the team: one moved elsewhere is unlinked, one deleted is archived and
-   * unlinked. The same walk refreshes every chip's identifier.
+   * a linked team: one moved out of all of them is unlinked, one deleted is
+   * archived and unlinked. The same walk refreshes every chip's identifier,
+   * which a move between linked teams changes.
    */
   private async audit(run: Run, force: boolean): Promise<void> {
     const { pass, session, state, docs } = run;
@@ -1564,7 +1719,7 @@ export class LinearSync {
       state.lastAuditAt = new Date().toISOString();
       return;
     }
-    const refs = pass.take(await session.client.issueLinks(session.teamId));
+    const refs = pass.take(await issueLinksAcrossTeams(session));
     if (refs === null) return;
     const inTeam = new Set<string>();
     for (const ref of refs) {
@@ -1581,9 +1736,9 @@ export class LinearSync {
         if (doc === undefined) continue;
         const issue = byId.get(id);
         if (issue === undefined) pass.unlinkDeleted(doc);
-        else if (issue.team !== null && issue.team.id !== session.teamId) {
+        else if (!inLinkedTeam(issue, session)) {
           pass.recordLink(issue.id, issue.identifier, issue.url);
-          pass.unlinkMoved(doc, id, issue.team.key);
+          pass.unlinkMoved(doc, id, issue.team?.key ?? 'another team');
         }
       }
     }

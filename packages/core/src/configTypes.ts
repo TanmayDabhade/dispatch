@@ -412,7 +412,12 @@ export const DEFAULT_NOTIFICATIONS: NotificationsConfig = {
 /** Linear sync settings. Holds no secret — the API key lives in `~/.dispatch/credentials.json`. */
 export interface LinearConfig {
   enabled: boolean;
+  /** The primary linked team: `teamIds[0]`, or null when none is linked.
+   *  Read from a legacy `teamId:` when `teamIds:` is absent. */
   teamId: string | null;
+  /** Every linked team, primary first. Issues follow a move between them
+   *  and unlink only when they leave all of them. */
+  teamIds: string[];
   /** Pre-mirroring map (status -> state name or type). Once a team is linked
    *  the statuses ARE its workflow states; this only guides that first move. */
   statusMap: Record<string, string>;
@@ -428,6 +433,7 @@ export const LINEAR_DIRECTIONS = ['both', 'pull', 'push'] as const;
 export const DEFAULT_LINEAR: LinearConfig = {
   enabled: false,
   teamId: null,
+  teamIds: [],
   statusMap: { ...DEFAULT_STATUS_MAP },
   intervalSec: 30,
   direction: 'both',

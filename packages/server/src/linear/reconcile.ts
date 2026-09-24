@@ -239,7 +239,11 @@ export interface PassDeps {
   store: TaskStorePort;
   client: LinearClient;
   config: DispatchConfig;
+  /** The primary linked team: where a new record goes unless its parent's
+   *  team is another linked one. */
   teamId: string;
+  /** Linked team key (an identifier's prefix, `ENG`) -> team id. */
+  teamByKey: ReadonlyMap<string, string>;
   state: LinearSyncState;
   summary: LinearSyncSummary;
   ctx: PassContext;
@@ -545,12 +549,12 @@ export class LinearPass {
   // ---------------------------------------------------------------------------
   // Pushes
 
-  // Creates the labels a task carries that Linear lacks, in the registry's
+  // Creates the labels a task carries that `teamId` lacks, in the registry's
   // color when it has one.
-  private async ensureLabels(doc: TaskDoc): Promise<boolean> {
-    const { ctx, client, teamId } = this.d;
+  private async ensureLabels(doc: TaskDoc, teamId: string): Promise<boolean> {
+    const { ctx, client } = this.d;
     let ok = true;
-    for (const name of missingLabels(doc, ctx)) {
+    for (const name of missingLabels(doc, ctx, teamId)) {
       const color = ctx.labelColors.get(name.toLowerCase());
       const label = this.check(
         await client.createLabel({
@@ -595,7 +599,8 @@ export class LinearPass {
     const { client, ctx } = this.d;
     const failed = new Set<string>();
     let latest = remote;
-    if (fields.includes('labels') && !(await this.ensureLabels(doc))) {
+    const team = remote.team?.id ?? this.d.teamId;
+    if (fields.includes('labels') && !(await this.ensureLabels(doc, team))) {
       failed.add('labels');
     }
     const plan = issuePush(doc, fields, remote, ctx);
@@ -861,14 +866,19 @@ export class LinearPass {
       );
     } else {
       ops = ISSUE_OPS as unknown as EntityOps<RemoteRecord>;
-      if (!(await this.ensureLabels(doc))) failed.add('labels');
-      const plan = issuePush(doc, ISSUE_FIELDS, null, ctx);
+      const team = this.teamForNewIssue(doc);
+      if (!(await this.ensureLabels(doc, team))) failed.add('labels');
+      const plan = issuePush(doc, ISSUE_FIELDS, null, ctx, team);
       // A create leaves unset fields out rather than sending explicit nulls.
       const input = Object.fromEntries(
         Object.entries(plan.input).filter(([, v]) => v !== null)
       );
       const created = this.check(
-        await client.createIssue({ ...input, teamId, title: doc.meta.title })
+        await client.createIssue({
+          ...input,
+          teamId: team,
+          title: doc.meta.title,
+        })
       );
       remote = created;
       if (created !== null) {
@@ -911,10 +921,23 @@ export class LinearPass {
     summary.pushed++;
   }
 
+  // A new issue joins its parent issue's team when that is a linked one (a
+  // sub-issue stays beside its parent), else the primary team.
+  private teamForNewIssue(doc: TaskDoc): string {
+    const parent = parseLinearExternal(
+      this.d.ctx.tasks.get(doc.meta.parent ?? '')?.external
+    );
+    if (parent?.entity !== 'issue') return this.d.teamId;
+    const identifier = this.d.state.links[parent.id]?.identifier ?? '';
+    const key = identifier.slice(0, identifier.lastIndexOf('-'));
+    return this.d.teamByKey.get(key) ?? this.d.teamId;
+  }
+
   /**
-   * An issue that left the linked team: the task is unlinked (and remembered,
-   * so it is linked again if the issue comes back) rather than following a
-   * team whose workflow this project does not mirror.
+   * An issue that left every linked team: the task is unlinked (and
+   * remembered, so it is linked again if the issue comes back to one) rather
+   * than following a team whose workflow this project does not mirror. A move
+   * between linked teams is followed instead, as an ordinary state change.
    */
   unlinkMoved(doc: TaskDoc, issueId: string, where: string): void {
     this.d.state.movedOut[issueId] = doc.meta.id;
@@ -930,7 +953,7 @@ export class LinearPass {
     );
   }
 
-  /** Links a task back to an issue that returned to the team. */
+  /** Links a task back to an issue that returned to a linked team. */
   relink(taskId: string, issue: LinearIssue): TaskDoc | null {
     const doc = this.d.docs.get(taskId);
     if (doc === undefined || doc.meta.external !== null) return null;
@@ -939,7 +962,7 @@ export class LinearPass {
       taskId,
       {
         external: linearExternal({ entity: 'issue', id: issue.id }),
-        appendActivity: `Relinked to Linear ${issue.identifier}: the issue is back in the team`,
+        appendActivity: `Relinked to Linear ${issue.identifier}: the issue is back in a linked team`,
         activityActor: 'none',
       },
       doc.meta.updated

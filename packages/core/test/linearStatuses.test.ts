@@ -6,6 +6,7 @@ import {
   defaultStatusRoles,
   migrateStatus,
   reconcileStatusRoles,
+  statusesFromTeams,
   statusesFromWorkflowStates,
   statusRenames,
   statusTypeOfState,
@@ -70,6 +71,55 @@ describe('statusesFromWorkflowStates', () => {
 
   it('types an unknown state type as backlog', () => {
     expect(statusTypeOfState('mystery')).toBe('backlog');
+  });
+});
+
+describe('statusesFromTeams', () => {
+  // A second team on a customized workflow: a QA-less board with a Design
+  // state of its own, and a "Review" that means done there.
+  const OPS: LinearWorkflowState[] = [
+    { id: 'o-backlog', name: 'Backlog', type: 'backlog', position: 0 },
+    { id: 'o-todo', name: 'todo', type: 'unstarted', position: 0 },
+    { id: 'o-progress', name: 'In Progress', type: 'started', position: 0 },
+    { id: 'o-design', name: 'Design', type: 'started', position: 1 },
+    { id: 'o-review', name: 'In Review', type: 'completed', position: 0 },
+    { id: 'o-done', name: 'Done', type: 'completed', position: 1 },
+    { id: 'o-canceled', name: 'Canceled', type: 'canceled', position: 0 },
+  ];
+
+  it('merges states by name and type, one status per shared state', () => {
+    const { definitions, names } = statusesFromTeams([STATES, OPS]);
+    expect(definitions.map((d) => [d.name, d.type])).toEqual([
+      ['Triage', 'triage'],
+      ['Backlog', 'backlog'],
+      ['Todo', 'unstarted'],
+      ['In Progress', 'started'],
+      // Ops' Design follows the state before it on Ops' board.
+      ['Design', 'started'],
+      ['QA', 'started'],
+      ['In Review', 'started'],
+      // Same name, other type: a status of its own.
+      ['In Review (2)', 'completed'],
+      ['Done', 'completed'],
+      ['Canceled', 'canceled'],
+      ['Duplicate', 'canceled'],
+    ]);
+    expect(names['o-todo']).toBe('Todo');
+    expect(names['o-progress']).toBe(names['s-progress']);
+    expect(names['o-review']).toBe('In Review (2)');
+    expect(names['s-review']).toBe('In Review');
+  });
+
+  it('never renames the primary team’s statuses when a team is linked', () => {
+    const alone = statusesFromTeams([STATES]).names;
+    const linked = statusesFromTeams([STATES, OPS]).names;
+    for (const state of STATES) expect(linked[state.id]).toBe(alone[state.id]);
+  });
+
+  it('is the single-team generation for one team', () => {
+    expect(statusesFromTeams([STATES])).toEqual(
+      statusesFromWorkflowStates(STATES)
+    );
   });
 });
 

@@ -9,16 +9,25 @@ import {
   issuePush,
   issueTaskCreate,
   issueValues,
+  labelFor,
   linearDescriptionFromBody,
   linksFromBody,
   missingLabels,
   normalizeMarkdown,
   PULL_ONLY_ISSUE_FIELDS,
+  stateIdFor,
   taskIssueValues,
   untrustedIssueFields,
 } from '../src/linearFields.js';
-import type { LinearIssue, LinearRelation } from '../src/linearMap.js';
+import type { LinearMapContext } from '../src/linearFields.js';
+import type {
+  LinearIssue,
+  LinearLabel,
+  LinearRelation,
+  LinearWorkflowState,
+} from '../src/linearMap.js';
 import { UNMAPPED } from '../src/linearMerge.js';
+import { statusesFromTeams } from '../src/linearStatuses.js';
 import { isDoneStatus } from '../src/status.js';
 import { applyUpdatePatch } from '../src/store.js';
 import { getSection } from '../src/taskfile.js';
@@ -200,7 +209,9 @@ describe('Linear -> Dispatch -> Linear', () => {
     const pulled = pull(issue, doc(linked('t-x', 'issue', 'i-x')), workspace());
     expect(pulled.meta.status).toBe('QA');
     const ctx = context([...workspace(), pulled.meta]);
-    expect(taskIssueValues(pulled, ctx).state).toBe('s-qa');
+    // Compared as the status it generated; pushed as the team's own state.
+    expect(taskIssueValues(pulled, ctx).state).toBe('QA');
+    expect(issuePush(pulled, ['state'], issue, ctx).input.stateId).toBe('s-qa');
   });
 });
 
@@ -486,3 +497,79 @@ function meta(
 ): TaskMeta {
   return doc({ id, kind, ...overrides }).meta;
 }
+
+describe('several linked teams', () => {
+  const OPS_STATES: LinearWorkflowState[] = [
+    { id: 'o-todo', name: 'Todo', type: 'unstarted', position: 0 },
+    { id: 'o-progress', name: 'In Progress', type: 'started', position: 0 },
+    { id: 'o-done', name: 'Done', type: 'completed', position: 0 },
+  ];
+  const WEB_OPS: LinearLabel = {
+    id: 'l-web-ops',
+    name: 'web',
+    color: '#111111',
+    group: null,
+    teamId: 'team-2',
+  };
+
+  function twoTeams(tasks: TaskMeta[]): LinearMapContext {
+    const generated = statusesFromTeams([STATES, OPS_STATES]);
+    return {
+      ...context(tasks, { labels: [...LABELS, WEB_OPS] }),
+      statusByState: new Map(Object.entries(generated.names)),
+      teamStates: new Map([
+        ['team-1', STATES],
+        ['team-2', OPS_STATES],
+      ]),
+    };
+  }
+
+  it('reads an issue that moved between them as the same status', () => {
+    const ctx = twoTeams(workspace());
+    const here = blankIssue('i-x', { state: STATES[3] });
+    const moved = blankIssue('i-x', {
+      team: { id: 'team-2', key: 'OPS' },
+      state: OPS_STATES[1],
+    });
+    expect(issueValues(here, ctx).state).toBe('In Progress');
+    expect(issueValues(moved, ctx).state).toBe('In Progress');
+  });
+
+  it('pushes a status as the issue’s own team’s state, by type when it lacks one', () => {
+    const ctx = twoTeams(workspace());
+    const issue = blankIssue('i-x', {
+      team: { id: 'team-2', key: 'OPS' },
+      state: OPS_STATES[0],
+    });
+    const stateFor = (status: string) =>
+      issuePush(
+        doc(linked('t-x', 'issue', 'i-x', 'task', { status })),
+        ['state'],
+        issue,
+        ctx
+      ).input.stateId;
+    expect(stateFor('In Progress')).toBe('o-progress');
+    // QA is team-1's alone: team-2's first started state stands in.
+    expect(stateFor('QA')).toBe('o-progress');
+    expect(stateIdFor('team-1', 'QA', ctx)).toBe('s-qa');
+    expect(stateIdFor('team-2', 'Triage', ctx)).toBeNull();
+  });
+
+  it('names the issue’s team’s label, else a workspace one', () => {
+    const ctx = twoTeams(workspace());
+    const issue = blankIssue('i-x', { team: { id: 'team-2', key: 'OPS' } });
+    const task = doc(
+      linked('t-x', 'issue', 'i-x', 'task', {
+        labels: ['web', 'infra', 'Type/Bug'],
+      })
+    );
+    expect(issuePush(task, ['labels'], issue, ctx).input.labelIds).toEqual([
+      'l-infra',
+      'l-web-ops',
+    ]);
+    expect(labelFor('WEB', 'team-1', ctx)?.id).toBe('l-web');
+    // Type/Bug is team-1's own: team-2 would need one of its own.
+    expect(missingLabels(task, ctx, 'team-2')).toEqual(['Type/Bug']);
+    expect(missingLabels(task, ctx, 'team-1')).toEqual([]);
+  });
+});
