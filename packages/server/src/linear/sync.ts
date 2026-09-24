@@ -217,6 +217,20 @@ const WEBHOOK_POLL_SEC = 300;
 // A failed registration (often: the key's user is not a workspace admin) is
 // retried this rarely, rather than on every pass.
 const WEBHOOK_RETRY_MS = 60 * 60_000;
+// How long applying pulled issues runs before handing the event loop back.
+const APPLY_SLICE_MS = 10;
+
+// Returns a function to await between units of synchronous work: it yields
+// to the event loop once APPLY_SLICE_MS has passed since the last yield, so
+// an import applying thousands of issues leaves the daemon answering.
+function sliceYielder(): () => Promise<void> {
+  let sliceStart = performance.now();
+  return async () => {
+    if (performance.now() - sliceStart < APPLY_SLICE_MS) return;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    sliceStart = performance.now();
+  };
+}
 
 // A second before the newest record seen: `gt` would otherwise drop any
 // record sharing that exact timestamp, and re-reading one is free.
@@ -1329,7 +1343,9 @@ export class LinearSync {
       a.updatedAt.localeCompare(b.updatedAt)
     );
     const pairs: [TaskDoc, LinearIssue][] = [];
+    const yieldLoop = sliceYielder();
     for (const issue of sorted) {
+      await yieldLoop();
       const taskId = ctx.taskByRemote.get(issue.id);
       const inTeam = issue.team === null || issue.team.id === session.teamId;
       if (taskId === undefined) {
@@ -1351,6 +1367,7 @@ export class LinearSync {
       pairs.push([doc, issue]);
     }
     for (const [doc, issue] of pairs) {
+      await yieldLoop();
       const current = docs.get(doc.meta.id) ?? doc;
       touched.add(current.meta.id);
       await pass.reconcileIssue(current, issue, {

@@ -602,7 +602,7 @@ async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
     status: input.status ?? statusModelFor(ctx.rootDir).roles.ready,
     creator: input.creator ?? humanActor(ctx),
   });
-  ctx.cache.rebuild(ctx.store);
+  ctx.cache.refresh(ctx.store, [doc.meta.id]);
   ctx.events.broadcast({ type: 'task.changed', ids: [doc.meta.id] });
   return jsonResponse(doc, 201);
 }
@@ -698,7 +698,7 @@ async function updateTask(
   }
 
   const doc = ctx.store.update(id, patch);
-  ctx.cache.rebuild(ctx.store);
+  ctx.cache.refresh(ctx.store, [id]);
   ctx.events.broadcast({ type: 'task.changed', ids: [id] });
   return jsonResponse(doc);
 }
@@ -736,7 +736,7 @@ async function createTaskComment(
     appendActivity: `${new Date().toISOString()} ${body.text}`,
     activityActor: commentAuthorFor(ctx, runId),
   });
-  ctx.cache.rebuild(ctx.store);
+  ctx.cache.refresh(ctx.store, [id]);
   ctx.events.broadcast({ type: 'task.changed', ids: [id] });
   return jsonResponse(doc);
 }
@@ -3020,7 +3020,7 @@ async function dispatchPrAgentReview(
   });
   const task = ctx.store.create(buildPrReviewTask({ ...pr, body }, files));
   try {
-    ctx.cache.rebuild(ctx.store);
+    ctx.cache.refresh(ctx.store, [task.meta.id]);
     // The worktree is cut here, behind fetchPrHead: any path that cut one
     // from an already-fetched ref would slip past the fork gate entirely.
     const meta = await ctx.reviewRunner.startReview({
@@ -3034,7 +3034,7 @@ async function dispatchPrAgentReview(
       // comment on — it reads the PR's head straight out of its own worktree.
       target: { kind: 'pr', number: pr.number },
     });
-    ctx.events.broadcast({ type: 'task.changed' });
+    ctx.events.broadcast({ type: 'task.changed', ids: [task.meta.id] });
     return meta;
   } catch (err) {
     rollbackSynthesizedTask(ctx, task.meta.id);
@@ -3068,7 +3068,7 @@ function routableDispatchError(err: unknown): Error {
 function rollbackSynthesizedTask(ctx: ApiContext, taskId: string): void {
   if (ctx.orchestrator.list().some((run) => run.taskId === taskId)) return;
   ctx.store.remove(taskId);
-  ctx.cache.rebuild(ctx.store);
+  ctx.cache.refresh(ctx.store, [taskId]);
 }
 
 // Shared by every /api/prs/:number/comments* route below: the store never
@@ -3995,7 +3995,7 @@ function promoteNote(ctx: ApiContext, id: string): Response {
   // Cache first, link second: the note's `note.changed` broadcast is what
   // makes the hub render "→ t-xxxxxx", and that id has to already resolve in
   // the task cache by the time a client follows it.
-  ctx.cache.rebuild(ctx.store);
+  ctx.cache.refresh(ctx.store, [task.meta.id]);
   ctx.events.broadcast({ type: 'task.changed', ids: [task.meta.id] });
   linkNoteToTask(ctx, id, task.meta.id);
   return jsonResponse(task, 201);
@@ -4172,7 +4172,10 @@ async function convertInbox(req: Request, ctx: ApiContext): Promise<Response> {
 
   if (links.length > 0) {
     // Cache first so the ids in the response already resolve for a client that follows them.
-    ctx.cache.rebuild(ctx.store);
+    ctx.cache.refresh(
+      ctx.store,
+      links.map((link) => link.taskId)
+    );
     ctx.events.broadcast({
       type: 'task.changed',
       ids: links.map((link) => link.taskId),
@@ -4768,7 +4771,7 @@ export async function handleApi(
         ok: true,
         version: ctx.version,
         rootDir: ctx.rootDir,
-        // Files the most recent cache rebuild couldn't parse (e.g. missing
+        // Task files the cache couldn't parse (e.g. missing
         // frontmatter, invalid kind) — empty when the task set is clean. The
         // daemon keeps serving the last-good cache regardless; this is
         // visibility, not a fatal signal (`ok` stays true). A displaced or

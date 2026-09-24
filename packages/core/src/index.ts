@@ -152,11 +152,16 @@ export {
   retireLegacySources,
 } from './retire.js';
 export type { RetiredSource, RetireOptions, RetireReport } from './retire.js';
-export { materializeReceipts, restoreReceipts } from './receipts.js';
+export {
+  materializeReceipts,
+  receiptSteps,
+  restoreReceipts,
+} from './receipts.js';
 export type {
   ReceiptsExport,
   ReceiptsProblem,
   ReceiptsRestore,
+  ReceiptsScope,
   ReceiptsTally,
 } from './receipts.js';
 export { scanFindingsJsonl, scanLedgerJsonl } from './jsonlRecords.js';

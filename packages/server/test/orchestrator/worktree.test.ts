@@ -815,4 +815,23 @@ describe('WorktreeManager origin ancestry', () => {
     const local = runGitSync(repo, ['rev-parse', 'HEAD']).trim();
     expect(wt.isOnOriginBase(local, 'main')).toBe(false);
   });
+
+  it('lists the commits a tip lacks, one git no longer has among them', () => {
+    const origin = initBareRepo();
+    const repo = initGitRepo();
+    runGitSync(repo, ['remote', 'add', 'origin', origin]);
+    const pushed = runGitSync(repo, ['rev-parse', 'HEAD']).trim();
+    runGitSync(repo, ['push', 'origin', 'main']);
+    runGitSync(repo, ['commit', '--allow-empty', '-m', 'local-only']);
+    const local = runGitSync(repo, ['rev-parse', 'HEAD']).trim();
+    const gone = 'deadbeef'.repeat(5);
+    const wt = new WorktreeManager(repo);
+    const tip = wt.originBaseTip('main');
+    if (tip === null) throw new Error('expected origin/main');
+
+    expect(wt.commitsNotOn([pushed, local, gone], tip)).toEqual(
+      new Set([local, gone])
+    );
+    expect(wt.commitsNotOn([gone], tip)).toEqual(new Set([gone]));
+  });
 });

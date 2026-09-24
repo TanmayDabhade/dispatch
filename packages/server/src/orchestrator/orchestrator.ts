@@ -204,6 +204,9 @@ interface ScopeRequestCarrier {
 // invisible to the Branches surface.
 const DISPATCH_BRANCH_PREFIX = 'dispatch/';
 
+// A commit named in full (SHA-1 or SHA-256), as `git rev-list` prints it.
+const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
 // Minimum gap between opportunistic claims refreshes for one run — see
 // scheduleClaimsRefresh.
 const CLAIMS_REFRESH_COOLDOWN_MS = 5_000;
@@ -395,6 +398,12 @@ export class Orchestrator {
   // When each failed run was last re-surveyed for orphan-landed work — see
   // scheduleOrphanRecheck.
   private readonly lastOrphanCheck = new Map<string, number>();
+  // Per base: the origin tip last seen, and which merge commits it contains.
+  // See pushedMerges.
+  private readonly pushedAtTip = new Map<
+    string,
+    { tip: string; commits: Map<string, boolean> }
+  >();
   private readonly claimsRefreshCooldownMs: number;
   // Pending "this stop has taken too long" timers, keyed by run — see
   // scheduleStopEscalation, and transition() for where they are cleared.
@@ -622,21 +631,68 @@ export class Orchestrator {
   decorateRunsWithPushed(
     runs: RunMeta[]
   ): (RunMeta & { pushedToOrigin?: boolean })[] {
-    const hasOrigin = this.worktrees.hasOriginRemote();
-    const cache = new Map<string, boolean>();
+    const merged = runs.flatMap((run) =>
+      run.reviewAction === 'merge' && run.mergeCommit !== undefined
+        ? [{ commit: run.mergeCommit, base: run.baseBranch }]
+        : []
+    );
+    // Asked only when some run is merged: a board with none spawns no git.
+    const hasOrigin = merged.length > 0 && this.worktrees.hasOriginRemote();
+    const isPushed = hasOrigin ? this.pushedMerges(merged) : () => false;
     return runs.map((run) => {
       if (run.reviewAction !== 'merge' || run.mergeCommit === undefined) {
         return run;
       }
-      if (!hasOrigin) return { ...run, pushedToOrigin: false };
-      const key = `${run.mergeCommit}\0${run.baseBranch}`;
-      let pushed = cache.get(key);
-      if (pushed === undefined) {
-        pushed = this.worktrees.isOnOriginBase(run.mergeCommit, run.baseBranch);
-        cache.set(key, pushed);
-      }
-      return { ...run, pushedToOrigin: pushed };
+      return {
+        ...run,
+        pushedToOrigin: isPushed(run.mergeCommit, run.baseBranch),
+      };
     });
+  }
+
+  /**
+   * Which of these merge commits have reached origin's copy of their base.
+   *
+   * Asked per commit, that is a git process per merged run on every GET
+   * /api/runs: 300 merged runs stalled the daemon for 8s a request. Instead
+   * each base's origin tip is read once, one `git rev-list` names the commits
+   * it does not contain, and the answers are kept for as long as that tip
+   * stands — they cannot change until origin moves.
+   */
+  private pushedMerges(
+    merges: readonly { commit: string; base: string }[]
+  ): (commit: string, base: string) => boolean {
+    const byBase = new Map<string, Set<string>>();
+    for (const { commit, base } of merges) {
+      const commits = byBase.get(base) ?? new Set<string>();
+      commits.add(commit);
+      byBase.set(base, commits);
+    }
+    const answers = new Map<string, Map<string, boolean>>();
+    for (const [base, commits] of byBase) {
+      // No origin/<base> locally: unpushed is the safe answer.
+      const tip = this.worktrees.originBaseTip(base);
+      if (tip === null) continue;
+      let known = this.pushedAtTip.get(base);
+      if (known?.tip !== tip) {
+        known = { tip, commits: new Map() };
+        this.pushedAtTip.set(base, known);
+      }
+      const unknown = [...commits].filter((c) => !known.commits.has(c));
+      const full = unknown.filter((c) => FULL_SHA.test(c));
+      const unpushed =
+        full.length > 0 ? this.worktrees.commitsNotOn(full, tip) : null;
+      for (const commit of unknown) {
+        known.commits.set(
+          commit,
+          unpushed !== null && FULL_SHA.test(commit)
+            ? !unpushed.has(commit)
+            : this.worktrees.isMergedInto(commit, tip)
+        );
+      }
+      answers.set(base, known.commits);
+    }
+    return (commit, base) => answers.get(base)?.get(commit) ?? false;
   }
 
   // Thin passthroughs so MergeQueue can gate its own push-retry/auto-refresh
@@ -773,7 +829,7 @@ export class Orchestrator {
       },
       now
     );
-    this.ctx.cache.rebuild(this.ctx.store);
+    this.ctx.cache.refresh(this.ctx.store, [taskId]);
     this.ctx.events.broadcast({ type: 'task.changed', ids: [taskId] });
 
     this.transition(runId, 'running');
@@ -928,7 +984,7 @@ export class Orchestrator {
           },
           now
         );
-        this.ctx.cache.rebuild(this.ctx.store);
+        this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
         this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
       });
       return;
@@ -976,7 +1032,7 @@ export class Orchestrator {
         },
         now
       );
-      this.ctx.cache.rebuild(this.ctx.store);
+      this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
       this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
     });
   }
@@ -1124,7 +1180,7 @@ export class Orchestrator {
       { appendActivity: `${now} ${text}`, activityActor: 'none' },
       now
     );
-    this.ctx.cache.rebuild(this.ctx.store);
+    this.ctx.cache.refresh(this.ctx.store, [taskId]);
     this.ctx.events.broadcast({ type: 'task.changed', ids: [taskId] });
   }
 
@@ -1590,7 +1646,7 @@ export class Orchestrator {
         },
         now
       );
-      this.ctx.cache.rebuild(this.ctx.store);
+      this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
       this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
     });
 
@@ -1678,7 +1734,7 @@ export class Orchestrator {
         },
         now
       );
-      this.ctx.cache.rebuild(this.ctx.store);
+      this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
       this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
     });
     this.fireTerminalHooks(runId);
@@ -2074,6 +2130,8 @@ export class Orchestrator {
         this.ctx.store.update(taskId, {
           appendActivity: `${new Date().toISOString()} [run ${meta.id}] model ${model}: ${reason}`,
         });
+        this.ctx.cache.refresh(this.ctx.store, [taskId]);
+        this.ctx.events.broadcast({ type: 'task.changed', ids: [taskId] });
       });
     }
     return meta;
@@ -2448,8 +2506,8 @@ export class Orchestrator {
     if (action === 'merge') {
       this.closeSupersededPredecessors(runId, now, mergeCommit);
     }
-    this.ctx.cache.rebuild(this.ctx.store);
-    this.ctx.events.broadcast({ type: 'task.changed' });
+    this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
+    this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
     this.ctx.events.broadcast({ type: 'run.changed' });
     const reviewed = this.registry.get(runId)!;
     this.invokeHooksSafely(this.reviewedHooks, reviewed);
@@ -2597,8 +2655,8 @@ export class Orchestrator {
       reviewAction: 'pr',
     });
     this.closeSupersededPredecessors(runId, now, undefined);
-    this.ctx.cache.rebuild(this.ctx.store);
-    this.ctx.events.broadcast({ type: 'task.changed' });
+    this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
+    this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
     const reviewedViaPr = this.registry.get(runId)!;
     this.invokeHooksSafely(this.reviewedHooks, reviewedViaPr);
     return reviewedViaPr;
@@ -2643,8 +2701,8 @@ export class Orchestrator {
       reviewAction: 'merge',
       mergeCommit,
     });
-    this.ctx.cache.rebuild(this.ctx.store);
-    this.ctx.events.broadcast({ type: 'task.changed' });
+    this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
+    this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
     const reviewed = this.registry.get(runId)!;
     this.invokeHooksSafely(this.reviewedHooks, reviewed);
     return reviewed;
@@ -2732,9 +2790,9 @@ export class Orchestrator {
         },
         now
       );
-      this.ctx.cache.rebuild(this.ctx.store);
+      this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
     });
-    this.ctx.events.broadcast({ type: 'task.changed' });
+    this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
     this.ctx.events.broadcast({ type: 'run.changed' });
   }
 
@@ -3130,8 +3188,8 @@ export class Orchestrator {
 
     this.persistEpicDiffSnapshot(epicId, preDiff);
     this.worktrees.removeBranchRef(branch);
-    this.ctx.cache.rebuild(this.ctx.store);
-    this.ctx.events.broadcast({ type: 'task.changed' });
+    this.ctx.cache.refresh(this.ctx.store, [epicId]);
+    this.ctx.events.broadcast({ type: 'task.changed', ids: [epicId] });
     // The Branches surface just lost a row.
     this.ctx.events.broadcast({ type: 'run.changed' });
     return { epicId, mergeCommit };
@@ -3177,7 +3235,7 @@ export class Orchestrator {
         },
         now
       );
-      this.ctx.cache.rebuild(this.ctx.store);
+      this.ctx.cache.refresh(this.ctx.store, [epicId]);
       this.ctx.events.broadcast({ type: 'task.changed', ids: [epicId] });
     }
     this.ctx.events.broadcast({ type: 'run.changed' });
@@ -3780,19 +3838,26 @@ export class Orchestrator {
       }
     }
     const now = new Date().toISOString();
-    let count = 0;
+    const archived: string[] = [];
+    const isPushed = this.pushedMerges(
+      doneTasks.flatMap((task) => {
+        const run = newestMergedByTask.get(task.meta.id);
+        return run?.mergeCommit === undefined
+          ? []
+          : [{ commit: run.mergeCommit, base: run.baseBranch }];
+      })
+    );
     for (const task of doneTasks) {
       const run = newestMergedByTask.get(task.meta.id);
       if (run?.mergeCommit === undefined) continue;
-      if (!this.worktrees.isOnOriginBase(run.mergeCommit, run.baseBranch)) {
-        continue;
-      }
+      if (!isPushed(run.mergeCommit, run.baseBranch)) continue;
       this.ctx.store.update(task.meta.id, { archivedAt: now }, now);
-      count++;
+      archived.push(task.meta.id);
     }
+    const count = archived.length;
     if (count > 0) {
-      this.ctx.cache.rebuild(this.ctx.store);
-      this.ctx.events.broadcast({ type: 'task.changed' });
+      this.ctx.cache.refresh(this.ctx.store, archived);
+      this.ctx.events.broadcast({ type: 'task.changed', ids: archived });
     }
     return count;
   }
@@ -3942,7 +4007,7 @@ export class Orchestrator {
       },
       now
     );
-    this.ctx.cache.rebuild(this.ctx.store);
+    this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
     this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
   }
 
@@ -4011,7 +4076,7 @@ export class Orchestrator {
         patch.status = model.roles.review;
       }
       this.ctx.store.update(meta.taskId, patch, now);
-      this.ctx.cache.rebuild(this.ctx.store);
+      this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
       this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
     }
     this.fireTerminalHooks(meta.id);
@@ -4310,7 +4375,7 @@ export class Orchestrator {
             },
             now
           );
-          this.ctx.cache.rebuild(this.ctx.store);
+          this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
           this.ctx.events.broadcast({
             type: 'task.changed',
             ids: [meta.taskId],
@@ -4538,7 +4603,7 @@ export class Orchestrator {
         patch.status = model.roles.review;
       }
       this.ctx.store.update(meta.taskId, patch, now);
-      this.ctx.cache.rebuild(this.ctx.store);
+      this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
       this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
     });
     this.fireTerminalHooks(runId);
@@ -4665,7 +4730,7 @@ export class Orchestrator {
       },
       now
     );
-    this.ctx.cache.rebuild(this.ctx.store);
+    this.ctx.cache.refresh(this.ctx.store, [oldMeta.taskId]);
     this.ctx.events.broadcast({ type: 'task.changed', ids: [oldMeta.taskId] });
 
     this.transition(runId, 'running');
@@ -4854,7 +4919,7 @@ export class Orchestrator {
       },
       now
     );
-    this.ctx.cache.rebuild(this.ctx.store);
+    this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
     this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
 
     this.transition(newRunId, 'running');

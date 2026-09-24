@@ -6,10 +6,10 @@ import type { ReceiptsResult } from './receipts/exporter.js';
 import type { SyncResult } from './sync/boardSyncer.js';
 
 // Single WS message shape the server ever sends. `hello` greets a freshly
-// opened socket; `task.changed` tells every connected client "something
+// opened socket; `task.changed` tells every connected client "these tasks
 // changed, go refetch" — clients never receive a diff, so a duplicate event
-// is harmless (see EventBus.broadcast callers in index.ts/api.ts for why
-// duplicates can happen).
+// is harmless, though the daemon no longer echoes its own writes back through
+// the file watcher (see the watcher in index.ts).
 //
 // The `run.*` variants are the orchestrator's equivalents: `run.changed` is
 // "some run's lifecycle/registry state changed, go refetch" (same

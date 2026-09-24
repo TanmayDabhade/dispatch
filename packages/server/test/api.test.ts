@@ -765,4 +765,69 @@ describe('WebSocket task.changed broadcast', () => {
 
     ws.close();
   });
+
+  it("names a hand-edited task, and does not echo the daemon's own write", async () => {
+    const ws = new WebSocket(wsUrl(handle));
+    const changes: unknown[] = [];
+    ws.addEventListener('message', (ev) => {
+      const parsed = JSON.parse(ev.data as string) as { type: string };
+      if (parsed.type === 'task.changed') changes.push(parsed);
+    });
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener('open', () => resolve());
+      ws.addEventListener('error', () => reject(new Error('WS open failed')));
+    });
+
+    // Another writer, straight to disk: the watcher names what it saw.
+    const doc = new TaskStore(root).create({ title: 'Edited by hand' });
+    for (let i = 0; i < 300 && changes.length === 0; i++) await Bun.sleep(50);
+    expect(changes).toEqual([{ type: 'task.changed', ids: [doc.meta.id] }]);
+
+    changes.length = 0;
+    const res = await fetch(`${baseUrl}/api/tasks/${doc.meta.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'Edited through the API' }),
+    });
+    expect(res.status).toBe(200);
+    // Past the watcher's debounce: the write's own file event reads back
+    // what the handler already cached, so only the handler announces it.
+    await Bun.sleep(1000);
+    expect(changes).toEqual([{ type: 'task.changed', ids: [doc.meta.id] }]);
+
+    ws.close();
+  }, 30_000);
+});
+
+describe('the task watcher', () => {
+  // A git pull or checkout lands many task files at once; the fs events for
+  // it can name only a few (Bun 1.3 on macOS), and the rest must still show.
+  it('serves every task another writer adds and edits in one burst', async () => {
+    const outside = new TaskStore(root);
+    const added = Array.from(
+      { length: 12 },
+      (_, n) => outside.create({ title: `from a teammate ${n}` }).meta.id
+    );
+    const served = async (): Promise<Map<string, string>> => {
+      const res = await fetch(`${baseUrl}/api/tasks`);
+      const docs = (await res.json()) as {
+        meta: { id: string; title: string };
+      }[];
+      return new Map(docs.map((d) => [d.meta.id, d.meta.title]));
+    };
+    let seen = await served();
+    for (let i = 0; i < 300 && seen.size < added.length; i++) {
+      await Bun.sleep(50);
+      seen = await served();
+    }
+    expect([...seen.keys()].sort()).toEqual([...added].sort());
+
+    for (const id of added) outside.update(id, { title: `edited ${id}` });
+    const edited = () => [...seen].filter(([id, t]) => t === `edited ${id}`);
+    for (let i = 0; i < 300 && edited().length < added.length; i++) {
+      await Bun.sleep(50);
+      seen = await served();
+    }
+    expect(edited()).toHaveLength(added.length);
+  }, 60_000);
 });

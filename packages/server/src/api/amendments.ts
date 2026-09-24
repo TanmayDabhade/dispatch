@@ -37,7 +37,7 @@ export async function amendTask(
     reason: body.reason,
     source,
   });
-  ctx.cache.rebuild(ctx.store);
+  ctx.cache.refresh(ctx.store, [id]);
 
   // A dependent task inherits this as a constraint, the same channel a
   // review's findings carry forward through.

@@ -3,6 +3,7 @@ import {
   canonicalStatus,
   CONTAINER_KINDS,
   readyTasks,
+  taskIdFromFilename,
 } from '@dispatch/core';
 import type {
   ListSafeError,
@@ -34,23 +35,60 @@ interface TaskRow {
   json: string;
 }
 
+// A doc with its content stamp, ready to write.
+interface StampedDoc {
+  doc: TaskDoc;
+  stamp: string;
+}
+
+// Rebuilds each object with its keys sorted, for stampOf.
+function sortedKeys(_key: string, value: unknown): unknown {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return value;
+  }
+  const record = value as Record<string, unknown>;
+  const sorted: Record<string, unknown> = {};
+  for (const key of Object.keys(record).sort()) sorted[key] = record[key];
+  return sorted;
+}
+
+// A hash of a doc's content that ignores key order. The doc a writer holds
+// and the same doc read back from its file can list the same fields in a
+// different order (a patch appends a key the file had elsewhere), so this,
+// not the JSON, is what tells a real edit from an echo of one.
+function stampOf(doc: TaskDoc): string {
+  return String(Bun.hash(JSON.stringify(doc, sortedKeys)));
+}
+
+// Whether a recorded problem is about task `id`: keyed by the id itself on
+// the database backend, by the file it names on the file backend.
+function isProblemFor(problem: ListSafeError, id: string): boolean {
+  if (problem.file === id) return true;
+  return taskIdFromFilename(problem.file.replace(/\.md$/, '')) === id;
+}
+
 /**
  * In-memory read cache for the task graph, derived one-way from whichever
  * store the daemon opened (markdown files or its SQLite database). The cache
- * never writes — `rebuild()` is the only way data enters it, so it is always
- * safely reconstructible from source, which remains the single source of
- * truth (see spec §4).
+ * never writes to the store — everything in it was read from there, so it is
+ * always safely reconstructible from source, which remains the single source
+ * of truth (see spec §4).
+ *
+ * A writer that knows which tasks it touched calls `refresh()` with their ids;
+ * `resync()` is the full rescan for a change nobody can name. Both write only
+ * the rows whose content changed and report which ones those were.
  *
  * The full TaskDoc is stashed as a `json` column and reconstructed on read;
  * the other columns exist purely so SQL can filter/sort without touching the
- * blob, per the phase-2 plan's schema.
+ * blob, per the phase-2 plan's schema. `stamp` is the doc's content hash (see
+ * stampOf).
  */
 export class TaskCache {
   private readonly db: Database;
-  // Parse failures from the most recent rebuild (empty when every task file
-  // parsed cleanly). Kept around so `problems()` can surface them at
-  // `GET /api/health` without the caller having to thread the result of
-  // `rebuild()` through separately.
+  // Parse failures from the most recent rescan, kept current by refreshes
+  // (empty when every task parsed cleanly). Kept around so `problems()` can
+  // surface them at `GET /api/health` without the caller having to thread
+  // them through separately.
   private lastErrors: ListSafeError[] = [];
 
   constructor() {
@@ -67,47 +105,107 @@ export class TaskCache {
         created TEXT,
         updated TEXT,
         archived INTEGER NOT NULL DEFAULT 0,
-        json TEXT
+        json TEXT,
+        stamp TEXT
       )
     `);
   }
 
-  // Truncates and repopulates the cache from the store's current contents. A
-  // full rescan on every change is O(task count); acceptable at v1 scale — an
-  // on-disk cache with incremental updates is a later optimization (see the
-  // phase-2 plan's "Deviations from spec" note).
-  //
-  // Uses `listSafe()` rather than `list()` so one corrupt task file never
-  // takes down the whole rebuild: the good docs still populate the cache and
-  // the bad ones come back as `errors` for the caller to log/surface (see
-  // `problems()`). The scan happens before the `DELETE FROM tasks` below, so
-  // if something more fundamental blows up (e.g. the tasks directory itself
-  // vanishes mid-scan), the previous cache contents are left untouched
-  // instead of being wiped and left empty.
+  /** resync(), returning the parse failures it met. */
   rebuild(store: TaskStorePort): ListSafeError[] {
+    this.resync(store);
+    return this.lastErrors;
+  }
+
+  /**
+   * Makes the cache match the whole store, writing only the rows that differ,
+   * and returns the ids of the tasks that were added, changed or removed.
+   *
+   * `listSafe()` rather than `list()`, so one corrupt task file costs itself
+   * rather than the rescan: it is left out and named by `problems()`. The scan
+   * runs before any write, so one that throws outright (the tasks directory
+   * vanishing mid-scan) leaves the last-good rows in place.
+   */
+  resync(store: TaskStorePort): string[] {
     const { docs, errors } = store.listSafe();
-    this.db.run('DELETE FROM tasks');
-    this.write(docs, 'INSERT');
+    const previous = new Map(
+      (
+        this.db.query('SELECT id, stamp FROM tasks').all() as {
+          id: string;
+          stamp: string;
+        }[]
+      ).map((row) => [row.id, row.stamp])
+    );
+    const writes: StampedDoc[] = [];
+    const changed = new Set<string>();
+    for (const doc of docs) {
+      const stamp = stampOf(doc);
+      const before = previous.get(doc.meta.id);
+      previous.delete(doc.meta.id);
+      if (before === stamp) continue;
+      writes.push({ doc, stamp });
+      changed.add(doc.meta.id);
+    }
+    const removed = [...previous.keys()];
+    this.apply(writes, removed);
     this.lastErrors = errors;
-    return errors;
+    return [...changed, ...removed];
+  }
+
+  /**
+   * Re-reads just these tasks from the store and writes their rows; a task the
+   * store no longer has, or can no longer parse, leaves the cache. Returns the
+   * ids whose rows changed, which is how the file watcher tells someone's edit
+   * from the echo of a write this daemon already applied.
+   */
+  refresh(store: TaskStorePort, ids: Iterable<string>): string[] {
+    const select = this.db.query('SELECT stamp FROM tasks WHERE id = $id');
+    const writes: StampedDoc[] = [];
+    const removed: string[] = [];
+    for (const id of new Set(ids)) {
+      let doc: TaskDoc | null = null;
+      const problems = this.lastErrors.filter((e) => !isProblemFor(e, id));
+      try {
+        doc = store.get(id);
+      } catch (err) {
+        problems.push({ file: id, message: (err as Error).message });
+      }
+      this.lastErrors = problems;
+      const before = (select.get({ $id: id }) as { stamp: string } | null)
+        ?.stamp;
+      if (doc === null) {
+        if (before !== undefined) removed.push(id);
+        continue;
+      }
+      const stamp = stampOf(doc);
+      if (stamp !== before) writes.push({ doc, stamp });
+    }
+    this.apply(writes, removed);
+    return [...writes.map((w) => w.doc.meta.id), ...removed];
   }
 
   /**
    * Writes just these docs over their cached rows. For a writer that already
-   * holds what it wrote (a sync pass importing thousands of tasks), where a
-   * full rescan per batch would cost a parse of every task file each time.
+   * holds what it wrote (a sync pass importing thousands of tasks), where even
+   * re-reading each one would cost a parse per task file.
    */
   upsert(docs: readonly TaskDoc[]): void {
-    this.write(docs, 'INSERT OR REPLACE');
+    this.apply(
+      docs.map((doc) => ({ doc, stamp: stampOf(doc) })),
+      []
+    );
   }
 
-  private write(docs: readonly TaskDoc[], verb: string): void {
-    const insert = this.db.prepare(
-      `${verb} INTO tasks (id, title, status, kind, parent, priority, assignee, created, updated, archived, json)
-       VALUES ($id, $title, $status, $kind, $parent, $priority, $assignee, $created, $updated, $archived, $json)`
+  private apply(writes: readonly StampedDoc[], removed: readonly string[]) {
+    if (writes.length === 0 && removed.length === 0) return;
+    const insert = this.db.query(
+      `INSERT OR REPLACE INTO tasks (id, title, status, kind, parent, priority, assignee, created, updated, archived, json, stamp)
+       VALUES ($id, $title, $status, $kind, $parent, $priority, $assignee, $created, $updated, $archived, $json, $stamp)`
     );
+    const remove = this.db.query('DELETE FROM tasks WHERE id = $id');
     this.db.transaction(() => {
-      for (const doc of docs) {
+      for (const id of removed) remove.run({ $id: id });
+      for (const { doc, stamp } of writes) {
         insert.run({
           $id: doc.meta.id,
           $title: doc.meta.title,
@@ -120,12 +218,13 @@ export class TaskCache {
           $updated: doc.meta.updated,
           $archived: doc.meta.archivedAt !== undefined ? 1 : 0,
           $json: JSON.stringify(doc),
+          $stamp: stamp,
         });
       }
     })();
   }
 
-  // Human-readable form of the most recent rebuild's parse failures, for
+  // Human-readable form of the current parse failures, for
   // `GET /api/health`'s `problems` field — empty when the task set is clean.
   problems(): string[] {
     return this.lastErrors.map((e) => `${e.file}: ${e.message}`);

@@ -1,5 +1,5 @@
 import { TaskStore } from '@dispatch/core';
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import {
   appendFileSync,
   existsSync,
@@ -39,6 +39,7 @@ import {
   OrchestratorConflictError,
   OrchestratorNotFoundError,
 } from '../../src/orchestrator/types.js';
+import { WorktreeManager } from '../../src/orchestrator/worktree.js';
 import { initGitRepo, runGitSync } from './helpers.js';
 
 let fakeHome: string;
@@ -2820,6 +2821,77 @@ describe('Orchestrator.decorateRunsWithPushed', () => {
     expect(
       orchestrator.decorateRunsWithPushed([reviewed])[0].pushedToOrigin
     ).toBe(true);
+  });
+
+  it('tells pushed merges from unpushed ones across many runs at once', async () => {
+    const origin = initBareGitRepo();
+    runGitSync(repo, ['remote', 'add', 'origin', origin]);
+    const { orchestrator, meta } = await dispatchFinishedRun(repo);
+    const commitFile = (name: string): string => {
+      writeFileSync(join(repo, name), `${name}\n`);
+      runGitSync(repo, ['add', name]);
+      runGitSync(repo, ['commit', '-m', name]);
+      return runGitSync(repo, ['rev-parse', 'HEAD']).trim();
+    };
+    const pushed = commitFile('pushed.txt');
+    runGitSync(repo, ['push', 'origin', 'main']);
+    const local = commitFile('local.txt');
+    const merged = (mergeCommit: string): RunMeta => ({
+      ...meta,
+      reviewAction: 'merge',
+      mergeCommit,
+    });
+
+    const decorate = () =>
+      orchestrator
+        .decorateRunsWithPushed([
+          merged(pushed),
+          merged(local),
+          // An abbreviated SHA is checked on its own rather than by listing.
+          merged(pushed.slice(0, 12)),
+        ])
+        .map((run) => run.pushedToOrigin);
+
+    expect(decorate()).toEqual([true, false, true]);
+    // Remembered against origin's tip, and asked again once it moves.
+    expect(decorate()).toEqual([true, false, true]);
+    runGitSync(repo, ['push', 'origin', 'main']);
+    expect(decorate()).toEqual([true, true, true]);
+  });
+
+  it('still answers from one listing when git no longer has a merge commit', async () => {
+    const origin = initBareGitRepo();
+    runGitSync(repo, ['remote', 'add', 'origin', origin]);
+    const { orchestrator, meta } = await dispatchFinishedRun(repo);
+    const commitFile = (name: string): string => {
+      writeFileSync(join(repo, name), `${name}\n`);
+      runGitSync(repo, ['add', name]);
+      runGitSync(repo, ['commit', '-m', name]);
+      return runGitSync(repo, ['rev-parse', 'HEAD']).trim();
+    };
+    const pushed = commitFile('pushed.txt');
+    runGitSync(repo, ['push', 'origin', 'main']);
+    const local = commitFile('local.txt');
+    // A merge commit gc'd or rewritten away since the run recorded it.
+    const gone = 'deadbeef'.repeat(5);
+    const merged = (mergeCommit: string): RunMeta => ({
+      ...meta,
+      reviewAction: 'merge',
+      mergeCommit,
+    });
+    // The one-git-per-commit fallback is what made one lost commit stall
+    // every request for seconds on a board with hundreds of merged runs.
+    const perCommit = spyOn(WorktreeManager.prototype, 'isMergedInto');
+    try {
+      expect(
+        orchestrator
+          .decorateRunsWithPushed([merged(pushed), merged(local), merged(gone)])
+          .map((run) => run.pushedToOrigin)
+      ).toEqual([true, false, false]);
+      expect(perCommit).not.toHaveBeenCalled();
+    } finally {
+      perCommit.mockRestore();
+    }
   });
 });
 
