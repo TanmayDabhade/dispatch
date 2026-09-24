@@ -1,7 +1,12 @@
 import type { TaskListItem } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
-import { childrenByParent, DIRECT_BAND, flightScope } from './flightScope';
+import {
+  childrenByParent,
+  DIRECT_BAND,
+  flightScope,
+  sameScope,
+} from './flightScope';
 
 function task(
   id: string,
@@ -95,5 +100,30 @@ describe('flightScope', () => {
     const scope = flightScope(tasks[0], childrenByParent(tasks));
     expect(scope.bands).toBeNull();
     expect(scope.nodes).toHaveLength(1);
+  });
+
+  test('a change outside the scope leaves it the same; one inside does not', () => {
+    const tasks = [
+      task('e-p', { kind: 'project' }),
+      task('e-m', { kind: 'milestone', parent: 'e-p' }),
+      task('t-1', { parent: 'e-m' }),
+      task('t-other'),
+    ];
+    const before = flightScope(tasks[0], childrenByParent(tasks));
+    const elsewhere = [
+      ...tasks.slice(0, 3),
+      task('t-other', { status: 'landed' }),
+    ];
+    expect(
+      sameScope(before, flightScope(elsewhere[0], childrenByParent(elsewhere)))
+    ).toBe(true);
+    const inside = [
+      ...tasks.slice(0, 2),
+      task('t-1', { parent: 'e-m' }),
+      tasks[3],
+    ];
+    expect(
+      sameScope(before, flightScope(inside[0], childrenByParent(inside)))
+    ).toBe(false);
   });
 });

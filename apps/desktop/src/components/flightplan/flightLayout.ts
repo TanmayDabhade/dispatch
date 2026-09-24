@@ -5,9 +5,9 @@ import { dagWaves } from '../../lib/dagLayout';
 // structure only — ids, blockers, waves, bands — never state, so a node landing or an
 // agent starting repaints a card without moving anything.
 
-export const NODE_WIDTH = 232;
-export const NODE_HEIGHT = 52;
-const COLUMN_GAP = 56;
+export const NODE_WIDTH = 240;
+export const NODE_HEIGHT = 68;
+const COLUMN_GAP = 48;
 const ROW_GAP = 10;
 const PAD_X = 20;
 const PAD_Y = 14;

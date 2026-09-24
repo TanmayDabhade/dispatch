@@ -128,3 +128,27 @@ export function flightScope(
   }
   return { nodes, bands, bandOf };
 }
+
+/**
+ * Whether two scopes hold the very same task objects in the same bands. The cached task
+ * list keeps an untouched task's object across a patch, so a change elsewhere in the
+ * project yields an equal scope, and the caller keeps the old one — nothing downstream
+ * recomputes.
+ */
+export function sameScope(a: FlightScope, b: FlightScope): boolean {
+  if (a.nodes.length !== b.nodes.length) return false;
+  for (let i = 0; i < a.nodes.length; i++) {
+    if (a.nodes[i] !== b.nodes[i]) return false;
+  }
+  if (a.bands === null || b.bands === null) return a.bands === b.bands;
+  if (a.bands.length !== b.bands.length) return false;
+  for (let i = 0; i < a.bands.length; i++) {
+    const x = a.bands[i];
+    const y = b.bands[i];
+    if (x?.key !== y?.key || x?.container !== y?.container) return false;
+  }
+  for (const [id, band] of a.bandOf) {
+    if (b.bandOf.get(id) !== band) return false;
+  }
+  return true;
+}
