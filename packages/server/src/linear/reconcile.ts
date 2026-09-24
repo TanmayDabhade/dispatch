@@ -348,12 +348,17 @@ export class LinearPass {
       updatedAt,
       recordedAt: new Date().toISOString(),
     });
+    this.echoIndex?.add(`${id}@${updatedAt}`);
   }
 
+  // Built on first use: a pull asks about every record it read.
+  private echoIndex: Set<string> | null = null;
+
   isEcho(id: string, updatedAt: string): boolean {
-    return this.d.state.echoes.some(
-      (e) => e.issueId === id && e.updatedAt === updatedAt
+    this.echoIndex ??= new Set(
+      this.d.state.echoes.map((e) => `${e.issueId}@${e.updatedAt}`)
     );
+    return this.echoIndex.has(`${id}@${updatedAt}`);
   }
 
   recordLink(id: string, identifier: string, url: string): void {

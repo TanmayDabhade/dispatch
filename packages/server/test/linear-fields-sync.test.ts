@@ -526,3 +526,58 @@ describe('directions', () => {
     expect(fake.updated.map((u) => u.input.title)).toEqual(['Waiting to go']);
   });
 });
+
+describe('the poll timer’s pass', () => {
+  // Counts full reads of the task store, the cost an idle poll must skip.
+  function countReads(): () => number {
+    let reads = 0;
+    const listSafe = store.listSafe.bind(store);
+    store.listSafe = (filter) => {
+      reads++;
+      return listSafe(filter);
+    };
+    return () => reads;
+  }
+
+  it('ends at one probe, without reading the store, when nothing moved', async () => {
+    const { sync } = await linkedPair();
+    sync.start();
+    await sync.pollOnce();
+    const reads = countReads();
+    fake.calls = [];
+    broadcasts = [];
+
+    await sync.pollOnce();
+
+    expect(fake.calls).toEqual(['probe']);
+    expect(reads()).toBe(0);
+    expect(broadcasts.some((e) => e.type === 'linear.changed')).toBe(false);
+    await sync.stop();
+  });
+
+  it('runs a full pass once something local changed', async () => {
+    const { id, sync } = await linkedPair();
+    sync.start();
+    await sync.pollOnce();
+    edit(id, { title: 'Edited here' });
+    sync.notifyTaskChanged();
+
+    await sync.pollOnce();
+
+    expect(fake.updated.map((u) => u.input.title)).toEqual(['Edited here']);
+    await sync.stop();
+  });
+
+  it('pulls when the probe finds a change in Linear', async () => {
+    const { issue, id, sync } = await linkedPair();
+    sync.start();
+    await sync.pollOnce();
+    issue.title = 'Renamed there';
+    touch(issue);
+
+    await sync.pollOnce();
+
+    expect(store.get(id)?.meta.title).toBe('Renamed there');
+    await sync.stop();
+  });
+});

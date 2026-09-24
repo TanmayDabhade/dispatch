@@ -31,6 +31,7 @@ import type {
   LinearClient,
   LinearFailure,
   LinearPage,
+  LinearProbe,
   LinearWorkspace,
 } from './client.js';
 import { HttpLinearClient } from './client.js';
@@ -146,6 +147,8 @@ interface RunOptions {
   mode: SyncMode;
   taskIds?: string[];
   targets?: WebhookTargets;
+  /** A timer pass, which may end at an idle probe (see pollOnce). */
+  poll?: boolean;
 }
 
 /** What webhook deliveries named since the last targeted pass. */
@@ -192,6 +195,8 @@ interface Run {
   canPush: (id: string) => boolean;
   importing: boolean;
   taskIds: string[] | undefined;
+  /** The poll's probe, when one already ran this pass. */
+  probe: LinearProbe | null;
 }
 
 /** Everything the pull fetched, by kind. */
@@ -270,6 +275,9 @@ export class LinearSync {
   private webhookTimer: ReturnType<typeof setTimeout> | null = null;
   private lastDeliveryAt: string | null = null;
   private pollSec = 0;
+  // Whether anything local may have changed since the last full pass; a
+  // fresh engine assumes so.
+  private localDirty = true;
   private workspaceCache: {
     teamId: string;
     at: number;
@@ -389,6 +397,7 @@ export class LinearSync {
       void this.dropWebhook().catch(() => undefined);
       return;
     }
+    this.localDirty = true;
     this.schedulePolls(config.linear.intervalSec);
   }
 
@@ -414,7 +423,7 @@ export class LinearSync {
     if (this.timer !== null) clearInterval(this.timer);
     this.pollSec = sec;
     this.timer = setInterval(() => {
-      void this.syncOnce().catch(() => undefined);
+      void this.pollOnce().catch(() => undefined);
     }, sec * 1000);
   }
 
@@ -503,6 +512,7 @@ export class LinearSync {
   // one call. Pull is left to the timer — a local edit says nothing about Linear.
   notifyTaskChanged(): void {
     if (!this.enabled || this.selfBroadcast) return;
+    this.localDirty = true;
     this.schedulePush();
   }
 
@@ -513,7 +523,19 @@ export class LinearSync {
     const ids = this.commentChanges.get(taskId) ?? new Set<string>();
     for (const id of commentIds) ids.add(id);
     this.commentChanges.set(taskId, ids);
+    this.localDirty = true;
     this.schedulePush();
+  }
+
+  /**
+   * The poll timer's pass. When nothing local changed since the last pass,
+   * no audit or webhook work is due, and the probe says Linear is idle, it
+   * ends there — without reading the task store, which on the markdown
+   * backend means parsing every task file on the daemon's one thread.
+   */
+  pollOnce(): Promise<LinearSyncSummary> {
+    if (this.inFlight !== null) return this.inFlight;
+    return this.enqueue({ mode: 'both', poll: true });
   }
 
   private schedulePush(): void {
@@ -550,13 +572,14 @@ export class LinearSync {
             () => undefined,
             () => undefined
           );
-    const next = settled.then(() => this.run(opts));
-    this.inFlight = next;
-    void next
-      .catch(() => undefined)
+    // Cleared inside the chain the caller awaits, so a caller that starts
+    // another pass right after this one resolves never gets this one back.
+    const next: Promise<LinearSyncSummary> = settled
+      .then(() => this.run(opts))
       .finally(() => {
         if (this.inFlight === next) this.inFlight = null;
       });
+    this.inFlight = next;
     return next;
   }
 
@@ -651,6 +674,42 @@ export class LinearSync {
     const { store, cache, rootDir } = this.deps;
     const state = readLinearState(rootDir);
     this.takeCommentChanges(state);
+    let probe: LinearProbe | null = null;
+    if (opts.poll === true && state.bootstrappedAt !== null) {
+      const pulls = session.linear.direction !== 'push';
+      const from = earliest(state.cursor, state.commentCursor);
+      if (pulls && from !== null) {
+        // Cursors sit a second behind the newest record seen; the probe asks
+        // about anything after that record itself, or an idle team never looks idle.
+        const seen = new Date(Date.parse(from) + 1000).toISOString();
+        const probed = await session.client.probe(session.teamId, seen);
+        if (!probed.ok) {
+          summary.errors.push(this.note(probed));
+          summary.rateLimited = probed.kind === 'rate-limit';
+          return this.finish(summary, state, null, session.linear.intervalSec);
+        }
+        probe = probed.data;
+      }
+      const moved =
+        probe !== null &&
+        (probe.issues ||
+          probe.projects ||
+          probe.milestones ||
+          probe.initiatives ||
+          probe.comments);
+      const idle =
+        !moved &&
+        (!pulls || probe !== null) &&
+        !this.localDirty &&
+        !this.auditDue(state) &&
+        this.webhookSettled(state, session);
+      if (idle) {
+        return this.finish(summary, state, null, session.linear.intervalSec, {
+          quiet: true,
+        });
+      }
+    }
+    this.localDirty = false;
     const docs = new Map(store.listSafe().docs.map((d) => [d.meta.id, d]));
     this.foldLegacyWatermark(state, docs);
     const batch = new TaskChangeBatch(
@@ -743,6 +802,7 @@ export class LinearSync {
         mayPush && (opts.taskIds === undefined || opts.taskIds.includes(id)),
       importing: opts.mode === 'import',
       taskIds: opts.taskIds,
+      probe,
     };
 
     // A first sync reconciles nothing — no task to create, no link to update — so it
@@ -970,7 +1030,8 @@ export class LinearSync {
     summary: LinearSyncSummary,
     state: LinearSyncState,
     batch: TaskChangeBatch | null,
-    intervalSec = 300
+    intervalSec = 300,
+    { quiet = false }: { quiet?: boolean } = {}
   ): LinearSyncSummary {
     batch?.flush();
     this.progress = null;
@@ -984,8 +1045,32 @@ export class LinearSync {
     );
     writeLinearState(this.deps.rootDir, state);
     this.lastSummary = summary;
-    this.deps.events.broadcast({ type: 'linear.changed', summary });
+    // An idle poll changed nothing a client shows, so it stays silent.
+    if (!quiet) this.deps.events.broadcast({ type: 'linear.changed', summary });
     return summary;
+  }
+
+  private auditDue(state: LinearSyncState): boolean {
+    return (
+      state.lastAuditAt === null ||
+      Date.now() - Date.parse(state.lastAuditAt) > AUDIT_EVERY_MS
+    );
+  }
+
+  // Whether the webhook registration already matches what ensureWebhook wants.
+  private webhookSettled(state: LinearSyncState, session: Session): boolean {
+    const url = this.deps.webhookUrl ?? null;
+    const wanted = url !== null && session.linear.direction !== 'push';
+    if (!wanted) return state.webhook === null;
+    if (state.webhook !== null) {
+      return (
+        state.webhook.url === url && state.webhook.teamId === session.teamId
+      );
+    }
+    return (
+      state.webhookRetryAt !== null &&
+      Date.now() < Date.parse(state.webhookRetryAt)
+    );
   }
 
   private async pull(run: Run): Promise<void> {
@@ -1001,7 +1086,7 @@ export class LinearSync {
       // Cursors sit a second behind the newest record seen; the probe asks
       // about anything after that record itself, or an idle team never looks idle.
       const seen = new Date(Date.parse(probeFrom) + 1000).toISOString();
-      const probe = pass.take(await client.probe(teamId, seen));
+      const probe = run.probe ?? pass.take(await client.probe(teamId, seen));
       if (probe === null) return;
       records =
         probe.issues || probe.projects || probe.milestones || probe.initiatives;
@@ -1425,11 +1510,7 @@ export class LinearSync {
    */
   private async audit(run: Run, force: boolean): Promise<void> {
     const { pass, session, state, docs } = run;
-    const due =
-      force ||
-      state.lastAuditAt === null ||
-      Date.now() - Date.parse(state.lastAuditAt) > AUDIT_EVERY_MS;
-    if (!due) return;
+    if (!force && !this.auditDue(state)) return;
     const linked = new Map<string, TaskDoc>();
     for (const doc of docs.values()) {
       const ref = parseLinearExternal(doc.meta.external);
