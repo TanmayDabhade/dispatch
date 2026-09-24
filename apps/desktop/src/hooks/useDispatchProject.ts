@@ -99,6 +99,8 @@ import {
   useStopFixLoop,
 } from './useOrchestration';
 import { overseerKey, overseerKeyPrefix } from './useOverseerSession';
+import { runDiffKey, runReviewKey } from './useRunData';
+import { commentsRootKey, taskCommentsKey } from './useTaskComments';
 import { taskDocKey, tasksKey } from './useTaskDoc';
 import { useTransitionNotifications } from './useTransitionNotifications';
 
@@ -1406,6 +1408,9 @@ export function useDispatchProject(
           if (queryClient.getQueryData(tasksQueryKey) !== undefined) {
             refetchTaskList();
           }
+          void queryClient.invalidateQueries({
+            queryKey: commentsRootKey(port),
+          });
           // The daemon sends `hello` from its websocket `open` handler
           // (packages/server/src/index.ts), so this fires once per socket:
           // on the first connect and again on every reconnect. A reconnect
@@ -1562,11 +1567,22 @@ export function useDispatchProject(
             queryKey: agentSessionsQueryKey,
           });
         } else if (event.type === 'review.changed') {
-          void queryClient.invalidateQueries({ queryKey: reviewQueryKey });
+          // The run the event names, whichever surface shows it — the selected run here
+          // or a task page's own (useRunData shares these keys).
+          void queryClient.invalidateQueries({
+            queryKey: runReviewKey(port, event.runId),
+          });
           // The server broadcasts this same event for a reviewer's inline edit and an
           // applied suggestion — both commit straight onto the run branch, so the diff
           // itself (not just its comment thread) is now stale too.
-          void queryClient.invalidateQueries({ queryKey: runDiffQueryKey });
+          void queryClient.invalidateQueries({
+            queryKey: runDiffKey(port, event.runId),
+          });
+        } else if (event.type === 'comment.changed') {
+          // One thread refetches, and only while a page shows it; the board never does.
+          void queryClient.invalidateQueries({
+            queryKey: taskCommentsKey(port, event.taskId),
+          });
         } else if (event.type === 'inbox.changed') {
           void queryClient.invalidateQueries({ queryKey: inboxQueryKey });
           // The daemon triages captures in the background and announces
@@ -1797,8 +1813,6 @@ export function useDispatchProject(
     agentSessionsQueryKey,
     inboxQueryKey,
     inboxTriageQueryKey,
-    reviewQueryKey,
-    runDiffQueryKey,
     epicProgressKeyPrefix,
     mergeQueueQueryKey,
     landingQueryKey,
