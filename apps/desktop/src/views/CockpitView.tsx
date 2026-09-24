@@ -561,6 +561,40 @@ export function CockpitView({
     }
   }
 
+  // The split pane as one element held across cursor moves: its callbacks read the cursor
+  // through a ref, so a j/k that does not change the pane's task never re-renders its page.
+  const cursorRef = useRef(cursor);
+  useEffect(() => {
+    cursorRef.current = cursor;
+  }, [cursor]);
+  const closePane = useCallback(() => {
+    setPaneTaskId(null);
+    gridRef.current?.focus();
+  }, []);
+  const expandPane = useCallback(
+    (taskId: string) => {
+      const key = cursorRef.current.key;
+      const entry = key === null ? undefined : itemByKey.get(key);
+      if (entry !== undefined && entry.item.taskId === taskId) {
+        openFull(entry.item);
+      } else {
+        onOpenTask(taskId);
+      }
+    },
+    [itemByKey, openFull, onOpenTask]
+  );
+  const pane = useMemo(
+    () =>
+      deferredPaneTaskId === null ? null : (
+        <TaskPane
+          taskId={deferredPaneTaskId}
+          onClose={closePane}
+          onExpand={() => expandPane(deferredPaneTaskId)}
+        />
+      ),
+    [deferredPaneTaskId, closePane, expandPane]
+  );
+
   if (!daemonReady) {
     return (
       <DaemonUnavailable
@@ -630,29 +664,7 @@ export function CockpitView({
             )
           )}
         </div>
-        {split && (
-          <div className="min-w-0 flex-1">
-            <TaskPane
-              taskId={deferredPaneTaskId}
-              onClose={() => {
-                setPaneTaskId(null);
-                gridRef.current?.focus();
-              }}
-              onExpand={() => {
-                const entry =
-                  cursor.key === null ? undefined : itemByKey.get(cursor.key);
-                if (
-                  entry !== undefined &&
-                  entry.item.taskId === deferredPaneTaskId
-                ) {
-                  openFull(entry.item);
-                } else {
-                  onOpenTask(deferredPaneTaskId);
-                }
-              }}
-            />
-          </div>
-        )}
+        {split && <div className="min-w-0 flex-1">{pane}</div>}
       </div>
     </div>
   );
