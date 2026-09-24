@@ -36,6 +36,7 @@ import {
   type ListKeyCommand,
   resolveListKeyCommand,
 } from '../../../lib/keyboard';
+import { colorForLabel } from '../../../lib/labelColor';
 import {
   isLinearConfigured,
   pushToLinearError,
@@ -88,7 +89,7 @@ import { TaskTitle } from './TaskTitle';
 import { cn } from '@/lib/utils';
 import { IconButton } from '@/ui/ai/icon-button';
 import { PageHeader, SidePanelIconButton } from '@/ui/ai/page-header';
-import { Pill } from '@/ui/ai/pill';
+import { LabelPill, Pill } from '@/ui/ai/pill';
 import { EmptyState } from '@/ui/chrome';
 import {
   DropdownMenu,
@@ -238,7 +239,9 @@ function PropertyChips({
       )}
       {meta.cycle !== null && <Pill>{cycleLabel(meta.cycle)}</Pill>}
       {meta.labels.map((label) => (
-        <Pill key={label}>{label}</Pill>
+        <LabelPill key={label} color={colorForLabel(label)}>
+          {label}
+        </LabelPill>
       ))}
       <button
         type="button"
