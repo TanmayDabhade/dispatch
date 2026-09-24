@@ -310,6 +310,25 @@ describe('FlightPlan', () => {
     expect(sentenceOf('t-3')).toBe('#2 in queue');
   });
 
+  test('a project session from before plan-wide fan-outs owns only its direct band', () => {
+    const tasks = [
+      task('e-p', { kind: 'project', parent: null }),
+      task('e-1', { kind: 'milestone', parent: 'e-p', title: 'Alpha' }),
+      task('t-1', { parent: 'e-1' }),
+      task('t-2', { parent: 'e-p' }),
+    ];
+    const legacy = progress('active', 1, 'e-p');
+    if (legacy.session !== null) legacy.session.scope = 'direct';
+    mount(dataWith(tasks, [], [legacy]), undefined, 'e-p');
+    // The server dispatches only t-2; Alpha may still fan out beside it.
+    expect(sentenceOf('t-2')).toBe('Next up');
+    expect(sentenceOf('t-1')).toBe('Ready to dispatch');
+    const alpha = document.querySelector(
+      '[data-slot=flight-band-head][data-band="e-1"]'
+    );
+    expect(alpha?.textContent).toContain('Send agents');
+  });
+
   test('a teammate’s node is theirs: never queued, and d passes it by', async () => {
     const sent: string[] = [];
     mount(

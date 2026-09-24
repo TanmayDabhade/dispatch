@@ -1,7 +1,6 @@
 import type { TaskListItem } from '@dispatch/core/browser';
 import {
   DEFAULT_STATUS_MODEL,
-  fanoutScope,
   isUnstartedStatus,
   statusModelOf,
 } from '@dispatch/core/browser';
@@ -25,6 +24,7 @@ import { cockpitRowId } from '../components/cockpit/CockpitRow';
 import {
   buildFlightPlan,
   type FlightPlan,
+  sessionScope,
 } from '../components/flightplan/flightPlan';
 import { usePeople } from '../components/people/PeopleContext';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
@@ -261,8 +261,9 @@ export function CockpitView({
     }
     for (const progress of data.liveEpicSessions) {
       // What the session covers: a project's milestone issues too.
-      const scope = fanoutScope(
+      const scope = sessionScope(
         progress.epicId,
+        progress.session?.scope,
         (id) => childrenOf.get(id) ?? []
       );
       out.set(

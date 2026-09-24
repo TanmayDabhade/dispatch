@@ -380,29 +380,24 @@ describe('a project fans out what its Flight Plan draws', () => {
   });
 });
 
-it('a session persisted without a starter works for the local human', async () => {
-  const h0 = makeHarness();
-  const m = h0.store.create({ title: 'Milestone', kind: 'milestone' }).meta.id;
-  const mine = h0.task('mine', { parent: m, assignee: 'human:test' });
-  h0.task('samTask', { parent: m, assignee: 'human:sam' });
+// A session as a daemon from before startedBy and plan-wide scopes wrote it.
+const LEGACY_SESSION = {
+  concurrency: 4,
+  executor: 'fake',
+  state: 'active',
+  maxSpendUsd: null,
+  maxRuns: null,
+  startedAt: '2026-09-20T00:00:00Z',
+  updatedAt: '2026-09-20T00:00:00Z',
+  heldCritical: [],
+};
+
+// A daemon booting on `sessions` as persisted, whose sessions arm at once.
+function bootWith(sessions: Record<string, unknown>) {
   mkdirSync(join(epicSessionsPath(repo), '..'), { recursive: true });
   writeFileSync(
     epicSessionsPath(repo),
-    JSON.stringify({
-      version: 1,
-      sessions: {
-        [m]: {
-          concurrency: 4,
-          executor: 'fake',
-          state: 'active',
-          maxSpendUsd: null,
-          maxRuns: null,
-          startedAt: '2026-09-20T00:00:00Z',
-          updatedAt: '2026-09-20T00:00:00Z',
-          heldCritical: [],
-        },
-      },
-    })
+    JSON.stringify({ version: 1, sessions })
   );
   const store = TaskStore.init(repo);
   const cache = new TaskCache();
@@ -431,10 +426,53 @@ it('a session persisted without a starter works for the local human', async () =
     orchestrator,
     actorContext,
     resumeDelayMs: 0,
+    eventDebounceMs: 0,
   });
+  return { orchestrator, epics };
+}
+
+it('a session persisted without a starter works for the local human', async () => {
+  const h0 = makeHarness();
+  const m = h0.store.create({ title: 'Milestone', kind: 'milestone' }).meta.id;
+  const mine = h0.task('mine', { parent: m, assignee: 'human:test' });
+  h0.task('samTask', { parent: m, assignee: 'human:sam' });
+  const { orchestrator, epics } = bootWith({ [m]: LEGACY_SESSION });
   expect(epics.progress(m).session?.startedBy).toBeNull();
   expect(epics.resumeOnBoot()).toBe(1);
   await waitFor(() => orchestrator.list().length === 1);
   await sleep(50);
   expect(orchestrator.list().map((r) => r.taskId)).toEqual([mine]);
+});
+
+it('a project session persisted before plan-wide fan-outs keeps to its direct issues', async () => {
+  const h0 = makeHarness();
+  const p = h0.store.create({ title: 'Project', kind: 'project' }).meta.id;
+  const m = h0.store.create({ title: 'M', kind: 'milestone', parent: p }).meta
+    .id;
+  const direct = h0.task('direct', { parent: p });
+  const underM = h0.task('underM', { parent: m });
+  const { orchestrator, epics } = bootWith({ [p]: LEGACY_SESSION });
+  expect(epics.progress(p).session?.scope).toBe('direct');
+  expect(epics.progress(p).children.map((c) => c.id)).toEqual([direct]);
+
+  epics.resumeOnBoot();
+  await waitFor(() => orchestrator.list().length === 1);
+  await sleep(100);
+  expect(orchestrator.list().map((r) => r.taskId)).toEqual([direct]);
+
+  // The milestone shares no task with it, so it may fan out beside it, and
+  // its run is no part of the project session's spend.
+  await epics.start(m, { executor: 'fake', concurrency: 1 });
+  expect(epics.progress(m).session?.scope).toBe('plan');
+  await waitFor(() => orchestrator.list().length === 2);
+  expect(orchestrator.list().some((r) => r.taskId === underM)).toBe(true);
+  expect(epics.progress(p).spend.runsStarted).toBe(1);
+
+  // Stopped, the project's next fan-out covers its whole plan again.
+  epics.stop(p);
+  epics.stop(m);
+  expect(new Set(epics.progress(p).children.map((c) => c.id))).toEqual(
+    new Set([direct, underM])
+  );
+  expect((await epics.start(p, { executor: 'fake' })).scope).toBe('plan');
 });

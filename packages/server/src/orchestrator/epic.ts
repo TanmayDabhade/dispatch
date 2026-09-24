@@ -45,6 +45,10 @@ import {
 
 type EpicSessionState = 'active' | 'paused' | 'stopped' | 'complete';
 export type EpicPauseReason = 'human' | 'budget' | 'runs' | 'fill-failed';
+/** What a session covers: its container's whole fan-out scope (core's
+ *  fanoutScope), or only its direct children — the rule a session persisted
+ *  before plan-wide fan-outs was started under, and keeps. */
+type EpicSessionScope = 'plan' | 'direct';
 
 // One epic's dispatch session. Persisted write-through to
 // `epicSessionsPath` (see persist()/hydrate()) so a dispatchd restart re-arms
@@ -70,6 +74,8 @@ interface EpicSessionRecord {
    *  it may pick up. Null on a session persisted before this was recorded,
    *  which works for the daemon's local human. */
   startedBy: string | null;
+  /** `direct` on a session persisted without it. */
+  scope: EpicSessionScope;
   updatedAt: string;
   completedAt?: string;
   /** Critical-risk children already noted as held on the epic's Activity,
@@ -99,6 +105,9 @@ export interface EpicSession {
   startedAt: string;
   /** Who started it; teammates' tasks are never auto-dispatched for them. */
   startedBy: string | null;
+  /** The whole plan, or (a session from before plan-wide fan-outs) its
+   *  container's direct children only. */
+  scope: EpicSessionScope;
   updatedAt: string;
   completedAt?: string;
   /** `state === 'active'` — kept for `formatEpicProgress` and `--watch`. */
@@ -391,6 +400,7 @@ export class EpicEngine {
       maxRuns,
       startedAt: now,
       startedBy: opts.startedBy ?? this.ctx.actorContext?.humanRef ?? null,
+      scope: 'plan',
       updatedAt: now,
       heldCritical: new Set(),
     };
@@ -575,7 +585,7 @@ export class EpicEngine {
 
   private progressOf(epicId: string, board: ProgressBoard): EpicProgress {
     const { statuses, dispatchable } = board;
-    const children = fanoutScope(epicId, (id) => board.children.get(id) ?? []);
+    const children = this.scopeOf(epicId, (id) => board.children.get(id) ?? []);
     const childIds = new Set(children.map((c) => c.meta.id));
     const childRuns = board.runs.filter((r) => childIds.has(r.taskId));
     const liveRuns = childRuns.filter((r) => !TERMINAL_RUN_STATES.has(r.state));
@@ -1092,13 +1102,25 @@ export class EpicEngine {
   }
 
   // The tasks `epicId`'s fan-out covers (core's fanoutScope): exactly what
-  // its Flight Plan draws, a project's milestone issues included. Includes
-  // archived ones: progress/completeness are historical facts about the
-  // epic, and an archived child is done+pushed, not missing.
-  private scopeOf(epicId: string): TaskDoc[] {
-    return fanoutScope(epicId, (id) =>
-      this.ctx.cache.query({ parent: id, includeArchived: true })
-    );
+  // its Flight Plan draws, a project's milestone issues included — unless a
+  // live session keeps the direct-children rule it was started under.
+  // Includes archived ones: progress/completeness are historical facts about
+  // the epic, and an archived child is done+pushed, not missing.
+  private scopeOf(
+    epicId: string,
+    childrenOf: (id: string) => readonly TaskDoc[] = (id) =>
+      this.ctx.cache.query({ parent: id, includeArchived: true }),
+    rule: EpicSessionScope = this.scopeRuleOf(epicId)
+  ): TaskDoc[] {
+    return rule === 'direct'
+      ? childrenOf(epicId).filter((t) => !isContainerKind(t.meta.kind))
+      : fanoutScope(epicId, childrenOf);
+  }
+
+  // A live session's scope rule; `plan` for any fan-out yet to start.
+  private scopeRuleOf(epicId: string): EpicSessionScope {
+    const session = this.sessions.get(epicId);
+    return session !== undefined && isLive(session) ? session.scope : 'plan';
   }
 
   // cache.get, memoized for one walk up the hierarchy.
@@ -1139,7 +1161,9 @@ export class EpicEngine {
     let mine: ReadonlySet<string> | null = null;
     for (const [otherId, other] of this.sessions) {
       if (otherId === epicId || !isLive(other)) continue;
-      mine ??= new Set(this.scopeOf(epicId).map((t) => t.meta.id));
+      mine ??= new Set(
+        this.scopeOf(epicId, undefined, 'plan').map((t) => t.meta.id)
+      );
       const scope = mine;
       const shared = this.scopeOf(otherId).filter((t) =>
         scope.has(t.meta.id)
@@ -1375,6 +1399,7 @@ export class EpicEngine {
         startedAt: record.startedAt,
         startedBy:
           typeof record.startedBy === 'string' ? record.startedBy : null,
+        scope: record.scope === 'plan' ? 'plan' : 'direct',
         updatedAt:
           typeof record.updatedAt === 'string'
             ? record.updatedAt
@@ -1410,6 +1435,7 @@ export class EpicEngine {
       maxRuns: session.maxRuns,
       startedAt: session.startedAt,
       startedBy: session.startedBy,
+      scope: session.scope,
       updatedAt: session.updatedAt,
       ...(session.completedAt !== undefined
         ? { completedAt: session.completedAt }

@@ -2,8 +2,10 @@ import type { RunMeta } from '@dispatch/client';
 import type { StatusModel, TaskListItem } from '@dispatch/core/browser';
 import {
   fanoutHolder,
+  fanoutScope,
   fanoutWaitingOn,
   hasStatusRole,
+  isContainerKind,
   isDoneStatus,
   isUnstartedStatus,
 } from '@dispatch/core/browser';
@@ -99,6 +101,18 @@ export interface FlightPlanOptions {
 }
 
 const NONE: ReadonlySet<string> = new Set();
+
+/** What a live fan-out session covers (the server's rule): its container's `fanoutScope`,
+ * or only the direct children of a session from before plan-wide fan-outs. */
+export function sessionScope(
+  epicId: string,
+  scope: 'plan' | 'direct' | undefined,
+  childrenOf: (id: string) => readonly TaskListItem[]
+): TaskListItem[] {
+  return scope === 'direct'
+    ? childrenOf(epicId).filter((t) => !isContainerKind(t.meta.kind))
+    : fanoutScope(epicId, childrenOf);
+}
 
 /** Tasks whose work sits on a Dispatch run branch a dependent can stack on: a terminal,
  * unreviewed run (the server's rule). */

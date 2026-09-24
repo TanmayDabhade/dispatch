@@ -1150,6 +1150,9 @@ export interface EpicSession {
   /** The `human:` ref that started it; its fan-out never starts a teammate's
    *  task. Null (or absent from an older daemon): the local human. */
   startedBy?: string | null;
+  /** What it covers: the container's whole Flight Plan, or only its direct
+   *  children (a session from before plan-wide fan-outs). Absent: `plan`. */
+  scope?: 'plan' | 'direct';
   updatedAt: string;
   completedAt?: string;
   /** `state === 'active'` — kept for `formatEpicProgress` and `--watch`. */

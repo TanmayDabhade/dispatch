@@ -245,29 +245,34 @@ export function FlightPlan({
     return out;
   }, [liveTaskIds, pending]);
 
-  // Every active or paused fan-out and who started it, as a key that only changes when
-  // one starts, stops or finishes.
+  // Every active or paused fan-out, who started it and its scope rule, as a key that
+  // only changes when one starts, stops or finishes.
   const liveKey = useMemo(() => {
     const out: string[] = [];
     for (const progress of data.epicProgressById.values()) {
       const session = progress.session;
       if (session?.state === 'active' || session?.state === 'paused') {
-        out.push(`${progress.epicId}=${session.startedBy ?? ''}`);
+        out.push(
+          `${progress.epicId}=${session.startedBy ?? ''}=${session.scope ?? 'plan'}`
+        );
       }
     }
     return out.sort().join(' ');
   }, [data.epicProgressById]);
-  const liveStarters = useMemo(() => {
-    const out = new Map<string, string | null>();
+  const { liveStarters, directOnly } = useMemo(() => {
+    const starters = new Map<string, string | null>();
+    const direct = new Set<string>();
     for (const entry of liveKey === '' ? [] : liveKey.split(' ')) {
-      const [id = '', startedBy = ''] = entry.split('=');
-      out.set(id, startedBy === '' ? null : startedBy);
+      const [id = '', startedBy = '', scope = ''] = entry.split('=');
+      starters.set(id, startedBy === '' ? null : startedBy);
+      if (scope === 'direct') direct.add(id);
     }
-    return out;
+    return { liveStarters: starters, directOnly: direct };
   }, [liveKey]);
   // Which fan-out would start each node: the nearest covering container with a live
-  // session (the server's rule, core's `fanoutCoverers`), else its parent. Kept as the
-  // same map while no owner moves, so a task event elsewhere never rebuilds the plan.
+  // session (the server's rule, core's `fanoutCoverers`; a session from before plan-wide
+  // fan-outs covers only its direct children), else its parent. Kept as the same map
+  // while no owner moves, so a task event elsewhere never rebuilds the plan.
   const lastOwners = useRef<ReadonlyMap<string, string | null>>(new Map());
   const owners = useMemo(() => {
     const byId =
@@ -279,8 +284,10 @@ export function FlightPlan({
       const covering =
         byId === null
           ? undefined
-          : fanoutCoverers(task, (id) => byId.get(id)).find((id) =>
-              liveStarters.has(id)
+          : fanoutCoverers(task, (id) => byId.get(id)).find(
+              (id) =>
+                liveStarters.has(id) &&
+                (id === task.meta.parent || !directOnly.has(id))
             );
       next.set(task.meta.id, covering ?? task.meta.parent);
     }
@@ -289,7 +296,7 @@ export function FlightPlan({
       prev.size === next.size &&
       [...next].every(([id, owner]) => prev.get(id) === owner);
     return same ? prev : next;
-  }, [nodes, tasks, liveStarters]);
+  }, [nodes, tasks, liveStarters, directOnly]);
   useEffect(() => {
     lastOwners.current = owners;
   }, [owners]);
@@ -600,7 +607,10 @@ export function FlightPlan({
     [data, model, setCeiling, onOpenTask]
   );
 
-  const containerLive = liveStarters.has(containerId);
+  // A live fan-out over the whole plan; one from before plan-wide fan-outs covers
+  // only the direct band, so the milestone bands keep their own controls.
+  const containerLive =
+    liveStarters.has(containerId) && !directOnly.has(containerId);
   const bandViews = useMemo<FlightBandView[] | null>(() => {
     if (scope === null || container === null || scope.bands === null) {
       return null;
