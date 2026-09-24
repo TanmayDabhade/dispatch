@@ -946,7 +946,7 @@ export class LinearPass {
       doc.meta.id,
       {
         external: null,
-        appendActivity: `Unlinked from Linear: the issue moved to ${where}`,
+        appendActivity: `Unlinked from Linear: the issue moved to ${where}, outside the linked teams`,
         activityActor: 'none',
       },
       doc.meta.updated
