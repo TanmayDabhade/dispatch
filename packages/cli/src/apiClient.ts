@@ -2,6 +2,7 @@ import type {
   CommandEvidence,
   CreateInput,
   Finding,
+  LabelDefinition,
   LedgerEntry,
   MilestoneMigrationReport,
   MutationEvidence,
@@ -432,6 +433,13 @@ export interface TaskApiClient {
   migrateMilestones(dryRun: boolean): Promise<MilestoneMigrationReport>;
   /** `GET /api/people`: the people registry and the caller's own ref. */
   listPeople(): Promise<{ me: string; people: Person[] }>;
+  /** `GET /api/labels`: the label registry (colors and external links). */
+  listLabels(): Promise<{ labels: LabelDefinition[] }>;
+  /** `PUT /api/labels`: one label's color; `null` clears it. */
+  setLabelColor(
+    name: string,
+    color: string | null
+  ): Promise<{ labels: LabelDefinition[] }>;
   /** `GET /api/tasks/:id/comments`, oldest first. */
   listComments(id: string): Promise<TaskComment[]>;
   /** `POST /api/tasks/:id/comments`, credited to the caller by the server. */
@@ -512,6 +520,12 @@ export function createTaskApiClient(
     migrateMilestones: (dryRun) =>
       request(target, '/api/migrations/milestones', jsonBody({ dryRun })),
     listPeople: () => request(target, '/api/people'),
+    listLabels: () => request(target, '/api/labels'),
+    setLabelColor: (name, color) =>
+      request(target, '/api/labels', {
+        ...jsonBody({ name, color }),
+        method: 'PUT',
+      }),
     listComments: (id) =>
       request(target, `/api/tasks/${encodeURIComponent(id)}/comments`),
     addComment: (id, input) =>

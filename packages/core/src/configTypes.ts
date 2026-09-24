@@ -1,3 +1,4 @@
+import type { LabelDefinition } from './labels.js';
 import { DEFAULT_STATUS_MAP } from './linearMap.js';
 import type { Person } from './people.js';
 import type { PolicyConfig, PolicyGate, PolicyGateMode } from './policy.js';
@@ -178,6 +179,8 @@ export interface DispatchConfig {
   statusRoles?: StatusRoles;
   /** The people registry beyond team.yml (see people.ts); absent when none. */
   people?: Person[];
+  /** The label registry (see labels.ts): colors and links; absent when none. */
+  labels?: LabelDefinition[];
   autoCommit: boolean;
   verifyCommand?: string;
   /** Verify as named steps rather than one opaque command, so a failure names
@@ -623,6 +626,8 @@ export interface ConfigPatch {
   statusRoles?: StatusRoles | null;
   /** Replaces `people`; null or empty removes it. */
   people?: Person[] | null;
+  /** Replaces `labels`; null or empty removes it. */
+  labels?: LabelDefinition[] | null;
   /** Named verify gates, replacing the list; null or empty removes it. */
   verifySteps?: VerifyStep[] | null;
   /** Per remote name: a config sets it, null removes it. */

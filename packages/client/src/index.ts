@@ -27,6 +27,8 @@ export type {
   BranchEntryStatus,
   ChatMessage,
   CommentPatch,
+  LabelDefinition,
+  LabelsSnapshot,
   NewCommentInput,
   PeopleSnapshot,
   Person,

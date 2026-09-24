@@ -530,6 +530,11 @@ export class LinearSync {
     this.schedulePush();
   }
 
+  /** A label color changed locally: the next push carries it to Linear. */
+  notifyLabelsChanged(): void {
+    this.notifyTaskChanged();
+  }
+
   /** Local comments changed (added, edited or removed): queue them for the next push. */
   notifyCommentChanged(taskId: string, commentIds: readonly string[]): void {
     if (!this.enabled || this.selfBroadcast) return;

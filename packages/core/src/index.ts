@@ -3,6 +3,7 @@ export * from './status.js';
 export * from './kinds.js';
 export * from './comments.js';
 export * from './people.js';
+export * from './labels.js';
 export {
   formatMilestoneMigrationReport,
   migrateLegacyMilestones,
