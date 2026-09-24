@@ -529,6 +529,49 @@ describe('HttpLinearClient labels', () => {
   });
 });
 
+describe('HttpLinearClient label update', () => {
+  it('recolors a label and reads it back with its group', async () => {
+    const seen: { init?: RequestInit } = {};
+    const client = new HttpLinearClient(KEY, {
+      fetchImpl: stubFetch(
+        {
+          body: {
+            data: {
+              issueLabelUpdate: {
+                success: true,
+                issueLabel: {
+                  id: 'l-1',
+                  name: 'bug',
+                  color: '#0f783c',
+                  isGroup: false,
+                  team: { id: 'team-1' },
+                  parent: { name: 'Type' },
+                },
+              },
+            },
+          },
+        },
+        seen
+      ),
+    });
+    const result = await client.updateLabel('l-1', { color: '#0f783c' });
+    if (!result.ok) throw new Error(result.error);
+    expect(result.data).toEqual({
+      id: 'l-1',
+      name: 'bug',
+      color: '#0f783c',
+      group: 'Type',
+      teamId: 'team-1',
+    });
+    const body = JSON.parse((seen.init?.body ?? '{}') as string) as {
+      query: string;
+      variables: unknown;
+    };
+    expect(body.query).toContain('issueLabelUpdate(id: $id, input: $input)');
+    expect(body.variables).toEqual({ id: 'l-1', input: { color: '#0f783c' } });
+  });
+});
+
 describe('HttpLinearClient walk cap', () => {
   it('stops a walk that never ends and says so', async () => {
     let calls = 0;
