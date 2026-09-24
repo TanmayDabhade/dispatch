@@ -1,4 +1,8 @@
-import type { SubagentEvent, SubagentSummary } from '@dispatch/core';
+import type {
+  EffortLevel,
+  SubagentEvent,
+  SubagentSummary,
+} from '@dispatch/core';
 
 import type { RunUsage } from './usage.js';
 
@@ -133,6 +137,9 @@ export interface ExecutorStartOptions {
   // Optional — omitted uses that executor's default behavior, so fixtures and
   // callers that don't care never need to set it.
   model?: string;
+  // Reasoning effort for the session; omitted leaves the model's default.
+  // Only the Claude executor acts on it.
+  effort?: EffortLevel;
   // The dispatch PROJECT's root directory — distinct from `cwd`, which for a
   // real run is the run's own git worktree (a different directory than the
   // project it was cut from). ClaudeExecutor needs both: `cwd` to root the
@@ -165,6 +172,9 @@ export interface ExecutorProfile {
   enforcesCaps: boolean;
   /** Why this executor cannot run under `permissionMode`, or null when it can. */
   permissionRefusal(permissionMode: string): string | null;
+  /** False when runs never get the dispatch MCP server, so the task prompt
+   * must not name its tools. Absent means they do. */
+  dispatchMcp?: boolean;
 }
 
 /** One registered executor as GET /api/executors reports it. */
@@ -272,6 +282,9 @@ export interface RunMeta {
   // ExecutorStartOptions.model) — surfaced so the UI can show which model ran
   // a given task.
   model?: string;
+  // The reasoning effort this run was started at; absent means the model's
+  // own default. A resume keeps it, like `model`.
+  effort?: EffortLevel;
   // Serialized ActorRef of the human who pressed dispatch, e.g. `human:ada`.
   // Absent for a run nobody dispatched by hand (an epic session's auto-fill)
   // and for runs recorded before this field existed. It is what makes a run —

@@ -287,6 +287,7 @@ export class ClaudeOverseer implements OverseerBackend {
         : {}),
       ...(resume !== undefined ? { resume } : {}),
       ...(opts.model !== undefined ? { model: opts.model } : {}),
+      ...(opts.effort !== undefined ? { effort: opts.effort } : {}),
     };
 
     // Same CLI-resolution chain (DISPATCH_CLAUDE_BIN -> bundled SDK CLI ->
