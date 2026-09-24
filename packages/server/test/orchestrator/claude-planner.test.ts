@@ -89,12 +89,12 @@ describe('ClaudePlanner.start', () => {
       preset: 'claude_code',
     });
     expect(captured?.settingSources).toEqual(['project', 'local']);
-    expect(captured?.tools).toEqual(['Read', 'Grep', 'Glob', 'Bash']);
-    expect(captured?.allowedTools).toEqual(['Read', 'Grep', 'Glob', 'Bash']);
+    // No Bash: plan mode does not stop a shell command from writing.
+    expect(captured?.tools).toEqual(['Read', 'Grep', 'Glob']);
+    expect(captured?.allowedTools).toEqual(['Read', 'Grep', 'Glob']);
     expect(captured?.strictMcpConfig).toBe(true);
     expect(captured?.skills).toEqual([]);
-    // Plan mode hands Bash to the SDK's classifier and there is no human to
-    // ask, so a floor command is refused before it runs.
+    // There is no human to ask, so a floor command is refused before it runs.
     expect(
       await floorDecision(captured?.hooks, 'Bash', { command: 'npm publish' })
     ).toBe('deny');

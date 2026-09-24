@@ -41,6 +41,9 @@ const MAX_DIGEST_CHARS = 6000;
 // failure quickly is the intent; this only stops it happening every dispatch.
 const FAILED_ATTEMPT_BACKOFF_MS = 5 * 60 * 1000;
 
+// Reading and searching are all a map of the repo needs.
+const DIGEST_TOOLS = ['Read', 'Grep', 'Glob'];
+
 const DIGEST_PROMPT =
   'Write a concise orientation map of this repository for an engineer who is ' +
   'about to make a change in it and has never seen it before. Cover: what ' +
@@ -117,9 +120,10 @@ export interface DigestResult {
 export type DigestGenerator = (rootDir: string) => Promise<DigestResult>;
 
 // The real generator: one read-only Agent SDK turn against the main checkout,
-// configured like ClaudePlanner's: plan permissions so it cannot edit files
-// (read-only commands still run, and floorGuard refuses irreversible ones),
-// and settingSources so the repo's own AGENTS.md/CLAUDE.md ground the answer.
+// configured like ClaudePlanner's: only reading and searching tools (no shell:
+// plan mode does not stop a shell command from writing in the checkout, and
+// this runs unattended over the repo's own content), and settingSources so
+// the repo's own AGENTS.md/CLAUDE.md ground the answer.
 export async function generateRepoDigest(
   rootDir: string,
   queryFn: typeof query = query
@@ -129,9 +133,13 @@ export async function generateRepoDigest(
     permissionMode: 'plan',
     systemPrompt: { type: 'preset', preset: 'claude_code' },
     settingSources: ['user', 'project', 'local'],
-    // No canUseTool here, but plan mode still runs a command a settings
-    // allow rule matches; an irreversible one is refused before it can (see
-    // floorGuard).
+    tools: DIGEST_TOOLS,
+    allowedTools: DIGEST_TOOLS,
+    // Only the MCP servers passed here, which is none: a project's
+    // `.mcp.json` servers do not start.
+    strictMcpConfig: true,
+    // Nobody is on hand to approve anything, so an irreversible command that
+    // reached the session some other way is refused (see floorGuard).
     ...floorGuard('deny'),
   };
   const sdkQuery: Query = openClaudeQuery(queryFn, DIGEST_PROMPT, options);

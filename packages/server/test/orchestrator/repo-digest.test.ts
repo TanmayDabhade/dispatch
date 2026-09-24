@@ -56,10 +56,10 @@ function generated(
 }
 
 describe('generateRepoDigest', () => {
-  // The digest session has no canUseTool, but a settings allow rule still
-  // let a matching command run in plan mode (verified against the bundled
-  // CLI); the hook refuses a floor command before it can.
-  it('denies floor commands in the digest session', async () => {
+  // The digest runs unattended over the repo's own content, so it gets no
+  // shell (plan mode let Bash write and delete files, verified against the
+  // bundled CLI), and the floor hook refuses anything irreversible.
+  it('reads without a shell and denies floor commands', async () => {
     let captured: Options | undefined;
     const result = await generateRepoDigest('/tmp/does-not-matter', ((args: {
       options?: Options;
@@ -76,6 +76,10 @@ describe('generateRepoDigest', () => {
     }) as never);
     expect(result.markdown).toBe('# map');
     expect(captured?.permissionMode).toBe('plan');
+    // No shell and no project MCP servers: plan mode does not stop a shell
+    // command from writing in the checkout.
+    expect(captured?.tools).toEqual(['Read', 'Grep', 'Glob']);
+    expect(captured?.strictMcpConfig).toBe(true);
     expect(
       await floorDecision(captured?.hooks, 'Bash', {
         command: 'git push --tags',
