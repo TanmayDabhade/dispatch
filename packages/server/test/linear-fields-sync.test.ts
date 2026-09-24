@@ -1,7 +1,9 @@
 import {
+  fieldHash,
   getSection,
   labelRef,
   loadConfig,
+  PROJECT_FIELDS,
   TaskStore,
   updateConfig,
   withLabelColor,
@@ -15,7 +17,12 @@ import { join } from 'node:path';
 import { TaskCache } from '../src/cache.js';
 import { EventBus } from '../src/events.js';
 import type { ServerEvent } from '../src/events.js';
-import { readLinearState, writeLinearState } from '../src/linear/state.js';
+import {
+  readBase,
+  readLinearState,
+  writeBase,
+  writeLinearState,
+} from '../src/linear/state.js';
 import { LinearSync } from '../src/linear/sync.js';
 import { FakeLinearClient, STATES, TEAMMATE, VIEWER } from './linearFake.js';
 
@@ -426,6 +433,63 @@ describe('archive', () => {
     await sync.syncOnce();
 
     expect(fake.calls).not.toContain('archiveIssue');
+  });
+});
+
+describe('project statuses by name', () => {
+  const PAUSED = { id: 'ps-paused', name: 'Paused', type: 'paused' };
+
+  function projectTask(projectId: string) {
+    const doc = store
+      .list()
+      .find((d) => d.meta.external === `linear-project:${projectId}`);
+    if (doc === undefined) throw new Error('project not imported');
+    return doc;
+  }
+
+  it('shows a paused project as the team’s Paused state, and resumes it by name', async () => {
+    fake.states = [
+      ...STATES,
+      { id: 's-paused', name: 'Paused', type: 'backlog', position: 1 },
+    ];
+    const project = fake.project({ status: PAUSED });
+    fake.projectList = [project];
+    const sync = makeSync();
+    await sync.importIssues();
+    const id = projectTask(project.id).meta.id;
+    expect(store.get(id)?.meta.status).toBe('Paused');
+
+    edit(id, { status: 'In Progress' });
+    await sync.syncOnce();
+    expect(fake.projectList[0]?.status?.id).toBe('ps-started');
+  });
+
+  it('never unpauses a project when upgrading a base kept by category', async () => {
+    const project = fake.project({ status: PAUSED });
+    fake.projectList = [project];
+    const sync = makeSync();
+    await sync.importIssues();
+    const id = projectTask(project.id).meta.id;
+    // No Paused state here: the project reads as started locally.
+    expect(store.get(id)?.meta.status).toBe('In Progress');
+    // Rewind the base to the category-only value space.
+    const state = readLinearState(root);
+    const base = readBase(state, id, 'project');
+    if (base === null) throw new Error('no base');
+    base.local.status = fieldHash('started');
+    base.remote.status = fieldHash('started');
+    writeBase(state, id, 'project', PROJECT_FIELDS, base);
+    delete state.baseVersion;
+    writeLinearState(root, state);
+    fake.projectList[0].name = 'Renamed there';
+    fake.projectList[0].updatedAt = fake.stamp();
+    fake.calls = [];
+
+    await sync.syncOnce();
+
+    expect(store.get(id)?.meta.title).toBe('Renamed there');
+    expect(fake.calls).not.toContain('updateProject');
+    expect(fake.projectList[0]?.status?.id).toBe('ps-paused');
   });
 });
 
