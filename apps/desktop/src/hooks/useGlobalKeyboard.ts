@@ -89,8 +89,13 @@ export function useGlobalKeyboard({
     function handleKeyDown(event: KeyboardEvent) {
       // A Base UI popup (Select/Menu/Dialog) already preventDefaults Escape when it dismisses
       // itself — without this guard the window-level listener below still saw the same
-      // keystroke and dispatched a second, unwanted "back" navigation on top of it.
-      if (event.defaultPrevented) return;
+      // keystroke and dispatched a second, unwanted "back" navigation on top of it. A key a
+      // view consumed (the Cockpit's own `g p`) still ends an armed chord, or the stale
+      // prefix would swallow the next `g`.
+      if (event.defaultPrevented) {
+        if (!isModifierKey(event.key)) clearPrefix();
+        return;
+      }
       const input = {
         key: event.key,
         metaKey: event.metaKey,
