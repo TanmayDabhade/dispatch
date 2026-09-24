@@ -197,16 +197,20 @@ const RUN_ENDED_DENIAL =
 const WIND_DOWN_STOP_MS = 5_000;
 const WIND_DOWN_FLUSH_MS = 250;
 
-// The tools denied once a run has ended: everything that can run a command,
-// change files, or start more work (SendMessage resumes a sub-agent).
-// `mcp__*` covers every MCP server, the ones a user's or a project's settings
-// add included: a user-scope server's shell tool ran a force-push after the
-// result until it was here. The CLI treats the server name `*` as all servers
-// (verified on the bundled 2.1.207); the servers this executor adds are also
-// named in the documented per-server form.
+// The deny rules applied once a run has ended. Nothing needs a tool after
+// the result, so `*` denies every tool: the CLI glob-matches deny rules
+// against tool names, and a named list kept missing tools that only some
+// sessions have. Monitor, which runs a shell command and is switched on by a
+// server-side feature flag, ran a force-push after the result until `*` was
+// here; so did a user-scope MCP server's shell tool. The named rules behind
+// it (commands, file changes, new work, every MCP server's tools, and the MCP
+// resource tools, which reach any connected server) still hold on a CLI that
+// does not glob-match.
 const RUN_ENDED_DENY_RULES = [
+  '*',
   'Bash',
   'PowerShell',
+  'Monitor',
   'Write',
   'Edit',
   'MultiEdit',
@@ -219,6 +223,9 @@ const RUN_ENDED_DENY_RULES = [
   'mcp__*',
   'mcp__dispatch',
   'mcp__carto',
+  'ListMcpResourcesTool',
+  'ReadMcpResourceTool',
+  'ReadMcpResourceDirTool',
 ] as const;
 
 // Resolves when `work` settles or after `ms`, whichever comes first.
@@ -846,10 +853,12 @@ export class ClaudeExecutor implements Executor {
     // - the CLI gets a moment to take those answers in.
     //
     // Each step's wait is bounded, so an unresponsive CLI cannot keep the run
-    // from finishing. A step the CLI refuses is logged with the CLI's version:
-    // the run still finishes, but without what that step guarantees, and an
-    // older Claude Code (a packaged app runs the `claude` on PATH) that lacks
-    // the control request is the likely cause.
+    // from finishing. A step that fails is logged with the CLI's version: the
+    // run still finishes, but without what that step guarantees, and an older
+    // Claude Code (a packaged app runs the `claude` on PATH) that lacks the
+    // control request is the likely cause. A step still pending when the query
+    // closes fails too; that is logged unless the run was cancelled, since a
+    // cancel closes the query on purpose.
     const windDown = async (
       liveTasks: readonly string[],
       cliVersion: string | undefined
@@ -864,8 +873,9 @@ export class ClaudeExecutor implements Executor {
       const warn =
         (consequence: string) =>
         (err: unknown): void => {
+          if (interrupted) return;
           console.error(
-            `dispatchd: run ${opts.runId ?? '(no id)'}: ${cli} refused a step of ending the run, so ${consequence}: ${(err as Error).message}`
+            `dispatchd: run ${opts.runId ?? '(no id)'}: ${cli} did not complete a step of ending the run, so ${consequence}: ${(err as Error).message}`
           );
         };
       // Each SDK call is started inside a promise, so one that throws at

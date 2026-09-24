@@ -608,9 +608,14 @@ describe('ClaudeExecutor CLI-parity system prompt and setting sources', () => {
     for (const tool of ['Bash', 'Write', 'Edit', 'Agent', 'SendMessage']) {
       expect(deny).toContain(tool);
     }
-    // Every MCP server's tools, not only the servers this executor adds: a
-    // user-scope server's shell tool ran a force-push after the result.
-    expect(deny).toContain('mcp__*');
+    // Every tool: a named list missed Monitor, which runs a shell command
+    // and only some sessions have, and ran a force-push after the result.
+    expect(deny).toContain('*');
+    // The named fallback for a CLI that does not glob-match deny rules
+    // covers every MCP server, not only the ones this executor adds.
+    for (const rule of ['Monitor', 'mcp__*', 'ReadMcpResourceTool']) {
+      expect(deny).toContain(rule);
+    }
     // Floor or not, nothing more runs once the result is in.
     for (const [toolName, toolInput] of [
       ['Bash', { command: 'bun test' }],
@@ -673,10 +678,11 @@ describe('ClaudeExecutor CLI-parity system prompt and setting sources', () => {
   }, 15_000);
 
   // An older Claude Code (a packaged app runs the `claude` on PATH) answers
-  // apply_flag_settings and stop_task with "Unsupported control request
-  // subtype". The run still finishes, and the missing guarantee is logged
-  // with the CLI's version rather than lost.
-  it('logs each wind-down step the CLI refuses, naming its version, and still finishes', async () => {
+  // apply_flag_settings with "Unsupported control request subtype". The run
+  // still finishes, and the missing guarantee is logged with the CLI's
+  // version rather than lost. A step that throws at once, rather than
+  // rejecting, must not stop the run finishing either.
+  it('logs each wind-down step that fails, naming the CLI version, and still finishes', async () => {
     const logged: string[] = [];
     const errorSpy = spyOn(console, 'error').mockImplementation(
       (...args: unknown[]) => {
@@ -722,12 +728,11 @@ describe('ClaudeExecutor CLI-parity system prompt and setting sources', () => {
                 Promise.reject(
                   new Error('Unsupported control request subtype: stop_task')
                 ),
-              applyFlagSettings: () =>
-                Promise.reject(
-                  new Error(
-                    'Unsupported control request subtype: apply_flag_settings'
-                  )
-                ),
+              applyFlagSettings: () => {
+                throw new Error(
+                  'Unsupported control request subtype: apply_flag_settings'
+                );
+              },
               interrupt: () => Promise.resolve(),
               close: () => {},
             }
