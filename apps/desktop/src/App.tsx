@@ -120,6 +120,7 @@ import type { FocusEpicRequest } from './views/MilestonesView';
 import { OverseerView } from './views/OverseerView';
 import { OverviewView } from './views/OverviewView';
 import { PlansView } from './views/PlansView';
+import { ProjectsView } from './views/ProjectsView';
 import { PrReviewView } from './views/PrReviewView';
 import { SessionsHubView } from './views/SessionsHubView';
 import { SettingsView } from './views/SettingsView';
@@ -705,6 +706,7 @@ function App() {
       else if (command === 'goto-home') selectProjectView('cockpit');
       else if (command === 'goto-inbox') selectProjectView('inbox');
       else if (command === 'goto-tasks') selectProjectView('board');
+      else if (command === 'goto-projects') selectProjectView('projects');
       else if (command === 'goto-control-room') selectProjectView('overview');
       else if (command.startsWith('goto-')) {
         // Position in the rail, not an id — ⌘1 is the first row, and so on.
@@ -1302,6 +1304,13 @@ function App() {
                                       onGoToBoard={() =>
                                         selectProjectView('board')
                                       }
+                                    />
+                                  )}
+                                  {navState.projectView === 'projects' && (
+                                    <ProjectsView
+                                      projectName={activeProject?.name ?? null}
+                                      data={data}
+                                      onOpenTask={openTaskView}
                                     />
                                   )}
                                   {navState.projectView === 'inbox' && (

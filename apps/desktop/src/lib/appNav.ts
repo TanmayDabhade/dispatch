@@ -16,6 +16,8 @@ export type ProjectView =
   | 'cockpit'
   | 'overview'
   | 'board'
+  /** Initiatives → projects → milestones → issues, as one tree to browse. */
+  | 'projects'
   /** retired — normalized to 'inbox' */
   | 'runs'
   | 'branches'
