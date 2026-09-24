@@ -27,6 +27,8 @@ import {
   Plus,
 } from 'lucide-react';
 import {
+  type ComponentProps,
+  memo,
   type ReactNode,
   useCallback,
   useEffect,
@@ -329,6 +331,19 @@ function DraggableCard({
   );
   return children(drag);
 }
+
+// A draggable card as one memoized unit, so a scroll that re-renders its column skips every
+// card whose props did not change (the tile alone is memoized, not its drag wrapper).
+const BoardCard = memo(function BoardCard({
+  disabled,
+  ...tile
+}: Omit<ComponentProps<typeof TaskCardTile>, 'drag'> & { disabled: boolean }) {
+  return (
+    <DraggableCard id={tile.doc.meta.id} disabled={disabled}>
+      {(drag) => <TaskCardTile {...tile} drag={drag} />}
+    </DraggableCard>
+  );
+});
 
 // One lane+status cell's card stack, droppable by the composite id `dropZoneId` builds (never
 // the bare status — see that helper for why). No background and no ring: the only drag-over
@@ -746,52 +761,44 @@ export function TaskBoard({
                             activeTaskId={activeTaskId}
                             focusedTaskId={focusedTaskId}
                             renderCard={(doc) => (
-                              <DraggableCard
-                                id={doc.meta.id}
+                              <BoardCard
+                                doc={doc}
                                 disabled={archivedTaskIds.has(doc.meta.id)}
-                              >
-                                {(drag) => (
-                                  <TaskCardTile
-                                    doc={doc}
-                                    ready={readyIds.has(doc.meta.id)}
-                                    blocked={blockedIds.has(doc.meta.id)}
-                                    liveRunState={liveRunStateByTaskId.get(
-                                      doc.meta.id
-                                    )}
-                                    run={latestRunByTaskId.get(doc.meta.id)}
-                                    readiness={readinessById?.get(doc.meta.id)}
-                                    // Epic lanes: the lane heading already names the
-                                    // epic, so the card skips the crumb. Every other
-                                    // board: the crumb is how a card keeps its epic.
-                                    epicTitle={
-                                      lane.kind === 'epic' ||
-                                      doc.meta.parent === null
-                                        ? undefined
-                                        : (epicById.get(doc.meta.parent)?.meta
-                                            .title ?? doc.meta.parent)
-                                    }
-                                    statuses={statuses}
-                                    properties={display.properties}
-                                    labelCatalogue={labelCatalogue}
-                                    onStatusChange={moveCardStatus}
-                                    onEditTask={editCard}
-                                    onClick={onSelect}
-                                    onDispatch={
-                                      readyIds.has(doc.meta.id)
-                                        ? onDispatch
-                                        : undefined
-                                    }
-                                    focused={doc.meta.id === focusedTaskId}
-                                    onFocus={onCardFocus}
-                                    drag={drag}
-                                    archived={archivedTaskIds.has(doc.meta.id)}
-                                    needsAttention={
-                                      attentionByTaskId?.has(doc.meta.id) ===
-                                      true
-                                    }
-                                  />
+                                ready={readyIds.has(doc.meta.id)}
+                                blocked={blockedIds.has(doc.meta.id)}
+                                liveRunState={liveRunStateByTaskId.get(
+                                  doc.meta.id
                                 )}
-                              </DraggableCard>
+                                run={latestRunByTaskId.get(doc.meta.id)}
+                                readiness={readinessById?.get(doc.meta.id)}
+                                // Epic lanes: the lane heading already names the
+                                // epic, so the card skips the crumb. Every other
+                                // board: the crumb is how a card keeps its epic.
+                                epicTitle={
+                                  lane.kind === 'epic' ||
+                                  doc.meta.parent === null
+                                    ? undefined
+                                    : (epicById.get(doc.meta.parent)?.meta
+                                        .title ?? doc.meta.parent)
+                                }
+                                statuses={statuses}
+                                properties={display.properties}
+                                labelCatalogue={labelCatalogue}
+                                onStatusChange={moveCardStatus}
+                                onEditTask={editCard}
+                                onClick={onSelect}
+                                onDispatch={
+                                  readyIds.has(doc.meta.id)
+                                    ? onDispatch
+                                    : undefined
+                                }
+                                focused={doc.meta.id === focusedTaskId}
+                                onFocus={onCardFocus}
+                                archived={archivedTaskIds.has(doc.meta.id)}
+                                needsAttention={
+                                  attentionByTaskId?.has(doc.meta.id) === true
+                                }
+                              />
                             )}
                           />
                         )}
