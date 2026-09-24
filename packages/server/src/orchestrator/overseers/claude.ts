@@ -190,6 +190,7 @@ export class ClaudeOverseer implements OverseerBackend {
       (t) => `${OVERSEER_TOOL_PREFIX}${t.name}`
     );
     const allowed = new Set(allowedTools);
+    const { authorizeTool } = opts;
     const options: Options = {
       cwd: this.rootDir,
       // Pre-approves the registry's own tools; everything else still reaches
@@ -222,10 +223,12 @@ export class ClaudeOverseer implements OverseerBackend {
             reason !== undefined && reason !== '' ? reason : 'denied by user',
         };
       },
-      // Routes every irreversible call to the canUseTool gate above, the one
-      // place the overseer's floor holds it for a human, even where the CLI
-      // would otherwise skip that gate (see floorGuard).
-      ...floorGuard('ask'),
+      // Holds every irreversible call for a human in the PreToolUse hook,
+      // through the same authorizeTool gate canUseTool uses, since the CLI can
+      // skip canUseTool or let a settings PermissionRequest hook answer first
+      // (see floorGuard). With no one to ask, the call is refused, as
+      // canUseTool refuses it.
+      ...floorGuard(authorizeTool ?? 'deny'),
       mcpServers: {
         [SERVER_NAME]: createSdkMcpServer({
           name: SERVER_NAME,

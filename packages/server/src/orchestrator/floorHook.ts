@@ -3,13 +3,39 @@ import type {
   HookJSONOutput,
   Options,
 } from '@anthropic-ai/claude-agent-sdk';
+import type { FloorCheck } from '@dispatch/core';
 
 import { floorCheckForToolInput } from '../floor.js';
 
-// What a floor-tripping call becomes: `ask` routes it to the session's
-// `canUseTool`, where a human decides; `deny` refuses it outright, for a
-// session that has no human to ask.
-export type FloorHookAction = 'ask' | 'deny';
+/** One floor-tripping tool call, held while a human decides on it. */
+export interface FloorHoldRequest {
+  /** Unique per tool call, so the approval flow can key its answer to it. */
+  requestId: string;
+  toolName: string;
+  input: unknown;
+  check: FloorCheck;
+}
+
+/** A human's answer to a held call; `reason` is shown to the model. */
+export interface FloorHoldDecision {
+  allow: boolean;
+  reason?: string;
+}
+
+/**
+ * How a session answers floor-tripping calls: a function that holds each one
+ * for a human and resolves with their decision, or `'deny'` for a session
+ * with no human to ask.
+ */
+export type FloorPolicy =
+  | ((request: FloorHoldRequest) => Promise<FloorHoldDecision>)
+  | 'deny';
+
+// How long the CLI waits on the hook while a human decides: a week, so the
+// wait is bounded only by the human (the orchestrator's own stop and cancel
+// paths resolve a hold sooner). A hook that timed out failed closed: the CLI
+// refused the call, even under bypassPermissions.
+const FLOOR_HOLD_TIMEOUT_SECONDS = 7 * 24 * 60 * 60;
 
 /**
  * The SDK options that hold every irreversible tool call (floor.ts: a
@@ -18,20 +44,24 @@ export type FloorHookAction = 'ask' | 'deny';
  * options.
  *
  * The floor used to be enforced only inside `canUseTool`, and the Claude Code
- * CLI does not always call it. Verified against the bundled CLI (SDK
- * 0.3.207), a `git push --force` ran without `canUseTool` ever being called
- * under `permissionMode: 'bypassPermissions'`, and under any mode once a
- * settings allow rule such as `Bash(git push:*)` matched it. Plan-mode
- * sessions with no `canUseTool` at all ran it on the same allow rule.
+ * CLI does not always get as far as asking it. Each of these was reproduced
+ * against the bundled CLI (SDK 0.3.207) with a harmless `git push --force`:
  *
- * Three parts close those paths:
+ * - Under bypassPermissions, or with a settings allow rule such as
+ *   `Bash(git push:*)` in any mode, it ran without `canUseTool` being called.
+ * - A settings PermissionRequest hook answering "allow" races `canUseTool`
+ *   (the CLI takes whichever answers first) and beat the human every time.
+ * - Plan-mode sessions with no `canUseTool` at all ran it on an allow rule.
  *
- * - A PreToolUse hook runs before the permission mode, allow rules and the
- *   auto-mode classifier, for sub-agents' calls too. Its `ask` made the CLI
- *   call `canUseTool` in default, acceptEdits, auto, dontAsk and
- *   bypassPermissions, and it outranked another hook answering `allow`. Calls
- *   the floor does not cover get no decision, so they take the session's
- *   normal permission path unchanged.
+ * So the decision is made where none of that can intervene:
+ *
+ * - A PreToolUse hook sees every tool call first, sub-agents' included, and
+ *   decides a floor-tripping one itself. With a hold policy it waits for the
+ *   human and returns allow or deny, which the CLI applied without entering
+ *   its permission path: no PermissionRequest hook ran and `canUseTool` was
+ *   not called, in every permission mode. A settings deny rule still refused
+ *   the call after a human's allow. Calls the floor does not cover get no
+ *   decision, so they take the session's normal permission path unchanged.
  * - `CLAUDE_CODE_SIMPLE` is pinned off. Bare mode drops every hook registered
  *   through the SDK, and a repo's `.claude/settings.json` (or a
  *   `settings.local.json` an agent writes) can switch it on through its `env`
@@ -52,11 +82,18 @@ export type FloorHookAction = 'ask' | 'deny';
  * that disagree.
  */
 export function floorGuard(
-  action: FloorHookAction,
+  policy: FloorPolicy,
   refusal: () => string | null = () => null
 ): Required<Pick<Options, 'hooks' | 'settings'>> {
   return {
-    hooks: { PreToolUse: [{ hooks: [floorHook(action, refusal)] }] },
+    hooks: {
+      PreToolUse: [
+        {
+          hooks: [floorHook(policy, refusal)],
+          timeout: FLOOR_HOLD_TIMEOUT_SECONDS,
+        },
+      ],
+    },
     settings: {
       env: { CLAUDE_CODE_SIMPLE: '0' },
       disableSkillShellExecution: true,
@@ -67,40 +104,53 @@ export function floorGuard(
 // The PreToolUse callback itself. It sees every tool (no matcher), because a
 // command can reach the shell through any tool whose input carries one.
 function floorHook(
-  action: FloorHookAction,
+  policy: FloorPolicy,
   refusal: () => string | null
 ): HookCallback {
-  return (input) => {
-    if (input.hook_event_name !== 'PreToolUse') return noDecision();
+  return async (input, toolUseId) => {
+    if (input.hook_event_name !== 'PreToolUse') return {};
     const refused = refusal();
     if (refused !== null) return decision('deny', refused);
     const check = floorCheckForToolInput(input.tool_input);
-    if (check === null) return noDecision();
+    if (check === null) return {};
+    if (policy === 'deny') {
+      return decision(
+        'deny',
+        `This command matches Dispatch's irreversible-action floor (${check}) and cannot run in this session, which has no human to approve it. If you only meant to find or read that text, use a search pattern or command that does not spell out the whole command.`
+      );
+    }
+    const answer = await policy({
+      requestId: `floor-${toolUseId ?? input.tool_use_id}`,
+      toolName: input.tool_name,
+      input: input.tool_input,
+      check,
+    });
+    if (answer.allow) {
+      return decision(
+        'allow',
+        `A human approved this irreversible action (${check}).`
+      );
+    }
+    // The human's reason reaches the model, so a refusal arrives as an
+    // explanation rather than a bare no.
+    const reason = answer.reason?.trim();
     return decision(
-      action,
-      action === 'ask'
-        ? `This command matches Dispatch's irreversible-action floor (${check}), so it waits for a human decision.`
-        : `This command matches Dispatch's irreversible-action floor (${check}) and cannot run in this session, which has no human to approve it. If you only meant to find or read that text, use a search pattern or command that does not spell out the whole command.`
+      'deny',
+      reason !== undefined && reason !== '' ? reason : 'denied by user'
     );
   };
 }
 
 // A PreToolUse decision, with the reason the CLI shows the model.
 function decision(
-  permissionDecision: FloorHookAction,
+  permissionDecision: 'allow' | 'deny',
   permissionDecisionReason: string
-): Promise<HookJSONOutput> {
-  return Promise.resolve({
+): HookJSONOutput {
+  return {
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',
       permissionDecision,
       permissionDecisionReason,
     },
-  });
-}
-
-// An empty hook output: no decision, so the CLI carries on exactly as if the
-// hook were not there.
-function noDecision(): Promise<HookJSONOutput> {
-  return Promise.resolve({});
+  };
 }

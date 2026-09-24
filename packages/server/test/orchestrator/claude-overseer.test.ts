@@ -15,7 +15,7 @@ import {
   OVERSEER_TOOL_PREFIX,
   overseerSdkTools,
 } from '../../src/orchestrator/overseers/claude.js';
-import { floorDecision } from './helpers.js';
+import { floorDecision, preToolUse } from './helpers.js';
 
 // The exact text the Agent SDK throws when it can't resolve its own bundled
 // native CLI binary — mirrors claude-planner.test.ts's fixture for the same
@@ -148,14 +148,45 @@ describe('ClaudeOverseer session wiring', () => {
     expect(captured?.permissionMode).toBe('auto');
     expect(captured?.maxTurns).toBe(40);
     expect(captured?.maxBudgetUsd).toBe(2.5);
-    // Floor commands reach the canUseTool gate even where the CLI would
-    // otherwise skip it (bypassPermissions, a settings allow rule).
+    // With no one to authorize anything, a floor command is refused, as
+    // canUseTool refuses every gated call.
     expect(
       await floorDecision(captured?.hooks, 'Bash', {
         command: 'gh release create v2.0.0',
       })
-    ).toBe('ask');
-    expect(captured?.settings).toEqual(floorGuard('ask').settings);
+    ).toBe('deny');
+    expect(captured?.settings).toEqual(floorGuard('deny').settings);
+  });
+
+  // The hook holds a floor command through the same authorizeTool gate
+  // canUseTool uses, since the CLI can skip canUseTool or let a settings
+  // PermissionRequest hook answer first (see floorGuard).
+  it('holds floor commands for a human through authorizeTool', async () => {
+    const { toolset } = stubToolset();
+    const asked: { requestId: string; toolName: string }[] = [];
+    const { captured } = await runTurn(successStream(), toolset, undefined, {
+      authorizeTool: (request) => {
+        asked.push(request);
+        return Promise.resolve({ allow: false, reason: 'not from chat' });
+      },
+    });
+    const release = { command: 'gh release create v2.0.0' };
+    expect(await preToolUse(captured?.hooks, 'Bash', release)).toMatchObject({
+      permissionDecision: 'deny',
+      permissionDecisionReason: 'not from chat',
+    });
+    expect(asked).toEqual([
+      expect.objectContaining({
+        requestId: 'floor-tu-1',
+        toolName: 'Bash',
+        input: release,
+      }),
+    ]);
+    // Anything else is left to canUseTool and the session's own policy.
+    expect(
+      await floorDecision(captured?.hooks, 'Bash', { command: 'git status' })
+    ).toBeUndefined();
+    expect(asked).toHaveLength(1);
   });
 
   it('leaves the caps and policy to the SDK defaults when the project sets none', async () => {

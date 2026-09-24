@@ -301,29 +301,89 @@ describe('ClaudeExecutor CLI-parity system prompt and setting sources', () => {
   });
 
   // The CLI skips canUseTool under bypassPermissions and on a matching
-  // settings allow rule (verified against the bundled CLI); the guard's hook
-  // sends floor commands to canUseTool anyway. This checks the wiring; the CLI
-  // routing itself was verified against the real CLI (see floorGuard).
-  it('wires the floor guard whatever the permission mode', async () => {
+  // settings allow rule, and a settings PermissionRequest hook can answer
+  // before it (all verified against the bundled CLI). So the guard's hook
+  // holds a floor command itself, through this executor's own approval flow,
+  // and returns the human's answer as its decision.
+  it('holds floor commands for a human through the approval flow, whatever the permission mode', async () => {
     for (const permissionMode of ['bypassPermissions', 'auto', 'acceptEdits']) {
       let captured: Options | undefined;
+      const requests: {
+        requestId: string;
+        toolName: string;
+        input: unknown;
+      }[] = [];
       const executor = new ClaudeExecutor((args: { options?: Options }) => {
         captured = args.options;
         return emptyMessages() as unknown as Query;
       });
-      executor.start(
+      const answers = [
+        { allow: true },
+        { allow: false, reason: 'not on main' },
+      ];
+      const run = executor.start(
         { cwd: '/tmp/dispatch-worktree-x', prompt: 'x', permissionMode },
-        noopEvents
+        {
+          ...noopEvents,
+          onApprovalRequest: (request) => {
+            requests.push(request);
+            queueMicrotask(() =>
+              run.approve(request.requestId, answers.shift()!)
+            );
+          },
+        }
       );
-      expect(
-        await floorDecision(captured?.hooks, 'Bash', {
-          command: 'git push --force origin main',
-        })
-      ).toBe('ask');
+      const push = { command: 'git push --force origin main' };
+      expect(await floorDecision(captured?.hooks, 'Bash', push)).toBe('allow');
+      expect(await preToolUse(captured?.hooks, 'Bash', push)).toMatchObject({
+        permissionDecision: 'deny',
+        permissionDecisionReason: 'not on main',
+      });
+      expect(requests).toEqual([
+        { requestId: 'floor-tu-1', toolName: 'Bash', input: push },
+        { requestId: 'floor-tu-1', toolName: 'Bash', input: push },
+      ]);
+      // Anything else takes the session's normal permission path.
       expect(
         await floorDecision(captured?.hooks, 'Bash', { command: 'bun test' })
       ).toBeUndefined();
-      expect(captured?.settings).toEqual(floorGuard('ask').settings);
+      expect(requests).toHaveLength(2);
+      expect(captured?.settings).toEqual(floorGuard('deny').settings);
+    }
+  });
+
+  // A hold is parked on a human, so the run's own stop and cancel have to be
+  // able to answer it, or a run stopped mid-hold would wait on it forever.
+  it('answers a held floor command when the run is stopped or cancelled', async () => {
+    for (const end of ['requestStop', 'interrupt'] as const) {
+      let captured: Options | undefined;
+      const executor = new ClaudeExecutor((args: { options?: Options }) => {
+        captured = args.options;
+        // interrupt() calls both control methods on the live query.
+        return Object.assign(emptyMessages(), {
+          interrupt: () => Promise.resolve(),
+          close: () => {},
+        }) as unknown as Query;
+      });
+      const run = executor.start(
+        {
+          cwd: '/tmp/dispatch-worktree-x',
+          prompt: 'x',
+          permissionMode: 'auto',
+        },
+        noopEvents
+      );
+      const held = preToolUse(captured?.hooks, 'Bash', {
+        command: 'npm publish',
+      });
+      await Promise.resolve();
+      if (end === 'requestStop') run.requestStop();
+      else void run.interrupt();
+      expect(await held).toMatchObject({
+        permissionDecision: 'deny',
+        permissionDecisionReason:
+          end === 'requestStop' ? STOP_DENIAL_MESSAGE : 'run cancelled',
+      });
     }
   });
 

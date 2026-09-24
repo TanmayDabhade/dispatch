@@ -17,6 +17,7 @@ import { cartoMcpSpec, cartoSpecFor, dispatchMcpSpec } from '../dispatchMcp.js';
 import { activeExperiments } from '../experiments.js';
 import type { ExperimentName } from '../experiments.js';
 import { floorGuard } from '../floorHook.js';
+import type { FloorPolicy } from '../floorHook.js';
 import type {
   ApprovalDecision,
   Executor,
@@ -622,6 +623,33 @@ export class ClaudeExecutor implements Executor {
     // at all.
     const sessionAllowed = new Set<string>();
 
+    // Raises the orchestrator's approval flow for one call and waits for
+    // approve() — or for interrupt()/requestStop(), which answer every
+    // pending request themselves.
+    const askHuman = (
+      requestId: string,
+      toolName: string,
+      input: unknown
+    ): Promise<ApprovalDecision> => {
+      events.onApprovalRequest({ requestId, toolName, input });
+      return new Promise<ApprovalDecision>((resolve) => {
+        pendingApprovals.set(requestId, resolve);
+      });
+    };
+
+    // How the PreToolUse hook holds an irreversible call (see floorGuard):
+    // through the same approval flow, with no session-wide grant, since each
+    // irreversible act gets its own human decision.
+    const holdForHuman: FloorPolicy = async ({
+      requestId,
+      toolName,
+      input,
+    }) => {
+      if (interrupted) return { allow: false, reason: 'run cancelled' };
+      const decision = await askHuman(requestId, toolName, input);
+      return { allow: decision.allow, reason: decision.reason };
+    };
+
     const canUseTool: CanUseTool = async (toolName, input, callOpts) => {
       if (interrupted) {
         return { behavior: 'deny', message: 'run cancelled' };
@@ -649,11 +677,7 @@ export class ClaudeExecutor implements Executor {
           return { behavior: 'allow', updatedInput: input };
         }
       }
-      const { requestId } = callOpts;
-      events.onApprovalRequest({ requestId, toolName, input });
-      const decision = await new Promise<ApprovalDecision>((resolve) => {
-        pendingApprovals.set(requestId, resolve);
-      });
+      const decision = await askHuman(callOpts.requestId, toolName, input);
       if (decision.allow) {
         if (decision.scope === 'session') sessionAllowed.add(toolName);
         return { behavior: 'allow', updatedInput: input };
@@ -683,12 +707,15 @@ export class ClaudeExecutor implements Executor {
       model: opts.model,
       resume: opts.resumeSessionId,
       canUseTool,
-      // Routes every irreversible call to canUseTool above, which parks it
-      // for a human, and after a stop denies every call outright. Without
-      // this the CLI skips canUseTool under bypassPermissions, on a matching
-      // settings allow rule, or when the auto-mode classifier approves —
-      // see floorGuard.
-      ...floorGuard('ask', () => (stopRequested ? STOP_DENIAL_MESSAGE : null)),
+      // Holds every irreversible call for a human in the PreToolUse hook
+      // itself, and after a stop denies every call outright. canUseTool alone
+      // is not enough: the CLI skips it under bypassPermissions, on a
+      // matching settings allow rule, or when the auto-mode classifier
+      // approves, and a settings PermissionRequest hook can answer before it
+      // — see floorGuard.
+      ...floorGuard(holdForHuman, () =>
+        stopRequested ? STOP_DENIAL_MESSAGE : null
+      ),
       // Same "query() doesn't auto-load what the CLI does" class of bug as
       // the `.mcp.json` fix directly below: a dispatched run must behave
       // like a human running `claude` in this checkout, not like a bare SDK
