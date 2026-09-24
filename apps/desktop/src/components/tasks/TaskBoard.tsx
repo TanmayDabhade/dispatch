@@ -30,6 +30,7 @@ import {
   type ComponentProps,
   memo,
   type ReactNode,
+  startTransition,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -39,6 +40,11 @@ import {
 } from 'react';
 
 import { boardCollision } from '../../lib/boardCollision';
+import {
+  type FlingTracker,
+  NEVER_FLINGING,
+  trackFling,
+} from '../../lib/boardFling';
 import {
   type BoardLane,
   countLaneStatuses,
@@ -238,12 +244,82 @@ function sameOffsets(
   return true;
 }
 
+/** The board's fling tracker: placeholders while its scroller flings (see `boardFling`). */
+function useBoardFling(board: HTMLDivElement | null): FlingTracker {
+  const [tracker, setTracker] = useState<FlingTracker>(NEVER_FLINGING);
+  useEffect(() => {
+    if (board === null) return;
+    const { tracker: next, dispose } = trackFling(board);
+    setTracker(next);
+    return () => {
+      dispose();
+      setTracker(NEVER_FLINGING);
+    };
+  }, [board]);
+  return tracker;
+}
+
+// A fling's stand-in for a card: the tile's surface at the card's last measured height.
+function CardPlaceholder({ height }: { height: number }) {
+  return (
+    <div
+      aria-hidden
+      data-slot="task-card-placeholder"
+      className="bg-surface-quaternary rounded-card shadow-card w-[322px] max-w-full opacity-60"
+      style={{ height }}
+    />
+  );
+}
+
+/**
+ * A card that mounts as a placeholder while the board flings and turns real once the fling
+ * settles, in a transition so a new fling can interrupt it. A card that mounted real stays
+ * real, and the cursor's or the dragged card (`eager`) never waits. Real cards record their
+ * height so a placeholder for one seen before keeps its size.
+ */
+function LazyCard({
+  id,
+  fling,
+  eager,
+  heights,
+  children,
+}: {
+  id: string;
+  fling: FlingTracker;
+  eager: boolean;
+  heights: Map<string, number>;
+  children: ReactNode;
+}) {
+  const [real, setReal] = useState(() => eager || !fling.isFlinging());
+  const show = real || eager;
+  useEffect(() => {
+    if (show) return;
+    const fill = () => startTransition(() => setReal(true));
+    if (!fling.isFlinging()) {
+      fill();
+      return;
+    }
+    return fling.onSettle(fill);
+  }, [show, fling]);
+  const record = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (node !== null) heights.set(id, node.offsetHeight);
+    },
+    [heights, id]
+  );
+  if (!show) {
+    return <CardPlaceholder height={heights.get(id) ?? CARD_ESTIMATE} />;
+  }
+  return <div ref={record}>{children}</div>;
+}
+
 /**
  * One lane+status cell's cards, virtualized against the board's shared scroller: only the
  * cards near the viewport mount, each measured for its real height. The dragged card and
  * the j/k cursor's card are pinned so they never unmount — dnd-kit drops a drag whose
  * source node goes away — and a keyboard move scrolls the focused card into view here,
- * where its index is known, so it mounts and takes DOM focus.
+ * where its index is known, so it mounts and takes DOM focus. Cards entering during a
+ * fling mount as placeholders (`LazyCard`).
  */
 function VirtualColumn({
   id,
@@ -252,6 +328,8 @@ function VirtualColumn({
   scrollMargin,
   activeTaskId,
   focusedTaskId,
+  fling,
+  heights,
   renderCard,
 }: {
   id: string;
@@ -260,6 +338,8 @@ function VirtualColumn({
   scrollMargin: number;
   activeTaskId: string | null;
   focusedTaskId: string | null;
+  fling: FlingTracker;
+  heights: Map<string, number>;
   renderCard: (doc: TaskListItem) => ReactNode;
 }) {
   const handle = useRef<VirtualRowsHandle>(null);
@@ -274,6 +354,16 @@ function VirtualColumn({
   useEffect(() => {
     if (focusedTaskId !== null) handle.current?.scrollToKey(focusedTaskId);
   }, [focusedTaskId]);
+  const renderLazyCard = (doc: TaskListItem) => (
+    <LazyCard
+      id={doc.meta.id}
+      fling={fling}
+      eager={pinnedKeys.includes(doc.meta.id)}
+      heights={heights}
+    >
+      {renderCard(doc)}
+    </LazyCard>
+  );
   return (
     <DroppableColumn id={id}>
       <VirtualRows
@@ -288,7 +378,7 @@ function VirtualColumn({
         scrollPaddingStart={COLUMN_HEADER_HEIGHT}
         pinnedKeys={pinnedKeys}
         handleRef={handle}
-        renderRow={renderCard}
+        renderRow={renderLazyCard}
       />
     </DroppableColumn>
   );
@@ -517,6 +607,9 @@ export function TaskBoard({
   const [board, setBoard] = useState<HTMLDivElement | null>(null);
   const [laneStack, setLaneStack] = useState<HTMLDivElement | null>(null);
   const viewportWidth = useBoardViewportWidth(board);
+  const fling = useBoardFling(board);
+  // Each card's last measured height, by task id — what its fling placeholder takes.
+  const [cardHeights] = useState(() => new Map<string, number>());
 
   // The same lanes `BoardView` derives for its j/k order, from the same pure function and the
   // same (pre-sorted) input — deliberately recomputed here rather than passed down, so the two
@@ -760,6 +853,8 @@ export function TaskBoard({
                             scrollMargin={laneOffsets.get(key) ?? 0}
                             activeTaskId={activeTaskId}
                             focusedTaskId={focusedTaskId}
+                            fling={fling}
+                            heights={cardHeights}
                             renderCard={(doc) => (
                               <BoardCard
                                 doc={doc}
