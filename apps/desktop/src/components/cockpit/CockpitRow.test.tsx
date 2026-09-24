@@ -97,6 +97,26 @@ describe('CockpitRow landing badge', () => {
     });
     expect(badge(container)).toBeNull();
   });
+
+  test('a landing row carries the badge, the queue step and the run’s cost', () => {
+    const { container } = renderRow(
+      {
+        kind: 'landing',
+        key: 'landing:t-4',
+        taskId: 't-4',
+        owner: ME,
+        task: task('t-4', 'landing'),
+        run: { costUsd: 1.25 } as RunMeta,
+        since: '2026-09-10T00:00:00.000Z',
+      },
+      'rebasing'
+    );
+    const row = container.querySelector<HTMLElement>('[data-kind=landing]');
+    expect(row?.textContent).toContain('Title t-4');
+    expect(row?.textContent).toContain('rebasing');
+    expect(row?.textContent).toContain('$1.25');
+    expect(badge(container)?.getAttribute('title')).toBe('Landing · rebasing');
+  });
 });
 
 describe('CockpitRow live step', () => {

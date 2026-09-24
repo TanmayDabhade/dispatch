@@ -248,4 +248,53 @@ describe('CockpitView', () => {
       screen.queryByRole('button', { name: 'Ready for you, 1' })
     ).toBeNull();
   });
+
+  test('an agent’s task the merge queue is landing sits in flight and opens its review', () => {
+    const finished: RunMeta = {
+      ...LIVE,
+      id: 'r-5',
+      taskId: 't-5',
+      taskTitle: 'Title t-5',
+      state: 'finished',
+      reviewedAt: '2026-09-20T00:30:00.000Z',
+    };
+    const data = {
+      ...dataWith(
+        [task('t-5', { status: 'landing', assignee: 'agent' })],
+        [finished]
+      ),
+      mergeQueue: {
+        entries: [
+          {
+            runId: 'r-5',
+            taskId: 't-5',
+            taskTitle: 'Title t-5',
+            state: 'verifying',
+            enqueuedAt: '2026-09-20T01:00:00.000Z',
+          },
+        ],
+        history: [],
+      },
+    } as unknown as DispatchProjectData;
+    const opened: unknown[][] = [];
+    render(
+      <CockpitView
+        data={data}
+        projectName="demo"
+        dispatchTask={() => Promise.resolve()}
+        onDispatchFailed={() => {}}
+        onOpenTask={(...args) => opened.push(args)}
+        onPeekTask={() => {}}
+      />
+    );
+    expect(laneKeys('flight')).toEqual(['landing:t-5']);
+    expect(
+      document
+        .querySelector('[data-lane=flight] [data-slot=landing-badge]')
+        ?.getAttribute('title')
+    ).toBe('Landing · verifying');
+    press('l');
+    press('o');
+    expect(opened).toEqual([['t-5', 'review', 'r-5']]);
+  });
 });

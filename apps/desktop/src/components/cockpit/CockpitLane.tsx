@@ -1,4 +1,4 @@
-import type { MergeQueueEntryState } from '@dispatch/client';
+import type { MergeQueueEntry } from '@dispatch/client';
 import { CircleDot, Hourglass, LoaderCircle } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -68,7 +68,7 @@ interface CockpitLaneProps {
   focusedKey: string | null;
   plans: ReadonlyMap<string, FlightPlan>;
   /** Tasks whose run is in the merge queue — their rows carry a `Landing` badge. */
-  landingByTaskId: ReadonlyMap<string, MergeQueueEntryState>;
+  landingByTaskId: ReadonlyMap<string, MergeQueueEntry>;
   loading: boolean;
   onActivate: (key: string) => void;
   onDispatch?: (taskId: string) => void;
@@ -113,7 +113,7 @@ export function CockpitLane({
               ? plans.get(row.item.progress.epicId)
               : undefined
           }
-          landing={landingByTaskId.get(row.item.taskId)}
+          landing={landingByTaskId.get(row.item.taskId)?.state}
           onActivate={onActivate}
           onDispatch={onDispatch}
         />

@@ -10,6 +10,7 @@ import {
   type RosterHeader,
 } from '../../lib/cockpit';
 import { formatUsd } from '../../lib/epicSession';
+import { landingStepLabel } from '../../lib/landingBadge';
 import { runKindLabel } from '../../lib/liveRail';
 import { formatShortDate } from '../../lib/taskDates';
 import type { FlightPlan } from '../flightplan/flightPlan';
@@ -89,8 +90,9 @@ interface CockpitRowProps {
  * One 36px Cockpit row, on the list row's anatomy. What fills the slots depends on the
  * item: a ready task (priority, id, status, title, cycle or due chip, assignee, age), a
  * live run (state mark, id, title, its latest step or else the agent, cost, a ticking
- * clock), a fan-out (its container and the mini Flight Plan), a teammate's started task
- * (their avatar, status, age) or something waiting on you (why, and since when).
+ * clock), a fan-out (its container and the mini Flight Plan), a run being landed (the
+ * badge, its queue step, cost, time in that step), a teammate's started task (their
+ * avatar, status, age) or something waiting on you (why, and since when).
  */
 export const CockpitRow = memo(function CockpitRow({
   item,
@@ -258,6 +260,27 @@ export const CockpitRow = memo(function CockpitRow({
         />
       );
     }
+    case 'landing':
+      return (
+        <ListRow
+          {...common}
+          leading={<StateMark state="landing" />}
+          id={item.taskId}
+          title={item.task?.meta.title ?? item.run?.taskTitle ?? item.taskId}
+          trailing={
+            <>
+              {landingBadge}
+              {landing !== undefined && (
+                <MetaText>{landingStepLabel(landing)}</MetaText>
+              )}
+              {item.run?.costUsd !== undefined && (
+                <MetaText>{formatUsd(item.run.costUsd)}</MetaText>
+              )}
+            </>
+          }
+          date={formatAge(item.since)}
+        />
+      );
     case 'needs':
       return (
         <ListRow

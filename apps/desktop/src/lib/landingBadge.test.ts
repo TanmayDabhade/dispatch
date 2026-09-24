@@ -5,7 +5,12 @@ import type {
 } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
-import { landingBadgeTitle, landingStateByTaskId } from './landingBadge';
+import {
+  landingBadgeTitle,
+  landingEntryByTaskId,
+  landingStateByTaskId,
+  landingStepLabel,
+} from './landingBadge';
 
 function entry(
   taskId: string,
@@ -60,7 +65,18 @@ describe('landingStateByTaskId', () => {
   });
 });
 
+test('landingEntryByTaskId keeps each task’s first live entry, whole', () => {
+  const first = entry('t-a', 'merging', 'r-1');
+  const map = landingEntryByTaskId(
+    queue([first, entry('t-a', 'queued', 'r-2'), entry('t-b', 'merged')])
+  );
+  expect([...map]).toEqual([['t-a', first]]);
+});
+
 test('landingBadgeTitle names the queue step', () => {
+  expect(landingStepLabel('blocked-environment')).toBe(
+    'held until the checkout is clean'
+  );
   expect(landingBadgeTitle('verifying')).toBe('Landing · verifying');
   expect(landingBadgeTitle('waiting-github')).toBe(
     'Landing · waiting on GitHub'
