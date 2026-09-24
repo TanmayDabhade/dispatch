@@ -164,6 +164,24 @@ describe('the mode follows the task', () => {
     expect(screen.getByText('abc1234')).not.toBeNull();
   });
 
+  test('a task reopened after it landed opens on its spec, with Dispatch', () => {
+    mount(
+      fakeHost(newLog(), {
+        tasks: [task('t-1', { status: 'ready' })],
+        runs: [
+          run({
+            state: 'finished',
+            reviewedAt: '2026-09-23T11:00:00.000Z',
+            reviewAction: 'merge',
+            mergeCommit: 'abc1234def',
+          }),
+        ],
+      })
+    );
+    expect(modeOf()).toBe('spec');
+    expect(document.querySelector('[data-slot=dispatch-card]')).not.toBeNull();
+  });
+
   test('a container opens on its plan, where the Flight Plan draws every sub-issue', () => {
     mount(
       fakeHost(newLog(), {

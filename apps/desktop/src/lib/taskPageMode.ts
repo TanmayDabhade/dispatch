@@ -48,8 +48,8 @@ export interface TaskStateInput {
 
 /**
  * The mode a task opens in, following its state: done work shows its summary, a container
- * its plan, a live run its transcript, a finished run its review, and anything not yet
- * dispatched its spec. A failed run opens on its transcript, which says why.
+ * its plan, a task not yet started (or reopened) its spec, a live run its transcript, a
+ * finished run its review. A failed run opens on its transcript, which says why.
  */
 export function defaultTaskPageMode({
   statusType,
@@ -58,6 +58,12 @@ export function defaultTaskPageMode({
 }: TaskStateInput): TaskPageMode {
   if (statusType === 'completed' || statusType === 'canceled') return 'summary';
   if (isContainer) return 'plan';
+  // Triage, backlog or unstarted: old runs are history; only a live one outranks the spec.
+  if (statusType !== 'started') {
+    return latestRun !== undefined && !isTerminalRunState(latestRun.state)
+      ? 'run'
+      : 'spec';
+  }
   if (latestRun === undefined) return 'spec';
   switch (deriveRunDisposition(latestRun)) {
     case 'live':

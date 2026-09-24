@@ -54,12 +54,39 @@ describe('defaultTaskPageMode', () => {
     expect(
       defaultTaskPageMode({
         ...TASK,
+        statusType: 'started',
         latestRun: run({ state: 'finished', prUrl: 'https://x/pr/1' }),
       })
     ).toBe('review');
     expect(
-      defaultTaskPageMode({ ...TASK, latestRun: run({ state: 'failed' }) })
+      defaultTaskPageMode({
+        ...TASK,
+        statusType: 'started',
+        latestRun: run({ state: 'failed' }),
+      })
     ).toBe('run');
+  });
+
+  test('a task not started, or reopened, opens on its spec unless a run is live', () => {
+    const merged = run({
+      state: 'finished',
+      reviewedAt: '2026-09-23T11:00:00Z',
+      reviewAction: 'merge',
+    });
+    for (const statusType of ['triage', 'backlog', 'unstarted'] as const) {
+      for (const latestRun of [
+        merged,
+        run({ state: 'failed' }),
+        run({ state: 'finished' }),
+      ]) {
+        expect(defaultTaskPageMode({ ...TASK, statusType, latestRun })).toBe(
+          'spec'
+        );
+      }
+      expect(
+        defaultTaskPageMode({ ...TASK, statusType, latestRun: run() })
+      ).toBe('run');
+    }
   });
 
   test('done work shows its summary, whatever its runs say', () => {
@@ -79,17 +106,19 @@ describe('defaultTaskPageMode', () => {
     ).toBe('summary');
   });
 
-  test('a merged run reads as landed, a discarded one as back to spec', () => {
+  test('a merged run on a started task reads as landed, a discarded one as back to spec', () => {
     const reviewed = { state: 'finished', reviewedAt: '2026-09-23T11:00:00Z' };
     expect(
       defaultTaskPageMode({
         ...TASK,
+        statusType: 'started',
         latestRun: run({ ...reviewed, reviewAction: 'merge' } as RunMeta),
       })
     ).toBe('summary');
     expect(
       defaultTaskPageMode({
         ...TASK,
+        statusType: 'started',
         latestRun: run({ ...reviewed, reviewAction: 'discard' } as RunMeta),
       })
     ).toBe('spec');
@@ -188,6 +217,7 @@ describe('lifecycleStages', () => {
     const failed = run({ state: 'failed', costUsd: 0.5 });
     const stages = lifecycleStages({
       ...base,
+      statusType: 'started',
       latestRun: failed,
       runs: [failed],
     });
@@ -210,6 +240,26 @@ describe('lifecycleStages', () => {
       'current',
     ]);
     expect(stages[3]?.caption).toBe('Landed');
+  });
+
+  test('a reopened task is back at its spec, its old runs kept as history', () => {
+    const merged = run({
+      state: 'finished',
+      reviewedAt: '2026-09-23T11:00:00Z',
+      reviewAction: 'merge',
+      costUsd: 0.25,
+    });
+    const stages = lifecycleStages({
+      ...base,
+      latestRun: merged,
+      runs: [merged],
+    });
+    expect(stages.map((s) => [s.mode, s.progress, s.caption])).toEqual([
+      ['spec', 'current', '3 criteria · 2 writes'],
+      ['run', 'pending', '1 run · $0.25'],
+      ['review', 'pending', 'Merged'],
+      ['summary', 'pending', '—'],
+    ]);
   });
 
   test('blockers lead the spec caption', () => {
