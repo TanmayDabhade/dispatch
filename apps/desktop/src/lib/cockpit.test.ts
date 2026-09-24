@@ -10,6 +10,7 @@ import {
   compareReady,
   formatAge,
   groupByOwner,
+  indexCockpitTasks,
   inScope,
   personOf,
 } from './cockpit';
@@ -77,19 +78,23 @@ function run(
   };
 }
 
-function input(overrides: Partial<CockpitInput> = {}): CockpitInput {
+function input(
+  overrides: Partial<Omit<CockpitInput, 'index'>> & {
+    tasks?: TaskListItem[];
+  } = {}
+): CockpitInput {
+  const { tasks = [], ...rest } = overrides;
   return {
-    tasks: [],
+    index: indexCockpitTasks(tasks, DEFAULT_STATUS_MODEL),
     runs: [],
     latestRunByTaskId: new Map(),
     attentionByTaskId: new Map(),
     liveEpicSessions: [],
     readinessById: new Map(),
     me: ME,
-    model: DEFAULT_STATUS_MODEL,
     scope: { kind: 'me' },
     pending: new Map(),
-    ...overrides,
+    ...rest,
   };
 }
 

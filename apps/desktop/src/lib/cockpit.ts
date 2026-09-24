@@ -95,9 +95,23 @@ export interface CockpitLanes {
   needs: CockpitItem[];
 }
 
+/**
+ * The per-task half of the lanes: everything that depends only on the task list and the
+ * status model, so the view can hold it across scope flips, dispatches and run updates
+ * and redo only the cheap filtering (`buildCockpit`) for those.
+ */
+export interface CockpitIndex {
+  taskById: ReadonlyMap<string, TaskListItem>;
+  /** Unstarted and unblocked, ranked by `compareReady`. */
+  ready: readonly TaskListItem[];
+  /** In the review role and not archived. */
+  inReview: readonly TaskListItem[];
+  /** Started, not a container, not archived — most recently updated first. */
+  started: readonly TaskListItem[];
+}
+
 export interface CockpitInput {
-  /** Every task, archived included — blockers resolve against the full set. */
-  tasks: readonly TaskListItem[];
+  index: CockpitIndex;
   runs: readonly RunMeta[];
   latestRunByTaskId: ReadonlyMap<string, RunMeta>;
   attentionByTaskId: ReadonlyMap<string, TaskAttention>;
@@ -106,7 +120,6 @@ export interface CockpitInput {
   readinessById: ReadonlyMap<string, ReadinessReading>;
   /** This window's own ref; null until the daemon says. */
   me: string | null;
-  model: StatusModel;
   scope: CockpitScope;
   /** Tasks dispatched from the Cockpit whose run has not shown up yet, with when. */
   pending: ReadonlyMap<string, number>;
@@ -143,12 +156,18 @@ export function inScope(
   }
 }
 
+// Code-unit order: ISO dates and ids sort correctly as plain strings, and this is several
+// times cheaper than `localeCompare` across a 2000-task ranking.
+function compareStrings(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 // ISO dates sort as strings; `null` sorts last.
 function compareNullableIso(a: string | null, b: string | null): number {
   if (a === b) return 0;
   if (a === null) return 1;
   if (b === null) return -1;
-  return a.localeCompare(b);
+  return compareStrings(a, b);
 }
 
 /** Ready's ranking: priority, then due date, then cycle (the earlier cycle first), then
@@ -164,8 +183,38 @@ export function compareReady(a: TaskListItem, b: TaskListItem): number {
     b.meta.cycle?.startsAt ?? null
   );
   if (byCycle !== 0) return byCycle;
-  const byAge = a.meta.created.localeCompare(b.meta.created);
-  return byAge !== 0 ? byAge : a.meta.id.localeCompare(b.meta.id);
+  const byAge = compareStrings(a.meta.created, b.meta.created);
+  return byAge !== 0 ? byAge : compareStrings(a.meta.id, b.meta.id);
+}
+
+/** Indexes the task list for the lanes: one pass for the review and started buckets, core's
+ * `readyTasks` for the queue. Pass every task, archived included. */
+export function indexCockpitTasks(
+  tasks: readonly TaskListItem[],
+  model: StatusModel
+): CockpitIndex {
+  const taskById = new Map<string, TaskListItem>();
+  for (const task of tasks) taskById.set(task.meta.id, task);
+  const parentIds = parentIdsOf(tasks);
+  const inReview: TaskListItem[] = [];
+  const started: TaskListItem[] = [];
+  for (const task of tasks) {
+    if (task.meta.archivedAt !== undefined) continue;
+    if (hasStatusRole(task.meta.status, 'review', model)) inReview.push(task);
+    if (
+      !isContainer(task.meta, parentIds) &&
+      isStartedStatus(task.meta.status, model)
+    ) {
+      started.push(task);
+    }
+  }
+  started.sort((a, b) => compareStrings(b.meta.updated, a.meta.updated));
+  return {
+    taskById,
+    ready: readyTasks(tasks, model).sort(compareReady),
+    inReview,
+    started,
+  };
 }
 
 /** A row's compact age: `now`, `12m`, `4h`, `60d`. An unparseable time reads as a dash. */
@@ -200,15 +249,24 @@ function isLive(run: RunMeta): boolean {
  * appears in one lane only.
  */
 export function buildCockpit(input: CockpitInput): CockpitLanes {
-  const { me, scope, model } = input;
-  const taskById = new Map<string, TaskListItem>();
-  for (const task of input.tasks) taskById.set(task.meta.id, task);
-  const parentIds = parentIdsOf(input.tasks);
+  const { me, scope, index } = input;
+  const { taskById } = index;
   const claimed = new Set<string>();
+  // Every assignee string resolves once per build — a few distinct values over 2000 tasks.
+  const owners = new Map<string, string | null>();
+  const ownerOf = (assignee: string | null | undefined): string | null => {
+    if (assignee === null || assignee === undefined) return null;
+    let owner = owners.get(assignee);
+    if (owner === undefined) {
+      owner = personOf(assignee, me);
+      owners.set(assignee, owner);
+    }
+    return owner;
+  };
   // A run belongs to whoever dispatched it; one nobody signed (a single-user daemon) is
   // this window's.
   const runOwner = (run: RunMeta) =>
-    run.dispatchedBy === undefined ? me : personOf(run.dispatchedBy, me);
+    run.dispatchedBy === undefined ? me : ownerOf(run.dispatchedBy);
 
   // Needs you first: whatever lands here leaves the other two lanes.
   const needs: NeedsItem[] = [];
@@ -216,7 +274,7 @@ export function buildCockpit(input: CockpitInput): CockpitLanes {
     const run = input.latestRunByTaskId.get(taskId);
     const task = taskById.get(taskId);
     const owner =
-      run === undefined ? personOf(task?.meta.assignee, me) : runOwner(run);
+      run === undefined ? ownerOf(task?.meta.assignee) : runOwner(run);
     if (!inScope(owner, scope, me)) continue;
     claimed.add(taskId);
     needs.push({
@@ -230,11 +288,10 @@ export function buildCockpit(input: CockpitInput): CockpitLanes {
       since: run?.updatedAt ?? task?.meta.updated ?? '',
     });
   }
-  for (const task of input.tasks) {
+  for (const task of index.inReview) {
     const id = task.meta.id;
-    if (claimed.has(id) || task.meta.archivedAt !== undefined) continue;
-    if (!hasStatusRole(task.meta.status, 'review', model)) continue;
-    const owner = personOf(task.meta.assignee, me);
+    if (claimed.has(id)) continue;
+    const owner = ownerOf(task.meta.assignee);
     if (owner === null || !inScope(owner, scope, me)) continue;
     claimed.add(id);
     needs.push({
@@ -252,15 +309,11 @@ export function buildCockpit(input: CockpitInput): CockpitLanes {
   // Ready: the unstarted, unblocked queue. A spec flagged as bare title goes to its
   // owner's Needs you instead — it wants words before it wants an agent.
   const ready: CockpitItem[] = [];
-  const readyInScope = readyTasks(input.tasks, model).filter((task) => {
+  for (const task of index.ready) {
     const id = task.meta.id;
-    if (claimed.has(id) || input.pending.has(id)) return false;
-    return inScope(personOf(task.meta.assignee, me), scope, me, true);
-  });
-  readyInScope.sort(compareReady);
-  for (const task of readyInScope) {
-    const id = task.meta.id;
-    const owner = personOf(task.meta.assignee, me);
+    if (claimed.has(id) || input.pending.has(id)) continue;
+    const owner = ownerOf(task.meta.assignee);
+    if (!inScope(owner, scope, me, true)) continue;
     if (owner !== null && isUnclearSpec(input.readinessById.get(id))) {
       claimed.add(id);
       needs.push({
@@ -280,7 +333,7 @@ export function buildCockpit(input: CockpitInput): CockpitLanes {
   needs.sort(
     (a, b) =>
       NEEDS_ORDER[a.reason] - NEEDS_ORDER[b.reason] ||
-      a.since.localeCompare(b.since)
+      compareStrings(a.since, b.since)
   );
 
   // In flight.
@@ -316,7 +369,7 @@ export function buildCockpit(input: CockpitInput): CockpitLanes {
         inScope(runOwner(run), scope, me)
     );
     const container = taskById.get(progress.epicId);
-    const owner = personOf(container?.meta.assignee, me) ?? me;
+    const owner = ownerOf(container?.meta.assignee) ?? me;
     if (nestedRuns.length === 0 && !inScope(owner, scope, me)) continue;
     flight.push({
       kind: 'fanout',
@@ -343,7 +396,7 @@ export function buildCockpit(input: CockpitInput): CockpitLanes {
     .filter(
       (run) => !sessionOf.has(run.taskId) && inScope(runOwner(run), scope, me)
     )
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    .sort((a, b) => compareStrings(b.createdAt, a.createdAt));
   for (const run of looseRuns) {
     claimed.add(run.taskId);
     flight.push({
@@ -356,25 +409,12 @@ export function buildCockpit(input: CockpitInput): CockpitLanes {
       nested: false,
     });
   }
-  const started = input.tasks
-    .filter((task) => {
-      const id = task.meta.id;
-      if (claimed.has(id) || liveTaskIds.has(id)) return false;
-      if (task.meta.archivedAt !== undefined) return false;
-      if (isContainer(task.meta, parentIds)) return false;
-      if (!isStartedStatus(task.meta.status, model)) return false;
-      const owner = personOf(task.meta.assignee, me);
-      return owner !== null && inScope(owner, scope, me);
-    })
-    .sort((a, b) => b.meta.updated.localeCompare(a.meta.updated));
-  for (const task of started) {
-    flight.push({
-      kind: 'started',
-      key: task.meta.id,
-      taskId: task.meta.id,
-      owner: personOf(task.meta.assignee, me),
-      task,
-    });
+  for (const task of index.started) {
+    const id = task.meta.id;
+    if (claimed.has(id) || liveTaskIds.has(id)) continue;
+    const owner = ownerOf(task.meta.assignee);
+    if (owner === null || !inScope(owner, scope, me)) continue;
+    flight.push({ kind: 'started', key: id, taskId: id, owner, task });
   }
 
   return { ready, flight, needs };

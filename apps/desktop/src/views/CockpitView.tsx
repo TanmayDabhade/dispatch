@@ -40,6 +40,7 @@ import {
   type CockpitLaneId,
   type CockpitScope,
   groupByOwner,
+  indexCockpitTasks,
 } from '../lib/cockpit';
 import {
   type CockpitCursor,
@@ -213,29 +214,32 @@ export function CockpitView({
     [optimistic.pending]
   );
 
+  // The per-task half of the lanes, held across scope flips, dispatches and run updates.
+  const index = useMemo(
+    () => indexCockpitTasks(data.tasksIncludingArchived, model),
+    [data.tasksIncludingArchived, model]
+  );
   const lanes = useMemo(
     () =>
       buildCockpit({
-        tasks: data.tasksIncludingArchived,
+        index,
         runs: data.runs,
         latestRunByTaskId: data.latestRunByTaskId,
         attentionByTaskId: data.attentionByTaskId,
         liveEpicSessions: data.liveEpicSessions,
         readinessById: data.readinessById,
         me,
-        model,
         scope,
         pending,
       }),
     [
-      data.tasksIncludingArchived,
+      index,
       data.runs,
       data.latestRunByTaskId,
       data.attentionByTaskId,
       data.liveEpicSessions,
       data.readinessById,
       me,
-      model,
       scope,
       pending,
     ]
