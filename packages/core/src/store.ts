@@ -86,6 +86,8 @@ export interface CreateInput {
   icon?: string | null;
   /** Who is creating it, as an actor ref. */
   creator?: Assignee | null;
+  /** The id in an external tracker (`linear:<uuid>`), linked from the start. */
+  external?: string | null;
 }
 
 export interface UpdatePatch {
@@ -118,6 +120,8 @@ export interface UpdatePatch {
   initiatives?: string[];
   color?: string | null;
   icon?: string | null;
+  /** Who created it; a tracker sync backfills it from the remote record. */
+  creator?: Assignee | null;
 
   // null clears archivedAt (unarchive); a string sets it; undefined leaves it untouched.
   archivedAt?: string | null;
@@ -216,7 +220,7 @@ export function newTaskDoc(
     assignee: input.assignee ?? 'none',
     created: now,
     updated: now,
-    external: null,
+    external: input.external ?? null,
     selfReview: input.selfReview ?? true,
     ...(input.fixLoop === false ? { fixLoop: false } : {}),
     writes: input.writes ?? [],

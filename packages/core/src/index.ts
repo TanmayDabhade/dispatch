@@ -297,12 +297,19 @@ export type {
   CredentialsFile,
   ProjectCredentials,
 } from './credentials.js';
+export * from './linearContainers.js';
+export * from './linearFields.js';
+export * from './linearMerge.js';
+export * from './linearPeople.js';
+export * from './linearStatuses.js';
 export {
   DEFAULT_STATUS_MAP,
   externalId,
   issueFromTask,
   LINEAR_EXTERNAL_PREFIX,
+  linearExternal,
   parseExternal,
+  parseLinearExternal,
   priorityFromLinear,
   priorityToLinear,
   resolveConflict,
@@ -314,6 +321,8 @@ export {
 export type {
   IssueMapContext,
   LinearAttachment,
+  LinearEntity,
+  LinearRef,
   LinearComment,
   LinearInitiative,
   LinearInitiativeInput,

@@ -329,7 +329,7 @@ export function serializeTaskFile(doc: TaskDoc): string {
 }
 
 // Splits a body into its `## ` sections: parts = [preamble, "## H1", body1, ...].
-function splitSections(body: string): {
+export function splitSections(body: string): {
   preamble: string;
   sections: { heading: string; content: string }[];
 } {
@@ -354,7 +354,7 @@ export function escapeHeadingLines(content: string): string {
 }
 
 // The read-side inverse of escapeHeadingLines.
-function unescapeHeadingLines(content: string): string {
+export function unescapeHeadingLines(content: string): string {
   return content
     .split('\n')
     .map((line) => (/^\\+## /.test(line) ? line.slice(1) : line))

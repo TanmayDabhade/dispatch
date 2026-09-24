@@ -223,6 +223,43 @@ export function parseExternal(value: string | null | undefined): string | null {
   return id === '' ? null : id;
 }
 
+/** The Linear record kinds a task can mirror. */
+export type LinearEntity = 'issue' | 'project' | 'milestone' | 'initiative';
+
+/** A task's link to one Linear record. */
+export interface LinearRef {
+  entity: LinearEntity;
+  id: string;
+}
+
+// Issues keep the historical `linear:` prefix; containers get their own so an
+// `external` value alone says which API a push goes to.
+const ENTITY_PREFIXES: readonly [LinearEntity, string][] = [
+  ['issue', LINEAR_EXTERNAL_PREFIX],
+  ['project', 'linear-project:'],
+  ['milestone', 'linear-milestone:'],
+  ['initiative', 'linear-initiative:'],
+];
+
+/** The `TaskMeta.external` value for a Linear record of any kind. */
+export function linearExternal(ref: LinearRef): string {
+  const prefix = ENTITY_PREFIXES.find(([entity]) => entity === ref.entity);
+  return `${prefix?.[1] ?? LINEAR_EXTERNAL_PREFIX}${ref.id}`;
+}
+
+/** The Linear record an `external` value names, of any kind, or null. */
+export function parseLinearExternal(
+  value: string | null | undefined
+): LinearRef | null {
+  if (typeof value !== 'string') return null;
+  for (const [entity, prefix] of ENTITY_PREFIXES) {
+    if (!value.startsWith(prefix)) continue;
+    const id = value.slice(prefix.length).trim();
+    return id === '' ? null : { entity, id };
+  }
+  return null;
+}
+
 // Linear's priority is an Int where 0 means "unset" and 1 is the most urgent —
 // so it is not an ordering the local scale can be compared against directly.
 const PRIORITY_TO_LINEAR: Record<Priority, number> = {
