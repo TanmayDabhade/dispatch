@@ -15,6 +15,7 @@ type StartOptions = { parent?: string | null } | undefined;
 
 function mount(preset: CreateTaskPreset | null) {
   const started: [string, StartOptions][] = [];
+  const quickAdds: CreateTaskPreset[] = [];
   const data = {
     portLoading: false,
     portError: false,
@@ -32,12 +33,14 @@ function mount(preset: CreateTaskPreset | null) {
           started.push([prompt, options]);
           return Promise.resolve({ id: 'd-1' } as DraftRecord);
         }}
-        onQuickAdd={() => {}}
+        onQuickAdd={(next) =>
+          quickAdds.push({ status: next.status, epic: next.epic })
+        }
         onClose={() => {}}
       />
     </ShellActionsProvider>
   );
-  return { started };
+  return { started, quickAdds };
 }
 
 async function draft(text: string) {
@@ -73,4 +76,19 @@ test('without a preset nothing is pinned', async () => {
   expect(document.querySelector('[data-slot=draft-parent]')).toBeNull();
   await draft('add refunds');
   expect(started).toEqual([['add refunds', undefined]]);
+});
+
+test('Quick add carries the parent the composer still holds', () => {
+  const { quickAdds } = mount({ status: 'ready', epic: 'e-1' });
+  fireEvent.click(screen.getByRole('button', { name: /Quick add/ }));
+  expect(quickAdds).toEqual([{ status: 'ready', epic: 'e-1' }]);
+});
+
+test('a dropped parent chip stays dropped in Quick add', () => {
+  const { quickAdds } = mount({ status: 'ready', epic: 'e-1' });
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Not in Payments › Beta' })
+  );
+  fireEvent.click(screen.getByRole('button', { name: /Quick add/ }));
+  expect(quickAdds).toEqual([{ status: 'ready' }]);
 });

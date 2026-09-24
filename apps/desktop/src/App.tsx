@@ -1572,9 +1572,9 @@ function App() {
                           projectName={activeProject?.name}
                           data={data}
                           onStartDraft={rawData.handleStartDraft}
-                          onQuickAdd={() => {
+                          onQuickAdd={(preset) => {
                             setAiComposerOpen(false);
-                            openQuickAddTask(createPreset ?? undefined);
+                            openQuickAddTask(preset);
                           }}
                           onClose={() => setAiComposerOpen(false)}
                         />

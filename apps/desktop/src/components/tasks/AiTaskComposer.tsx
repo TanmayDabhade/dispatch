@@ -4,7 +4,10 @@ import { useState } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { DaemonUnavailable } from '../shell/DaemonUnavailable';
-import { useShellActions } from '../shell/ShellActionsContext';
+import {
+  type CreateTaskPreset,
+  useShellActions,
+} from '../shell/ShellActionsContext';
 import { Pill } from '@/ui/ai/pill';
 import { Button } from '@/ui/button';
 import {
@@ -30,8 +33,9 @@ interface AiTaskComposerProps {
     options?: { parent?: string | null }
   ) => Promise<DraftRecord>;
   /** Opens `CreateTaskModal` instead — the structured quick-add fallback for when you already
-   * know the exact fields and don't want to spend an agent round-trip describing them. */
-  onQuickAdd: () => void;
+   * know the exact fields and don't want to spend an agent round-trip describing them.
+   * `preset` is the creator's preset with the parent this dialog holds now. */
+  onQuickAdd: (preset: CreateTaskPreset) => void;
   onClose: () => void;
 }
 
@@ -58,6 +62,14 @@ export function AiTaskComposer({
     parent === null
       ? null
       : (data.epics.find((e) => e.meta.id === parent)?.meta.title ?? parent);
+
+  // The launch preset with this dialog's parent, so a dropped chip stays dropped.
+  function quickAddPreset(): CreateTaskPreset {
+    const next: CreateTaskPreset = { ...createPreset };
+    if (parent === null) delete next.epic;
+    else next.epic = parent;
+    return next;
+  }
 
   async function submit() {
     if (prompt.trim() === '' || submitting) return;
@@ -159,7 +171,7 @@ export function AiTaskComposer({
                 <Button
                   type="button"
                   variant="ghost"
-                  onClick={onQuickAdd}
+                  onClick={() => onQuickAdd(quickAddPreset())}
                   disabled={submitting}
                 >
                   <PanelTopOpen />
