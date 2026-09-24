@@ -49,6 +49,7 @@ describe('floorGuard', () => {
     expect(human.asked).toHaveLength(6);
     expect(human.asked[0]).toEqual({
       requestId: 'floor-tu-1',
+      toolUseId: 'tu-1',
       toolName: 'Bash',
       input: { command: 'git push --force origin main' },
       check: 'force-push',
@@ -85,6 +86,20 @@ describe('floorGuard', () => {
       permissionDecision: 'deny',
       permissionDecisionReason: 'denied by user',
     });
+  });
+
+  // A hook that fails gives the CLI no decision, which bypassPermissions
+  // treats as an allow, so a hold that cannot be raised has to be a refusal.
+  it('refuses the call when the hold itself fails', async () => {
+    const decision = await preToolUse(
+      floorGuard(() => Promise.reject(new Error('approval store down'))).hooks,
+      'Bash',
+      { command: 'git push --force origin main' }
+    );
+    expect(decision?.permissionDecision).toBe('deny');
+    expect(String(decision?.permissionDecisionReason)).toContain(
+      'approval store down'
+    );
   });
 
   it('denies floor commands outright in a session with no human to ask', async () => {

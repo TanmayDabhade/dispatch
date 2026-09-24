@@ -15,6 +15,7 @@ import type { z } from 'zod';
 import { openClaudeQuery, rewriteMissingCliError } from '../claudeCli.js';
 import { cartoMcpServers } from '../executors/claude.js';
 import { floorGuard } from '../floorHook.js';
+import type { FloorPolicy } from '../floorHook.js';
 import type {
   OverseerBackend,
   OverseerToolDescriptor,
@@ -191,6 +192,23 @@ export class ClaudeOverseer implements OverseerBackend {
     );
     const allowed = new Set(allowedTools);
     const { authorizeTool } = opts;
+    // Floor calls the human already approved in the PreToolUse hook, by
+    // tool-use id, with the input they approved: the CLI can still send such
+    // a call on to canUseTool, which must not ask a second time.
+    const approvedInHook = new Map<string, string>();
+    const holdForHuman: FloorPolicy | 'deny' =
+      authorizeTool === undefined
+        ? 'deny'
+        : async (request) => {
+            const decision = await authorizeTool(request);
+            if (decision.allow) {
+              approvedInHook.set(
+                request.toolUseId,
+                JSON.stringify(request.input)
+              );
+            }
+            return decision;
+          };
     const options: Options = {
       cwd: this.rootDir,
       // Pre-approves the registry's own tools; everything else still reaches
@@ -198,6 +216,10 @@ export class ClaudeOverseer implements OverseerBackend {
       allowedTools,
       canUseTool: async (toolName, input, callOpts) => {
         if (allowed.has(toolName)) {
+          return { behavior: 'allow', updatedInput: input };
+        }
+        if (approvedInHook.get(callOpts.toolUseID) === JSON.stringify(input)) {
+          approvedInHook.delete(callOpts.toolUseID);
           return { behavior: 'allow', updatedInput: input };
         }
         if (opts.authorizeTool === undefined) {
@@ -228,7 +250,7 @@ export class ClaudeOverseer implements OverseerBackend {
       // skip canUseTool or let a settings PermissionRequest hook answer first
       // (see floorGuard). With no one to ask, the call is refused, as
       // canUseTool refuses it.
-      ...floorGuard(authorizeTool ?? 'deny'),
+      ...floorGuard(holdForHuman),
       mcpServers: {
         [SERVER_NAME]: createSdkMcpServer({
           name: SERVER_NAME,

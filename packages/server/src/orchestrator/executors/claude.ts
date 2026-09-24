@@ -186,6 +186,17 @@ function experimentOptions(
  * work. A model that ignores this and keeps calling tools is caught by
  * Orchestrator.requestStop's escalation timer, not here.
  */
+// What a call is refused with once the session's result has arrived: the run
+// is over, so nothing still pending can be approved.
+const RUN_ENDED_DENIAL =
+  'The run ended before a human decided on this call, so it was not run.';
+
+// How long windDown waits for the CLI to confirm it stopped the background
+// tasks, and then lets it take in the answers it was just sent, before the
+// query is closed.
+const WIND_DOWN_STOP_MS = 5_000;
+const WIND_DOWN_FLUSH_MS = 250;
+
 export const STOP_DENIAL_MESSAGE =
   'The user asked this run to stop. Do not start any new tool calls. ' +
   'Summarize what you completed and what is left unfinished, then end your turn.';
@@ -617,6 +628,9 @@ export class ClaudeExecutor implements Executor {
     // Set by requestStop(); read by canUseTool and the PreToolUse hook below.
     // See STOP_DENIAL_MESSAGE.
     let stopRequested = false;
+    // Set once the session's result has arrived and the run is winding down
+    // (see windDown below): nothing may be approved any more.
+    let ending = false;
     // Tools the user said "always, for this run" about. Session-scoped by construction: this
     // Set lives inside start(), so it dies with the run rather than leaking a permission grant
     // into the next one — which is the property that makes approve-for-session safe to offer
@@ -640,19 +654,35 @@ export class ClaudeExecutor implements Executor {
     // How the PreToolUse hook holds an irreversible call (see floorGuard):
     // through the same approval flow, with no session-wide grant, since each
     // irreversible act gets its own human decision.
+    // Floor calls the human already approved in the PreToolUse hook, by
+    // tool-use id, with the input they approved. The CLI can still send such a
+    // call on to canUseTool (a settings ask rule, one of its safety checks, or
+    // another hook's "ask"), which must not ask the human a second time.
+    const approvedInHook = new Map<string, string>();
+
     const holdForHuman: FloorPolicy = async ({
       requestId,
+      toolUseId,
       toolName,
       input,
     }) => {
       if (interrupted) return { allow: false, reason: 'run cancelled' };
+      if (ending) return { allow: false, reason: RUN_ENDED_DENIAL };
       const decision = await askHuman(requestId, toolName, input);
+      if (decision.allow) {
+        approvedInHook.set(toolUseId, JSON.stringify(input));
+        // Safe to honour: sessionAllowed is never consulted for a floor call.
+        if (decision.scope === 'session') sessionAllowed.add(toolName);
+      }
       return { allow: decision.allow, reason: decision.reason };
     };
 
     const canUseTool: CanUseTool = async (toolName, input, callOpts) => {
       if (interrupted) {
         return { behavior: 'deny', message: 'run cancelled' };
+      }
+      if (ending) {
+        return { behavior: 'deny', message: RUN_ENDED_DENIAL };
       }
       // Ahead of every allow branch below, including the `acceptEdits`
       // auto-allow: after a stop, "the agent may edit files without asking"
@@ -666,6 +696,13 @@ export class ClaudeExecutor implements Executor {
       // earlier "approve Bash for this session" lets one through. Each
       // irreversible act gets its own human decision, at every policy rung.
       const floorHold = floorCheckForToolInput(input);
+      if (
+        floorHold !== null &&
+        approvedInHook.get(callOpts.toolUseID) === JSON.stringify(input)
+      ) {
+        approvedInHook.delete(callOpts.toolUseID);
+        return { behavior: 'allow', updatedInput: input };
+      }
       if (floorHold === null) {
         if (
           opts.permissionMode === 'acceptEdits' &&
@@ -756,6 +793,32 @@ export class ClaudeExecutor implements Executor {
     };
     const sdkQuery: Query = this.openQuery(queue, sdkOptions);
 
+    // Settles everything still pending when the session's result arrives,
+    // before the query is closed. The run ends at its result, but background
+    // sub-agents can still be working, and closing the query leaves the CLI
+    // with no way to hear an answer: a background sub-agent's held floor call
+    // then went ahead as if no hook had decided (reproduced through this
+    // executor under bypassPermissions). So: refuse anything new, deny what is
+    // pending, stop the background tasks, and give the CLI a moment to take
+    // those answers in. A run with nothing pending skips all of it.
+    const windDown = async (liveTasks: readonly string[]): Promise<void> => {
+      ending = true;
+      if (pendingApprovals.size === 0 && liveTasks.length === 0) return;
+      for (const resolve of pendingApprovals.values()) {
+        resolve({ allow: false, reason: RUN_ENDED_DENIAL });
+      }
+      pendingApprovals.clear();
+      // Bounded: a CLI that never confirms a stop must not keep the run from
+      // finishing. Closing the query ends its tasks within seconds anyway.
+      await Promise.race([
+        Promise.allSettled(
+          liveTasks.map((taskId) => sdkQuery.stopTask(taskId))
+        ),
+        new Promise((resolve) => setTimeout(resolve, WIND_DOWN_STOP_MS)),
+      ]);
+      await new Promise((resolve) => setTimeout(resolve, WIND_DOWN_FLUSH_MS));
+    };
+
     // Fire-and-forget: `start()` must return the ExecutorRun handle
     // synchronously (same contract as FakeExecutor), before any onEntry/
     // onFinish call can land.
@@ -790,6 +853,9 @@ export class ClaudeExecutor implements Executor {
       // lifecycle messages, tool results) into `agent` entries — see the
       // tracker's own doc comment for why one object has to see all three.
       const subagents = new SubagentTracker();
+      // The session's live background tasks (background_tasks_changed
+      // carries the whole set each time), so windDown can stop them.
+      let backgroundTasks: string[] = [];
       // Token usage by billing type — see ClaudeUsageMeter for why it reads
       // both the streamed messages and the terminal result.
       const usageMeter = new ClaudeUsageMeter();
@@ -820,6 +886,9 @@ export class ClaudeExecutor implements Executor {
               events.onEntry(entry);
             }
           } else if (message.type === 'system') {
+            if (message.subtype === 'background_tasks_changed') {
+              backgroundTasks = message.tasks.map((task) => task.task_id);
+            }
             const lifecycle = subagents.onSystem(
               message,
               new Date().toISOString()
@@ -853,6 +922,7 @@ export class ClaudeExecutor implements Executor {
             }
           } else if (message.type === 'result') {
             gotResult = true;
+            await windDown(backgroundTasks);
             if (!interrupted) {
               events.onFinish({
                 ...guardZeroTurnFinish(

@@ -11,6 +11,8 @@ import { floorCheckForToolInput } from '../floor.js';
 export interface FloorHoldRequest {
   /** Unique per tool call, so the approval flow can key its answer to it. */
   requestId: string;
+  /** The tool call's own id, which canUseTool also receives for the call. */
+  toolUseId: string;
   toolName: string;
   input: unknown;
   check: FloorCheck;
@@ -57,11 +59,17 @@ const FLOOR_HOLD_TIMEOUT_SECONDS = 7 * 24 * 60 * 60;
  *
  * - A PreToolUse hook sees every tool call first, sub-agents' included, and
  *   decides a floor-tripping one itself. With a hold policy it waits for the
- *   human and returns allow or deny, which the CLI applied without entering
- *   its permission path: no PermissionRequest hook ran and `canUseTool` was
- *   not called, in every permission mode. A settings deny rule still refused
- *   the call after a human's allow. Calls the floor does not cover get no
- *   decision, so they take the session's normal permission path unchanged.
+ *   human and returns allow or deny. A deny is final. An allow skips the
+ *   permission path unless something else still asks for it: a settings ask
+ *   rule, one of the CLI's own safety checks, or another hook answering "ask"
+ *   sends the call on to `canUseTool`, so a session has to recognize a call
+ *   its human already approved (the executor and overseer do, by tool-use
+ *   id). Without those, no PermissionRequest hook ran and `canUseTool` was
+ *   not called. A settings deny rule still refused the call after a human's
+ *   allow. Calls the floor does not cover get no decision, so they take the
+ *   session's normal permission path unchanged. A policy that throws is a
+ *   refusal: a hook that fails gives the CLI no decision, which is an allow
+ *   under bypassPermissions.
  * - `CLAUDE_CODE_SIMPLE` is pinned off. Bare mode drops every hook registered
  *   through the SDK, and a repo's `.claude/settings.json` (or a
  *   `settings.local.json` an agent writes) can switch it on through its `env`
@@ -119,12 +127,22 @@ function floorHook(
         `This command matches Dispatch's irreversible-action floor (${check}) and cannot run in this session, which has no human to approve it. If you only meant to find or read that text, use a search pattern or command that does not spell out the whole command.`
       );
     }
-    const answer = await policy({
-      requestId: `floor-${toolUseId ?? input.tool_use_id}`,
-      toolName: input.tool_name,
-      input: input.tool_input,
-      check,
-    });
+    const callId = toolUseId ?? input.tool_use_id;
+    let answer: FloorHoldDecision;
+    try {
+      answer = await policy({
+        requestId: `floor-${callId}`,
+        toolUseId: callId,
+        toolName: input.tool_name,
+        input: input.tool_input,
+        check,
+      });
+    } catch (err) {
+      return decision(
+        'deny',
+        `Dispatch could not hold this irreversible action (${check}) for a human, so it was not run: ${(err as Error).message}`
+      );
+    }
     if (answer.allow) {
       return decision(
         'allow',

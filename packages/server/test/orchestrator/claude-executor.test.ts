@@ -387,6 +387,192 @@ describe('ClaudeExecutor CLI-parity system prompt and setting sources', () => {
     }
   });
 
+  // After the hook's allow the CLI can still send the call on to canUseTool
+  // (a settings ask rule, one of its safety checks, another hook's "ask");
+  // the human already decided on that exact call, so it is not asked twice.
+  it('does not ask twice about a floor call the human approved in the hook', async () => {
+    let captured: Options | undefined;
+    const requests: string[] = [];
+    const executor = new ClaudeExecutor((args: { options?: Options }) => {
+      captured = args.options;
+      return emptyMessages() as unknown as Query;
+    });
+    const run = executor.start(
+      {
+        cwd: '/tmp/dispatch-worktree-x',
+        prompt: 'x',
+        permissionMode: 'default',
+      },
+      {
+        ...noopEvents,
+        onApprovalRequest: (request) => {
+          requests.push(request.requestId);
+          queueMicrotask(() =>
+            run.approve(request.requestId, { allow: true, scope: 'session' })
+          );
+        },
+      }
+    );
+    const push = { command: 'git push --force origin main' };
+    expect(await floorDecision(captured?.hooks, 'Bash', push)).toBe('allow');
+    // "Allow Bash for this run" on the floor approval still grants routine
+    // Bash calls; it never pre-approves a floor call.
+    expect(
+      await captured?.canUseTool?.(
+        'Bash',
+        { command: 'bun test' },
+        {
+          signal: new AbortController().signal,
+          toolUseID: 'tu-2',
+          requestId: 'cli-uuid-2',
+        }
+      )
+    ).toEqual({ behavior: 'allow', updatedInput: { command: 'bun test' } });
+    expect(requests).toEqual(['floor-tu-1']);
+    const callOpts = {
+      signal: new AbortController().signal,
+      toolUseID: 'tu-1',
+      requestId: 'cli-uuid-1',
+    };
+    expect(await captured?.canUseTool?.('Bash', push, callOpts)).toEqual({
+      behavior: 'allow',
+      updatedInput: push,
+    });
+    expect(requests).toEqual(['floor-tu-1']);
+    // Only that exact call: a changed input, or the same id again, is asked.
+    const other = { command: 'git push --force origin release' };
+    await captured?.canUseTool?.('Bash', other, callOpts);
+    expect(requests).toEqual(['floor-tu-1', 'cli-uuid-1']);
+  });
+
+  // The run ends at its result, but a background sub-agent can still be
+  // working, and once the query closes the CLI cannot hear a hold's answer: a
+  // held floor call then went ahead as if no hook had decided (reproduced
+  // under bypassPermissions). So the result settles every pending hold as a
+  // refusal and stops the live background tasks before the query closes.
+  it('refuses pending holds and stops background tasks when the result arrives', async () => {
+    let captured: Options | undefined;
+    let releaseResult!: () => void;
+    const resultReleased = new Promise<void>((resolve) => {
+      releaseResult = resolve;
+    });
+    const stopped: string[] = [];
+    const executor = new ClaudeExecutor((args: { options?: Options }) => {
+      captured = args.options;
+      const messages = (async function* (): AsyncGenerator<unknown> {
+        yield { type: 'system', subtype: 'init', session_id: 's' };
+        yield {
+          type: 'system',
+          subtype: 'background_tasks_changed',
+          session_id: 's',
+          tasks: [
+            { task_id: 'task-sub', task_type: 'subagent', description: 'x' },
+          ],
+        };
+        yield {
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: 'launched it' }] },
+        };
+        await resultReleased;
+        yield {
+          type: 'result',
+          subtype: 'success',
+          is_error: false,
+          num_turns: 1,
+          total_cost_usd: 0.01,
+          session_id: 's',
+          result: 'done',
+          terminal_reason: 'completed',
+          modelUsage: {},
+          errors: [],
+        };
+      })();
+      return Object.assign(messages, {
+        stopTask: (taskId: string) => {
+          stopped.push(taskId);
+          return Promise.resolve();
+        },
+        interrupt: () => Promise.resolve(),
+        close: () => {},
+      }) as unknown as Query;
+    });
+    const finished = new Promise<void>((resolve) => {
+      executor.start(
+        {
+          cwd: '/tmp/dispatch-worktree-x',
+          prompt: 'x',
+          permissionMode: 'bypassPermissions',
+        },
+        { ...noopEvents, onFinish: () => resolve() }
+      );
+    });
+    // Let the stream deliver the task list before the hold is raised.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const held = preToolUse(captured?.hooks, 'Bash', {
+      command: 'git push --force origin main',
+    });
+    releaseResult();
+    expect(await held).toMatchObject({ permissionDecision: 'deny' });
+    expect(String((await held)?.permissionDecisionReason)).toContain(
+      'run ended'
+    );
+    await finished;
+    expect(stopped).toEqual(['task-sub']);
+    // Nothing raised after the result can be approved either.
+    expect(
+      await floorDecision(captured?.hooks, 'Bash', { command: 'npm publish' })
+    ).toBe('deny');
+  });
+
+  it('still finishes when the CLI never confirms a background task stopped', async () => {
+    const executor = new ClaudeExecutor(
+      () =>
+        Object.assign(
+          (async function* (): AsyncGenerator<unknown> {
+            yield { type: 'system', subtype: 'init', session_id: 's' };
+            yield {
+              type: 'system',
+              subtype: 'background_tasks_changed',
+              session_id: 's',
+              tasks: [{ task_id: 't', task_type: 'shell', description: 'x' }],
+            };
+            yield {
+              type: 'assistant',
+              message: { content: [{ type: 'text', text: 'done' }] },
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              is_error: false,
+              num_turns: 1,
+              total_cost_usd: 0.01,
+              session_id: 's',
+              result: 'done',
+              terminal_reason: 'completed',
+              modelUsage: {},
+              errors: [],
+            };
+          })(),
+          {
+            stopTask: () => new Promise<void>(() => {}),
+            interrupt: () => Promise.resolve(),
+            close: () => {},
+          }
+        ) as unknown as Query
+    );
+    const finish = await new Promise<{ state: string }>((resolve) => {
+      executor.start(
+        {
+          cwd: '/tmp/dispatch-worktree-x',
+          prompt: 'x',
+          permissionMode: 'auto',
+        },
+        { ...noopEvents, onFinish: resolve }
+      );
+    });
+    expect(finish.state).toBe('finished');
+  }, 15_000);
+
   // Each of these was exercised through this executor against the real CLI:
   // AskUserQuestion's answers never arrive, cron jobs and wakeups die with
   // the run, and EnterWorktree moves the agent out of the run's worktree.

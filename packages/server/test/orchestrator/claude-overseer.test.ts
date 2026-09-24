@@ -189,6 +189,30 @@ describe('ClaudeOverseer session wiring', () => {
     expect(asked).toHaveLength(1);
   });
 
+  // After the hook's allow the CLI can still send the call on to canUseTool;
+  // the human already decided on that exact call, so authorizeTool is not
+  // asked again.
+  it('does not ask twice about a floor call approved in the hook', async () => {
+    const { toolset } = stubToolset();
+    let asks = 0;
+    const { captured } = await runTurn(successStream(), toolset, undefined, {
+      authorizeTool: () => {
+        asks += 1;
+        return Promise.resolve({ allow: true });
+      },
+    });
+    const release = { command: 'gh release create v2.0.0' };
+    expect(await floorDecision(captured?.hooks, 'Bash', release)).toBe('allow');
+    expect(
+      await captured?.canUseTool?.('Bash', release, {
+        signal: new AbortController().signal,
+        toolUseID: 'tu-1',
+        requestId: 'cli-uuid-1',
+      })
+    ).toEqual({ behavior: 'allow', updatedInput: release });
+    expect(asks).toBe(1);
+  });
+
   it('leaves the caps and policy to the SDK defaults when the project sets none', async () => {
     const { toolset } = stubToolset();
     const { captured } = await runTurn(successStream(), toolset);
