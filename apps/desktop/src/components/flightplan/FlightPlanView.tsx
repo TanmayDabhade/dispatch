@@ -534,7 +534,7 @@ export function FlightPlan({
         title:
           band.container?.meta.title ?? `Directly in ${container.meta.title}`,
         refLabel: band.container === null ? null : refFor(band.key),
-        status: rollupMilestoneStatus(work),
+        status: rollupMilestoneStatus(work, model),
         done: work.filter((t) => isDoneStatus(t.meta.status, model)).length,
         total: work.length,
         controls:

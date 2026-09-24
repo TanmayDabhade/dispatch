@@ -1,4 +1,4 @@
-import type { TaskListItem } from '@dispatch/core/browser';
+import type { StatusModel, TaskListItem } from '@dispatch/core/browser';
 import {
   hasStatusDefinition,
   hasStatusRole,
@@ -15,10 +15,13 @@ import { activeStatusModel } from './statusModel';
  * most actionable child state: dispatched > review > landing > ready > backlog, and it only
  * turns landed once every child is terminal (completed or canceled). A custom open status
  * that is not backlog counts at the ready tier: it's open work, just not a named stage.
- * Statuses are the project's own, found by role and type (see core's status.ts).
+ * Statuses are the project's own, found by role and type (see core's status.ts). A memo keyed
+ * on config passes that config's `model`: the module-level one updates a render later.
  */
-export function rollupMilestoneStatus(children: TaskListItem[]): string {
-  const model = activeStatusModel();
+export function rollupMilestoneStatus(
+  children: TaskListItem[],
+  model: StatusModel = activeStatusModel()
+): string {
   const { roles } = model;
   const backlog = statusesOfType('backlog', model)[0] ?? 'draft';
   if (children.length === 0) return backlog;
@@ -41,8 +44,10 @@ export function rollupMilestoneStatus(children: TaskListItem[]): string {
 }
 
 /** True once every child is terminal — the "milestones show as finished" rule. */
-export function isMilestoneFinished(children: TaskListItem[]): boolean {
-  const model = activeStatusModel();
+export function isMilestoneFinished(
+  children: TaskListItem[],
+  model: StatusModel = activeStatusModel()
+): boolean {
   return (
     children.length > 0 &&
     children.every((c) => isDoneStatus(c.meta.status, model))

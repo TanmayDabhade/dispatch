@@ -144,8 +144,11 @@ function resolveStatusVisual(
 
 /** The CSS colour a status paints with (`var(--status-progress)` for working, …) — what a
  * group header sets as its `--tint` and what a graph node strokes its border in. */
-export function statusColor(status: string): string {
-  return resolveStatusVisual(status).color;
+export function statusColor(
+  status: string,
+  model: StatusModel = activeStatusModel()
+): string {
+  return resolveStatusVisual(status, model).color;
 }
 
 /** The dashoffset that leaves `fraction` of the pie visible — the shared glyph's, re-exported

@@ -156,21 +156,21 @@ export function MilestoneBranchesView({
       const all =
         group.epicId === null ? undefined : childrenByEpic.get(group.epicId);
       if (all === undefined) continue;
-      const rollup = rollupMilestoneStatus(all);
+      const rollup = rollupMilestoneStatus(all, model);
       const children = group.rows.map((r) => r.doc);
       const dagTasks = children.map(dagTaskFromDoc);
       const layout = branchLayout(dagTasks, model);
       const branch: MilestoneBranch = {
         group: {
           ...group,
-          tint: statusColor(rollup),
+          tint: statusColor(rollup, model),
           icon: { kind: 'milestone', status: rollup },
         },
         children,
         dagTasks,
         summary: layout.pathSummary,
         rowIds: layout.rows.map((r) => r.id),
-        finished: isMilestoneFinished(all),
+        finished: isMilestoneFinished(all, model),
       };
       (branch.finished ? finished : open).push(branch);
     }
