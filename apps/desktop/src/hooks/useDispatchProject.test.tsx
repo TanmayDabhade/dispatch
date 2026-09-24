@@ -58,6 +58,10 @@ const taskDocs = new Map<string, TaskDoc>();
 let configFixture: object | null = null;
 let configFetches = 0;
 
+// What `createRun` answers; a test swaps in a held or refused promise.
+let createRunResult: () => Promise<RunMeta> = () =>
+  Promise.reject(new Error('no runs in this test'));
+
 // Only `createApiClient` is replaced — the rest of the module (ApiError, which
 // useOverseerSession's 404 veto instanceof-checks) has to stay real.
 // Lets a test hold the first presence fetch open, so a `hello` can land while
@@ -77,6 +81,7 @@ void mock.module('@dispatch/client', () => ({
         : Promise.resolve(configFixture);
     },
     fetchReadiness: () => Promise.resolve({}),
+    createRun: () => createRunResult(),
     fetchReadyTasks: () => Promise.resolve([]),
     fetchTaskList: () => {
       taskListFetches += 1;
@@ -418,6 +423,73 @@ test('a loose task changing refetches only that task', async () => {
   expect(
     queryClient.getQueryCache().find({ queryKey: ['dispatch-ready-tasks'] })
   ).toBeUndefined();
+  taskListFixture = null;
+  configFixture = null;
+});
+
+// Mounts with a one-ready-task list and a config, returning the hook's result.
+async function mountReadyTask(onRunDispatched?: (runId: string) => void) {
+  configFixture = {
+    statuses: ['draft', 'ready', 'working', 'review', 'landed', 'dropped'],
+    notifications: { kinds: null },
+  };
+  taskListFixture = [
+    { meta: taskDoc('t-1', 'Ready one', '2026-01-01T00:00:00.000Z').meta },
+  ];
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { result } = renderHook(
+    () => useDispatchProject('/repo', { selectedRunId: null, onRunDispatched }),
+    { wrapper: wrapper(queryClient) }
+  );
+  await waitFor(() => {
+    expect([...result.current.readyIds]).toEqual(['t-1']);
+  });
+  return result;
+}
+
+const statusOf = (tasks: TaskListItem[]) => tasks[0]?.meta.status;
+
+test('an optimistic dispatch shows the task started before the daemon answers', async () => {
+  const followed: string[] = [];
+  const result = await mountReadyTask((runId) => followed.push(runId));
+  let answer: (run: RunMeta) => void = () => {};
+  createRunResult = () => new Promise((resolve) => (answer = resolve));
+
+  let sent: Promise<void> = Promise.resolve();
+  act(() => {
+    sent = result.current.handleDispatch('t-1', undefined, undefined, {
+      optimistic: true,
+    });
+  });
+  expect(statusOf(result.current.tasks)).toBe('working');
+  expect(result.current.readyIds.has('t-1')).toBe(false);
+
+  await act(async () => {
+    answer(runFixture('r-1', 'running'));
+    await sent;
+  });
+  expect(followed).toEqual([]);
+  taskListFixture = null;
+  configFixture = null;
+});
+
+test('a refused optimistic dispatch puts the task back and rejects', async () => {
+  const result = await mountReadyTask();
+  createRunResult = () => Promise.reject(new Error('task is blocked'));
+
+  let error: unknown = null;
+  await act(async () => {
+    await result.current
+      .handleDispatch('t-1', undefined, undefined, { optimistic: true })
+      .catch((err: unknown) => {
+        error = err;
+      });
+  });
+  expect((error as Error | null)?.message).toBe('task is blocked');
+  expect(statusOf(result.current.tasks)).toBe('ready');
+  expect(result.current.readyIds.has('t-1')).toBe(true);
   taskListFixture = null;
   configFixture = null;
 });

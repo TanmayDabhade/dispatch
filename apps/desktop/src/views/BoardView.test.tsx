@@ -687,6 +687,31 @@ test('j walks a column in its displayed (priority) order, not data order', () =>
   expect(new Set(opened)).toEqual(new Set(['t-high']));
 });
 
+// The board's `d` (and a card's Dispatch) go through the optimistic path like the Cockpit's:
+// the card moves at once and the board stays put. A card that is not ready ignores `d`.
+test('d dispatches the focused ready card in place', () => {
+  const sent: [string, unknown][] = [];
+  const data = {
+    ...boardData(),
+    handleDispatch: (id: string, _e?: string, _m?: string, opts?: unknown) => {
+      sent.push([id, opts]);
+      return Promise.resolve();
+    },
+  } as DispatchProjectData;
+  render(view('board', { data }));
+  const anchor = cardRoot('Card one');
+
+  pressNav('j', anchor);
+  while (!focusedCardText().includes('Card one')) pressNav('j', anchor);
+  fireEvent.keyDown(anchor, { key: 'd' });
+  expect(sent).toEqual([['t-1', { optimistic: true }]]);
+
+  pressNav('j', anchor);
+  expect(focusedCardText()).not.toContain('Card one');
+  fireEvent.keyDown(anchor, { key: 'd' });
+  expect(sent).toHaveLength(1);
+});
+
 // The regression this guards: `initial` used to win over storage, so App's never-updated
 // `mode` prop put the board back on Board every time the view remounted (a trip to Git and
 // back) after the user had chosen List.

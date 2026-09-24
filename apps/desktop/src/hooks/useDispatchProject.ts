@@ -43,6 +43,7 @@ import type {
 } from '@dispatch/core/browser';
 import {
   isContainer,
+  isUnstartedStatus,
   parentIdsOf,
   readyTasks,
   statusModelOf,
@@ -98,9 +99,11 @@ import {
   removeTaskListItem,
   touchesFanout,
   upsertTaskListItem,
+  withDispatching,
 } from '../lib/taskListCache';
 import { ensureDispatchd, restartDispatchd } from '../lib/tauri';
 import { gitQueryRootKey } from './useGit';
+import { useOptimisticDispatch } from './useOptimisticDispatch';
 import {
   findingsQueryRootKey,
   fixLoopQueryRootKey,
@@ -142,6 +145,8 @@ const SHOW_ARCHIVED_STORAGE_KEY = 'dispatch:show-archived';
 
 // task.changed is handled in the socket's onEvent, where its ids are.
 const ignoreChange = () => {};
+// An in-place dispatch's failure reaches its caller as a rejection instead.
+const ignoreDispatchFailure = () => {};
 
 // Stable empty registry while the people query loads.
 const NO_PEOPLE: readonly Person[] = [];
@@ -237,6 +242,12 @@ interface DispatchOptions {
    * exactly one is not a batch: pass `false` and it jumps like any single dispatch.
    */
   batch?: boolean;
+  /**
+   * The list's and board's dispatch: the task shows as started at once and the user stays
+   * put (no `onRunDispatched`), like the Cockpit's `d`. A refused dispatch puts the task
+   * back and rejects. Always the default executor and model.
+   */
+  optimistic?: boolean;
 }
 
 export interface DispatchProjectData {
@@ -855,7 +866,7 @@ export function useDispatchProject(
   // One archived-inclusive, body-less list; `tasks` (active only) and
   // `archivedTasks` are derived from it below rather than fetched separately.
   const {
-    data: allTasksIncludingArchived,
+    data: listedTasks,
     isLoading: tasksLoading,
     isFetched: allTasksFetched,
   } = useQuery({
@@ -866,11 +877,6 @@ export function useDispatchProject(
     },
     enabled: client !== null,
   });
-  const tasks = useMemo(
-    () =>
-      allTasksIncludingArchived?.filter((t) => t.meta.archivedAt === undefined),
-    [allTasksIncludingArchived]
-  );
 
   // Writes one fetched doc into the caches in place of a list refetch: its list entry
   // (meta only) and, when a task page holds it, its full doc. Stale responses lose.
@@ -1005,6 +1011,63 @@ export function useDispatchProject(
     },
     enabled: client !== null,
   });
+
+  // The list's and board's dispatch (`DispatchOptions.optimistic`): the Cockpit's pending
+  // map, shown as the dispatched status over the listed tasks until the daemon's own
+  // change or the run arrives. A failure is kept for `dispatchInPlace` to rethrow.
+  const liveRunTaskIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const run of runs ?? []) {
+      if (!isTerminalRunState(run.state)) ids.add(run.taskId);
+    }
+    return ids;
+  }, [runs]);
+  const statusModel = useMemo(() => statusModelOf(config), [config]);
+  const stillWaiting = useCallback(
+    (taskId: string) => {
+      const task = listedTasks?.find((t) => t.meta.id === taskId);
+      return (
+        task !== undefined && isUnstartedStatus(task.meta.status, statusModel)
+      );
+    },
+    [listedTasks, statusModel]
+  );
+  const dispatchFailures = useRef(new Map<string, unknown>());
+  const sendInPlace = useCallback(
+    async (taskId: string) => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      const claude = (executors?.default ?? 'claude') === 'claude';
+      try {
+        await client.createRun(taskId, {
+          model: claude ? resolveExecuteModel(config) : undefined,
+        });
+      } catch (err) {
+        dispatchFailures.current.set(taskId, err);
+        throw err;
+      }
+      void queryClient.invalidateQueries({ queryKey: runsQueryKey });
+    },
+    [client, config, executors, queryClient, runsQueryKey]
+  );
+  const inPlace = useOptimisticDispatch(
+    sendInPlace,
+    liveRunTaskIds,
+    stillWaiting,
+    ignoreDispatchFailure
+  );
+  const dispatchInPlace = inPlace.dispatch;
+  const allTasksIncludingArchived = useMemo(
+    () =>
+      listedTasks === undefined
+        ? undefined
+        : withDispatching(listedTasks, inPlace.pending, statusModel),
+    [listedTasks, inPlace.pending, statusModel]
+  );
+  const tasks = useMemo(
+    () =>
+      allTasksIncludingArchived?.filter((t) => t.meta.archivedAt === undefined),
+    [allTasksIncludingArchived]
+  );
   // What the Approve buttons act on: the daemon's own record of each parked
   // run's request, with the live events covering the moment before a refetch.
   const pendingApprovals = useMemo(
@@ -1179,11 +1242,9 @@ export function useDispatchProject(
       return new Set<string>();
     }
     return new Set(
-      readyTasks(allTasksIncludingArchived, statusModelOf(config)).map(
-        (t) => t.meta.id
-      )
+      readyTasks(allTasksIncludingArchived, statusModel).map((t) => t.meta.id)
     );
-  }, [config, allTasksIncludingArchived]);
+  }, [config, allTasksIncludingArchived, statusModel]);
   const { readinessById, scheduleJudge } = useReadiness(
     client,
     port,
@@ -2194,6 +2255,13 @@ export function useDispatchProject(
       opts?: DispatchOptions
     ): Promise<void> => {
       if (client === null) return;
+      if (opts?.optimistic === true) {
+        await dispatchInPlace(taskId);
+        const failure = dispatchFailures.current.get(taskId);
+        dispatchFailures.current.delete(taskId);
+        if (failure !== undefined) throw failure;
+        return;
+      }
       // Only a Claude dispatch carries the picker's model (the picker lists
       // Claude ids); any other executor resolves its own default server-side.
       const effective = executor ?? executors?.default ?? 'claude';
@@ -2209,7 +2277,15 @@ export function useDispatchProject(
       // run. See DispatchOptions for what firing this per task looks like.
       if (opts?.batch !== true) onRunDispatched?.(meta.id, meta.taskId);
     },
-    [client, config, executors, queryClient, runsQueryKey, onRunDispatched]
+    [
+      client,
+      config,
+      executors,
+      queryClient,
+      runsQueryKey,
+      onRunDispatched,
+      dispatchInPlace,
+    ]
   );
 
   const handleApprove = useCallback(

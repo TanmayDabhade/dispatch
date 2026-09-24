@@ -312,9 +312,12 @@ export function TasksListView({
     }
   }, [orderedIds, focusedTaskId]);
 
+  // In place and optimistic, like the Cockpit's `d`: the row shows as started at once.
   function dispatchOne(taskId: string) {
     if (!data.readyIds.has(taskId)) return;
-    void data.handleDispatch(taskId);
+    void data.handleDispatch(taskId, undefined, undefined, {
+      optimistic: true,
+    });
   }
 
   // Only a keyboard move scrolls — a hover that set the cursor must not shift the list under

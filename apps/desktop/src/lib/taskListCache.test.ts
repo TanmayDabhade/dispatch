@@ -1,10 +1,12 @@
 import type { TaskListItem, TaskMeta } from '@dispatch/core/browser';
+import { DEFAULT_STATUS_MODEL } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
 import {
   removeTaskListItem,
   touchesFanout,
   upsertTaskListItem,
+  withDispatching,
 } from './taskListCache';
 
 function item(id: string, created: string, updated = created): TaskListItem {
@@ -89,5 +91,29 @@ describe('touchesFanout', () => {
 
   test('with no list cached, it might', () => {
     expect(touchesFanout(undefined, 't-loose', null)).toBe(true);
+  });
+});
+
+describe('withDispatching', () => {
+  const at = (id: string, status: string) =>
+    ({ meta: { id, status } as TaskMeta }) as TaskListItem;
+  const list = [at('t-1', 'ready'), at('t-2', 'ready'), at('t-3', 'review')];
+  const statuses = (next: TaskListItem[]) => next.map((t) => t.meta.status);
+
+  test('shows a waiting task being dispatched as the dispatched status', () => {
+    const next = withDispatching(
+      list,
+      new Map([['t-2', 0]]),
+      DEFAULT_STATUS_MODEL
+    );
+    expect(statuses(next)).toEqual(['ready', 'working', 'review']);
+    expect(list[1].meta.status).toBe('ready');
+  });
+
+  test('leaves a task the daemon already moved, and returns the same list', () => {
+    expect(
+      withDispatching(list, new Map([['t-3', 0]]), DEFAULT_STATUS_MODEL)
+    ).toBe(list);
+    expect(withDispatching(list, new Map(), DEFAULT_STATUS_MODEL)).toBe(list);
   });
 });

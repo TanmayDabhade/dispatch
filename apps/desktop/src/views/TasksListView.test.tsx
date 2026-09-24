@@ -31,6 +31,7 @@ beforeEach(() => window.sessionStorage.clear());
 interface DispatchCall {
   taskId: string;
   batch: boolean | undefined;
+  optimistic?: boolean;
 }
 
 function task(
@@ -83,9 +84,13 @@ function dataWith(
       taskId: string,
       _executor?: string,
       _model?: string,
-      opts?: { batch?: boolean }
+      opts?: { batch?: boolean; optimistic?: boolean }
     ) => {
-      calls.push({ taskId, batch: opts?.batch });
+      calls.push({
+        taskId,
+        batch: opts?.batch,
+        ...(opts?.optimistic !== undefined && { optimistic: opts.optimistic }),
+      });
       return Promise.resolve();
     },
   } as unknown as DispatchProjectData;
@@ -201,6 +206,27 @@ test('a bulk dispatch of one task still follows it', async () => {
 
   await waitFor(() => expect(calls.length).toBe(1));
   expect(calls[0]?.batch).toBe(false);
+});
+
+// `d` goes through the optimistic path, like the Cockpit's: the row shows as started at
+// once and the list stays where it is.
+test('d dispatches the focused ready row in place', async () => {
+  const calls: DispatchCall[] = [];
+  const data = dataWith(
+    [task('t-1', 'First task'), task('t-2', 'Second task')],
+    calls
+  );
+  renderList({ ...data, readyIds: new Set(['t-2']) });
+  const grid = screen.getByRole('grid', { name: 'Tasks' });
+
+  fireEvent.keyDown(grid, { key: 'd' });
+  fireEvent.keyDown(grid, { key: 'j' });
+  fireEvent.keyDown(grid, { key: 'd' });
+
+  await waitFor(() => expect(calls.length).toBe(1));
+  expect(calls).toEqual([
+    { taskId: 't-2', batch: undefined, optimistic: true },
+  ]);
 });
 
 // §4: rows are 36px ListRows straight on the panel — no table, no header row, no divider,

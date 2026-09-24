@@ -1,5 +1,9 @@
-import type { TaskListItem, TaskMeta } from '@dispatch/core/browser';
-import { isContainerKind } from '@dispatch/core/browser';
+import type {
+  StatusModel,
+  TaskListItem,
+  TaskMeta,
+} from '@dispatch/core/browser';
+import { isContainerKind, isUnstartedStatus } from '@dispatch/core/browser';
 
 // The server's list order (packages/server/src/cache.ts): created, then id.
 function before(a: TaskMeta, b: TaskMeta): boolean {
@@ -56,4 +60,28 @@ export function touchesFanout(
     }
   }
   return false;
+}
+
+/** The list with each task in `dispatching` that is still waiting to start shown in the
+ * model's dispatched status — a dispatch drawn as started before the daemon's own change
+ * arrives. The same array when nothing changes. */
+export function withDispatching(
+  list: TaskListItem[],
+  dispatching: ReadonlyMap<string, unknown>,
+  model: StatusModel
+): TaskListItem[] {
+  if (dispatching.size === 0) return list;
+  const status = model.roles.dispatched;
+  let changed = false;
+  const next = list.map((task) => {
+    if (
+      !dispatching.has(task.meta.id) ||
+      !isUnstartedStatus(task.meta.status, model)
+    ) {
+      return task;
+    }
+    changed = true;
+    return { ...task, meta: { ...task.meta, status } };
+  });
+  return changed ? next : list;
 }

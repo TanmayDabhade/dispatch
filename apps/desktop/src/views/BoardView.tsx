@@ -496,6 +496,16 @@ export function BoardView({
     [client]
   );
 
+  // A card's Dispatch, `Dispatch all ready` and `d`: in place and optimistic, like the
+  // Cockpit's — the card moves to the dispatched column at once.
+  const handleDispatch = data.handleDispatch;
+  const readyIds = data.readyIds;
+  const dispatchInPlace = useCallback(
+    (taskId: string) =>
+      handleDispatch(taskId, undefined, undefined, { optimistic: true }),
+    [handleDispatch]
+  );
+
   function handleBoardKeyDown(e: React.KeyboardEvent) {
     // A keydown that lands on (or inside) one of the track's own interactive controls — an
     // epic lane header's buttons or pickers, a column's menu, a card's Dispatch button.
@@ -528,6 +538,12 @@ export function BoardView({
       if (onControl) return;
       e.preventDefault();
       if (focusedTaskId !== null) onSelectTask(focusedTaskId);
+      return;
+    }
+    if (command === 'list-dispatch') {
+      if (focusedTaskId === null || !readyIds.has(focusedTaskId)) return;
+      e.preventDefault();
+      void dispatchInPlace(focusedTaskId);
       return;
     }
     if (command !== 'list-down' && command !== 'list-up') return;
@@ -807,7 +823,7 @@ export function BoardView({
             }
             epics={data.epics}
             onSelect={onSelectTask}
-            onDispatch={data.handleDispatch}
+            onDispatch={dispatchInPlace}
             onWorkEpic={data.handleWorkEpic}
             onPauseEpic={data.handlePauseEpic}
             onResumeEpic={data.handleResumeEpic}
