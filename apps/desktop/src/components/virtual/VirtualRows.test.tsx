@@ -1,0 +1,90 @@
+import { act, render } from '@testing-library/react';
+import { expect, test } from 'bun:test';
+import { createRef, useState } from 'react';
+
+import { VirtualRows, type VirtualRowsHandle } from './VirtualRows';
+
+interface Row {
+  id: string;
+}
+
+const ROWS: Row[] = Array.from({ length: 2000 }, (_, i) => ({ id: `t-${i}` }));
+const rowKey = (row: Row) => row.id;
+const size = () => 36;
+
+function List({
+  rows = ROWS,
+  pinnedKeys,
+  handle,
+}: {
+  rows?: Row[];
+  pinnedKeys?: string[];
+  handle?: React.Ref<VirtualRowsHandle>;
+}) {
+  const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
+  return (
+    <div ref={setScroller} data-testid="scroller" style={{ overflow: 'auto' }}>
+      <VirtualRows
+        rows={rows}
+        rowKey={rowKey}
+        estimateSize={size}
+        scrollElement={scroller}
+        pinnedKeys={pinnedKeys}
+        handleRef={handle}
+        renderRow={(row) => <div data-row-id={row.id}>{row.id}</div>}
+      />
+    </div>
+  );
+}
+
+function mountedIds(container: HTMLElement): string[] {
+  return Array.from(container.querySelectorAll('[data-row-id]')).map(
+    (el) => el.getAttribute('data-row-id') ?? ''
+  );
+}
+
+test('mounts a screenful of 2000 rows, not all of them', () => {
+  const { container } = render(<List />);
+  const ids = mountedIds(container);
+  expect(ids[0]).toBe('t-0');
+  expect(ids.length).toBeGreaterThan(10);
+  expect(ids.length).toBeLessThan(60);
+  // The track is as tall as every row together.
+  const track = container.querySelector<HTMLElement>(
+    '[data-slot="virtual-rows"]'
+  );
+  expect(track?.style.height).toBe(`${2000 * 36}px`);
+});
+
+test('places each row at its offset', () => {
+  const { container } = render(<List />);
+  const second = container.querySelector<HTMLElement>('[data-index="1"]');
+  expect(second?.style.transform).toBe('translateY(36px)');
+  expect(second?.style.height).toBe('36px');
+});
+
+test('keeps a pinned row mounted however far away it is', () => {
+  const { container } = render(<List pinnedKeys={['t-1500']} />);
+  expect(mountedIds(container)).toContain('t-1500');
+});
+
+test('scrollToKey scrolls the owner element to that row', () => {
+  const handle = createRef<VirtualRowsHandle>();
+  const { getByTestId } = render(<List handle={handle} />);
+  const scroller = getByTestId('scroller');
+  // happy-dom has no layout, so give the scroller the extent a browser would.
+  Object.defineProperty(scroller, 'scrollHeight', { value: 2000 * 36 });
+  Object.defineProperty(scroller, 'clientHeight', { value: 720 });
+  const calls: unknown[] = [];
+  scroller.scrollTo = ((options: ScrollToOptions) => {
+    calls.push(options);
+  }) as typeof scroller.scrollTo;
+  act(() => handle.current?.scrollToKey('t-1000', 'start'));
+  expect(calls[0]).toMatchObject({ top: 36 * 1000 });
+});
+
+test('a row set that shrinks re-windows to what is left', () => {
+  const { container, rerender } = render(<List />);
+  rerender(<List rows={ROWS.slice(0, 3)} />);
+  expect(mountedIds(container)).toEqual(['t-0', 't-1', 't-2']);
+});
