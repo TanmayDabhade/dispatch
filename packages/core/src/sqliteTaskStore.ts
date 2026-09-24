@@ -397,6 +397,15 @@ export class SqliteTaskStore implements TaskStorePort {
     return this.rows(filter).map(docFromRow);
   }
 
+  /** Every task id, damaged rows included, in list() order. */
+  ids(): string[] {
+    if (this.handle === null) return [];
+    return queryAll<{ id: string }>(
+      this.handle,
+      'SELECT id FROM tasks ORDER BY created, id'
+    ).map((row) => row.id);
+  }
+
   // The file backend's listSafe() exists because one unreadable task must not
   // abort a scan of the rest. A row damaged by a foreign writer — a JSON
   // column that will not parse, an enum outside its set — is exactly that
