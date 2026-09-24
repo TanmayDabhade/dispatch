@@ -208,6 +208,24 @@ test('daemon: the digest cooldown saves; the receipt folder is the owner’s', (
   expect(screen.queryByRole('textbox', { name: 'Folder' })).toBeNull();
 });
 
+// Whether the log is kept is the audit trail, and it is pushed with the
+// owner's own git credentials, so the switch and the branch are theirs too.
+test('daemon: keeping the receipt log and its branch are the owner’s', () => {
+  render(
+    <DaemonConfigGroups
+      config={{ ...config, receipts: { enabled: true, remote: 'origin' } }}
+      onSave={() => Promise.resolve()}
+      canOperate={false}
+    />
+  );
+  expect(
+    screen
+      .getByRole('switch', { name: 'Keep a receipt log' })
+      .hasAttribute('data-disabled')
+  ).toBe(true);
+  expect(screen.queryByRole('textbox', { name: 'Branch' })).toBeNull();
+});
+
 test('board sync: the interval saves; where the board is kept is the owner’s', () => {
   const r = recorder();
   render(
@@ -217,6 +235,24 @@ test('board sync: the interval saves; where the board is kept is the owner’s',
   expect(r.saved).toEqual([{ sync: { intervalSec: 60 } }]);
   expect(screen.queryByRole('textbox', { name: 'Remote' })).toBeNull();
   expect(screen.getAllByLabelText(OPERATOR_ONLY).length).toBeGreaterThan(0);
+});
+
+// Turning sharing on pushes the board with the owner's git credentials, to
+// origin unless they chose otherwise, and the branch is where it lands.
+test('board sync: turning sharing on and its branch are the owner’s', () => {
+  render(
+    <BoardSyncSettings
+      config={config}
+      onSave={() => Promise.resolve()}
+      canOperate={false}
+    />
+  );
+  expect(
+    screen
+      .getByRole('switch', { name: 'Share this board with teammates' })
+      .hasAttribute('data-disabled')
+  ).toBe(true);
+  expect(screen.queryByRole('textbox', { name: 'Branch' })).toBeNull();
 });
 
 // Sharing never depended on autoCommit, which only drives a board kept as
@@ -276,6 +312,7 @@ test('task files: auto-commit renders as a switch named by its row title', () =>
       config={config}
       onSave={() => Promise.resolve()}
       syncStatus={null}
+      canOperate
     />
   );
   const toggle = screen.getByRole('switch', {
@@ -305,6 +342,7 @@ test('task files: with no main branch, it says so and what to do', () => {
         mergeDriverWarning: null,
         ...receipts('disabled'),
       }}
+      canOperate
     />
   );
   expect(screen.getByText('No main branch to commit to')).toBeDefined();
@@ -316,10 +354,34 @@ test('task files: with no main branch, it says so and what to do', () => {
 test('task files: clicking the auto-commit title toggles and saves', () => {
   const r = recorder();
   render(
-    <CommitTaskFilesGroup config={config} onSave={r.onSave} syncStatus={null} />
+    <CommitTaskFilesGroup
+      config={config}
+      onSave={r.onSave}
+      syncStatus={null}
+      canOperate
+    />
   );
   fireEvent.click(screen.getByText('Commit task files to the main branch'));
   expect(r.saved).toEqual([{ autoCommit: true }]);
+});
+
+// It pushes to the repo's main branch with the owner's git credentials.
+test('task files: committing to the main branch is the owner’s', () => {
+  const r = recorder();
+  render(
+    <CommitTaskFilesGroup
+      config={config}
+      onSave={r.onSave}
+      syncStatus={null}
+      canOperate={false}
+    />
+  );
+  const toggle = screen.getByRole('switch', {
+    name: 'Commit task files to the main branch',
+  });
+  expect(toggle.hasAttribute('data-disabled')).toBe(true);
+  fireEvent.click(screen.getByText('Commit task files to the main branch'));
+  expect(r.saved).toEqual([]);
 });
 
 test('queue weights: each factor saves, and 0 is allowed', () => {

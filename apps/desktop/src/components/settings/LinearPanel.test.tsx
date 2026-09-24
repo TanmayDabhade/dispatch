@@ -63,6 +63,41 @@ test('clicking Retry on a failed team fetch calls refetchLinearTeams', () => {
   expect(calls).toBe(1);
 });
 
+// The key decides whose Linear account the board goes to, so setting or
+// removing it is the owner's; importing and syncing only use it.
+test('below the operator tier, the key cannot change but import and sync still run', () => {
+  const { unmount } = render(
+    <SettingsAccessProvider access={accessFor('decide', false)}>
+      <LinearPanel data={dataWith({ keySource: 'env', connected: true })} />
+    </SettingsAccessProvider>
+  );
+  expect(
+    screen.getByPlaceholderText<HTMLInputElement>('Linear API key').disabled
+  ).toBe(true);
+  expect(
+    screen.getByRole<HTMLButtonElement>('button', { name: 'Connect' }).disabled
+  ).toBe(true);
+  // No team is chosen in this fixture, so these are disabled for that reason;
+  // what matters here is that no tier lock reaches them.
+  expect(
+    lockedByGroup(screen.getByRole('button', { name: 'Import from Linear' }))
+  ).toBe(false);
+  expect(lockedByGroup(screen.getByRole('button', { name: /Sync now/ }))).toBe(
+    false
+  );
+  unmount();
+
+  render(
+    <SettingsAccessProvider access={accessFor('decide', false)}>
+      <LinearPanel data={dataWith({ keySource: 'project', connected: true })} />
+    </SettingsAccessProvider>
+  );
+  expect(
+    screen.getByRole<HTMLButtonElement>('button', { name: /Disconnect/ })
+      .disabled
+  ).toBe(true);
+});
+
 test('a project-sourced key leaves Disconnect enabled', () => {
   render(
     <LinearPanel data={dataWith({ keySource: 'project', connected: true })} />

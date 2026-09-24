@@ -87,7 +87,8 @@ export function boardStorage(
 /**
  * Settings → Board sync, for a board kept in Dispatch's database: sharing it
  * with teammates' copies of Dispatch through a branch of its own in git.
- * Where the board is pushed is the owner's call alone.
+ * Whether and where the board is pushed is the owner's call alone: it goes
+ * out on their own git credentials.
  */
 export function BoardSyncSettings({ config, onSave, canOperate }: Props) {
   const locked = canOperate ? undefined : OPERATOR_ONLY;
@@ -118,6 +119,7 @@ export function BoardSyncSettings({ config, onSave, canOperate }: Props) {
           subtitle="Everyone who turns this on with the same repo and branch shares one board."
           keywords="sync enabled"
           checked={sync.enabled}
+          locked={locked}
           onSave={(enabled) => void onSave({ sync: { enabled } })}
         />
         <ChoiceSetting
@@ -165,6 +167,7 @@ export function BoardSyncSettings({ config, onSave, canOperate }: Props) {
           value={sync.branch}
           placeholder="dispatch-sync"
           mono
+          locked={locked}
           onSave={(branch) => void onSave({ sync: { branch } })}
         />
         <NumberSetting
@@ -184,12 +187,14 @@ export function BoardSyncSettings({ config, onSave, canOperate }: Props) {
 /**
  * Settings → Board sync, for a board kept as task files in the repo, which
  * sharing cannot carry: committing those files to the main branch instead.
+ * Pushing to that branch uses the owner's git credentials, so it's theirs.
  */
 export function CommitTaskFilesGroup({
   config,
   onSave,
   syncStatus,
-}: Omit<Props, 'canOperate'> & {
+  canOperate,
+}: Props & {
   /** GET /api/sync; `disabled` on this backend means no branch resolved at boot. */
   syncStatus: SyncStatus | null;
 }) {
@@ -205,6 +210,7 @@ export function CommitTaskFilesGroup({
         subtitle="Commits your task edits from a private checkout, pushes them to the repo's main branch, and brings teammates' edits back in."
         keywords="autoCommit auto-commit git commit push"
         checked={config.autoCommit}
+        locked={canOperate ? undefined : OPERATOR_ONLY}
         onSave={(autoCommit) => void onSave({ autoCommit })}
       />
       {syncStatus?.state === 'disabled' && (
@@ -225,7 +231,8 @@ export function CommitTaskFilesGroup({
 
 /**
  * Settings → Background: the receipt log (and where it is pushed), the code
- * map and the repo digest. Where anything is pushed is the owner's call.
+ * map and the repo digest. Whether the log is kept, and where it is pushed,
+ * is the owner's call: it is the audit trail, pushed on their credentials.
  */
 export function DaemonConfigGroups({ config, onSave, canOperate }: Props) {
   const locked = canOperate ? undefined : OPERATOR_ONLY;
@@ -249,6 +256,7 @@ export function DaemonConfigGroups({ config, onSave, canOperate }: Props) {
           id="receipts-enabled"
           title="Keep a receipt log"
           checked={receipts.enabled}
+          locked={locked}
           onSave={(enabled) => void onSave({ receipts: { enabled } })}
         />
         <TextSetting
@@ -307,6 +315,7 @@ export function DaemonConfigGroups({ config, onSave, canOperate }: Props) {
             value={receipts.branch}
             placeholder={DEFAULT_RECEIPTS_BRANCH}
             mono
+            locked={locked}
             onSave={(branch) => void onSave({ receipts: { branch } })}
           />
         )}

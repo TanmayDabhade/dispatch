@@ -502,9 +502,9 @@ const CONFIG_PAGES: PageLocks[] = [
     page: 'sync',
     locked: ['Sharing'],
     open: ['Status'],
+    // The branch is the owner's too, so it shows as text with no control.
     controls: () => [
       screen.getByRole('switch', { name: 'Share this board with teammates' }),
-      screen.getByLabelText('Branch'),
       screen.getByLabelText("Check for teammates' changes every"),
     ],
   },
@@ -645,26 +645,30 @@ describe('below the decide tier, config is read-only', () => {
 });
 
 describe('below the decide tier, what has its own route stays usable', () => {
-  test('Linear, not connected: the API key and Connect', () => {
+  // The group stays open, but the key decides whose Linear account the board
+  // goes to, so the daemon keeps setting it to the owner.
+  test('Linear, not connected: the group is open, but the key is the owner’s', () => {
     renderAt(dataWith({ myTier: 'request' }), 'integrations');
     expect(screen.getByRole('note').textContent).toBe(NEEDS_DECIDE);
     expect(headingLock('Connection')).toBeNull();
-    const key = screen.getByLabelText('API key');
-    expect(isDisabled(key)).toBe(false);
-    fireEvent.change(key, { target: { value: 'lin_api_123' } });
+    expect(rowLock('API key')).toBe(OPERATOR_ONLY);
+    expect(isDisabled(screen.getByLabelText('API key'))).toBe(true);
     expect(isDisabled(screen.getByRole('button', { name: 'Connect' }))).toBe(
-      false
+      true
     );
   });
 
-  test('Linear, connected: Disconnect, Import and Sync now', () => {
+  test('Linear, connected: Import and Sync now, but not Disconnect', () => {
     renderAt(tierData({ myTier: 'request' }), 'integrations');
-    for (const name of ['Disconnect', 'Import from Linear', 'Sync now']) {
+    for (const name of ['Import from Linear', 'Sync now']) {
       expect({
         name,
         disabled: isDisabled(screen.getByRole('button', { name })),
       }).toEqual({ name, disabled: false });
     }
+    expect(isDisabled(screen.getByRole('button', { name: 'Disconnect' }))).toBe(
+      true
+    );
   });
 
   test('Board sync: Sync now, while sharing is on', async () => {
@@ -721,7 +725,9 @@ describe('at the decide tier', () => {
     expect(isDisabled(screen.getByLabelText('Start command'))).toBe(true);
   });
 
-  test('Board sync: where the board goes is still the owner’s', async () => {
+  // Sharing pushes on the owner's own git credentials, so whether it runs and
+  // which branch it lands on are theirs; how often it checks is not.
+  test('Board sync: whether and where the board goes is still the owner’s', async () => {
     renderAt(tierData({ myTier: 'decide' }), 'sync');
     await screen.findByText('Not sharing');
     expect(screen.queryByRole('note')).toBeNull();
@@ -729,13 +735,18 @@ describe('at the decide tier', () => {
       isDisabled(
         screen.getByRole('switch', { name: 'Share this board with teammates' })
       )
-    ).toBe(false);
-    expect(isDisabled(screen.getByLabelText('Branch'))).toBe(false);
+    ).toBe(true);
+    expect(rowLock('Share this board with teammates')).toBe(OPERATOR_ONLY);
+    expect(screen.queryByRole('textbox', { name: 'Branch' })).toBeNull();
+    expect(rowLock('Branch')).toBe(OPERATOR_ONLY);
     expect(
       isDisabled(
         screen.getByRole('combobox', { name: 'Where the board is kept' })
       )
     ).toBe(true);
+    expect(
+      isDisabled(screen.getByLabelText("Check for teammates' changes every"))
+    ).toBe(false);
   });
 });
 

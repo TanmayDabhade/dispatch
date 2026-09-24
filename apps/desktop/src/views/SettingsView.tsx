@@ -250,6 +250,7 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
               config={ctx.config}
               onSave={ctx.save}
               syncStatus={ctx.data.syncStatus}
+              canOperate={ctx.canOperate}
             />
           ) : (
             <>
