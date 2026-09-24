@@ -118,6 +118,9 @@ export class ReceiptsScheduler {
   private pushing = false;
   private pushAgain = false;
   private lastPushValue: ReceiptsPush | null = null;
+  // The log the last pass wrote to: a scoped pass into any other would leave
+  // every task it does not name missing or stale there.
+  private lastDir: string | null = null;
 
   constructor(private readonly deps: ReceiptsSchedulerDeps) {
     this.exporter = new ReceiptsExporter(deps.stores, deps.actor, deps.run);
@@ -199,26 +202,33 @@ export class ReceiptsScheduler {
     let dir: string;
     try {
       const config = loadConfig(this.deps.rootDir);
-      if (!receiptsEnabled(config)) return null;
+      if (!receiptsEnabled(config)) {
+        // What changed while off is not in the log: the next pass writes it all.
+        this.pending.full = true;
+        return null;
+      }
       dir = resolveReceiptsDir(this.deps.rootDir, config);
     } catch (err) {
       // An unparseable config.yml must not take the daemon down from a timer
       // callback. Standing down is the safe read: it stops the export, and the
-      // next pass after the file is fixed picks straight back up.
+      // next pass after the file is fixed picks straight back up, in full.
       console.error(
         `receipts: could not read config, export skipped: ${(err as Error).message}`
       );
+      this.pending.full = true;
       return null;
     }
     markBlockingSection('receipts export');
-    const scope: ReceiptsScope = pending.full
-      ? {}
-      : { taskIds: [...pending.taskIds], records: pending.records };
+    const scope: ReceiptsScope =
+      pending.full || dir !== this.lastDir
+        ? {}
+        : { taskIds: [...pending.taskIds], records: pending.records };
     const result = await this.exporter.exportOnce(
       dir,
       scope,
       () => this.stopped
     );
+    this.lastDir = dir;
     if (this.stopped) return null;
     this.lastResultValue = result;
     this.lastExportedAtIso = new Date().toISOString();

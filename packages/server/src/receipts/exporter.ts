@@ -173,9 +173,10 @@ export class ReceiptsExporter {
     stopped: () => boolean
   ): Promise<ReceiptsResult> {
     markBlockingSection('receipts export');
-    await this.ensureRepo(dir);
+    // A log created just now holds nothing yet, so a scoped pass writes it all.
+    const created = await this.ensureRepo(dir);
     const materialized = await runSliced(
-      receiptSteps(this.stores, dir, scope),
+      receiptSteps(this.stores, dir, created ? {} : scope),
       stopped
     );
     if (materialized === null || stopped()) {
@@ -276,7 +277,8 @@ export class ReceiptsExporter {
 
   /**
    * Makes sure `dir` is a receipt log this daemon owns, creating it if the
-   * directory is empty or absent, and refusing outright otherwise.
+   * directory is empty or absent, and refusing outright otherwise. True when
+   * it had to create the repository.
    *
    * The refusal is the point. `receipts.dir` is hand-edited in config.yml, and
    * the plausible mistakes — `.`, `..`, the project root, an existing notes
@@ -285,7 +287,7 @@ export class ReceiptsExporter {
    * change. So ownership is proven by a marker file this code wrote, never
    * inferred from the presence of `.git`.
    */
-  private async ensureRepo(dir: string): Promise<void> {
+  private async ensureRepo(dir: string): Promise<boolean> {
     const project = resolve(this.stores.tasks.rootDir);
     const resolved = resolve(dir);
     // Nested inside the project is refused before anything is created: the
@@ -303,8 +305,9 @@ export class ReceiptsExporter {
       this.verifyMarker(marker, resolved, project);
       // A log whose `.git` was deleted by hand is still ours to re-create;
       // the marker, not the repository, is what proves ownership.
-      if (!existsSync(join(dir, '.git'))) await this.init(dir);
-      return;
+      if (existsSync(join(dir, '.git'))) return false;
+      await this.init(dir);
+      return true;
     }
     if (existsSync(dir) && readdirSync(dir).length > 0) {
       throw new Error(
@@ -323,6 +326,7 @@ export class ReceiptsExporter {
     // file would only ever hide a receipt. The one thing worth excluding is the
     // OS noise that would otherwise land in an audit commit.
     writeFileSync(join(dir, '.gitignore'), '.DS_Store\n');
+    return true;
   }
 
   // Refuses a log that belongs to a different project. Two projects sharing one

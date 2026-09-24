@@ -681,6 +681,95 @@ describe('ReceiptsScheduler', () => {
     await scheduler.stop();
   });
 
+  // The files a log's HEAD holds.
+  function tracked(dir: string): string[] {
+    return run(dir, ['ls-tree', '-r', '--name-only', 'HEAD'])
+      .stdout.trim()
+      .split('\n');
+  }
+  const taskFiles = (dir: string): string[] =>
+    tracked(dir).filter((f) => f.startsWith('.dispatch/tasks/'));
+
+  it('writes the whole board when a change re-enables it, not just that change', async () => {
+    writeFileSync(
+      join(root, '.dispatch', 'config.yml'),
+      'receipts:\n  enabled: false\n'
+    );
+    const s = stores();
+    const edited = s.tasks.create({ kind: 'task', title: 'Edited' });
+    s.tasks.create({ kind: 'task', title: 'Untouched' });
+    s.tasks.create({ kind: 'task', title: 'Also untouched' });
+    const scheduler = schedulerFor(s);
+    expect(await scheduler.exportNow()).toBeNull();
+
+    writeFileSync(
+      join(root, '.dispatch', 'config.yml'),
+      'receipts:\n  enabled: true\n'
+    );
+    s.tasks.update(edited.meta.id, { status: 'review' });
+    // What the daemon broadcasts for an ordinary edit.
+    scheduler.notifyChanged({ type: 'task.changed', ids: [edited.meta.id] });
+    const dir = defaultReceiptsDir(root);
+    await waitForCommits(dir, 1);
+
+    expect(taskFiles(dir)).toHaveLength(3);
+    expect(tracked(dir)).toContain('README.md');
+    await scheduler.stop();
+  });
+
+  it('rebuilds a log deleted under it whole, from a change naming one task', async () => {
+    const s = stores();
+    const edited = s.tasks.create({ kind: 'task', title: 'Edited' });
+    s.tasks.create({ kind: 'task', title: 'Untouched' });
+    const scheduler = schedulerFor(s);
+    await scheduler.exportNow();
+    const dir = defaultReceiptsDir(root);
+    rmSync(dir, { recursive: true, force: true });
+
+    s.tasks.update(edited.meta.id, { status: 'review' });
+    scheduler.notifyChanged({ type: 'task.changed', ids: [edited.meta.id] });
+    await waitForCommits(dir, 1);
+
+    expect(taskFiles(dir)).toHaveLength(2);
+    expect(tracked(dir)).toContain('README.md');
+    await scheduler.stop();
+  });
+
+  it('writes the whole board when receipts.dir points back at an older log', async () => {
+    const s = stores();
+    const edited = s.tasks.create({ kind: 'task', title: 'Edited' });
+    const other = s.tasks.create({ kind: 'task', title: 'Other' });
+    const scheduler = schedulerFor(s);
+    await scheduler.exportNow();
+    const first = defaultReceiptsDir(root);
+    const otherFile = `.dispatch/tasks/${other.meta.id}-other.md`;
+
+    // Away to another log, where the other task moves on.
+    const second = logDir('elsewhere');
+    writeFileSync(
+      join(root, '.dispatch', 'config.yml'),
+      `receipts:\n  dir: ${second}\n`
+    );
+    s.tasks.update(other.meta.id, { status: 'review' });
+    scheduler.notifyChanged({ type: 'task.changed', ids: [other.meta.id] });
+    await waitForCommits(second, 1);
+
+    // And back: a change naming only the edited task still brings the
+    // first log's copy of the other one up to date.
+    writeFileSync(
+      join(root, '.dispatch', 'config.yml'),
+      'receipts:\n  enabled: true\n'
+    );
+    s.tasks.update(edited.meta.id, { status: 'review' });
+    scheduler.notifyChanged({ type: 'task.changed', ids: [edited.meta.id] });
+    await waitForCommits(first, 2);
+
+    expect(run(first, ['show', `HEAD:${otherFile}`]).stdout).toContain(
+      'status: review'
+    );
+    await scheduler.stop();
+  });
+
   it('stands down on an unreadable config instead of taking the daemon down', async () => {
     writeFileSync(join(root, '.dispatch', 'config.yml'), 'receipts: [oh no\n');
     const s = stores();
