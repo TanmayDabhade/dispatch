@@ -22,6 +22,7 @@ import type {
   TaskDoc,
   TaskStorePort,
 } from '@dispatch/core';
+import { randomBytes } from 'node:crypto';
 
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
@@ -51,6 +52,12 @@ import {
   readLinearState,
   writeLinearState,
 } from './state.js';
+import {
+  parseWebhook,
+  verifyLinearSignature,
+  WEBHOOK_RESOURCE_TYPES,
+  webhookFresh,
+} from './webhook.js';
 import type { PassContext } from './workspace.js';
 import {
   buildContext,
@@ -86,6 +93,27 @@ export interface LinearStatus {
   conflicts: { total: number; recent: ConflictRecord[] };
   /** Set while an import or other long pass is running. */
   progress: LinearProgress | null;
+  webhook: LinearWebhookStatus;
+}
+
+/**
+ * How changes reach this daemon: `active` when Linear delivers to its
+ * webhook, `polling` when it has no public HTTPS URL to deliver to, `error`
+ * when registering failed (it polls meanwhile), `off` when sync is off.
+ */
+export interface LinearWebhookStatus {
+  state: 'active' | 'polling' | 'error' | 'off';
+  url: string | null;
+  lastDeliveryAt: string | null;
+  error: string | null;
+  /** Seconds between polls as the timer runs them now. */
+  pollSec: number;
+}
+
+/** A webhook delivery's answer, for the route to send. */
+export interface WebhookReply {
+  status: number;
+  body: Record<string, unknown>;
 }
 
 export interface LinearSyncDeps {
@@ -103,15 +131,41 @@ export interface LinearSyncDeps {
   pushDebounceMs?: number;
   /** The local human's person ref; the API key's Linear user maps to it. */
   localHumanRef?: string;
+  /** Where Linear can deliver webhooks (a public HTTPS URL), or null to poll. */
+  webhookUrl?: string | null;
+  /** Delay before a webhook's changes are fetched, coalescing a burst. */
+  webhookDebounceMs?: number;
 }
 
 // 'both' is the ordinary pass; 'push' is the debounced local-edit trigger;
-// 'import' is the explicit "bring existing Linear issues down" action.
-type SyncMode = 'both' | 'push' | 'import';
+// 'import' is the explicit "bring existing Linear issues down" action;
+// 'webhook' applies what deliveries named, and nothing else.
+type SyncMode = 'both' | 'push' | 'import' | 'webhook';
 
 interface RunOptions {
   mode: SyncMode;
   taskIds?: string[];
+  targets?: WebhookTargets;
+}
+
+/** What webhook deliveries named since the last targeted pass. */
+interface WebhookTargets {
+  issues: Set<string>;
+  removedIssues: Set<string>;
+  comments: Set<string>;
+  removedComments: Set<string>;
+  /** A project changed: containers are re-read from the cursor. */
+  containers: boolean;
+}
+
+function emptyTargets(): WebhookTargets {
+  return {
+    issues: new Set(),
+    removedIssues: new Set(),
+    comments: new Set(),
+    removedComments: new Set(),
+    containers: false,
+  };
 }
 
 interface Session {
@@ -150,8 +204,14 @@ interface Fetched {
 }
 
 const DEFAULT_PUSH_DEBOUNCE_MS = 5_000;
+const DEFAULT_WEBHOOK_DEBOUNCE_MS = 250;
 const WORKSPACE_TTL_MS = 5 * 60_000;
 const AUDIT_EVERY_MS = 30 * 60_000;
+// With deliveries arriving, polling is only a safety net.
+const WEBHOOK_POLL_SEC = 300;
+// A failed registration (often: the key's user is not a workspace admin) is
+// retried this rarely, rather than on every pass.
+const WEBHOOK_RETRY_MS = 60 * 60_000;
 
 // A second before the newest record seen: `gt` would otherwise drop any
 // record sharing that exact timestamp, and re-reading one is free.
@@ -205,6 +265,11 @@ export class LinearSync {
   // Local comment changes since the last pass, by task; folded into the
   // persisted queue when the next pass starts.
   private readonly commentChanges = new Map<string, Set<string>>();
+  // What webhook deliveries named, waiting for the targeted pass.
+  private targets: WebhookTargets = emptyTargets();
+  private webhookTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastDeliveryAt: string | null = null;
+  private pollSec = 0;
   private workspaceCache: {
     teamId: string;
     at: number;
@@ -250,7 +315,28 @@ export class LinearSync {
       syncing: this.inFlight !== null,
       conflicts: { total: state.conflictTotal, recent: state.conflicts },
       progress: this.progress,
+      webhook: this.webhookStatus(linear, state),
     };
+  }
+
+  private webhookStatus(
+    linear: LinearConfig,
+    state: LinearSyncState
+  ): LinearWebhookStatus {
+    const lastDeliveryAt = this.lastDeliveryAt ?? state.lastWebhookAt;
+    const pollSec = this.pollSec === 0 ? linear.intervalSec : this.pollSec;
+    const base = { lastDeliveryAt, pollSec };
+    if (!linear.enabled) {
+      return { ...base, state: 'off', url: null, error: null };
+    }
+    if (state.webhook !== null) {
+      return { ...base, state: 'active', url: state.webhook.url, error: null };
+    }
+    const url = this.deps.webhookUrl ?? null;
+    if (url !== null && state.webhookError !== null) {
+      return { ...base, state: 'error', url, error: state.webhookError };
+    }
+    return { ...base, state: 'polling', url, error: null };
   }
 
   /** Record UUID -> display identifier and URL, for clients holding only `TaskMeta.external`. */
@@ -275,9 +361,19 @@ export class LinearSync {
     writeProjectCredential(this.deps.rootDir, 'linear', { apiKey });
   }
 
-  /** Forgets this project's key. An env or machine-wide key still resolves afterwards, which
+  /** Forgets this project's key, first removing the webhook the key registered.
+   *  An env or machine-wide key still resolves afterwards, which
    *  `status().keySource` makes visible. */
-  disconnect(): void {
+  async disconnect(): Promise<void> {
+    const state = readLinearState(this.deps.rootDir);
+    const client = this.client();
+    if (state.webhook !== null && client !== null) {
+      await client.deleteWebhook(state.webhook.id);
+    }
+    if (state.webhook !== null) {
+      state.webhook = null;
+      writeLinearState(this.deps.rootDir, state);
+    }
     this.workspaceCache = null;
     clearProjectCredential(this.deps.rootDir, 'linear');
   }
@@ -288,17 +384,111 @@ export class LinearSync {
     this.workspaceCache = null;
     const config = this.safeConfig();
     this.enabled = config?.linear.enabled ?? false;
-    if (config === null || !config.linear.enabled) return;
+    if (config === null) return;
+    if (!config.linear.enabled) {
+      void this.dropWebhook().catch(() => undefined);
+      return;
+    }
+    this.schedulePolls(config.linear.intervalSec);
+  }
+
+  // Turning sync off takes the webhook down with it, best effort.
+  private async dropWebhook(): Promise<void> {
+    const state = readLinearState(this.deps.rootDir);
+    const client = state.webhook === null ? null : this.client();
+    if (state.webhook === null || client === null) return;
+    const done = await client.deleteWebhook(state.webhook.id);
+    if (!done.ok) return;
+    state.webhook = null;
+    writeLinearState(this.deps.rootDir, state);
+  }
+
+  // Polls at the configured interval, or as a slow safety net while a
+  // webhook delivers changes as they happen.
+  private schedulePolls(
+    intervalSec: number,
+    hooked = readLinearState(this.deps.rootDir).webhook !== null
+  ): void {
+    const sec = hooked ? Math.max(intervalSec, WEBHOOK_POLL_SEC) : intervalSec;
+    if (this.timer !== null && sec === this.pollSec) return;
+    if (this.timer !== null) clearInterval(this.timer);
+    this.pollSec = sec;
     this.timer = setInterval(() => {
       void this.syncOnce().catch(() => undefined);
-    }, config.linear.intervalSec * 1000);
+    }, sec * 1000);
   }
 
   private stopTimers(): void {
     if (this.timer !== null) clearInterval(this.timer);
     this.timer = null;
+    this.pollSec = 0;
     if (this.debounce !== null) clearTimeout(this.debounce);
     this.debounce = null;
+    if (this.webhookTimer !== null) clearTimeout(this.webhookTimer);
+    this.webhookTimer = null;
+  }
+
+  /**
+   * One webhook delivery. Answers 404 while no webhook is registered, 401 for
+   * a bad signature or a stale timestamp, 400 for a body that is not a
+   * delivery; otherwise notes what changed and applies it moments later, in
+   * one targeted pass for a whole burst of deliveries.
+   */
+  handleWebhook(rawBody: string, signature: string | null): WebhookReply {
+    const state = readLinearState(this.deps.rootDir);
+    const secret = state.webhook?.secret;
+    if (secret === undefined) {
+      return {
+        status: 404,
+        body: { error: 'no Linear webhook is registered' },
+      };
+    }
+    if (!verifyLinearSignature(rawBody, signature, secret)) {
+      return { status: 401, body: { error: 'bad signature' } };
+    }
+    const event = parseWebhook(rawBody);
+    if (event === null) {
+      return { status: 400, body: { error: 'not a Linear delivery' } };
+    }
+    if (!webhookFresh(event.webhookTimestamp, Date.now())) {
+      return { status: 401, body: { error: 'stale delivery' } };
+    }
+    this.lastDeliveryAt = new Date().toISOString();
+    // Acknowledged either way, so Linear does not retry or disable the hook.
+    if (!this.enabled) return { status: 200, body: { ok: true } };
+    const echo =
+      event.updatedAt !== null &&
+      state.echoes.some(
+        (e) => e.issueId === event.id && e.updatedAt === event.updatedAt
+      );
+    if (!echo) this.target(event.type, event.action, event.id);
+    return { status: 200, body: { ok: true } };
+  }
+
+  private target(type: string, action: string, id: string): void {
+    const t = this.targets;
+    const removed = action === 'remove';
+    if (type === 'Issue') (removed ? t.removedIssues : t.issues).add(id);
+    else if (type === 'Comment') {
+      (removed ? t.removedComments : t.comments).add(id);
+    } else if (type === 'Project') t.containers = true;
+    else if (type === 'IssueLabel' || type === 'Cycle') {
+      this.workspaceCache = null;
+    } else return;
+    if (this.webhookTimer !== null) clearTimeout(this.webhookTimer);
+    this.webhookTimer = setTimeout(() => {
+      this.webhookTimer = null;
+      const targets = this.targets;
+      this.targets = emptyTargets();
+      void this.enqueue({ mode: 'webhook', targets }).catch(() => undefined);
+    }, this.deps.webhookDebounceMs ?? DEFAULT_WEBHOOK_DEBOUNCE_MS);
+  }
+
+  /** Resolves once no pass is running or queued. */
+  async idle(): Promise<void> {
+    while (this.inFlight !== null) {
+      await this.inFlight.catch(() => undefined);
+    }
   }
 
   // Clears both timers and waits for any pass already running, so shutdown cannot
@@ -558,7 +748,12 @@ export class LinearSync {
     // A first sync reconciles nothing — no task to create, no link to update — so it
     // takes a cursor instead of scanning a whole team it has no use for.
     const baselining = state.bootstrappedAt === null && !run.importing;
-    if (baselining) {
+    const webhook = opts.mode === 'webhook';
+    if (webhook) {
+      if (!baselining && mayPull) {
+        await pass.guarded(() => this.applyTargets(run, opts.targets));
+      }
+    } else if (baselining) {
       const now = new Date().toISOString();
       state.cursor = rewind(now);
       state.commentCursor = rewind(now);
@@ -575,12 +770,18 @@ export class LinearSync {
     }
 
     const pushing = baselining ? opts.taskIds !== undefined : !run.importing;
-    if (pushing && mayPush && !pass.stopped) {
+    if (!webhook && pushing && mayPush && !pass.stopped) {
       await pass.guarded(() => this.push(run));
     }
 
-    if (!baselining && !pass.stopped) {
+    if (!webhook && !baselining && !pass.stopped) {
       await pass.guarded(() => this.audit(run, run.importing));
+    }
+    if (!webhook && !pass.stopped) {
+      await pass.guarded(() => this.ensureWebhook(run));
+      if (this.timer !== null) {
+        this.schedulePolls(session.linear.intervalSec, state.webhook !== null);
+      }
     }
 
     if (pass.withheld > 0) {
@@ -607,6 +808,117 @@ export class LinearSync {
       }
     });
     return this.finish(summary, state, batch, session.linear.intervalSec);
+  }
+
+  /**
+   * Applies what webhook deliveries named: those issues and comments fetched
+   * by id and run through the same mapping as a pull, deletions applied
+   * straight away, and containers re-read from the cursor when a project
+   * changed. Cursors stay put; the next poll reads past these again cheaply.
+   */
+  private async applyTargets(
+    run: Run,
+    targets: WebhookTargets = emptyTargets()
+  ): Promise<void> {
+    const { pass, session, state, ctx, docs } = run;
+    const { client, teamId } = session;
+    const fetched: Fetched = {
+      initiatives: [],
+      projects: [],
+      milestones: [],
+      issues: [],
+      comments: [],
+    };
+    if (targets.containers) {
+      fetched.projects =
+        pass.take(await client.projects(teamId, state.cursor))?.nodes ?? [];
+      fetched.milestones =
+        pass.take(await client.projectMilestones(teamId, state.cursor))
+          ?.nodes ?? [];
+      fetched.initiatives =
+        pass.take(await client.initiatives(state.cursor))?.nodes ?? [];
+    }
+    if (targets.issues.size > 0) {
+      fetched.issues =
+        pass.take(await client.issuesByIds([...targets.issues])) ?? [];
+    }
+    if (targets.comments.size > 0 && run.comments !== null) {
+      fetched.comments =
+        pass.take(await client.commentsByIds([...targets.comments])) ?? [];
+    }
+    await this.fillReferences(run, fetched);
+    await this.learnUsers(run, fetched);
+    await this.applyContainers(run, fetched);
+    await this.applyIssues(run, fetched.issues);
+    for (const id of targets.removedIssues) {
+      const doc = docs.get(ctx.taskByRemote.get(id) ?? '');
+      if (doc !== undefined) pass.unlinkDeleted(doc);
+    }
+    if (run.comments !== null) {
+      await run.comments.pull(fetched.comments);
+      for (const id of targets.removedComments) run.comments.removeRemote(id);
+    }
+  }
+
+  /**
+   * Keeps the webhook registration in step with the daemon: registered while
+   * sync pulls and the daemon has a public HTTPS URL, re-registered when that
+   * URL or the team changes, removed otherwise. A failed registration (the
+   * key's user must be a workspace admin) waits an hour before retrying and
+   * leaves the sync polling meanwhile.
+   */
+  private async ensureWebhook(run: Run): Promise<void> {
+    const { state, session, mayPull, pass } = run;
+    const url = this.deps.webhookUrl ?? null;
+    const wanted = url !== null && mayPull;
+    const current = state.webhook;
+    if (
+      current !== null &&
+      wanted &&
+      current.url === url &&
+      current.teamId === session.teamId
+    ) {
+      return;
+    }
+    if (current !== null) {
+      pass.take(await session.client.deleteWebhook(current.id));
+      state.webhook = null;
+    }
+    if (!wanted) {
+      state.webhookError = null;
+      state.webhookRetryAt = null;
+      return;
+    }
+    if (
+      state.webhookRetryAt !== null &&
+      Date.now() < Date.parse(state.webhookRetryAt)
+    ) {
+      return;
+    }
+    const secret = randomBytes(32).toString('hex');
+    const created = await session.client.createWebhook({
+      url,
+      teamId: session.teamId,
+      secret,
+      label: 'Dispatch',
+      resourceTypes: WEBHOOK_RESOURCE_TYPES,
+    });
+    if (!created.ok) {
+      state.webhookError = this.note(created);
+      state.webhookRetryAt = new Date(
+        Date.now() + WEBHOOK_RETRY_MS
+      ).toISOString();
+      return;
+    }
+    state.webhook = {
+      id: created.data,
+      url,
+      secret,
+      teamId: session.teamId,
+      createdAt: new Date().toISOString(),
+    };
+    state.webhookError = null;
+    state.webhookRetryAt = null;
   }
 
   // Moves comment changes noted since the last pass into the persisted queue.
@@ -664,6 +976,7 @@ export class LinearSync {
     this.progress = null;
     state.lastSyncAt = summary.at;
     state.lastError = summary.errors[0] ?? null;
+    state.lastWebhookAt = this.lastDeliveryAt ?? state.lastWebhookAt;
     state.echoes = pruneEchoes(
       state.echoes,
       Date.now(),

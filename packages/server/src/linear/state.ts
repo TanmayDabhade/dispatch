@@ -82,6 +82,8 @@ export interface LinearSyncState {
   generatedRoles: StatusRoles | null;
   webhook: WebhookRecord | null;
   webhookError: string | null;
+  /** When a failed registration may be tried again. */
+  webhookRetryAt: string | null;
   lastWebhookAt: string | null;
   /** The most recent field conflicts, newest last. */
   conflicts: ConflictRecord[];
@@ -124,6 +126,7 @@ export function emptyLinearState(): LinearSyncState {
     generatedRoles: null,
     webhook: null,
     webhookError: null,
+    webhookRetryAt: null,
     lastWebhookAt: null,
     conflicts: [],
     conflictTotal: 0,

@@ -87,6 +87,7 @@ import {
   readJsonBodyOptional,
 } from './api/http.js';
 import { getImpact } from './api/impact.js';
+import { isLinearWebhook, linearWebhook } from './api/linearWebhook.js';
 import { migrateMilestones } from './api/migrations.js';
 import { listPeople } from './api/people.js';
 import { getQueue } from './api/queue.js';
@@ -1506,8 +1507,8 @@ async function connectLinear(req: Request, ctx: ApiContext): Promise<Response> {
 
 // POST /api/linear/disconnect — forget this project's key. An environment or
 // machine-wide key still resolves afterwards, which `status.keySource` makes visible.
-function disconnectLinear(ctx: ApiContext): Response {
-  ctx.linearSync.disconnect();
+async function disconnectLinear(ctx: ApiContext): Promise<Response> {
+  await ctx.linearSync.disconnect();
   ctx.events.broadcast({ type: 'config.changed' });
   return jsonResponse(ctx.linearSync.status());
 }
@@ -4728,6 +4729,13 @@ export async function handleApi(
   const untrusted = rejectUntrustedOrigin(req, daemonCtx.ownOrigins);
   if (untrusted !== null) return untrusted;
 
+  // Linear's deliveries carry no daemon token: this one exact route is
+  // admitted by path and gated on its HMAC signature instead (see
+  // api/linearWebhook.ts). Nothing else skips the token check.
+  if (isLinearWebhook(method, segments)) {
+    return await linearWebhook(req, daemonCtx);
+  }
+
   const presented = presentedCredential(req, daemonCtx.sessionOrigins);
   const tier = requiredTier(method, segments);
   if (tier !== null) {
@@ -4959,7 +4967,7 @@ export async function handleApi(
         return await connectLinear(req, ctx);
       }
       if (segments[1] === 'disconnect' && method === 'POST') {
-        return disconnectLinear(ctx);
+        return await disconnectLinear(ctx);
       }
       if (segments[1] === 'teams' && method === 'GET') {
         return await linearTeams(ctx);
