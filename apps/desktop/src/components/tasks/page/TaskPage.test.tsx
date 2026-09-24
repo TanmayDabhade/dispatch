@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react';
 import { describe, expect, mock, test } from 'bun:test';
 import type { ReactNode } from 'react';
@@ -196,6 +197,44 @@ describe('the mode follows the task', () => {
     );
     expect(modeOf()).toBe('spec');
     expect(document.querySelector('[data-slot=dispatch-card]')).not.toBeNull();
+  });
+
+  test('a landed container’s summary rolls up its sub-issues’ work', () => {
+    const log = newLog();
+    mount(
+      fakeHost(log, {
+        tasks: [
+          task('t-1', { kind: 'milestone', status: 'landed' }),
+          task('t-2', { parent: 't-1', status: 'landed' }),
+          task('t-3', { parent: 't-1', status: 'dropped' }),
+        ],
+        runs: [
+          run({
+            id: 'r-2',
+            taskId: 't-2',
+            state: 'finished',
+            reviewedAt: '2026-09-23T11:00:00.000Z',
+            reviewAction: 'merge',
+            mergeCommit: 'bd7298eaaa',
+            costUsd: 0.25,
+          }),
+        ],
+      })
+    );
+    expect(modeOf()).toBe('summary');
+    const summary = document.querySelector('[data-slot=summary-mode]');
+    expect(summary?.textContent).toContain(
+      '1 of 2 sub-issues landed · 1 dropped'
+    );
+    expect(summary?.textContent).not.toContain('without an agent run');
+    expect(screen.getByText('bd7298e')).not.toBeNull();
+    expect(screen.getByText('$0.25')).not.toBeNull();
+    const outcomes = document.querySelector<HTMLElement>(
+      '[data-slot=sub-issue-outcomes]'
+    );
+    if (outcomes === null) throw new Error('no sub-issue outcomes');
+    fireEvent.click(within(outcomes).getByText('Title of t-3'));
+    expect(log.peeks).toEqual(['t-3']);
   });
 
   test('a container opens on its plan, where the Flight Plan draws every sub-issue', () => {

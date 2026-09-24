@@ -9,11 +9,19 @@ import {
   useProjectLedger,
   useTaskVerification,
 } from '../../../hooks/useOrchestration';
+import type { ContainerRollup } from '../../../lib/containerRollup';
+import {
+  containerRollup,
+  landingRun,
+  rollupOutcome,
+} from '../../../lib/containerRollup';
 import { taskLedgerEntries } from '../../../lib/ledgerScope';
 import { modelLabel } from '../../../lib/models';
 import { isStatusCanceled, isStatusDone } from '../../../lib/statusModel';
 import { formatShortDate } from '../../../lib/taskDates';
+import { taskIndexOf } from '../../../lib/taskIndex';
 import { taskTimeline } from '../../../lib/taskTimeline';
+import { flightScope } from '../../flightplan/flightScope';
 import { RunStatePill } from '../../runs/RunStatePill';
 import { LedgerSection } from '../detail/LedgerSection';
 import { VerificationSection } from '../detail/VerificationSection';
@@ -54,19 +62,97 @@ function span(runs: readonly RunMeta[]): string | null {
   return formatElapsed(ms);
 }
 
+/** Where a run's work landed: its merge commit (and whether it reached origin), its PR. */
+function LandedAs({ run }: { run: RunMeta }) {
+  return (
+    <>
+      {run.mergeCommit !== undefined && (
+        <Pill className="font-mono font-normal" title={run.mergeCommit}>
+          <GitCommitHorizontal />
+          {run.mergeCommit.slice(0, 7)}
+        </Pill>
+      )}
+      {run.pushedToOrigin === true && (
+        <span className="text-muted-foreground">· pushed</span>
+      )}
+      {run.prUrl !== undefined && (
+        <a href={run.prUrl} target="_blank" rel="noreferrer">
+          <Pill className="hover:bg-surface-active">
+            Pull request
+            <ArrowUpRight className="text-muted-foreground" />
+          </Pill>
+        </a>
+      )}
+    </>
+  );
+}
+
+/** A container's sub-issues, each with its status and where its work landed. */
+function SubIssueOutcomes({
+  rollup,
+  onOpenTask,
+}: {
+  rollup: ContainerRollup;
+  onOpenTask: (taskId: string) => void;
+}) {
+  if (rollup.subIssues.length === 0) return null;
+  return (
+    <section data-slot="sub-issue-outcomes" className="flex flex-col gap-1">
+      <h3 className="text-muted-foreground flex h-6 items-center text-[12px] font-medium">
+        Sub-issues
+      </h3>
+      <ul className="-mx-2 flex flex-col">
+        {rollup.subIssues.map(({ task, landedBy }) => (
+          <li key={task.meta.id} className="flex h-8 items-center gap-2 px-2">
+            <StatusIcon status={task.meta.status} className="size-3.5" />
+            <button
+              type="button"
+              onClick={() => onOpenTask(task.meta.id)}
+              className="flex min-w-0 flex-1 items-center gap-2 text-left outline-none focus-visible:underline"
+            >
+              <span className="text-muted-foreground font-book shrink-0 text-[12px] tracking-(--id-tracking)">
+                {task.meta.id}
+              </span>
+              <span className="font-book hover:text-foreground min-w-0 truncate text-[13px] text-(--text-secondary)">
+                {task.meta.title}
+              </span>
+            </button>
+            {landedBy !== undefined && (
+              <span className="font-book flex shrink-0 items-center gap-2 text-[12px]">
+                <LandedAs run={landedBy} />
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 /**
  * Summary mode — how the task ended: its outcome in one line (landed where, as which
  * commit, through which PR), the figures (runs, spend, turns, time from first dispatch),
  * the files the landing run touched, every run it took, and the full timeline. For a
- * canceled task it says so and keeps the history.
+ * canceled task it says so and keeps the history. A container has no runs of its own, so
+ * its summary rolls up the work its plan draws: which sub-issues landed and how, and the
+ * figures across their runs.
  */
 export function SummaryMode({ page }: { page: TaskPageModel }) {
-  const { item, project, runs } = page;
+  const { item, project } = page;
   const meta = item.meta;
-  const landed =
-    runs.find(
-      (r) => r.reviewAction === 'merge' || r.mergeCommit !== undefined
-    ) ?? runs.find((r) => r.prUrl !== undefined);
+  const tasks = project.tasksIncludingArchived;
+  const rollup = useMemo(
+    () =>
+      page.isContainer
+        ? containerRollup(
+            flightScope(item, taskIndexOf(tasks).childrenOf).nodes,
+            project.runs
+          )
+        : null,
+    [page.isContainer, item, tasks, project.runs]
+  );
+  const runs = rollup?.runs ?? page.runs;
+  const landed = rollup === null ? landingRun(runs) : undefined;
   const totalCost = runs.reduce((sum, r) => sum + (r.costUsd ?? 0), 0);
   const totalTurns = runs.reduce((sum, r) => sum + (r.turns ?? 0), 0);
   const took = span(runs);
@@ -89,15 +175,18 @@ export function SummaryMode({ page }: { page: TaskPageModel }) {
     ? epicLedger
     : taskLedgerEntries(projectLedger, meta.id);
 
-  const outcome = canceled
-    ? 'No work landed.'
-    : landed?.mergeCommit !== undefined
-      ? `Merged into ${landed.baseBranch}`
-      : landed?.prUrl !== undefined
-        ? 'Landed through a pull request'
-        : done
-          ? 'Closed without an agent run here.'
-          : 'Not finished yet.';
+  const outcome =
+    rollup !== null
+      ? rollupOutcome(rollup)
+      : canceled
+        ? 'No work landed.'
+        : landed?.mergeCommit !== undefined
+          ? `Merged into ${landed.baseBranch}`
+          : landed?.prUrl !== undefined
+            ? 'Landed through a pull request'
+            : done
+              ? 'Closed without an agent run here.'
+              : 'Not finished yet.';
 
   return (
     <div data-slot="summary-mode" className="flex flex-col gap-6 px-4 pb-10">
@@ -113,23 +202,7 @@ export function SummaryMode({ page }: { page: TaskPageModel }) {
         </div>
         <div className="font-book flex flex-wrap items-center gap-2 text-[13px] text-(--text-secondary)">
           <span>{outcome}</span>
-          {landed?.mergeCommit !== undefined && (
-            <Pill className="font-mono font-normal" title={landed.mergeCommit}>
-              <GitCommitHorizontal />
-              {landed.mergeCommit.slice(0, 7)}
-            </Pill>
-          )}
-          {landed?.pushedToOrigin === true && (
-            <span className="text-muted-foreground">· pushed</span>
-          )}
-          {landed?.prUrl !== undefined && (
-            <a href={landed.prUrl} target="_blank" rel="noreferrer">
-              <Pill className="hover:bg-surface-active">
-                Pull request
-                <ArrowUpRight className="text-muted-foreground" />
-              </Pill>
-            </a>
-          )}
+          {landed !== undefined && <LandedAs run={landed} />}
         </div>
         {runs.length > 0 && (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -144,7 +217,11 @@ export function SummaryMode({ page }: { page: TaskPageModel }) {
         {landed !== undefined && <FilesTouched files={landed.claims ?? []} />}
       </section>
 
-      {runs.length > 0 && (
+      {rollup !== null && (
+        <SubIssueOutcomes rollup={rollup} onOpenTask={page.openTask} />
+      )}
+
+      {rollup === null && runs.length > 0 && (
         <section className="flex flex-col gap-1">
           <h3 className="text-muted-foreground flex h-6 items-center text-[12px] font-medium">
             Runs
