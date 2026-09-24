@@ -690,19 +690,34 @@ function TaskPageLoaded({
           className="shadow-hairline-bottom text-muted-foreground flex h-10 shrink-0 items-center gap-1.5 pr-2 pl-4 text-[12px] font-medium"
         >
           <div className="flex min-w-0 flex-1 items-center gap-1.5">
-            {crumb.map((segment, index) => (
-              <span key={index} className="flex min-w-0 items-center gap-1.5">
-                {index > 0 && <span aria-hidden>›</span>}
+            {/* A pane too narrow for the trail keeps only the task's own segment. */}
+            {crumb.map((segment, index) => {
+              const last = index === crumb.length - 1;
+              return (
                 <span
+                  key={index}
                   className={cn(
-                    'flex min-w-0 items-center truncate',
-                    index === crumb.length - 1 && 'text-foreground'
+                    'flex min-w-0 items-center gap-1.5',
+                    // The trail gives way before the task's own title does.
+                    !last && 'shrink-[4] @max-[520px]/task-page:hidden'
                   )}
                 >
-                  {segment}
+                  {index > 0 && (
+                    <span aria-hidden className="@max-[520px]/task-page:hidden">
+                      ›
+                    </span>
+                  )}
+                  <span
+                    className={cn(
+                      'flex min-w-0 items-center truncate',
+                      last && 'text-foreground'
+                    )}
+                  >
+                    {segment}
+                  </span>
                 </span>
-              </span>
-            ))}
+              );
+            })}
           </div>
           <div className="flex shrink-0 items-center gap-1">
             {headerActions}

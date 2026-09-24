@@ -290,3 +290,34 @@ describe('the rail', () => {
     expect(await screen.findByRole('menu')).not.toBeNull();
   });
 });
+
+describe('keyboard', () => {
+  const opened = () => document.querySelector('[data-popup-open]') !== null;
+
+  test('a property key opens its picker in the rail', async () => {
+    mount(fakeHost(newLog(), { tasks: [task('t-1')] }));
+    const main = document.querySelector('[data-slot=task-main]');
+    if (main === null) throw new Error('no main pane');
+    fireEvent.keyDown(main, { key: 's' });
+    await waitFor(() => expect(opened()).toBe(true));
+  });
+
+  test('a key already handled, or meant for a page nested inside, is left alone', () => {
+    mount(fakeHost(newLog(), { tasks: [task('t-1')] }));
+    const main = document.querySelector('[data-slot=task-main]');
+    if (main === null) throw new Error('no main pane');
+    // The Flight Plan's canvas takes h/j/k/l and `d` itself.
+    const canvas = document.createElement('div');
+    canvas.addEventListener('keydown', (e) => e.preventDefault());
+    main.append(canvas);
+    fireEvent.keyDown(canvas, { key: 'l' });
+    // The Flight Plan's pane holds a task page of its own.
+    const nested = document.createElement('div');
+    nested.dataset.slot = 'task-page';
+    const inner = document.createElement('button');
+    nested.append(inner);
+    main.append(nested);
+    fireEvent.keyDown(inner, { key: 's' });
+    expect(opened()).toBe(false);
+  });
+});
