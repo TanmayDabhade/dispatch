@@ -1,5 +1,7 @@
+import { isContainer, parentIdsOf } from '@dispatch/core/browser';
 import { useMemo } from 'react';
 
+import { ContainerFlightPlanSection } from '../components/flightplan/ContainerFlightPlanSection';
 import { RunStatePill } from '../components/runs/RunStatePill';
 import { ErrorBoundary } from '../components/shell/ErrorBoundary';
 import type { TaskDetailPanelProps } from '../components/tasks/detail';
@@ -26,6 +28,8 @@ const TASK_TABS = [
   { id: 'diff', label: 'Diff' },
   { id: 'preview', label: 'Preview' },
 ];
+// A container leads with its Flight Plan.
+const CONTAINER_TABS = [{ id: 'plan', label: 'Flight plan' }, ...TASK_TABS];
 
 export interface TaskViewProps {
   data: DispatchProjectData;
@@ -54,6 +58,8 @@ export interface TaskViewProps {
 /**
  * One task, full-window: `TaskPage` draws the crumb header with Details/Chat/Diff view
  * tabs; Details is the page's own body, Chat hosts `TaskChatTab`, Diff hosts `TaskDiffTab`.
+ * A container (a milestone, a project, anything with children) adds a Flight plan tab
+ * first, its main pane: the live fan-out graph.
  */
 export function TaskView({
   data,
@@ -78,6 +84,14 @@ export function TaskView({
     [data.runs, taskId]
   );
   const selectedRun = taskRuns.find((r) => r.id === activeRunId);
+  const container = useMemo(
+    () =>
+      doc !== null &&
+      isContainer(doc.meta, parentIdsOf(data.tasksIncludingArchived)),
+    [doc, data.tasksIncludingArchived]
+  );
+  // Only a container has a plan; a stale `plan` tab on a plain task reads as Details.
+  const shown: TaskTab = tab === 'plan' && !container ? 'details' : tab;
   // Listed but body still loading: render nothing rather than the "gone" state.
   if (doc !== null && panelProps === undefined) return null;
   if (doc === null || panelProps === undefined)
@@ -92,7 +106,7 @@ export function TaskView({
 
   // The session select: which run the Chat and Diff tabs read. Details has no session.
   const sessionSelect =
-    tab !== 'details' && taskRuns.length > 0 ? (
+    shown !== 'details' && shown !== 'plan' && taskRuns.length > 0 ? (
       <DropdownMenu>
         <DropdownMenuTrigger
           render={<SelectPill aria-label="Session" className="max-w-72" />}
@@ -131,15 +145,19 @@ export function TaskView({
       {...panelProps}
       tabs={
         <ViewTabs
-          tabs={TASK_TABS}
-          active={tab}
+          tabs={container ? CONTAINER_TABS : TASK_TABS}
+          active={shown}
           onChange={(id) => onSetTab(id as TaskTab)}
           label="Task views"
         />
       }
       controls={sessionSelect}
     >
-      {tab === 'chat' ? (
+      {shown === 'plan' ? (
+        <ErrorBoundary label="the flight plan">
+          <ContainerFlightPlanSection containerId={doc.meta.id} focusOnMount />
+        </ErrorBoundary>
+      ) : shown === 'chat' ? (
         <ErrorBoundary label="this tab">
           <TaskChatTab
             data={data}
@@ -148,7 +166,7 @@ export function TaskView({
             onDispatch={() => void data.handleDispatch(doc.meta.id)}
           />
         </ErrorBoundary>
-      ) : tab === 'diff' ? (
+      ) : shown === 'diff' ? (
         <ErrorBoundary label="this tab">
           <TaskDiffTab
             data={data}
@@ -162,7 +180,7 @@ export function TaskView({
             }
           />
         </ErrorBoundary>
-      ) : tab === 'preview' ? (
+      ) : shown === 'preview' ? (
         <ErrorBoundary label="this tab">
           <TaskPreviewTab data={data} selectedRun={selectedRun} />
         </ErrorBoundary>

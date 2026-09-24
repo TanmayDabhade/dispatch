@@ -143,8 +143,9 @@ interface CockpitViewProps {
  * all rendered from the caches the app already holds, so it is up the moment they are.
  * Keyboard-first: j/k within a lane, h/l across, `d` dispatches the focused ready task (it
  * moves into flight at once and comes back if the daemon refuses), Enter opens the task in
- * a split pane beside the lanes, `o` the full page, Space the peek, `t` flips Mine/Team and
- * `g p` groups every lane by person. The split pane follows the cursor.
+ * a split pane beside the lanes (a fan-out row opens its full Flight Plan), `o` the full
+ * page, Space the peek, `t` flips Mine/Team and `g p` groups every lane by person. The split
+ * pane follows the cursor.
  */
 export function CockpitView({
   data,
@@ -365,15 +366,20 @@ export function CockpitView({
     [onOpenTask]
   );
 
+  // A fan-out row opens its container's full Flight Plan; any other row the split pane.
   const activate = useCallback(
     (key: string) => {
       const entry = itemByKey.get(key);
       if (entry === undefined) return;
       setCursor({ lane: entry.lane, key });
+      if (entry.item.kind === 'fanout') {
+        onOpenTask(entry.item.taskId, 'plan');
+        return;
+      }
       setPaneTaskId(entry.item.taskId);
       gridRef.current?.focus();
     },
-    [itemByKey]
+    [itemByKey, onOpenTask]
   );
 
   const dispatchFromRow = useCallback(
@@ -412,7 +418,8 @@ export function CockpitView({
       case 'open-split':
         if (focused === undefined) return;
         e.preventDefault();
-        setPaneTaskId(focused.taskId);
+        if (focused.kind === 'fanout') onOpenTask(focused.taskId, 'plan');
+        else setPaneTaskId(focused.taskId);
         return;
       case 'open-full':
         if (focused === undefined) return;

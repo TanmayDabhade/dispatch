@@ -2,6 +2,7 @@ import type { TaskDoc } from '@dispatch/core/browser';
 import { useQuery } from '@tanstack/react-query';
 import { Plus, TriangleAlert } from 'lucide-react';
 import {
+  type ReactNode,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -11,6 +12,10 @@ import {
   useState,
 } from 'react';
 
+import {
+  type FlightPlanHost,
+  FlightPlanHostContext,
+} from './components/flightplan/ContainerFlightPlanSection';
 import { PeopleProvider } from './components/people/PeopleContext';
 import { AddProjectDialog } from './components/shell/AddProjectDialog';
 import { CommandPalette } from './components/shell/CommandPalette';
@@ -75,7 +80,7 @@ import type {
   SettingsPage,
   TaskTab,
 } from './lib/appNav';
-import { initialNavState, navReducer } from './lib/appNav';
+import { defaultTaskTab, initialNavState, navReducer } from './lib/appNav';
 import { hideArchivedRuns } from './lib/archiveFilter';
 import type { InboxTarget } from './lib/inbox';
 import { projectViewForInboxTarget, unreadCount } from './lib/inbox';
@@ -140,6 +145,26 @@ import {
 import { SidebarProvider } from '@/ui/sidebar';
 import { Spinner } from '@/ui/spinner';
 import { TooltipProvider } from '@/ui/tooltip';
+
+// The hosts a split pane and a Flight Plan draw from, provided together so the shell's
+// provider stack stays one level deep.
+function SurfaceHosts({
+  taskPane,
+  flightPlan,
+  children,
+}: {
+  taskPane: TaskPaneHost | null;
+  flightPlan: FlightPlanHost;
+  children: ReactNode;
+}) {
+  return (
+    <TaskPaneHostContext.Provider value={taskPane}>
+      <FlightPlanHostContext.Provider value={flightPlan}>
+        {children}
+      </FlightPlanHostContext.Provider>
+    </TaskPaneHostContext.Provider>
+  );
+}
 
 function App() {
   const [navState, dispatchNav] = useReducer(navReducer, initialNavState);
@@ -507,14 +532,20 @@ function App() {
   );
 
   // Opens the full task view; unspecified runId resolves to the task's latest
-  // run so Chat/Diff have something to show immediately.
+  // run so Chat/Diff have something to show immediately. With no tab named, a
+  // container opens on its Flight Plan and anything else on Details.
   const openTaskView = useCallback(
-    (taskId: string, tab: TaskTab = 'details', runId?: string) => {
+    (taskId: string, tab?: TaskTab, runId?: string) => {
       const resolved =
         runId ?? rawData.latestRunByTaskId.get(taskId)?.id ?? null;
-      dispatchNav({ type: 'openTask', taskId, tab, runId: resolved });
+      dispatchNav({
+        type: 'openTask',
+        taskId,
+        tab: tab ?? defaultTaskTab(taskId, rawData.tasksIncludingArchived),
+        runId: resolved,
+      });
     },
-    [rawData.latestRunByTaskId]
+    [rawData.latestRunByTaskId, rawData.tasksIncludingArchived]
   );
 
   // A Tasks-page row or card open: a phase drill from the milestones layout names
@@ -904,6 +935,19 @@ function App() {
     []
   );
 
+  // What a `<ContainerFlightPlanSection>` draws a plan with: the project's data and the
+  // Cockpit's stay-in-place dispatch.
+  const flightPlanHost = useMemo<FlightPlanHost>(
+    () => ({
+      data,
+      dispatchTask: cockpitDispatch,
+      onDispatchFailed: onCockpitDispatchFailed,
+      onOpenTask: openTaskView,
+      onPeekTask: peekTask,
+    }),
+    [data, cockpitDispatch, onCockpitDispatchFailed, openTaskView, peekTask]
+  );
+
   const openOverseer = useCallback(
     (prompt?: string) => {
       if (prompt !== undefined) overseer.setDraft(prompt);
@@ -1068,7 +1112,10 @@ function App() {
             <SavedViewsProvider value={savedViews}>
               <PageHeaderShellContext.Provider value={pageHeaderShell}>
                 <PeopleProvider people={data.people} me={data.me}>
-                  <TaskPaneHostContext.Provider value={taskPaneHost}>
+                  <SurfaceHosts
+                    taskPane={taskPaneHost}
+                    flightPlan={flightPlanHost}
+                  >
                     {/* Linear's frame: the window is the dark frame, the rail sits directly on it, and
           the content is one rounded panel inset 8px from the top and right with the status
           strip in the 36px below. Views own their inset from here on — the panel has no
@@ -1645,7 +1692,7 @@ function App() {
                         onClose={() => dispatchNav({ type: 'closePalette' })}
                       />
                     </div>
-                  </TaskPaneHostContext.Provider>
+                  </SurfaceHosts>
                 </PeopleProvider>
               </PageHeaderShellContext.Provider>
             </SavedViewsProvider>

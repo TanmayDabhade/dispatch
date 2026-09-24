@@ -62,6 +62,9 @@ export interface FanoutControlsProps {
   onOpenEpic: (epicId: string) => void;
   /** The trailing Open button; the board turns it off since its id chip opens the epic. */
   showOpen?: boolean;
+  /** An active session's phase chips; the Flight Plan turns them off since its header
+   * counts the same children. */
+  phases?: boolean;
 }
 
 /** No session, or one that has run its course — the caller's own live-run pill speaks
@@ -103,6 +106,7 @@ export function FanoutControls({
   onLand,
   onOpenEpic,
   showOpen = true,
+  phases = true,
 }: FanoutControlsProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -150,7 +154,8 @@ export function FanoutControls({
 
   let controls: ReactNode;
   if (active && progress !== undefined) {
-    const counts = phaseCounts(progressChildren);
+    // Counting nothing leaves no chips, for a caller that shows its own counts.
+    const counts = phaseCounts(phases ? progressChildren : []);
     const spend = progress.spend;
     const rulings = rulingsWaiting(progressChildren);
     controls = (

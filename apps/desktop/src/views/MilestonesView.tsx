@@ -454,7 +454,7 @@ export function MilestonesView({
                 }
                 onStop={data.handleStopEpic}
                 onLand={data.handleLandEpic}
-                onOpenEpic={(id) => onOpenTask(id)}
+                onOpenEpic={(id) => onOpenTask(id, 'plan')}
               >
                 {/* The health pill speaks for a milestone nobody is fanning out; a live
                     session's phase chips replace it. */}

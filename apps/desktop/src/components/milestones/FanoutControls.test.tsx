@@ -462,3 +462,14 @@ test('a verb disables the row while it runs and shows a rejected handler’s mes
   expect(alert.textContent).toBe('session is not active');
   expect(alert.getAttribute('title')).toBe('session is not active');
 });
+
+test('phases={false} drops the chips and keeps the verbs', () => {
+  mount(
+    progressWith([child('t-1', 'working'), child('t-2', 'queued')], {
+      session: sessionWith('active'),
+    }),
+    { phases: false }
+  );
+  expect(document.querySelector('[data-slot=phase-chip]')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Pause' })).not.toBeNull();
+});
