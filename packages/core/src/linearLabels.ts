@@ -58,7 +58,9 @@ function sameLabel(
  * local edit Linear has not moved on from is pushed; otherwise Linear's color
  * wins, including on first contact. Two Linear labels spelling the same ref
  * (one per team) share nothing: the first claims the entry. An entry whose
- * label is gone from Linear keeps its color and loses its link.
+ * label is gone from Linear keeps its color and loses its link. The registry
+ * holds one entry per ref, so a label renamed onto another entry's ref folds
+ * in an unlinked (or orphaned) one, and yields to one another label spells.
  */
 export function syncLinearLabels(input: LabelSyncInput): LabelSyncResult {
   const configured = input.configured.map((l) => ({ ...l }));
@@ -68,8 +70,34 @@ export function syncLinearLabels(input: LabelSyncInput): LabelSyncResult {
     if (l.external != null) byExternal.set(l.external, i);
     byRef.set(labelRef(l).toLowerCase(), i);
   });
+  // The ref each Linear label spells as of this pass.
+  const spelled = new Map(
+    input.linear.map((l) => [
+      linearLabelExternal(l.id),
+      labelRef(l).toLowerCase(),
+    ])
+  );
   const claimed = new Set<number>();
+  const absorbed = new Set<number>();
   const live = new Set<string>();
+  // Re-keys entry `at` to `ref`; false when another label keeps that ref.
+  const moveTo = (at: number, ref: string): boolean => {
+    const other = byRef.get(ref);
+    if (other !== undefined && other !== at) {
+      const ext = configured[other].external ?? null;
+      const holder = ext === null ? undefined : spelled.get(ext);
+      const foreign = ext !== null && !ext.startsWith(LABEL_PREFIX);
+      if (claimed.has(other) || holder === ref || foreign) return false;
+      if (holder === undefined) {
+        absorbed.add(other);
+        configured[at].color ??= configured[other].color;
+      }
+    }
+    const was = labelRef(configured[at]).toLowerCase();
+    if (byRef.get(was) === at) byRef.delete(was);
+    byRef.set(ref, at);
+    return true;
+  };
   const push: LabelColorPush[] = [];
   const base: Record<string, string | null> = {};
 
@@ -85,7 +113,7 @@ export function syncLinearLabels(input: LabelSyncInput): LabelSyncResult {
       at = free ? sameRef : undefined;
       if (sameRef !== undefined && !free) continue;
     }
-    if (at !== undefined && claimed.has(at)) continue;
+    if (at !== undefined && (claimed.has(at) || !moveTo(at, ref))) continue;
     live.add(external);
     const remote = label.color ?? null;
     if (at === undefined) {
@@ -126,14 +154,15 @@ export function syncLinearLabels(input: LabelSyncInput): LabelSyncResult {
     }
   }
 
-  for (const entry of configured) {
+  const kept = configured.filter((_, i) => !absorbed.has(i));
+  for (const entry of kept) {
     const ext = entry.external ?? null;
     if (ext !== null && ext.startsWith(LABEL_PREFIX) && !live.has(ext)) {
       entry.external = null;
     }
   }
   const changed =
-    configured.length !== input.configured.length ||
-    configured.some((l, i) => !sameLabel(l, input.configured[i]));
-  return { configured, changed, push, base };
+    kept.length !== input.configured.length ||
+    kept.some((l, i) => !sameLabel(l, input.configured[i]));
+  return { configured: kept, changed, push, base };
 }

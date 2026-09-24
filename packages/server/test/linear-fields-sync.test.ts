@@ -394,6 +394,41 @@ describe('label registry', () => {
     expect(fake.labelList[0]?.color).toBe('#0f783c');
   });
 
+  it('folds a local-only entry into a Linear label renamed onto it', async () => {
+    updateConfig(root, { labels: [{ name: 'feature', color: '#00ff00' }] });
+    fake.labelList = [
+      { id: 'l-d', name: 'Defect', color: '#eb5757', teamId: 'team-1' },
+    ];
+    const { issue, id } = await linkedPair({ title: 'before', labels: [] });
+
+    fake.labelList = [{ ...fake.labelList[0], name: 'Feature' }];
+    issue.title = 'after';
+    touch(issue);
+    // A fresh engine reads the renamed label, as after a restart.
+    const summary = await makeSync().syncOnce();
+
+    expect(summary.errors).toEqual([]);
+    expect(store.get(id)?.meta.title).toBe('after');
+    expect(registry()).toEqual([['Feature', '#eb5757', 'linear:l-d']]);
+  });
+
+  it('reports a registry it cannot write and still runs the pass', async () => {
+    const { issue, id } = await linkedPair({ title: 'before' });
+    // A color the registry refuses, so the labels: write is rejected.
+    fake.labelList = [
+      { id: 'l-odd', name: 'odd', color: 'not-a-color', teamId: 'team-1' },
+    ];
+    issue.title = 'after';
+    touch(issue);
+    const summary = await makeSync().syncOnce();
+
+    expect(summary.errors.join('\n')).toContain('label registry not updated');
+    expect(readLinearState(root).lastError).toContain(
+      'label registry not updated'
+    );
+    expect(store.get(id)?.meta.title).toBe('after');
+  });
+
   it('creates a missing label in the registry’s color', async () => {
     const { id, sync } = await linkedPair();
     recolor('perf', '#26b5ce');

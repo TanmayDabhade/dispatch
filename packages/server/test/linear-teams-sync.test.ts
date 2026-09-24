@@ -316,6 +316,29 @@ describe('several linked teams', () => {
     expect(fake.calls).not.toContain('createLabel');
   });
 
+  it('keeps syncing when a team renames its label to one another team’s label spells', async () => {
+    fake.labelList = [
+      { id: 'l-a', name: 'Bug', color: '#eb5757', teamId: 'team-1' },
+      { id: 'l-b', name: 'defect', color: '#5e6ad2', teamId: 'team-2' },
+    ];
+    const issue = fake.issue({ title: 'before', labels: [] });
+    fake.issues = [issue];
+    await makeSync().importIssues();
+
+    // Linear allows one name per team, so Ops can spell Hydrogen's label.
+    fake.labelList[1] = { ...fake.labelList[1], name: 'bug' };
+    remote(issue).title = 'after';
+    remote(issue).updatedAt = fake.stamp();
+    const summary = await makeSync().syncOnce();
+
+    expect(summary.errors).toEqual([]);
+    expect(taskFor(issue)?.meta.title).toBe('after');
+    expect(loadConfig(root).labels).toEqual([
+      { name: 'Bug', color: '#eb5757', group: null, external: 'linear:l-a' },
+      { name: 'defect', color: '#5e6ad2', group: null, external: null },
+    ]);
+  });
+
   it('registers one webhook per team, sharing a secret, and redoes them when the teams change', async () => {
     const url = 'https://dispatch.example.com/api/linear/webhook';
     const sync = makeSync(url);

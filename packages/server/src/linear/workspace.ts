@@ -212,11 +212,21 @@ export function syncPeople(
   };
 }
 
+/** What folding Linear's labels into the registry left behind. */
+export interface LabelRegistrySync {
+  config: DispatchConfig;
+  changed: boolean;
+  /** Local color edits to write to Linear. */
+  push: LabelColorPush[];
+  /** Why the registry could not be written, or null. */
+  error: string | null;
+}
+
 /**
  * Folds the linked teams' labels into `labels:` and settles colors against
- * the stored base: returns the config as it stands afterwards, whether it
- * changed, and the local color edits to write to Linear. `state.labelColors`
- * takes the next base, which assumes those writes land.
+ * the stored base. `state.labelColors` takes the next base, which assumes the
+ * color writes land. A registry that cannot be written is reported and left
+ * as it was, base and all, so the rest of the pass still runs.
  */
 export function syncLabels(
   rootDir: string,
@@ -224,19 +234,33 @@ export function syncLabels(
   labels: readonly LinearLabel[],
   state: LinearSyncState,
   direction: { mayPull: boolean; mayPush: boolean }
-): { config: DispatchConfig; changed: boolean; push: LabelColorPush[] } {
+): LabelRegistrySync {
   const result = syncLinearLabels({
     configured: config.labels ?? [],
     linear: labels,
     base: state.labelColors,
     ...direction,
   });
+  let next = config;
+  if (result.changed) {
+    try {
+      next = updateConfig(rootDir, { labels: result.configured });
+    } catch (err) {
+      const why = err instanceof Error ? err.message : String(err);
+      return {
+        config,
+        changed: false,
+        push: [],
+        error: `label registry not updated: ${why}`,
+      };
+    }
+  }
   state.labelColors = result.base;
-  if (!result.changed) return { config, changed: false, push: result.push };
   return {
-    config: updateConfig(rootDir, { labels: result.configured }),
-    changed: true,
+    config: next,
+    changed: result.changed,
     push: result.push,
+    error: null,
   };
 }
 

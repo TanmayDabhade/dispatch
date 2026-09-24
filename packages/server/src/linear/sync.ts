@@ -911,6 +911,7 @@ export class LinearSync {
       mayPull,
       mayPush,
     });
+    if (labels.error !== null) summary.errors.push(labels.error);
     if (regenerated.configChanged || people.changed || labels.changed) {
       this.deps.events.broadcast({ type: 'config.changed' });
     }

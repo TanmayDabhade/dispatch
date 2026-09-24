@@ -132,4 +132,61 @@ describe('syncLinearLabels', () => {
     expect(result.configured[0]?.external).toBe('linear:l-web');
     expect(result.base).toEqual({ 'l-web': '#5e6ad2' });
   });
+
+  describe('a label renamed onto another entry’s ref', () => {
+    const linked = (id: string, name: string): LabelDefinition => ({
+      name,
+      group: null,
+      color: '#5e6ad2',
+      external: `linear:${id}`,
+    });
+    const label = (id: string, name: string, teamId: string): LinearLabel => ({
+      id,
+      name,
+      color: '#5e6ad2',
+      group: null,
+      teamId,
+    });
+
+    it('folds in an unlinked entry, or one whose label is gone', () => {
+      for (const external of [null, 'linear:l-gone']) {
+        const result = run({
+          configured: [
+            { name: 'web', group: null, color: '#000000', external },
+            linked('l-api', 'api'),
+          ],
+          linear: [label('l-api', 'Web', 'team-1')],
+          base: { 'l-api': '#5e6ad2' },
+        });
+        expect(result.configured).toEqual([linked('l-api', 'Web')]);
+      }
+    });
+
+    it('yields to the entry another label still spells, keeping its own unlinked', () => {
+      const result = run({
+        configured: [linked('l-a', 'Bug'), linked('l-b', 'defect')],
+        linear: [label('l-a', 'Bug', 'team-1'), label('l-b', 'bug', 'team-2')],
+        base: { 'l-a': '#5e6ad2', 'l-b': '#5e6ad2' },
+      });
+      expect(result.configured).toEqual([
+        linked('l-a', 'Bug'),
+        { ...linked('l-b', 'defect'), external: null },
+      ]);
+    });
+
+    it('lets two labels swap names in one pass', () => {
+      const result = run({
+        configured: [linked('l-a', 'Bug'), linked('l-b', 'Defect')],
+        linear: [
+          label('l-a', 'Defect', 'team-1'),
+          label('l-b', 'Bug', 'team-1'),
+        ],
+        base: { 'l-a': '#5e6ad2', 'l-b': '#5e6ad2' },
+      });
+      expect(result.configured).toEqual([
+        linked('l-a', 'Defect'),
+        linked('l-b', 'Bug'),
+      ]);
+    });
+  });
 });
