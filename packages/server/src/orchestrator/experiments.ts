@@ -6,7 +6,7 @@
 // `DISPATCH_EXPERIMENTS=lean-tools,cache-1h`. The executor reports the ones it
 // applied on the run's finish, so every run records which arm it ran in.
 
-export const EXPERIMENTS = [
+const EXPERIMENTS = [
   // Also removes Claude Code tools a dispatched run rarely needs but pays for
   // on every request: Workflow (multi-agent orchestration, ~21 KB of schema on
   // its own), plan mode, the code-review findings reporter, notebook editing,

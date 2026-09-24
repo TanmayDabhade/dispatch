@@ -38,7 +38,7 @@ function item(id: string, text: string): InboxItem {
   } as InboxItem;
 }
 
-// These one-shot judgements read untrusted text (a diff, inbox captures, a
+// These one-shot judgments read untrusted text (a diff, inbox captures, a
 // filter sentence) and need no tools. `allowedTools: []` only pre-approved
 // nothing: the model still had Bash, and plan mode runs a command that a
 // settings allow rule matches. `tools: []` is what removes them, and

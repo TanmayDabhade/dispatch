@@ -204,7 +204,7 @@ const WIND_DOWN_FLUSH_MS = 250;
 // result until it was here. The CLI treats the server name `*` as all servers
 // (verified on the bundled 2.1.207); the servers this executor adds are also
 // named in the documented per-server form.
-export const RUN_ENDED_DENY_RULES = [
+const RUN_ENDED_DENY_RULES = [
   'Bash',
   'PowerShell',
   'Write',

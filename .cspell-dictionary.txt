@@ -569,6 +569,8 @@ vsart
 vslab
 vsrow
 waitlist
+wakeup
+wakeups
 watskeburt
 wayfinding
 WHATWG

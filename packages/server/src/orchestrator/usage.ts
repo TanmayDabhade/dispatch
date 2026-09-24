@@ -30,7 +30,7 @@ export interface RunUsage extends TokenUsage {
   /**
    * Where the totals came from. `'result'` is the executor's own end-of-run
    * accounting; `'stream'` is a partial count summed from the messages seen
-   * before the run ended without one, and undercounts output tokens.
+   * before the run ended without one, and reports too few output tokens.
    */
   source: 'result' | 'stream';
 }
