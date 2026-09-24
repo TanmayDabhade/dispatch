@@ -1,8 +1,11 @@
+import type { MergeQueueEntryState } from '@dispatch/client';
 import { CircleDashed, Hourglass } from 'lucide-react';
 import { memo } from 'react';
 
 import { formatUsd } from '../../lib/epicSession';
+import { landingBadgeTitle } from '../../lib/landingBadge';
 import { AssigneeAvatar } from '../tasks/AssigneeAvatar';
+import { LandingBadge } from '../tasks/LandingBadge';
 import { StatusIcon } from '../tasks/StatusIcon';
 import { NODE_HEIGHT, NODE_WIDTH } from './flightLayout';
 import type { FlightNodeState } from './flightPlan';
@@ -33,6 +36,8 @@ export interface FlightNodeView {
   startedAt: number | null;
   /** The run's cost so far, for a running or finished node. */
   costUsd: number | null;
+  /** Where the task's run stands in the merge queue, while it is landing. */
+  landing: MergeQueueEntryState | null;
   critical: boolean;
   x: number;
   y: number;
@@ -122,6 +127,7 @@ export const FlightNodeCard = memo(function FlightNodeCard({
   owner,
   startedAt,
   costUsd,
+  landing,
   critical,
   x,
   y,
@@ -131,12 +137,17 @@ export const FlightNodeCard = memo(function FlightNodeCard({
   focused: boolean;
   onActivate: (id: string) => void;
 }) {
+  // A review node in the queue says where it is instead of "Ready for review"; any other
+  // node in the queue carries the badge in its header.
+  const landingSentence =
+    landing !== null && state === 'review' ? landingBadgeTitle(landing) : null;
+  const text = landingSentence ?? sentence;
   return (
     <button
       type="button"
       id={flightNodeDomId(id)}
       tabIndex={-1}
-      aria-label={`${refLabel} ${title}: ${sentence}`}
+      aria-label={`${refLabel} ${title}: ${text}`}
       data-slot="flight-node"
       data-node-id={id}
       data-state={state}
@@ -163,6 +174,9 @@ export const FlightNodeCard = memo(function FlightNodeCard({
         <span className="font-book min-w-0 flex-1 truncate tracking-(--id-tracking) text-(--text-muted) tabular-nums">
           {refLabel}
         </span>
+        {landing !== null && landingSentence === null && (
+          <LandingBadge state={landing} variant="inline" />
+        )}
         {costUsd !== null && costUsd > 0 && (
           <span className="font-book shrink-0 text-(--text-muted) tabular-nums">
             {formatUsd(costUsd)}
@@ -186,10 +200,13 @@ export const FlightNodeCard = memo(function FlightNodeCard({
       </span>
       <span
         data-slot="flight-node-sentence"
-        title={sentence}
-        className={cn('truncate text-[12px] leading-4', TONE_CLASS[tone])}
+        title={text}
+        className={cn(
+          'truncate text-[12px] leading-4',
+          landingSentence === null ? TONE_CLASS[tone] : 'text-state-landing'
+        )}
       >
-        {sentence}
+        {text}
       </span>
     </button>
   );

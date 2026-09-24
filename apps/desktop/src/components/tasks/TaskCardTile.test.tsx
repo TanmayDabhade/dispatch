@@ -240,3 +240,10 @@ test('a card without labels grows no picker', () => {
   expect(screen.queryByRole('button', { name: 'Change labels' })).toBeNull();
   expect(slot('pills').querySelector('[data-slot=label-pill]')).toBeNull();
 });
+
+test('a card whose run is in the merge queue shows a Landing pill on row 3', () => {
+  renderCard({ landing: 'rebasing' });
+  const badge = slot('pills').querySelector('[data-slot=landing-badge]');
+  expect(badge?.textContent).toBe('Landing');
+  expect(badge?.getAttribute('title')).toBe('Landing · rebasing');
+});

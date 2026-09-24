@@ -249,3 +249,34 @@ test('a cursor move re-renders only the rows whose focus changed', () => {
   fireEvent.mouseEnter(rows()[3]);
   expect(reads).toBe(perRow * 2);
 });
+
+test('a task whose run is in the merge queue carries the Landing badge', () => {
+  const props = {
+    prefs: DEFAULT_TASKS_DISPLAY,
+    run: undefined,
+    live: false,
+    needsYou: false,
+    statuses: testConfig.statuses,
+    epics: NO_EPICS,
+    onUpdate: resolved,
+    onMoveStatus: resolved,
+    picker: null,
+    onPickerChange: noop,
+    selected: false,
+    focused: false,
+    onOpen: noop,
+    onFocus: noop,
+  };
+  render(
+    <div>
+      <TaskListRow {...props} doc={task('t-1', 'Landing')} landing="merging" />
+      <TaskListRow {...props} doc={task('t-2', 'Idle')} />
+    </div>
+  );
+  const badges = document.querySelectorAll('[data-slot=landing-badge]');
+  expect(badges).toHaveLength(1);
+  expect(badges[0]?.closest('[data-row-id]')?.getAttribute('data-row-id')).toBe(
+    't-1'
+  );
+  expect(badges[0]?.getAttribute('title')).toBe('Landing · merging');
+});

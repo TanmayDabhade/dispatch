@@ -1,4 +1,9 @@
-import type { ReadinessReading, RunMeta, RunState } from '@dispatch/client';
+import type {
+  MergeQueueEntryState,
+  ReadinessReading,
+  RunMeta,
+  RunState,
+} from '@dispatch/client';
 import type { TaskListItem, UpdatePatch } from '@dispatch/core/browser';
 import type {
   DraggableAttributes,
@@ -14,6 +19,7 @@ import { formatCreated } from '../../lib/taskDates';
 import { TASK_PROPERTIES, type TaskProperty } from '../../lib/tasksPrefs';
 import { MergeLadderPill } from '../runs/MergeLadderDot';
 import { RunStatePill } from '../runs/RunStatePill';
+import { LandingBadge } from './LandingBadge';
 import {
   AssigneeControl,
   LabelsControl,
@@ -73,6 +79,9 @@ interface TaskCardTileProps {
   /** True when this task's latest run needs a human (see `deriveTaskAttentionById`) — a
    * `Needs you` pill on row 3, never a tinted card. */
   needsAttention?: boolean;
+  /** Where the task's run stands in the merge queue, while it is landing — a `Landing` pill
+   * on row 3. */
+  landing?: MergeQueueEntryState;
   /** Which properties the card shows (Display › Display properties). Defaults to all. */
   properties?: ReadonlySet<TaskProperty>;
   /** The daemon's readiness reading for this task, when judged — a thin spec
@@ -91,7 +100,8 @@ const ALL_PROPERTIES: ReadonlySet<TaskProperty> = new Set(TASK_PROPERTIES);
 /**
  * A Board card on Linear's four-row anatomy (§5): row 1 the id and ` › Epic` crumb with the
  * assignee avatar pushed right; row 2 the status glyph and a two-line title; row 3 the
- * priority glyph and the pills (labels, blocked, `Needs you`, live run mark, merge ladder);
+ * priority glyph and the pills (labels, blocked, `Needs you`, `Landing`, live run mark, merge
+ * ladder);
  * row 4 `Created Sep 13` with the Dispatch action on the right. Every card is the same
  * 322px `#1b1a1a` tile with a half-pixel ring — no coloured edge, no state tint; the
  * keyboard cursor and hover are neutral. Draggable via the optional `drag` prop.
@@ -113,6 +123,7 @@ export const TaskCardTile = memo(function TaskCardTile({
   drag,
   archived = false,
   needsAttention = false,
+  landing,
   properties = ALL_PROPERTIES,
   readiness,
   labelCatalogue = [],
@@ -284,6 +295,9 @@ export const TaskCardTile = memo(function TaskCardTile({
             {badge}
           </LabelPill>
         ))}
+        {has('run') && landing !== undefined && !archived && (
+          <LandingBadge state={landing} />
+        )}
         {has('run') && liveRunState !== undefined && run !== undefined && (
           <RunStatePill meta={run} compact />
         )}

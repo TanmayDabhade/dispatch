@@ -1,3 +1,4 @@
+import type { MergeQueueEntryState } from '@dispatch/client';
 import { Bot, Layers, Play } from 'lucide-react';
 import { memo } from 'react';
 
@@ -14,6 +15,7 @@ import type { FlightPlan } from '../flightplan/flightPlan';
 import { FlightPlanMini } from '../flightplan/FlightPlanMini';
 import { RunStatePill } from '../runs/RunStatePill';
 import { AssigneeAvatar } from '../tasks/AssigneeAvatar';
+import { LandingBadge } from '../tasks/LandingBadge';
 import { PriorityIcon } from '../tasks/PriorityIcon';
 import { StatusIcon } from '../tasks/StatusIcon';
 import type { FeedState } from '@/lib/feedState';
@@ -56,6 +58,8 @@ interface CockpitRowProps {
   focused: boolean;
   /** The fan-out's plan, for a fan-out row. */
   plan: FlightPlan | undefined;
+  /** Where the row's task sits in the merge queue, while it is landing. */
+  landing?: MergeQueueEntryState;
   onActivate: (key: string) => void;
   /** Present on Ready rows: the hover `Dispatch` button. */
   onDispatch?: (taskId: string) => void;
@@ -72,9 +76,12 @@ export const CockpitRow = memo(function CockpitRow({
   item,
   focused,
   plan,
+  landing,
   onActivate,
   onDispatch,
 }: CockpitRowProps) {
+  const landingBadge =
+    landing === undefined ? null : <LandingBadge state={landing} />;
   const common = {
     domId: cockpitRowId(item.key),
     'data-row-key': item.key,
@@ -148,6 +155,7 @@ export const CockpitRow = memo(function CockpitRow({
           title={item.task?.meta.title ?? run.taskTitle}
           trailing={
             <>
+              {landingBadge}
               <MetaText className="max-w-24 truncate">
                 {kind === 'agent' ? run.executor : `${kind} run`}
               </MetaText>
@@ -224,6 +232,7 @@ export const CockpitRow = memo(function CockpitRow({
           id={meta.id}
           status={<StatusIcon status={meta.status} />}
           title={meta.title}
+          trailing={landingBadge ?? undefined}
           date={formatAge(meta.updated)}
         />
       );
@@ -245,6 +254,7 @@ export const CockpitRow = memo(function CockpitRow({
               >
                 {NEEDS_LABEL[item.reason]}
               </Pill>
+              {landingBadge}
               {item.owner !== null && (
                 <AssigneeAvatar assignee={item.owner} size={16} />
               )}

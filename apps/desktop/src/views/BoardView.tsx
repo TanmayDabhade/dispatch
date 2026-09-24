@@ -28,6 +28,7 @@ import {
 } from '../lib/collapsedEpics';
 import type { WorkEpicOptions } from '../lib/epicSession';
 import { resolveListKeyCommand } from '../lib/keyboard';
+import { landingStateByTaskId } from '../lib/landingBadge';
 import { sortTasks } from '../lib/listGrouping';
 import { countMergeReady } from '../lib/mergeReady';
 import { viewMatches } from '../lib/savedViews';
@@ -358,6 +359,10 @@ export function BoardView({
   const archivedTaskIds = useMemo(
     () => new Set(data.archivedTasks.map((t) => t.meta.id)),
     [data.archivedTasks]
+  );
+  const landingByTaskId = useMemo(
+    () => landingStateByTaskId(data.mergeQueue),
+    [data.mergeQueue]
   );
   const epicIds = useMemo(
     () => new Set(data.epics.map((e) => e.meta.id)),
@@ -801,6 +806,7 @@ export function BoardView({
             latestRunByTaskId={data.latestRunByTaskId}
             readinessById={data.readinessById}
             attentionByTaskId={data.attentionByTaskId}
+            landingByTaskId={landingByTaskId}
             epicProgressById={data.epicProgressById}
             epicConcurrencyDefault={
               data.config?.orchestrator.epicConcurrency ?? 3

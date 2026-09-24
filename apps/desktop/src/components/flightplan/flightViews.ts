@@ -1,4 +1,8 @@
-import type { EpicProgressChild, RunMeta } from '@dispatch/client';
+import type {
+  EpicProgressChild,
+  MergeQueueEntryState,
+  RunMeta,
+} from '@dispatch/client';
 import type { StatusModel } from '@dispatch/core/browser';
 import {
   claimConflictsWithWrites,
@@ -75,6 +79,8 @@ export interface NodeViewContext {
   phaseOf: (taskId: string) => EpicProgressChild | undefined;
   /** Live runs' claimed files, for spotting a queued node parked behind one. */
   liveClaims: readonly { taskId: string; claims: string[] }[];
+  /** Tasks whose run is in the merge queue, with the entry's state. */
+  landingByTaskId: ReadonlyMap<string, MergeQueueEntryState>;
   personName: (assignee: string) => string | null;
 }
 
@@ -148,6 +154,7 @@ export function flightNodeViews(
         run?.costUsd !== undefined
           ? run.costUsd
           : null,
+      landing: ctx.landingByTaskId.get(meta.id) ?? null,
       critical: critical.has(meta.id),
       x: box.x,
       y: box.y,

@@ -47,6 +47,7 @@ import {
   moveCockpitCursor,
   resolveCockpitKey,
 } from '../lib/cockpitKeys';
+import { landingStateByTaskId } from '../lib/landingBadge';
 import { pendingStarts } from '../lib/optimisticDispatch';
 import { isTerminalRunState } from '../lib/runState';
 import { flattenGroups } from '../lib/virtualRows';
@@ -244,6 +245,11 @@ export function CockpitView({
       scope,
       pending,
     ]
+  );
+
+  const landingByTaskId = useMemo(
+    () => landingStateByTaskId(data.mergeQueue),
+    [data.mergeQueue]
   );
 
   // The mini Flight Plan for every container being fanned out.
@@ -577,6 +583,7 @@ export function CockpitView({
                 count={laneKeys[lane].length}
                 focusedKey={cursor.lane === lane ? cursor.key : null}
                 plans={plans}
+                landingByTaskId={landingByTaskId}
                 loading={!data.tasksReady}
                 onActivate={activate}
                 onDispatch={lane === 'ready' ? dispatchFromRow : undefined}

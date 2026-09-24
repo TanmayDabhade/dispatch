@@ -1,6 +1,7 @@
 import type {
   EpicProgressChild,
   FixLoopState,
+  MergeQueueEntryState,
   RunMeta,
 } from '@dispatch/client';
 import type { TaskListItem, UpdatePatch } from '@dispatch/core/browser';
@@ -9,6 +10,7 @@ import { type KeyboardEvent, memo } from 'react';
 
 import { RunStatePill } from '../components/runs/RunStatePill';
 import { AssigneeAvatar } from '../components/tasks/AssigneeAvatar';
+import { LandingBadge } from '../components/tasks/LandingBadge';
 import { PriorityIcon } from '../components/tasks/PriorityIcon';
 import {
   AssigneeControl,
@@ -85,6 +87,8 @@ export interface TaskListRowProps {
   live: boolean;
   /** Whether the task's latest run needs a human (`attentionByTaskId`). */
   needsYou: boolean;
+  /** Where the task's run stands in the merge queue, while it is landing. */
+  landing?: MergeQueueEntryState;
   /** This task's fix loop, for a capped phase pill's wording. */
   fixLoop?: FixLoopState;
   /** The project's configured statuses, for the status picker. */
@@ -136,14 +140,15 @@ function phasePillLabel(
 }
 
 /** One 36px task row: priority picker, sans id, status picker, title, then the right-aligned
- * label pills, epic chip, sub-task count, `Needs you`, live run mark and assignee, and the
- * absolute date. Which of those show comes from `prefs.properties`. */
+ * label pills, epic chip, sub-task count, `Needs you`, `Landing`, live run mark and assignee,
+ * and the absolute date. Which of those show comes from `prefs.properties`. */
 export const TaskListRow = memo(function TaskListRow({
   doc,
   prefs,
   run,
   live: liveRun,
   needsYou,
+  landing,
   fixLoop,
   statuses,
   epics,
@@ -221,6 +226,9 @@ export const TaskListRow = memo(function TaskListRow({
       )}
       {needsYou && !archived && (
         <LabelPill color="var(--state-waiting-fg)">Needs you</LabelPill>
+      )}
+      {has('run') && landing !== undefined && !archived && (
+        <LandingBadge state={landing} />
       )}
       {has('run') && live && <RunStatePill meta={run} compact />}
       {phase !== undefined && showsPhasePill(phase.phase) && (
