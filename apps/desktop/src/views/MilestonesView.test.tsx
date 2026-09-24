@@ -423,6 +423,41 @@ test('j/k and Enter walk and open the rows; + files the new task under the miles
   expect(log.presets).toEqual([{ epic: 'e-1' }]);
 });
 
+test('milestones sit under their project, and a parent issue is a row, not a milestone', () => {
+  const project = task('p-1', 'Storefront', { kind: 'project' });
+  const beta = task('m-1', 'Beta', { kind: 'milestone', parent: 'p-1' });
+  const parentIssue = task('t-1', 'Checkout', { parent: 'm-1' });
+  const { container, log } = renderMilestones(
+    dataWith(
+      [
+        project,
+        beta,
+        parentIssue,
+        task('t-2', 'Card form', { parent: 't-1' }),
+        task('t-3', 'Receipt', { parent: 't-1' }),
+      ],
+      // Every container, the parent issue included, as the app derives it.
+      [project, beta, parentIssue]
+    )
+  );
+  const names = Array.from(
+    container.querySelectorAll<HTMLElement>('[data-slot="group-header-name"]')
+  ).map((n) => n.textContent);
+  expect(names).toEqual(['Storefront › Beta']);
+  const rows = Array.from(
+    container.querySelectorAll<HTMLElement>('[data-slot="list-row"]')
+  ).map((r) => r.dataset.rowId);
+  expect(rows).toEqual(['t-1', 't-2', 't-3']);
+  expect(
+    container.querySelector('[data-slot="milestone-progress"]')?.textContent
+  ).toBe('0/3');
+
+  fireEvent.click(
+    screen.getByRole('button', { name: 'New task in Storefront › Beta' })
+  );
+  expect(log.presets).toEqual([{ epic: 'm-1' }]);
+});
+
 test('with no milestones the empty state offers Plan work…', () => {
   const { log } = renderMilestones(dataWith([task('t-1', 'Loose task')], []));
 

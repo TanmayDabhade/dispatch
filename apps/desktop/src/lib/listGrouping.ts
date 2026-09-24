@@ -1,5 +1,9 @@
 import type { Assignee, Priority, TaskListItem } from '@dispatch/core/browser';
-import { isContainerKind, PRIORITY_ORDER } from '@dispatch/core/browser';
+import {
+  canonicalKind,
+  isContainerKind,
+  PRIORITY_ORDER,
+} from '@dispatch/core/browser';
 
 import { statusColor } from '../components/tasks/StatusIcon';
 import { isMilestoneFinished, rollupMilestoneStatus } from './milestoneRollup';
@@ -61,7 +65,9 @@ export interface ListGroup {
 export interface GroupContext {
   /** The project's statuses in config order — status groups follow it. */
   statuses: readonly string[];
-  /** The project's epics in their own order — epic and milestone groups follow it. */
+  /** Every container (a container kind, or a task with children) in project order —
+   * epic and milestone groups follow it, and the milestone grouping walks it for the
+   * hierarchy above each task. */
   epics: readonly TaskListItem[];
   /** Appended as a trailing `Archived` group when non-empty (the "Show archived" toggle). */
   archivedTasks?: readonly TaskListItem[];
@@ -165,11 +171,15 @@ export function nestRows(
   return rows;
 }
 
-// A sub-task is a task whose parent is another *task* — an epic's children are its members,
-// not sub-tasks (Linear's project members vs sub-issues), so `showSubtasks: false` leaves an
-// epic-grouped list intact.
-function isSubtask(doc: TaskListItem, epicIds: ReadonlySet<string>): boolean {
-  return doc.meta.parent !== null && !epicIds.has(doc.meta.parent);
+// A sub-task is a task whose parent is another *task* — a container's children are its
+// members, not sub-tasks (Linear's project members vs sub-issues), so `showSubtasks: false`
+// leaves an epic-grouped list intact. `containerIds` holds container *kinds* only: a parent
+// issue has children too, but what sits under it is still a sub-issue.
+function isSubtask(
+  doc: TaskListItem,
+  containerIds: ReadonlySet<string>
+): boolean {
+  return doc.meta.parent !== null && !containerIds.has(doc.meta.parent);
 }
 
 interface Bucket {
@@ -214,32 +224,25 @@ function byStatus(tasks: TaskListItem[], ctx: GroupContext): Bucket[] {
 }
 
 // Buckets under each epic in project order, then dangling parent ids, then "No epic". Epic
-// docs themselves are the headers, not rows. `asMilestone` swaps the epic swatch for the
-// milestone target tinted by the rolled-up status and sinks finished milestones to the end.
-function byEpic(
-  tasks: TaskListItem[],
-  ctx: GroupContext,
-  asMilestone: boolean
-): Bucket[] {
-  const kind = asMilestone ? 'milestone' : 'epic';
+// docs themselves are headers, not rows: a task sits under its direct parent.
+function byEpic(tasks: TaskListItem[], ctx: GroupContext): Bucket[] {
   const buckets = new Map<string, Bucket>();
-  const noEpic: TaskListItem[] = [];
+  const epicBucket = (id: string, label: string, tint: string | null) =>
+    bucket({
+      key: `epic:${id}`,
+      label,
+      tint,
+      icon: { kind: 'epic', epicId: id },
+      preset: { epic: id },
+      epicId: id,
+    });
   for (const epic of ctx.epics) {
     buckets.set(
       epic.meta.id,
-      bucket({
-        key: `${kind}:${epic.meta.id}`,
-        label: epic.meta.title,
-        tint: asMilestone ? null : colorForEpic(epic.meta.id),
-        icon: asMilestone
-          ? { kind: 'milestone', status: 'draft' }
-          : { kind: 'epic', epicId: epic.meta.id },
-        // A milestone's `+` files the new task under it, like an epic's.
-        preset: { epic: epic.meta.id },
-        epicId: epic.meta.id,
-      })
+      epicBucket(epic.meta.id, epic.meta.title, colorForEpic(epic.meta.id))
     );
   }
+  const noEpic: TaskListItem[] = [];
   for (const doc of tasks) {
     if (isContainerKind(doc.meta.kind)) continue;
     const parent = doc.meta.parent;
@@ -249,48 +252,179 @@ function byEpic(
     }
     let target = buckets.get(parent);
     if (target === undefined) {
-      target = bucket({
-        key: `${kind}:${parent}`,
-        label: parent,
-        tint: null,
-        icon: asMilestone
-          ? { kind: 'milestone', status: 'draft' }
-          : { kind: 'epic', epicId: parent },
-        preset: { epic: parent },
-        epicId: parent,
-      });
+      target = epicBucket(parent, parent, null);
       buckets.set(parent, target);
     }
     target.tasks.push(doc);
   }
-  let result = [...buckets.values()];
-  if (asMilestone) {
-    for (const b of result) {
-      const rollup = rollupMilestoneStatus(b.tasks);
-      b.icon = { kind: 'milestone', status: rollup };
-      b.tint = statusColor(rollup);
+  const result = [...buckets.values()];
+  if (noEpic.length > 0) result.push(noParentBucket('No epic', noEpic));
+  return result;
+}
+
+function noParentBucket(label: string, tasks: TaskListItem[]): Bucket {
+  return bucket(
+    {
+      key: NO_EPIC_KEY,
+      label,
+      tint: null,
+      icon: { kind: 'epic', epicId: null },
+      preset: {},
+      epicId: null,
+    },
+    tasks
+  );
+}
+
+/**
+ * The hierarchy the milestone grouping reads: for any parent id, the nearest milestone,
+ * project or initiative at or above it (a parent issue passes through to its own parent).
+ * A missing id answers itself, so its tasks keep a group of their own; a cycle answers
+ * null. Memoized, so every task's walk costs O(1) amortized.
+ */
+function containerHomes(
+  tasks: readonly TaskListItem[],
+  containers: readonly TaskListItem[]
+): (parentId: string) => string | null {
+  const byId = new Map<string, TaskListItem>();
+  for (const doc of containers) byId.set(doc.meta.id, doc);
+  for (const doc of tasks)
+    if (!byId.has(doc.meta.id)) byId.set(doc.meta.id, doc);
+  const memo = new Map<string, string | null>();
+  return (parentId) => {
+    const chain: string[] = [];
+    const seen = new Set<string>();
+    let id: string | null = parentId;
+    let home: string | null = null;
+    while (id !== null) {
+      const cached = memo.get(id);
+      if (cached !== undefined) {
+        home = cached;
+        break;
+      }
+      if (seen.has(id)) break;
+      seen.add(id);
+      chain.push(id);
+      const node = byId.get(id);
+      if (node === undefined || isContainerKind(node.meta.kind)) {
+        home = id;
+        break;
+      }
+      id = node.meta.parent;
     }
-    result = [
-      ...result.filter((b) => !isFinishedBucket(b)),
-      ...result.filter(isFinishedBucket),
-    ];
+    for (const link of chain) memo.set(link, home);
+    return home;
+  };
+}
+
+// Buckets each task under its nearest milestone (or project/initiative, for work filed
+// straight under one), in hierarchy order — initiative, its projects, their milestones.
+// A parent issue is a row with its sub-issues under it, never a group of its own.
+// Headers wear the rolled-up status, finished ones sink to the end, then any dangling
+// parent ids, then "No milestone".
+function byMilestone(tasks: TaskListItem[], ctx: GroupContext): Bucket[] {
+  const containers = ctx.epics.filter((e) => isContainerKind(e.meta.kind));
+  const homeOf = containerHomes(tasks, containers);
+  const direct = new Map<string, TaskListItem[]>();
+  const noMilestone: TaskListItem[] = [];
+  for (const doc of tasks) {
+    if (isContainerKind(doc.meta.kind)) continue;
+    const home = doc.meta.parent === null ? null : homeOf(doc.meta.parent);
+    if (home === null) {
+      noMilestone.push(doc);
+      continue;
+    }
+    const list = direct.get(home);
+    if (list === undefined) direct.set(home, [doc]);
+    else list.push(doc);
   }
-  if (noEpic.length > 0) {
+
+  // The container tree, in project order under each parent.
+  const known = new Map(containers.map((c) => [c.meta.id, c]));
+  const childContainers = new Map<string, TaskListItem[]>();
+  const roots: TaskListItem[] = [];
+  const outerOf = (c: TaskListItem): TaskListItem | undefined => {
+    const up = c.meta.parent === null ? null : homeOf(c.meta.parent);
+    return up === null || up === c.meta.id ? undefined : known.get(up);
+  };
+  for (const c of containers) {
+    const outer = outerOf(c);
+    if (outer === undefined) {
+      roots.push(c);
+      continue;
+    }
+    const list = childContainers.get(outer.meta.id);
+    if (list === undefined) childContainers.set(outer.meta.id, [c]);
+    else list.push(c);
+  }
+
+  const result: Bucket[] = [];
+  const visited = new Set<string>();
+  const visit = (c: TaskListItem) => {
+    const id = c.meta.id;
+    if (visited.has(id)) return;
+    visited.add(id);
+    const inner = childContainers.get(id) ?? [];
+    const own = direct.get(id) ?? [];
+    direct.delete(id);
+    // A project or initiative is a group only for work filed straight under it, or
+    // when nothing nests below it; otherwise its milestones stand for it.
+    if (
+      canonicalKind(c.meta.kind) === 'milestone' ||
+      own.length > 0 ||
+      inner.length === 0
+    ) {
+      const outer = outerOf(c);
+      result.push(
+        bucket(
+          {
+            key: `milestone:${id}`,
+            label:
+              outer === undefined
+                ? c.meta.title
+                : `${outer.meta.title} › ${c.meta.title}`,
+            tint: null,
+            icon: { kind: 'milestone', status: 'draft' },
+            preset: { epic: id },
+            epicId: id,
+          },
+          own
+        )
+      );
+    }
+    for (const child of inner) visit(child);
+  };
+  for (const root of roots) visit(root);
+  // What is left names a parent that is not here (a dangling id), or sits in a cycle.
+  for (const [id, own] of direct) {
     result.push(
       bucket(
         {
-          key: NO_EPIC_KEY,
-          label: asMilestone ? 'No milestone' : 'No epic',
+          key: `milestone:${id}`,
+          label: known.get(id)?.meta.title ?? id,
           tint: null,
-          icon: { kind: 'epic', epicId: null },
-          preset: {},
-          epicId: null,
+          icon: { kind: 'milestone', status: 'draft' },
+          preset: { epic: id },
+          epicId: id,
         },
-        noEpic
+        own
       )
     );
   }
-  return result;
+
+  for (const b of result) {
+    const rollup = rollupMilestoneStatus(b.tasks);
+    b.icon = { kind: 'milestone', status: rollup };
+    b.tint = statusColor(rollup);
+  }
+  const ordered = [
+    ...result.filter((b) => !isFinishedBucket(b)),
+    ...result.filter(isFinishedBucket),
+  ];
+  if (noMilestone.length > 0) {
+    ordered.push(noParentBucket('No milestone', noMilestone));
+  }
+  return ordered;
 }
 
 function isFinishedBucket(b: Bucket): boolean {
@@ -355,10 +489,12 @@ export function groupTasks(
   prefs: TasksDisplayPrefs,
   ctx: GroupContext
 ): ListGroup[] {
-  const epicIds = new Set(ctx.epics.map((e) => e.meta.id));
+  const containerIds = new Set(
+    ctx.epics.filter((e) => isContainerKind(e.meta.kind)).map((e) => e.meta.id)
+  );
   const visible = prefs.showSubtasks
     ? tasks
-    : tasks.filter((doc) => !isSubtask(doc, epicIds));
+    : tasks.filter((doc) => !isSubtask(doc, containerIds));
 
   let buckets: Bucket[];
   switch (prefs.grouping) {
@@ -366,10 +502,10 @@ export function groupTasks(
       buckets = byStatus(visible, ctx);
       break;
     case 'epic':
-      buckets = byEpic(visible, ctx, false);
+      buckets = byEpic(visible, ctx);
       break;
     case 'milestone':
-      buckets = byEpic(visible, ctx, true);
+      buckets = byMilestone(visible, ctx);
       break;
     case 'assignee':
       buckets = byAssignee(visible);
