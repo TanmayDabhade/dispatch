@@ -195,6 +195,42 @@ describe('a fan-out never picks up a teammate’s task', () => {
     expect(h.dispatched()).toEqual(new Set([dependent]));
   });
 
+  it('holds a teammate’s dependents through In Review, with no branch of theirs to stack on', async () => {
+    const h = makeHarness();
+    const m = h.store.create({ title: 'Milestone', kind: 'milestone' }).meta.id;
+    const samTask = h.task('samTask', { parent: m, assignee: 'human:sam' });
+    const dependent = h.task('dependent', { parent: m, blockedBy: [samTask] });
+    // Moved to review by hand: no run, so no branch either.
+    const handMoved = h.task('handMoved', { parent: m });
+    const handDependent = h.task('handDependent', {
+      parent: m,
+      blockedBy: [handMoved],
+    });
+    h.store.update(handMoved, { status: 'review' });
+
+    await h.epics.start(m, { executor: 'fake', concurrency: 4 });
+    await sleep(50);
+    expect(h.orchestrator.list()).toHaveLength(0);
+
+    // Sam opens his PR: Linear moves the issue to In Review.
+    h.store.update(samTask, { status: 'review' });
+    h.events.broadcast({ type: 'task.changed', ids: [samTask] });
+    await sleep(100);
+    expect(h.orchestrator.list()).toHaveLength(0);
+    const phases = new Map(h.epics.progress(m).children.map((c) => [c.id, c]));
+    expect(phases.get(dependent)).toMatchObject({
+      phase: 'waiting',
+      reason: `waiting on ${samTask}`,
+    });
+    expect(phases.get(handDependent)).toMatchObject({ phase: 'waiting' });
+
+    h.store.update(samTask, { status: 'landed' });
+    h.events.broadcast({ type: 'task.changed', ids: [samTask] });
+    await waitFor(() => h.dispatched().has(dependent));
+    await sleep(50);
+    expect(h.dispatched()).toEqual(new Set([dependent]));
+  });
+
   it('skips a task reassigned to a teammate while the batch is mid-dispatch', async () => {
     const h = makeHarness();
     const m = h.store.create({ title: 'Milestone', kind: 'milestone' }).meta.id;

@@ -41,7 +41,11 @@ import type { BranchLaneGroup } from './FlightBranchLane';
 import type { FlightBandView } from './FlightCanvas';
 import { flightNavIndex } from './flightKeys';
 import { flightGeometry, flightStructureKey } from './flightLayout';
-import { buildFlightPlan, type FlightNode } from './flightPlan';
+import {
+  buildFlightPlan,
+  type FlightNode,
+  tasksWithRunBranch,
+} from './flightPlan';
 import { type FlightHeaderStats, FlightPlanHeader } from './FlightPlanHeader';
 import {
   childrenByParent,
@@ -328,6 +332,10 @@ export function FlightPlan({
     return out;
   }, [sessions]);
 
+  const withRunBranch = useMemo(
+    () => tasksWithRunBranch(data.runs),
+    [data.runs]
+  );
   const plan = useMemo(
     () =>
       buildFlightPlan(nodes, {
@@ -339,6 +347,7 @@ export function FlightPlan({
         me: directory.me,
         ownerOf,
         startedByOf,
+        withRunBranch,
       }),
     [
       nodes,
@@ -350,6 +359,7 @@ export function FlightPlan({
       directory.me,
       ownerOf,
       startedByOf,
+      withRunBranch,
     ]
   );
   const planNodeById = useMemo(

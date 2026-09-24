@@ -1,13 +1,15 @@
+import type { RunMeta } from '@dispatch/client';
 import type { StatusModel, TaskListItem } from '@dispatch/core/browser';
 import {
   fanoutHolder,
+  fanoutWaitingOn,
   hasStatusRole,
   isDoneStatus,
-  isSatisfiedForDispatchStatus,
   isUnstartedStatus,
 } from '@dispatch/core/browser';
 
 import { dagTaskFromDoc, dagWaves } from '../../lib/dagLayout';
+import { isTerminalRunState } from '../../lib/runState';
 
 // The Flight Plan's model: where each child of a fanned-out container stands, and the
 // waves they run in. The Cockpit's mini (wave bar, slots, running count) and the full
@@ -21,7 +23,8 @@ import { dagTaskFromDoc, dagWaves } from '../../lib/dagLayout';
  * - `teammate`: another person's, in any unfinished state; the fan-out never starts it
  *   (the server's rule, core's `fanoutHolder`), though its dependents still wait on it.
  * - `review`: the agent is done and it waits in review or landing — its dependents may
- *   already start (the server stacks them on its branch).
+ *   already start when it has a run branch to stack on (core's
+ *   `releasesFanoutDependents`).
  * - `queued`: unstarted and unblocked — next when a slot frees.
  * - `blocked`: waiting on something: a blocker in the container, a spec (backlog), a
  *   hand dispatch (critical risk), or a failed run.
@@ -40,7 +43,7 @@ export interface FlightNode {
   /** 0-based wave (`dagWaves`). */
   wave: number;
   /** Ids of this child's blockers inside the container that still hold its dispatch
-   * (not yet in review, landing or done — the server's rule). */
+   * (core's `fanoutWaitingOn`, the server's rule). */
   waitingOn: string[];
   /** The child is itself a container: it fans out on its own plan, never this one's. */
   subPlan: boolean;
@@ -90,6 +93,23 @@ export interface FlightPlanOptions {
   ownerOf?: (task: TaskListItem) => string | null;
   /** Who started `owner`'s live fan-out, whose tasks it may start. Null or omitted: `me`. */
   startedByOf?: (owner: string) => string | null | undefined;
+  /** Tasks with a run branch a dependent can stack on (`tasksWithRunBranch`); a blocker in
+   * review without one holds its dependents until done. Omitted: none. */
+  withRunBranch?: ReadonlySet<string>;
+}
+
+const NONE: ReadonlySet<string> = new Set();
+
+/** Tasks whose work sits on a Dispatch run branch a dependent can stack on: a terminal,
+ * unreviewed run (the server's rule). */
+export function tasksWithRunBranch(runs: readonly RunMeta[]): Set<string> {
+  const out = new Set<string>();
+  for (const run of runs) {
+    if (isTerminalRunState(run.state) && run.reviewedAt === undefined) {
+      out.add(run.taskId);
+    }
+  }
+  return out;
 }
 
 // One child's state, first match wins: finished, a live run, a teammate's hands, the
@@ -139,6 +159,7 @@ export function buildFlightPlan(
     me = null,
     ownerOf,
     startedByOf,
+    withRunBranch = NONE,
   }: FlightPlanOptions
 ): FlightPlan {
   const waveOf = knownWaves ?? dagWaves(children.map(dagTaskFromDoc));
@@ -147,18 +168,21 @@ export function buildFlightPlan(
   const local = me ?? 'human';
   const nodes: FlightNode[] = children.map((task) => {
     const id = task.meta.id;
-    const waitingOn = task.meta.blockedBy.filter((blocker) => {
-      const b = byId.get(blocker);
-      return (
-        b !== undefined &&
-        blocker !== id &&
-        !isSatisfiedForDispatchStatus(b.meta.status, model)
-      );
-    });
     const subPlan = containerIds?.has(id) ?? false;
     const owner = ownerOf === undefined ? task.meta.parent : ownerOf(task);
     const starter = owner === null ? null : (startedByOf?.(owner) ?? null);
-    const holder = fanoutHolder(task.meta.assignee, starter ?? local, local);
+    const holderOf = (t: TaskListItem) =>
+      fanoutHolder(t.meta.assignee, starter ?? local, local);
+    const holder = holderOf(task);
+    const waitingOn = fanoutWaitingOn(
+      task,
+      (blocker) => (blocker === id ? undefined : byId.get(blocker)),
+      model,
+      (b) => ({
+        held: holderOf(b) !== null,
+        hasRunBranch: withRunBranch.has(b.meta.id),
+      })
+    );
     return {
       task,
       state: stateOf(

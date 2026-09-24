@@ -4,15 +4,17 @@ import {
   fanoutCoverers,
   fanoutHolder,
   fanoutScope,
+  fanoutWaitingOn,
   hasStatusRole,
   isContainerKind,
-  isSatisfiedForDispatchStatus,
   isUnstartedStatus,
   loadConfig,
+  releasesFanoutDependents,
   schedulableBatch,
 } from '@dispatch/core';
 import type {
   ActorContext,
+  FanoutBlocker,
   StatusModel,
   TaskDoc,
   TaskStorePort,
@@ -28,7 +30,6 @@ import {
   deriveSpend,
   deriveWaves,
   summarizeWaves,
-  unsatisfiedBlockersOf,
 } from './epicPhase.js';
 import type { EpicProgressChild, EpicSpend, EpicWave } from './epicPhase.js';
 import type { FixLoopState } from './fixLoop.js';
@@ -197,6 +198,29 @@ function childrenIndex(tasks: readonly TaskDoc[]): Map<string, TaskDoc[]> {
   return out;
 }
 
+// Tasks whose work sits on a branch a dependent can stack on: a terminal,
+// unreviewed run (the rule Orchestrator.branchForTask picks a base by).
+function tasksWithRunBranch(runs: readonly RunMeta[]): Set<string> {
+  const out = new Set<string>();
+  for (const run of runs) {
+    if (TERMINAL_RUN_STATES.has(run.state) && run.reviewedAt === undefined) {
+      out.add(run.taskId);
+    }
+  }
+  return out;
+}
+
+// A blocker as a fan-out working for `holder`'s dispatcher sees it.
+function blockerView(
+  holder: (task: TaskDoc) => string | null,
+  withRunBranch: ReadonlySet<string>
+): (blocker: TaskDoc) => FanoutBlocker {
+  return (blocker) => ({
+    held: holder(blocker) !== null,
+    hasRunBranch: withRunBranch.has(blocker.meta.id),
+  });
+}
+
 // Active or paused: a session that still claims its scope.
 function isLive(session: EpicSessionRecord): boolean {
   return session.state === 'active' || session.state === 'paused';
@@ -216,6 +240,8 @@ interface ProgressBoard {
   /** Each task's latest run and its live one; `runs` is newest first. */
   latestRun: Map<string, RunMeta>;
   liveRun: Map<string, RunMeta>;
+  /** See tasksWithRunBranch. */
+  withRunBranch: Set<string>;
   /** Readings by `<dispatcher> <task id>`, filled as containers ask. */
   readings: Map<string, ChildReading>;
   runCostEstimateUsd: number;
@@ -531,6 +557,7 @@ export class EpicEngine {
       runs,
       latestRun,
       liveRun,
+      withRunBranch: tasksWithRunBranch(runs),
       readings: new Map(),
       runCostEstimateUsd: loadConfig(this.ctx.rootDir).orchestrator
         .runCostEstimateUsd,
@@ -546,6 +573,7 @@ export class EpicEngine {
     const waves = deriveWaves(children);
     const session = this.sessions.get(epicId);
     const { dispatcher, holder } = this.holderFor(session);
+    const blocker = blockerView(holder, board.withRunBranch);
     const progressChildren: EpicProgressChild[] = children.map((task) => {
       const id = task.meta.id;
       const key = `${dispatcher} ${id}`;
@@ -558,10 +586,11 @@ export class EpicEngine {
           latestRun,
           fixLoop: this.fixLoop?.get(id) ?? null,
           blockedReason: this.ctx.orchestrator.blockedFindingReason(id),
-          unsatisfiedBlockers: unsatisfiedBlockersOf(
+          unsatisfiedBlockers: fanoutWaitingOn(
             task,
-            (blockerId) => board.byId.get(blockerId) ?? null,
-            statuses
+            (blockerId) => board.byId.get(blockerId),
+            statuses,
+            blocker
           ),
           dispatchable: dispatchable.has(id),
           heldBy: holder(task),
@@ -840,11 +869,12 @@ export class EpicEngine {
   // Dispatches ready work in the session's scope (the tasks the Flight Plan
   // draws, see scopeOf) via schedulableBatch (conflicts.ts): concurrency cap,
   // then the run and spend ceilings, no two overlapping `writes` in one batch.
-  // A teammate's task is never a candidate, but still blocks its dependents.
-  // Readiness runs over the FULL task set first, since dispatchableTasks
-  // treats a blocker it wasn't given as satisfied — a blocker in another epic,
-  // or in none, must still count. The ceilings are only consulted once there
-  // is something to gate, so a session never pauses with nothing to dispatch.
+  // A teammate's task is never a candidate, and holds its dependents until it
+  // is done (core's releasesFanoutDependents). Readiness runs over the FULL
+  // task set first, since dispatchableTasks treats a blocker it wasn't given
+  // as satisfied — a blocker in another epic, or in none, must still count.
+  // The ceilings are only consulted once there is something to gate, so a
+  // session never pauses with nothing to dispatch.
   private async fillQueue(epicId: string): Promise<void> {
     const session = this.sessions.get(epicId);
     if (session?.state !== 'active' || !this.armed.has(epicId)) return;
@@ -852,11 +882,10 @@ export class EpicEngine {
     const scope = this.scopeOf(epicId);
     const work = this.ownWork(epicId, scope, this.cacheLookup());
     const workIds = new Set(work.map((c) => c.meta.id));
-    const liveCount = this.ctx.orchestrator
-      .list()
-      .filter(
-        (r) => workIds.has(r.taskId) && !TERMINAL_RUN_STATES.has(r.state)
-      ).length;
+    const runs = this.ctx.orchestrator.list();
+    const liveCount = runs.filter(
+      (r) => workIds.has(r.taskId) && !TERMINAL_RUN_STATES.has(r.state)
+    ).length;
     let slots = session.concurrency - liveCount;
     // A full session refills on its next terminal, which re-reads all this.
     if (slots <= 0) return;
@@ -867,18 +896,24 @@ export class EpicEngine {
     const mine = new Set(
       work.filter((t) => holder(t) === null).map((t) => t.meta.id)
     );
+    const byId = new Map(tasks.map((t) => [t.meta.id, t]));
+    const blocker = blockerView(holder, tasksWithRunBranch(runs));
+    const waitingOn = (t: TaskDoc) =>
+      fanoutWaitingOn(t, (id) => byId.get(id), statuses, blocker);
     this.noteWaiting(
       epicId,
       work.filter((t) => mine.has(t.meta.id)),
-      new Map(tasks.map((t) => [t.meta.id, t])),
-      statuses
+      statuses,
+      waitingOn
     );
     // The scope includes archived children (see scopeOf); dispatchability
-    // must exclude them explicitly.
+    // must exclude them explicitly. dispatchableTasks releases a dependent at
+    // a blocker's review role; a fan-out also wants a branch to stack on.
     const ready = dispatchableTasks(tasks, statuses).filter(
       (t) =>
         mine.has(t.meta.id) &&
         t.meta.archivedAt === undefined &&
+        waitingOn(t).length === 0 &&
         !this.holdCritical(session, epicId, t)
     );
     // A live run's footprint can have grown past its task's declared writes
@@ -1129,27 +1164,19 @@ export class EpicEngine {
     };
   }
 
-  // Records the unsatisfied blockers `work` (the session's own unstarted
-  // tasks) waits on, for onTasksChanged.
+  // Records the blockers `work` (the session's own unstarted tasks) still
+  // waits on, for onTasksChanged.
   private noteWaiting(
     epicId: string,
     work: readonly TaskDoc[],
-    byId: ReadonlyMap<string, TaskDoc>,
-    statuses: StatusModel
+    statuses: StatusModel,
+    waitingOn: (task: TaskDoc) => string[]
   ): void {
     const waiting = new Set<string>();
     for (const task of work) {
       if (task.meta.archivedAt !== undefined) continue;
       if (!isUnstartedStatus(task.meta.status, statuses)) continue;
-      for (const id of task.meta.blockedBy) {
-        const blocker = byId.get(id);
-        if (
-          blocker !== undefined &&
-          !isSatisfiedForDispatchStatus(blocker.meta.status, statuses)
-        ) {
-          waiting.add(id);
-        }
-      }
+      for (const id of waitingOn(task)) waiting.add(id);
     }
     this.waitingOn.set(epicId, waiting);
   }
@@ -1159,19 +1186,23 @@ export class EpicEngine {
   // rest, refilling a session only when a blocker it waited on now lets go.
   private onTasksChanged(ids: readonly string[] | undefined): void {
     let statuses: StatusModel | null = null;
+    let withRunBranch: Set<string> | null = null;
     for (const [epicId, waiting] of this.waitingOn) {
       if (waiting.size === 0 || !this.armed.has(epicId)) continue;
-      if (this.sessions.get(epicId)?.state !== 'active') continue;
+      const session = this.sessions.get(epicId);
+      if (session?.state !== 'active') continue;
       const touched =
         ids === undefined ? [...waiting] : ids.filter((id) => waiting.has(id));
       if (touched.length === 0) continue;
       statuses ??= statusModelFor(this.ctx.rootDir);
+      withRunBranch ??= tasksWithRunBranch(this.ctx.orchestrator.list());
       const model = statuses;
+      const view = blockerView(this.holderFor(session).holder, withRunBranch);
       const released = touched.some((id) => {
         const blocker = this.ctx.cache.get(id);
         return (
           blocker === null ||
-          isSatisfiedForDispatchStatus(blocker.meta.status, model)
+          releasesFanoutDependents(blocker.meta.status, model, view(blocker))
         );
       });
       if (released) this.scheduleFill(epicId);

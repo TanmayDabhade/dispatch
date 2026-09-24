@@ -4,7 +4,6 @@ import {
   hasStatusRole,
   isCompletedStatus,
   isDoneStatus,
-  isSatisfiedForDispatchStatus,
   isUnstartedStatus,
 } from '@dispatch/core';
 import type { StatusModel, TaskDoc } from '@dispatch/core';
@@ -253,21 +252,4 @@ export function summarizeWaves(children: EpicProgressChild[]): EpicWave[] {
     wave.byPhase[child.phase] = (wave.byPhase[child.phase] ?? 0) + 1;
   }
   return [...byWave.values()].sort((a, b) => a.index - b.index);
-}
-
-/** Blocker ids on `task` that are not yet dispatch-satisfying, resolved
- *  through `lookup`; an id that resolves to nothing never blocks (matches
- *  core's `dispatchableTasks`). */
-export function unsatisfiedBlockersOf(
-  task: TaskDoc,
-  lookup: (id: string) => TaskDoc | null,
-  model: StatusModel = DEFAULT_STATUS_MODEL
-): string[] {
-  return task.meta.blockedBy.filter((id) => {
-    const blocker = lookup(id);
-    return (
-      blocker !== null &&
-      !isSatisfiedForDispatchStatus(blocker.meta.status, model)
-    );
-  });
 }

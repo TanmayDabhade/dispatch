@@ -1,8 +1,9 @@
+import type { RunMeta } from '@dispatch/client';
 import type { TaskListItem } from '@dispatch/core/browser';
 import { DEFAULT_STATUS_MODEL, fanoutScope } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
-import { buildFlightPlan } from './flightPlan';
+import { buildFlightPlan, tasksWithRunBranch } from './flightPlan';
 import { childrenByParent, flightScope } from './flightScope';
 import { queuePositions } from './flightViews';
 
@@ -120,13 +121,48 @@ describe('buildFlightPlan', () => {
         child('t-a', { status: 'review' }),
         child('t-b', { blockedBy: ['t-a'] }),
       ],
-      opts()
+      { ...opts(), withRunBranch: new Set(['t-a']) }
     );
     expect(plan.nodes.map((n) => [n.task.meta.id, n.state])).toEqual([
       ['t-a', 'review'],
       ['t-b', 'queued'],
     ]);
     expect(plan.nodes[1]?.waitingOn).toEqual([]);
+  });
+
+  test('a blocker in review with no run branch, or a teammate’s, holds until done', () => {
+    const plan = buildFlightPlan(
+      [
+        // Moved to review by hand: nothing to stack on.
+        child('t-a', { status: 'review' }),
+        child('t-b', { blockedBy: ['t-a'] }),
+        // Sam's In Review, even with a branch on this daemon.
+        child('t-c', { status: 'review', assignee: 'human:sam' }),
+        child('t-d', { blockedBy: ['t-c'] }),
+      ],
+      { ...opts(), me: 'human:wyat', withRunBranch: new Set(['t-c']) }
+    );
+    expect(plan.nodes.map((n) => n.state)).toEqual([
+      'review',
+      'blocked',
+      'teammate',
+      'blocked',
+    ]);
+    expect(plan.nodes[1]?.waitingOn).toEqual(['t-a']);
+    expect(plan.nodes[3]?.waitingOn).toEqual(['t-c']);
+  });
+
+  test('marks the tasks whose last terminal run is still unreviewed as branched', () => {
+    const run = (taskId: string, state: string, reviewedAt?: string) =>
+      ({ taskId, state, reviewedAt }) as RunMeta;
+    expect(
+      tasksWithRunBranch([
+        run('t-a', 'finished'),
+        run('t-b', 'finished', '2026-09-24T00:00:00Z'),
+        run('t-c', 'running'),
+        run('t-d', 'failed'),
+      ])
+    ).toEqual(new Set(['t-a', 't-d']));
   });
 
   test('critical work, a sub-plan and a backlog child never read as queued', () => {
