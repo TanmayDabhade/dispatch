@@ -34,6 +34,7 @@ import type {
   EscalationStep,
   ModelConfig,
   NotificationKind,
+  Person,
   PolicyGate,
   PolicyGateMode,
   TaskDoc,
@@ -53,6 +54,7 @@ import {
   configChangedQueryKeys,
   dispatchConfigKey,
   linearStatusKey,
+  peopleKey,
   syncStatusKey,
 } from '../lib/configEvents';
 import type { DecideAvailability } from '../lib/daemonAuth';
@@ -121,6 +123,9 @@ type PendingScopeRequest = { requestId: string };
 // is a Tauri/browser-only app, never SSR'd, but a stray server-side render of this module
 // shouldn't throw on a missing `localStorage`).
 const SHOW_ARCHIVED_STORAGE_KEY = 'dispatch:show-archived';
+
+// Stable empty registry while the people query loads.
+const NO_PEOPLE: readonly Person[] = [];
 
 // The open-repo-PRs query key, exported so the PR review page can refresh it for
 // as long as it is the page on screen (no WS event announces a PR moving).
@@ -235,6 +240,9 @@ export interface DispatchProjectData {
   /** This window's own ActorRef (`human:<handle>`), or `null` until the daemon
    *  has said. While null, nothing is treated as a teammate's. */
   me: string | null;
+  /** The project's people registry (team roster + config `people`) — what pickers offer
+   *  and avatars resolve names from. Empty until fetched. */
+  people: readonly Person[];
   /** The tier the daemon says this window's credential carries, or `null`
    *  until it has said. Read from `/api/whoami` rather than inferred from which
    *  token is held, because in team-local mode a decide-tier teammate holds an
@@ -989,6 +997,21 @@ export function useDispatchProject(
     },
     enabled: client !== null,
     staleTime: Number.POSITIVE_INFINITY,
+  });
+  // The people registry. Changes with config (`people:`) and the team roster, so a
+  // `config.changed` refetches it; otherwise it holds for the connection.
+  const peopleQueryKey = useMemo(
+    () => (port === undefined ? ['dispatch-people'] : peopleKey(port)),
+    [port]
+  );
+  const { data: peopleSnapshot } = useQuery({
+    queryKey: peopleQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchPeople();
+    },
+    enabled: client !== null,
+    staleTime: 60_000,
   });
   // Who else is on this daemon. Refetched on `presence.changed` (someone
   // arrived or left) and `run.changed` (what they are running moved).
@@ -2834,6 +2857,7 @@ export function useDispatchProject(
         connection === undefined ? null : daemonBaseUrl(connection),
       presence: presence ?? [],
       me: whoami?.ref ?? null,
+      people: peopleSnapshot?.people ?? NO_PEOPLE,
       myTier: whoami?.tier ?? null,
       portLoading,
       portError,
@@ -2979,6 +3003,7 @@ export function useDispatchProject(
       connection,
       presence,
       whoami,
+      peopleSnapshot,
       portLoading,
       portError,
       portErrorDetail,

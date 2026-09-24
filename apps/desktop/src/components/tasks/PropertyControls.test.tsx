@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
 import { type ReactElement, useState } from 'react';
 
+import { PeopleProvider } from '../people/PeopleContext';
 import {
   AssigneeControl,
   EpicControl,
@@ -434,5 +435,45 @@ describe('pickers mount their menu on first intent', () => {
     expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual([
       'ui',
     ]);
+  });
+});
+
+describe('the assignee picker lists people and agents', () => {
+  const people = [
+    { ref: 'human:maya', name: 'Maya Chen' },
+    { ref: 'human:wyat', name: 'Wyat Soule' },
+  ];
+
+  test('you first, then the team, then the agent pool and nobody', async () => {
+    const picked: string[] = [];
+    render(
+      <PeopleProvider people={people} me="human:wyat">
+        <AssigneeControl value="none" onChange={(a) => picked.push(a)} />
+      </PeopleProvider>
+    );
+    await settle(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Change assignee' }));
+    });
+    // Each item's label, without its avatar's initials.
+    expect(
+      screen
+        .getAllByRole('menuitem')
+        .map((item) => item.querySelector('.truncate')?.textContent)
+    ).toEqual(['Wyat Soule', 'Maya Chen', 'Agent', 'Unassigned']);
+    await settle(() => {
+      fireEvent.click(screen.getByRole('menuitem', { name: /Maya Chen/ }));
+    });
+    expect(picked).toEqual(['human:maya']);
+  });
+
+  test('the legacy bare human reads as me', () => {
+    render(
+      <PeopleProvider people={people} me="human:wyat">
+        <AssigneeControl value="human" onChange={() => {}} variant="row" />
+      </PeopleProvider>
+    );
+    expect(
+      screen.getByRole('button', { name: 'Change assignee' }).textContent
+    ).toContain('Wyat Soule');
   });
 });

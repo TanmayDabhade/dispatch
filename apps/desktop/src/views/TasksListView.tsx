@@ -20,6 +20,7 @@ import {
 import type { KeyboardEvent, ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { usePeople } from '../components/people/PeopleContext';
 import { useDeepLinkActions } from '../components/shell/DeepLinkContext';
 import { useShellActions } from '../components/shell/ShellActionsContext';
 import { AssigneeAvatar } from '../components/tasks/AssigneeAvatar';
@@ -135,6 +136,16 @@ export function TasksListView({
   const shell = useShellActions();
   // `null` outside App's provider (the harness, view tests): no `Copy link` row then.
   const deepLink = useDeepLinkActions();
+  const directory = usePeople();
+  // The Assignee submenu: everyone in the registry plus the agent pool and nobody, or the
+  // three fixed kinds when there is no registry.
+  const assigneeChoices = useMemo<Assignee[]>(
+    () =>
+      directory.people.length === 0
+        ? ASSIGNEES
+        : [...directory.people.map((p) => p.ref), 'agent', 'none'],
+    [directory.people]
+  );
   const prefs = display ?? DEFAULT_TASKS_DISPLAY;
 
   const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
@@ -548,7 +559,7 @@ export function TasksListView({
                       <ContextMenuShortcut>A</ContextMenuShortcut>
                     </ContextMenuSubTrigger>
                     <ContextMenuSubContent>
-                      {ASSIGNEES.map((assignee) => (
+                      {assigneeChoices.map((assignee) => (
                         <ContextMenuItem
                           key={assignee}
                           onClick={() =>
@@ -558,7 +569,8 @@ export function TasksListView({
                           }
                         >
                           <AssigneeAvatar assignee={assignee} size={16} />
-                          {assigneeLabel(assignee)}
+                          {directory.personFor(assignee)?.name ??
+                            assigneeLabel(assignee)}
                         </ContextMenuItem>
                       ))}
                     </ContextMenuSubContent>

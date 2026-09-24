@@ -8,6 +8,7 @@ import {
   priorityLabel,
   statusLabel,
 } from '../../lib/taskDisplay';
+import { usePeople } from '../people/PeopleContext';
 import { AssigneeAvatar } from './AssigneeAvatar';
 import { PickerPopover } from './detail/PickerPopover';
 import { railRowClass } from './detail/RailSection';
@@ -275,17 +276,34 @@ export function AssigneeControl({
   onChange: (assignee: Assignee) => void;
   variant?: ControlVariant;
 } & ControlledOpen) {
-  // A named ref (`human:wyat`) is not one of the three fixed choices, so it is listed as
-  // the current value on top rather than silently rendering as unassigned.
-  const values = ASSIGNEES.includes(value) ? ASSIGNEES : [value, ...ASSIGNEES];
+  const directory = usePeople();
+  // With a people registry the choices are everyone in it (you first), the agent pool and
+  // nobody; without one, the three fixed kinds. A value in neither list (a ref from before
+  // the roster had them) is listed on top rather than silently rendering as unassigned.
+  const choices =
+    directory.people.length === 0
+      ? ASSIGNEES
+      : [
+          ...directory.people
+            .map((p) => p.ref)
+            .sort((a, b) =>
+              a === directory.me ? -1 : b === directory.me ? 1 : 0
+            ),
+          'agent',
+          'none',
+        ];
+  const current =
+    directory.personFor(value)?.ref ??
+    (value === 'human' && directory.me !== null ? directory.me : value);
+  const values = choices.includes(current) ? choices : [current, ...choices];
   const options = values.map((a) => ({
     value: a,
-    label: assigneeLabel(a),
+    label: directory.personFor(a)?.name ?? assigneeLabel(a),
     glyph: <AssigneeAvatar assignee={a} size={16} />,
   }));
   return (
     <PropertyDropdown
-      value={value}
+      value={current}
       options={options}
       onChange={onChange}
       variant={variant}
