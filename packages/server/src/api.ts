@@ -3034,7 +3034,7 @@ async function dispatchPrAgentReview(
       // comment on — it reads the PR's head straight out of its own worktree.
       target: { kind: 'pr', number: pr.number },
     });
-    ctx.events.broadcast({ type: 'task.changed' });
+    ctx.events.broadcast({ type: 'task.changed', ids: [task.meta.id] });
     return meta;
   } catch (err) {
     rollbackSynthesizedTask(ctx, task.meta.id);

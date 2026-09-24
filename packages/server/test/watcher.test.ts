@@ -97,6 +97,70 @@ describe('watchTasks', () => {
   }, 30_000);
 });
 
+describe('watchTasks ids', () => {
+  // Drives the listener directly, so the assertion is about which names map
+  // to which ids, not about when macOS delivers the events.
+  function watchWithFake(): {
+    emit: (filename: string | null) => void;
+    next: () => Promise<string[] | null>;
+  } {
+    let listener: ((event: string, filename: string | null) => void) | null =
+      null;
+    const factory: WatchFactory = (_dir, _opts, l) => {
+      listener = l;
+      return new FakeFSWatcher() as unknown as FSWatcher;
+    };
+    const calls: (string[] | null)[] = [];
+    let wake: (() => void) | null = null;
+    watcher = watchTasks(
+      store.tasksDir,
+      (ids) => {
+        calls.push(ids);
+        wake?.();
+      },
+      factory
+    );
+    return {
+      emit: (filename) => listener?.('rename', filename),
+      next: async () => {
+        if (calls.length === 0) {
+          await new Promise<void>((resolve) => (wake = resolve));
+        }
+        return calls.shift() ?? null;
+      },
+    };
+  }
+
+  it('names the tasks whose files a burst touched, once each', async () => {
+    const fake = watchWithFake();
+    fake.emit('t-00000a-first.md');
+    fake.emit('t-00000a-first.md');
+    fake.emit('t-00000a-renamed.md');
+    fake.emit('e-00000b.md');
+    expect((await fake.next())?.sort()).toEqual(['e-00000b', 't-00000a']);
+  });
+
+  it('ignores files the store never reads', async () => {
+    const fake = watchWithFake();
+    fake.emit('.DS_Store');
+    fake.emit('t-00000a-first.md.swp');
+    fake.emit('t-00000c-real.md');
+    expect(await fake.next()).toEqual(['t-00000c']);
+  });
+
+  it('asks for a full rescan when an event names no task', async () => {
+    const fake = watchWithFake();
+    fake.emit('t-00000a-first.md');
+    fake.emit('notes.md');
+    expect(await fake.next()).toBeNull();
+    // The next burst starts over.
+    fake.emit('t-00000d-later.md');
+    expect(await fake.next()).toEqual(['t-00000d']);
+    fake.emit(null);
+    expect(await fake.next()).toBeNull();
+  });
+});
+
 describe('watchSourceDirs', () => {
   it('fires onChange after a debounce window when a file is written', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'dispatch-source-watch-'));

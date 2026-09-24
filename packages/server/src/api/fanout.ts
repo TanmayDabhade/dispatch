@@ -102,7 +102,7 @@ export async function fanoutTask(
 
   const ids = result.variants.map((v) => v.task.meta.id);
   ctx.cache.refresh(ctx.store, ids);
-  ctx.events.broadcast({ type: 'task.changed' });
+  ctx.events.broadcast({ type: 'task.changed', ids });
   ctx.events.broadcast({ type: 'run.changed' });
   return jsonResponse(result, 201);
 }

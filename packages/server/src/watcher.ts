@@ -1,3 +1,4 @@
+import { taskIdFromFilename } from '@dispatch/core';
 import type { FSWatcher } from 'node:fs';
 import { existsSync, mkdirSync, watch } from 'node:fs';
 
@@ -29,15 +30,30 @@ function reportWatchFailures(watcher: FSWatcher, dir: string): FSWatcher {
 
 // Editors and CLI writes both tend to emit several fs events for what a human
 // considers one change (e.g. write-then-rename). Collapsing them behind a
-// short debounce means one cache rebuild + one broadcast per logical change
+// short debounce means one cache refresh + one broadcast per logical change
 // instead of one per raw fs event.
 const DEBOUNCE_MS = 100;
 
+// What one fs event says about the task set: the id of the task whose file it
+// names, `null` when only a full rescan can tell (no filename, or a `.md` file
+// that names no task), or `undefined` for a file the store never reads (an
+// editor's swap file, .DS_Store).
+function taskIdOfEvent(
+  filename: string | Buffer | null
+): string | null | undefined {
+  if (filename === null) return null;
+  const name = typeof filename === 'string' ? filename : filename.toString();
+  if (!name.endsWith('.md')) return undefined;
+  return taskIdFromFilename(name.slice(0, -'.md'.length));
+}
+
 // Watches `tasksDir` non-recursively (task files are flat, one level deep)
-// and invokes `onChange` at most once per DEBOUNCE_MS-wide burst of activity.
+// and invokes `onChange` at most once per DEBOUNCE_MS-wide burst of activity,
+// with the ids of the tasks whose files the burst touched — or null when some
+// event could not be tied to a task.
 export function watchTasks(
   tasksDir: string,
-  onChange: () => void,
+  onChange: (ids: string[] | null) => void,
   createWatcher: WatchFactory = watch
 ): Watcher {
   // `node:fs.watch` throws ENOENT if the directory doesn't exist, which would
@@ -49,12 +65,19 @@ export function watchTasks(
   // directory-existence case.
   if (!existsSync(tasksDir)) mkdirSync(tasksDir, { recursive: true });
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let ids: Set<string> | null = new Set();
   const fsWatcher = reportWatchFailures(
-    createWatcher(tasksDir, {}, () => {
+    createWatcher(tasksDir, {}, (_event, filename) => {
+      const id = taskIdOfEvent(filename);
+      if (id === undefined) return;
+      if (id === null) ids = null;
+      else ids?.add(id);
       if (timer !== null) clearTimeout(timer);
       timer = setTimeout(() => {
         timer = null;
-        onChange();
+        const changed = ids === null ? null : [...ids];
+        ids = new Set();
+        onChange(changed);
       }, DEBOUNCE_MS);
     }),
     tasksDir

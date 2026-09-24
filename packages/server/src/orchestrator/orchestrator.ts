@@ -2451,7 +2451,7 @@ export class Orchestrator {
       this.closeSupersededPredecessors(runId, now, mergeCommit);
     }
     this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
-    this.ctx.events.broadcast({ type: 'task.changed' });
+    this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
     this.ctx.events.broadcast({ type: 'run.changed' });
     const reviewed = this.registry.get(runId)!;
     this.invokeHooksSafely(this.reviewedHooks, reviewed);
@@ -2600,7 +2600,7 @@ export class Orchestrator {
     });
     this.closeSupersededPredecessors(runId, now, undefined);
     this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
-    this.ctx.events.broadcast({ type: 'task.changed' });
+    this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
     const reviewedViaPr = this.registry.get(runId)!;
     this.invokeHooksSafely(this.reviewedHooks, reviewedViaPr);
     return reviewedViaPr;
@@ -2646,7 +2646,7 @@ export class Orchestrator {
       mergeCommit,
     });
     this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
-    this.ctx.events.broadcast({ type: 'task.changed' });
+    this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
     const reviewed = this.registry.get(runId)!;
     this.invokeHooksSafely(this.reviewedHooks, reviewed);
     return reviewed;
@@ -2736,7 +2736,7 @@ export class Orchestrator {
       );
       this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
     });
-    this.ctx.events.broadcast({ type: 'task.changed' });
+    this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
     this.ctx.events.broadcast({ type: 'run.changed' });
   }
 
@@ -3133,7 +3133,7 @@ export class Orchestrator {
     this.persistEpicDiffSnapshot(epicId, preDiff);
     this.worktrees.removeBranchRef(branch);
     this.ctx.cache.refresh(this.ctx.store, [epicId]);
-    this.ctx.events.broadcast({ type: 'task.changed' });
+    this.ctx.events.broadcast({ type: 'task.changed', ids: [epicId] });
     // The Branches surface just lost a row.
     this.ctx.events.broadcast({ type: 'run.changed' });
     return { epicId, mergeCommit };
@@ -3795,7 +3795,7 @@ export class Orchestrator {
     const count = archived.length;
     if (count > 0) {
       this.ctx.cache.refresh(this.ctx.store, archived);
-      this.ctx.events.broadcast({ type: 'task.changed' });
+      this.ctx.events.broadcast({ type: 'task.changed', ids: archived });
     }
     return count;
   }

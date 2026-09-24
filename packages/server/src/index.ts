@@ -971,10 +971,12 @@ async function bootServer(
   safeSync(store, cache);
   const events = new EventBus();
 
-  // Resync + broadcast on any on-disk change, regardless of who made it,
-  // naming only the tasks whose content differs from the cache. An API write
-  // refreshes the cache itself before the watcher sees the file, so its echo
-  // compares equal and costs no second `task.changed`.
+  // Refresh + broadcast on any on-disk change, regardless of who made it:
+  // the watcher names the tasks whose files changed, the cache re-reads just
+  // those, and the broadcast names the ones whose content really differs. An
+  // API write refreshes the cache itself before the watcher sees the file, so
+  // its echo compares equal and costs no second `task.changed`. A change the
+  // watcher cannot tie to a task falls back to a full resync.
   //
   // Only the file backend has a directory to watch, and only it needs one:
   // watching exists because a task file can change under a running daemon
@@ -984,9 +986,9 @@ async function bootServer(
   // there is no third party to notice.
   const watcher =
     store instanceof TaskStore
-      ? watchTasks(store.tasksDir, () => {
-          watchdog.mark('task watcher: cache resync');
-          const changed = safeSync(store, cache);
+      ? watchTasks(store.tasksDir, (ids) => {
+          watchdog.mark('task watcher: cache refresh');
+          const changed = safeSync(store, cache, ids);
           if (changed.length > 0) {
             events.broadcast({ type: 'task.changed', ids: changed });
           }

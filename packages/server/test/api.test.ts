@@ -765,4 +765,36 @@ describe('WebSocket task.changed broadcast', () => {
 
     ws.close();
   });
+
+  it("names a hand-edited task, and does not echo the daemon's own write", async () => {
+    const ws = new WebSocket(wsUrl(handle));
+    const changes: unknown[] = [];
+    ws.addEventListener('message', (ev) => {
+      const parsed = JSON.parse(ev.data as string) as { type: string };
+      if (parsed.type === 'task.changed') changes.push(parsed);
+    });
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener('open', () => resolve());
+      ws.addEventListener('error', () => reject(new Error('WS open failed')));
+    });
+
+    // Another writer, straight to disk: the watcher names what it saw.
+    const doc = new TaskStore(root).create({ title: 'Edited by hand' });
+    for (let i = 0; i < 300 && changes.length === 0; i++) await Bun.sleep(50);
+    expect(changes).toEqual([{ type: 'task.changed', ids: [doc.meta.id] }]);
+
+    changes.length = 0;
+    const res = await fetch(`${baseUrl}/api/tasks/${doc.meta.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'Edited through the API' }),
+    });
+    expect(res.status).toBe(200);
+    // Past the watcher's debounce: the write's own file event reads back
+    // what the handler already cached, so only the handler announces it.
+    await Bun.sleep(1000);
+    expect(changes).toEqual([{ type: 'task.changed', ids: [doc.meta.id] }]);
+
+    ws.close();
+  }, 30_000);
 });
