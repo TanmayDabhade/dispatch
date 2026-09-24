@@ -305,7 +305,6 @@ export * from './linearStatuses.js';
 export {
   DEFAULT_STATUS_MAP,
   externalId,
-  issueFromTask,
   LINEAR_EXTERNAL_PREFIX,
   linearExternal,
   parseExternal,
@@ -314,12 +313,8 @@ export {
   priorityToLinear,
   resolveConflict,
   resolveWorkflowState,
-  statusFromState,
-  taskCreateFromIssue,
-  taskPatchFromIssue,
 } from './linearMap.js';
 export type {
-  IssueMapContext,
   LinearAttachment,
   LinearEntity,
   LinearRef,
@@ -338,7 +333,6 @@ export type {
   LinearTruncatedField,
   LinearUser,
   LinearWorkflowState,
-  TaskMapContext,
 } from './linearMap.js';
 export { normalizeProjectPath } from './projectPath.js';
 export {

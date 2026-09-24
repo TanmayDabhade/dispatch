@@ -238,7 +238,8 @@ export class FakeLinearClient implements LinearClient {
 
   issuesUpdatedSince(
     teamId: string,
-    since: string | null
+    since: string | null,
+    onPage?: (fetched: number) => void
   ): Promise<LinearResult<LinearIssuePage>> {
     const f = this.fail('issuesUpdatedSince') ?? this.issuesFailure;
     if (f !== null) return Promise.resolve(f);
@@ -248,6 +249,7 @@ export class FakeLinearClient implements LinearClient {
         (i.team === null || i.team.id === teamId) &&
         (since === null || i.updatedAt > since)
     );
+    onPage?.(nodes.length);
     return ok({
       issues: nodes.map((i) => structuredClone(i)),
       truncated: this.truncated,

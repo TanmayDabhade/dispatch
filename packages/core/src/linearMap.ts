@@ -1,5 +1,4 @@
-import type { CreateInput, UpdatePatch } from './store.js';
-import type { Priority, TaskCycle, TaskDoc } from './types.js';
+import type { Priority, TaskCycle } from './types.js';
 
 /** One Linear workflow state. `type` is the fixed semantic bucket; `name` is per-team config. */
 export interface LinearWorkflowState {
@@ -299,18 +298,6 @@ export const DEFAULT_STATUS_MAP: Record<string, string> = {
   dropped: 'Canceled',
 };
 
-// Fallback for a Linear state the configured map says nothing about: its `type`
-// is a fixed enum, so it always yields a sensible local status.
-const STATUS_BY_STATE_TYPE: Record<string, string> = {
-  backlog: 'draft',
-  triage: 'ready',
-  unstarted: 'ready',
-  started: 'working',
-  completed: 'landed',
-  canceled: 'dropped',
-  duplicate: 'dropped',
-};
-
 function normalize(value: string): string {
   return value.trim().toLowerCase();
 }
@@ -330,112 +317,6 @@ export function resolveWorkflowState(
     states.find((s) => normalize(s.type) === wanted) ??
     null
   );
-}
-
-/** The reverse direction: the configured map inverted, then the state's `type`, then
- *  `fallback` — so a renamed state never writes a status the project does not define. */
-export function statusFromState(
-  state: LinearWorkflowState | null,
-  statusMap: Record<string, string>,
-  statuses: readonly string[],
-  fallback: string
-): string {
-  const valid = (candidate: string | undefined): string | null =>
-    candidate !== undefined && statuses.includes(candidate) ? candidate : null;
-  if (state === null) return fallback;
-  const byName = Object.keys(statusMap).find(
-    (key) =>
-      normalize(statusMap[key]) === normalize(state.name) ||
-      normalize(statusMap[key]) === normalize(state.type)
-  );
-  return (
-    valid(byName) ??
-    valid(STATUS_BY_STATE_TYPE[normalize(state.type)]) ??
-    fallback
-  );
-}
-
-/** Everything the two `taskFromIssue` directions need that is not on the issue itself. */
-export interface TaskMapContext {
-  statusMap: Record<string, string>;
-  statuses: readonly string[];
-  /** Status used when the issue's state maps to nothing the project defines. */
-  fallbackStatus: string;
-}
-
-/** A Linear issue as a brand-new local task. */
-export function taskCreateFromIssue(
-  issue: LinearIssue,
-  ctx: TaskMapContext
-): CreateInput {
-  return {
-    title: issue.title,
-    status: statusFromState(
-      issue.state,
-      ctx.statusMap,
-      ctx.statuses,
-      ctx.fallbackStatus
-    ),
-    description: issue.description ?? '',
-    labels: issue.labels.map((l) => l.name),
-    priority: priorityFromLinear(issue.priority),
-  };
-}
-
-/** A Linear issue as a patch over an existing local task. */
-export function taskPatchFromIssue(
-  issue: LinearIssue,
-  ctx: TaskMapContext
-): UpdatePatch {
-  return {
-    title: issue.title,
-    status: statusFromState(
-      issue.state,
-      ctx.statusMap,
-      ctx.statuses,
-      ctx.fallbackStatus
-    ),
-    description: issue.description ?? '',
-    labels: issue.labels.map((l) => l.name),
-    priority: priorityFromLinear(issue.priority),
-  };
-}
-
-/** Everything `issueFromTask` needs beyond the task: the team, its states and its labels. */
-export interface IssueMapContext {
-  teamId: string;
-  statusMap: Record<string, string>;
-  states: LinearWorkflowState[];
-  labels: LinearLabel[];
-  /** The task body's `## Description` section, already extracted by the caller. */
-  description: string;
-}
-
-/** A local task as Linear mutation input. Labels are matched by name against the team's
- *  own labels; unknown ones are dropped rather than created. */
-export function issueFromTask(
-  doc: TaskDoc,
-  ctx: IssueMapContext
-): LinearIssueInput {
-  const state = resolveWorkflowState(
-    doc.meta.status,
-    ctx.statusMap,
-    ctx.states
-  );
-  const labelIds = doc.meta.labels
-    .map(
-      (name) =>
-        ctx.labels.find((l) => normalize(l.name) === normalize(name))?.id
-    )
-    .filter((id): id is string => id !== undefined);
-  return {
-    teamId: ctx.teamId,
-    title: doc.meta.title,
-    description: ctx.description,
-    priority: priorityToLinear(doc.meta.priority),
-    ...(state === null ? {} : { stateId: state.id }),
-    ...(labelIds.length === 0 ? {} : { labelIds }),
-  };
 }
 
 /** Which side of a link has the newer edit. Ties and unparseable timestamps resolve to

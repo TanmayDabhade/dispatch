@@ -85,6 +85,9 @@ export interface MergeInput {
   pullOnly?: ReadonlySet<string>;
   /** Fields not trusted this pass (a cut-short list): skipped entirely. */
   unknown?: ReadonlySet<string>;
+  /** Without a base, only these fields may push (default: all). The rest
+   *  have no history to say the local value is an edit, so Linear's wins. */
+  noBasePush?: ReadonlySet<string>;
 }
 
 /**
@@ -114,12 +117,12 @@ export function mergeFields(input: MergeInput): FieldDecision[] {
       continue;
     }
     if (input.base === null || baseL === undefined || baseR === undefined) {
-      const localWins =
-        !unmapped && input.localDirty && wholeRecordWinner === 'local';
+      const contested =
+        !unmapped && input.localDirty && (input.noBasePush?.has(field) ?? true);
       decisions.push({
         field,
-        action: localWins ? 'push' : 'pull',
-        conflict: false,
+        action: contested && wholeRecordWinner === 'local' ? 'push' : 'pull',
+        conflict: contested,
       });
       continue;
     }

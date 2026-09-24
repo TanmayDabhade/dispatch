@@ -1,51 +1,68 @@
 import {
   clearProjectCredential,
   DEFAULT_LINEAR,
-  externalId,
-  getSection,
   isOutstanding,
-  issueFromTask,
   loadConfig,
-  parseExternal,
-  resolveConflict,
+  parseLinearExternal,
   resolveLinearApiKey,
-  taskCreateFromIssue,
-  taskPatchFromIssue,
   writeProjectCredential,
 } from '@dispatch/core';
 import type {
   CredentialSource,
   DispatchConfig,
   LinearConfig,
+  LinearInitiative,
   LinearIssue,
   LinearLabel,
-  LinearWorkflowState,
+  LinearProject,
+  LinearProjectMilestone,
+  LinearUser,
   TaskDoc,
   TaskStorePort,
 } from '@dispatch/core';
 
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
-import type { LinearClient, LinearFailure } from './client.js';
+import { TaskChangeBatch } from './batch.js';
+import type {
+  LinearClient,
+  LinearFailure,
+  LinearPage,
+  LinearWorkspace,
+} from './client.js';
 import { HttpLinearClient } from './client.js';
-import type { LinearIssueLink, LinearSyncState } from './state.js';
+import type {
+  LinearSyncSummary,
+  ReconcileMode,
+  RemoteRecord,
+} from './reconcile.js';
+import { emptySummary, LinearPass } from './reconcile.js';
+import type {
+  ConflictRecord,
+  LinearIssueLink,
+  LinearSyncState,
+} from './state.js';
 import {
   echoTtlMs,
   pruneEchoes,
   readLinearState,
   writeLinearState,
 } from './state.js';
+import type { PassContext } from './workspace.js';
+import {
+  buildContext,
+  refreshPeople,
+  regenerateStatuses,
+  syncPeople,
+} from './workspace.js';
 
-/** One sync's outcome. `created` counts new local tasks; `createdIssues` counts new Linear issues. */
-export interface LinearSyncSummary {
-  at: string;
-  pulled: number;
-  pushed: number;
-  created: number;
-  createdIssues: number;
-  conflicts: number;
-  errors: string[];
-  rateLimited: boolean;
+export type { LinearSyncSummary } from './reconcile.js';
+
+/** Where a long pass (an import) has got to. `total` is null while unknown. */
+export interface LinearProgress {
+  phase: 'containers' | 'issues' | 'applying';
+  done: number;
+  total: number | null;
 }
 
 export interface LinearStatus {
@@ -62,6 +79,10 @@ export interface LinearStatus {
   lastError: string | null;
   lastSummary: LinearSyncSummary | null;
   syncing: boolean;
+  /** Field conflicts resolved since the link, and the latest few. */
+  conflicts: { total: number; recent: ConflictRecord[] };
+  /** Set while an import or other long pass is running. */
+  progress: LinearProgress | null;
 }
 
 export interface LinearSyncDeps {
@@ -75,56 +96,71 @@ export interface LinearSyncDeps {
   createClient?: (apiKey: string) => LinearClient;
   /** Debounce for the push triggered by a local task change. */
   pushDebounceMs?: number;
-}
-
-// Everything one sync pass needs, resolved once so pull and push share the same
-// team metadata instead of re-fetching states and labels per direction.
-interface SyncSession {
-  client: LinearClient;
-  config: DispatchConfig;
-  linear: LinearConfig;
-  teamId: string;
-  states: LinearWorkflowState[];
-  labels: LinearLabel[];
+  /** The local human's person ref; the API key's Linear user maps to it. */
+  localHumanRef?: string;
 }
 
 // 'both' is the ordinary pass; 'push' is the debounced local-edit trigger;
 // 'import' is the explicit "bring existing Linear issues down" action.
 type SyncMode = 'both' | 'push' | 'import';
 
-// One issue-link fetch per pass: `versions` is set once, to null when the fetch failed.
-interface IssueRefCache {
-  versions?: Map<string, string> | null;
-}
-
 interface RunOptions {
   mode: SyncMode;
   taskIds?: string[];
 }
 
-function emptySummary(at: string): LinearSyncSummary {
-  return {
-    at,
-    pulled: 0,
-    pushed: 0,
-    created: 0,
-    createdIssues: 0,
-    conflicts: 0,
-    errors: [],
-    rateLimited: false,
-  };
+interface Session {
+  client: LinearClient;
+  config: DispatchConfig;
+  linear: LinearConfig;
+  teamId: string;
+  workspace: LinearWorkspace;
+  labels: LinearLabel[];
+}
+
+/** Everything the pull fetched, by kind. */
+interface Fetched {
+  initiatives: LinearInitiative[];
+  projects: LinearProject[];
+  milestones: LinearProjectMilestone[];
+  issues: LinearIssue[];
 }
 
 const DEFAULT_PUSH_DEBOUNCE_MS = 5_000;
+const WORKSPACE_TTL_MS = 5 * 60_000;
+const AUDIT_EVERY_MS = 30 * 60_000;
 
-/** Polls Linear for issue changes and pushes local task changes back, one team at a time,
- *  against a cursor in `~/.dispatch/`. Its own writes are recorded and skipped on the next pull. */
+function rewind(high: string | null): string | null {
+  // A second before the newest record seen: `gt` would otherwise drop any
+  // record sharing that exact timestamp, and re-reading one is free.
+  return high === null ? null : new Date(Date.parse(high) - 1000).toISOString();
+}
+
+function newest(
+  records: readonly { updatedAt: string }[],
+  start: string | null
+): string | null {
+  let high = start;
+  for (const r of records) {
+    if (high === null || r.updatedAt > high) high = r.updatedAt;
+  }
+  return high;
+}
+
+/**
+ * Keeps a project's tasks and one Linear team as two faithful copies: every
+ * field both ways, merged field by field against a per-field base in
+ * `~/.dispatch/`, with the team's workflow states as the project's statuses
+ * and its users as the project's people. Its own writes are recorded and
+ * skipped on the next pull.
+ */
 export class LinearSync {
   private readonly deps: LinearSyncDeps;
   private timer: ReturnType<typeof setInterval> | null = null;
   private debounce: ReturnType<typeof setTimeout> | null = null;
   private inFlight: Promise<LinearSyncSummary> | null = null;
   private lastSummary: LinearSyncSummary | null = null;
+  private progress: LinearProgress | null = null;
   // Set after a rate-limit failure; the timer and the debounced push both stand
   // down until it passes rather than spending the remaining hourly budget.
   private backoffUntil = 0;
@@ -134,6 +170,15 @@ export class LinearSync {
   // Set when .dispatch/config.yml cannot be parsed. Sync stands down rather than
   // throwing out of a timer or blocking daemon boot.
   private configError: string | null = null;
+  // True while this engine broadcasts its own writes, so they do not schedule
+  // a push of what it just wrote.
+  private selfBroadcast = false;
+  private workspaceCache: {
+    teamId: string;
+    at: number;
+    workspace: LinearWorkspace;
+    labels: LinearLabel[];
+  } | null = null;
 
   constructor(deps: LinearSyncDeps) {
     this.deps = deps;
@@ -171,10 +216,12 @@ export class LinearSync {
       lastError: this.configError ?? state.lastError,
       lastSummary: this.lastSummary,
       syncing: this.inFlight !== null,
+      conflicts: { total: state.conflictTotal, recent: state.conflicts },
+      progress: this.progress,
     };
   }
 
-  /** Issue UUID -> display identifier and URL, for clients holding only `TaskMeta.external`. */
+  /** Record UUID -> display identifier and URL, for clients holding only `TaskMeta.external`. */
   links(): Record<string, LinearIssueLink> {
     return readLinearState(this.deps.rootDir).links;
   }
@@ -192,18 +239,21 @@ export class LinearSync {
   /** Stores an API key for this project only — the daemon's own `rootDir` is the credential's
    *  key. The machine-wide key is never written, staying a read-only fallback. */
   connect(apiKey: string): void {
+    this.workspaceCache = null;
     writeProjectCredential(this.deps.rootDir, 'linear', { apiKey });
   }
 
   /** Forgets this project's key. An env or machine-wide key still resolves afterwards, which
    *  `status().keySource` makes visible. */
   disconnect(): void {
+    this.workspaceCache = null;
     clearProjectCredential(this.deps.rootDir, 'linear');
   }
 
   /** Starts the poll timer when the config enables it. Safe to call repeatedly. */
   start(): void {
     this.stopTimers();
+    this.workspaceCache = null;
     const config = this.safeConfig();
     this.enabled = config?.linear.enabled ?? false;
     if (config === null || !config.linear.enabled) return;
@@ -230,7 +280,11 @@ export class LinearSync {
   // A local task changed: push it up shortly, coalescing a burst of edits into
   // one call. Pull is left to the timer — a local edit says nothing about Linear.
   notifyTaskChanged(): void {
-    if (!this.enabled) return;
+    if (!this.enabled || this.selfBroadcast) return;
+    this.schedulePush();
+  }
+
+  private schedulePush(): void {
     if (this.debounce !== null) clearTimeout(this.debounce);
     const delay = this.deps.pushDebounceMs ?? DEFAULT_PUSH_DEBOUNCE_MS;
     this.debounce = setTimeout(() => {
@@ -250,7 +304,7 @@ export class LinearSync {
     return this.enqueue({ mode: 'both', taskIds });
   }
 
-  /** Creates local tasks for Linear issues that have none — the explicit first-sync import. */
+  /** Brings the team's whole backlog down: containers, issues, links. */
   async importIssues(): Promise<LinearSyncSummary> {
     return this.enqueue({ mode: 'import' });
   }
@@ -274,143 +328,34 @@ export class LinearSync {
     return next;
   }
 
-  private async run(opts: RunOptions): Promise<LinearSyncSummary> {
-    const summary = emptySummary(new Date().toISOString());
-    if (Date.now() < this.backoffUntil) {
-      summary.rateLimited = true;
-      summary.errors.push('linear rate limit backoff in effect');
-      return this.finish(summary, readLinearState(this.deps.rootDir), 300);
+  // Turns a client failure into a summary message, arming the backoff clock when
+  // the failure was a throttle.
+  private note(failure: LinearFailure): string {
+    if (failure.kind === 'rate-limit') {
+      this.backoffUntil = Date.now() + (failure.retryAfterMs ?? 60_000);
     }
-
-    const opened = await this.openSession();
-    if (!opened.ok) {
-      summary.errors.push(opened.error);
-      // Persisted so `status().lastError` explains a misconfiguration, not just the summary.
-      return this.finish(summary, readLinearState(this.deps.rootDir), 300);
-    }
-    const session = opened.session;
-    const state = readLinearState(this.deps.rootDir);
-    this.foldLegacyWatermark(state);
-    const direction = session.linear.direction;
-    // Local tasks this pass just wrote from Linear — never pushed straight back
-    // out in the same pass.
-    const pulledTaskIds = new Set<string>();
-    // Issues the pull decided Linear wins on, so push does not overwrite them.
-    const remoteWins = new Set<string>();
-    // Issues this pass already holds a remote version for, so an explicit push does
-    // not re-fetch what the pull has answered.
-    const verifiedIssues = new Set<string>();
-    // One issue-link fetch per pass at most, shared by the baseline backfill and the push.
-    const refs: IssueRefCache = {};
-
-    // A first sync reconciles nothing — no task to create, no link to update — so it
-    // takes a cursor instead of scanning a whole team it has no use for.
-    const baselining = state.bootstrappedAt === null && opts.mode !== 'import';
-    const pulling =
-      !baselining &&
-      (opts.mode === 'import' ||
-        (opts.mode === 'both' && direction !== 'push'));
-    let pullFailed = false;
-    if (baselining) {
-      const now = new Date().toISOString();
-      state.cursor = now;
-      // Everything on disk is accounted for BEFORE the push: nothing local has been
-      // reconciled yet, so a fresh clone must send none of it over a linked issue.
-      this.accountForAll(state);
-      state.bootstrappedAt = now;
-      await this.refreshIssueRefs(session, state, summary, refs);
-    } else if (pulling) {
-      pullFailed = !(await this.pull(
-        session,
-        state,
-        summary,
-        pulledTaskIds,
-        remoteWins,
-        verifiedIssues,
-        opts.mode === 'import'
-      ));
-    }
-
-    if (
-      opts.mode !== 'import' &&
-      direction !== 'pull' &&
-      !summary.rateLimited
-    ) {
-      await this.push(session, state, summary, {
-        taskIds: opts.taskIds,
-        pulledTaskIds,
-        remoteWins,
-        verifiedIssues,
-        createOnly: pullFailed,
-        refs,
-      });
-    }
-
-    // The link is established once the team answered, not once a data pass came back
-    // clean — otherwise one persistent error would freeze the integration forever.
-    if (state.bootstrappedAt === null) {
-      // An import establishes the link without ever pushing, so the same rule as the
-      // baseline path applies: nothing already on disk goes up automatically.
-      this.accountForAll(state);
-      state.bootstrappedAt = new Date().toISOString();
-    }
-    return this.finish(summary, state, session.linear.intervalSec);
+    return failure.error;
   }
 
-  // Records every task on disk at its current version, so establishing the link leaves
-  // nothing outstanding for the push to send.
-  private accountForAll(state: LinearSyncState): void {
-    for (const doc of this.deps.store.listSafe().docs) {
-      state.pushed[doc.meta.id] = doc.meta.updated;
+  private setProgress(progress: LinearProgress | null): void {
+    this.progress = progress;
+    if (progress !== null) {
+      this.deps.events.broadcast({ type: 'linear.progress', progress });
     }
   }
 
-  // A state file written before per-task accounting carries only a watermark. Everything at
-  // or before it is recorded once, so an upgrade neither re-sends work nor strands it.
-  private foldLegacyWatermark(state: LinearSyncState): void {
-    if (state.lastPushAt === null) return;
-    if (Object.keys(state.pushed).length === 0) {
-      const mark = Date.parse(state.lastPushAt);
-      // Ids in `pushRetry` were outstanding despite the watermark covering them.
-      const queued = new Set(state.pushRetry ?? []);
-      for (const doc of this.deps.store.listSafe().docs) {
-        if (queued.has(doc.meta.id)) continue;
-        if (Date.parse(doc.meta.updated) <= mark) {
-          state.pushed[doc.meta.id] = doc.meta.updated;
-        }
-      }
+  private broadcastTasks(ids: string[]): void {
+    this.selfBroadcast = true;
+    try {
+      this.deps.events.broadcast({ type: 'task.changed', ids });
+    } finally {
+      this.selfBroadcast = false;
     }
-    delete state.pushRetry;
-    state.lastPushAt = null;
   }
 
-  // Records the pass: persists cursor/echo state, refreshes the read cache when local
-  // files changed, and tells connected clients the sync ran.
-  private finish(
-    summary: LinearSyncSummary,
-    state: LinearSyncState,
-    intervalSec: number
-  ): LinearSyncSummary {
-    state.lastSyncAt = summary.at;
-    state.lastError = summary.errors[0] ?? null;
-    state.echoes = pruneEchoes(
-      state.echoes,
-      Date.now(),
-      echoTtlMs(intervalSec)
-    );
-    writeLinearState(this.deps.rootDir, state);
-    this.lastSummary = summary;
-    if (summary.pulled > 0 || summary.created > 0) {
-      this.deps.cache.rebuild(this.deps.store);
-      this.deps.events.broadcast({ type: 'task.changed' });
-    }
-    this.deps.events.broadcast({ type: 'linear.changed', summary });
-    return summary;
-  }
-
-  private async openSession(): Promise<
-    { ok: true; session: SyncSession } | { ok: false; error: string }
-  > {
+  private async openSession(
+    force: boolean
+  ): Promise<{ ok: true; session: Session } | { ok: false; error: string }> {
     const config = this.safeConfig();
     if (config === null) {
       return { ok: false, error: this.configError ?? 'invalid config' };
@@ -423,10 +368,35 @@ export class LinearSync {
     if (client === null) {
       return { ok: false, error: 'no Linear API key configured' };
     }
-    const states = await client.workflowStates(teamId);
-    if (!states.ok) return { ok: false, error: this.note(states) };
+    const cached = this.workspaceCache;
+    if (
+      !force &&
+      cached !== null &&
+      cached.teamId === teamId &&
+      Date.now() - cached.at < WORKSPACE_TTL_MS
+    ) {
+      return {
+        ok: true,
+        session: {
+          client,
+          config,
+          linear: config.linear,
+          teamId,
+          workspace: cached.workspace,
+          labels: cached.labels,
+        },
+      };
+    }
+    const workspace = await client.workspace(teamId);
+    if (!workspace.ok) return { ok: false, error: this.note(workspace) };
     const labels = await client.labels(teamId);
     if (!labels.ok) return { ok: false, error: this.note(labels) };
+    this.workspaceCache = {
+      teamId,
+      at: Date.now(),
+      workspace: workspace.data,
+      labels: labels.data,
+    };
     return {
       ok: true,
       session: {
@@ -434,363 +404,729 @@ export class LinearSync {
         config,
         linear: config.linear,
         teamId,
-        states: states.data,
+        workspace: workspace.data,
         labels: labels.data,
       },
     };
   }
 
-  // Turns a client failure into a summary message, arming the backoff clock when
-  // the failure was a throttle.
-  private note(failure: LinearFailure): string {
-    if (failure.kind === 'rate-limit') {
-      this.backoffUntil = Date.now() + (failure.retryAfterMs ?? 60_000);
-    }
-    return failure.error;
-  }
-
-  // Current version and display fields for every issue a local task links to, so chips fill
-  // in and an explicit push can see whether Linear is ahead. Null when the fetch failed.
-  private async refreshIssueRefs(
-    session: SyncSession,
-    state: LinearSyncState,
-    summary: LinearSyncSummary,
-    cache: IssueRefCache
-  ): Promise<Map<string, string> | null> {
-    if (cache.versions !== undefined) return cache.versions;
-    const linked = new Set<string>();
-    for (const doc of this.deps.store.listSafe().docs) {
-      const id = parseExternal(doc.meta.external);
-      if (id !== null) linked.add(id);
-    }
-    if (linked.size === 0) {
-      cache.versions = new Map();
-      return cache.versions;
-    }
-    const result = await session.client.issueLinks(session.teamId);
-    if (!result.ok) {
-      summary.errors.push(this.note(result));
-      summary.rateLimited ||= result.kind === 'rate-limit';
-      cache.versions = null;
-      return null;
-    }
-    const versions = new Map<string, string>();
-    for (const issue of result.data) {
-      if (!linked.has(issue.id)) continue;
-      this.recordLink(state, issue);
-      versions.set(issue.id, issue.updatedAt);
-    }
-    cache.versions = versions;
-    return versions;
-  }
-
-  // Linked candidates this pass holds no verdict for: an explicit push names tasks the pull
-  // never covered, and an unrecorded version means the engine has never reconciled the issue.
-  private async verifyBeforeSending(
-    session: SyncSession,
-    state: LinearSyncState,
-    summary: LinearSyncSummary,
-    candidates: TaskDoc[],
-    opts: {
-      explicit: boolean;
-      verifiedIssues: Set<string>;
-      remoteWins: Set<string>;
-      refs: IssueRefCache;
-    }
-  ): Promise<Set<string>> {
-    const { explicit, verifiedIssues, remoteWins, refs } = opts;
-    // Task ids the check could not answer for. They are skipped without being recorded,
-    // so a failed lookup postpones the decision instead of settling it.
-    const unchecked = new Set<string>();
-    const pending = candidates.filter((doc) => {
-      const issueId = parseExternal(doc.meta.external);
-      if (issueId === null) return false;
-      if (verifiedIssues.has(issueId) || remoteWins.has(issueId)) return false;
-      return explicit || state.pushed[doc.meta.id] === undefined;
-    });
-    if (pending.length === 0) return unchecked;
-
-    const versions = await this.refreshIssueRefs(session, state, summary, refs);
-    let withheld = 0;
-    for (const doc of pending) {
-      const issueId = parseExternal(doc.meta.external) ?? '';
-      const remote = versions?.get(issueId);
-      // A version this engine itself wrote is already reconciled, so Linear being ahead only
-      // because of its own stamp must not block a push the user asked for by name.
-      if (
-        explicit &&
-        remote !== undefined &&
-        this.isAlreadyApplied(state, issueId, remote)
-      ) {
-        continue;
-      }
-      const verdict =
-        remote === undefined
-          ? 'unknown'
-          : this.compareVersions(doc.meta.updated, remote);
-      if (verdict === 'local') continue;
-      // A tie means the two sides already agree, so there is nothing to send or report.
-      if (verdict === 'none') {
-        remoteWins.add(issueId);
-        continue;
-      }
-      withheld++;
-      if (verdict === 'unknown') unchecked.add(doc.meta.id);
-      else remoteWins.add(issueId);
-    }
-    if (withheld > 0) {
-      summary.errors.push(
-        `withheld ${withheld} issue update(s): Linear holds a newer copy, or its version could not be checked`
+  private async run(opts: RunOptions): Promise<LinearSyncSummary> {
+    const summary = emptySummary(new Date().toISOString());
+    if (Date.now() < this.backoffUntil) {
+      summary.rateLimited = true;
+      summary.errors.push('linear rate limit backoff in effect');
+      return this.finish(
+        summary,
+        readLinearState(this.deps.rootDir),
+        null,
+        300
       );
     }
-    return unchecked;
-  }
-
-  // resolveConflict folds an unreadable timestamp into the same 'none' as a genuine tie,
-  // which would withhold a task silently. Unreadable is surfaced as its own verdict.
-  private compareVersions(
-    local: string,
-    remote: string
-  ): 'local' | 'remote' | 'none' | 'unknown' {
-    if (Number.isNaN(Date.parse(local)) || Number.isNaN(Date.parse(remote))) {
-      return 'unknown';
+    const opened = await this.openSession(opts.mode === 'import');
+    if (!opened.ok) {
+      summary.errors.push(opened.error);
+      // Persisted so `status().lastError` explains a misconfiguration, not just the summary.
+      return this.finish(
+        summary,
+        readLinearState(this.deps.rootDir),
+        null,
+        300
+      );
     }
-    return resolveConflict(local, remote);
+    const session = opened.session;
+    const { store, cache, rootDir } = this.deps;
+    const state = readLinearState(rootDir);
+    const docs = new Map(store.listSafe().docs.map((d) => [d.meta.id, d]));
+    this.foldLegacyWatermark(state, docs);
+    const batch = new TaskChangeBatch(store, cache, (ids) => {
+      this.broadcastTasks(ids);
+      if (this.progress !== null) {
+        this.setProgress({
+          ...this.progress,
+          phase: 'applying',
+          done: batch.count(),
+        });
+      }
+    });
+
+    // The team's workflow is the project's status vocabulary, and its users
+    // are the project's people; both are refreshed before anything maps.
+    const regen = regenerateStatuses(
+      rootDir,
+      store,
+      docs,
+      state,
+      session.workspace.states
+    );
+    for (const id of regen.migrated) batch.add(id);
+    const localRef = this.deps.localHumanRef ?? 'human:me';
+    const people = syncPeople(
+      rootDir,
+      regen.config,
+      session.workspace.members,
+      session.workspace.viewer.id,
+      localRef
+    );
+    if (regen.configChanged || people.changed) {
+      this.deps.events.broadcast({ type: 'config.changed' });
+    }
+    const config = people.config;
+    const ctx = buildContext(
+      rootDir,
+      config,
+      state,
+      docs,
+      session.labels,
+      session.workspace.projectStatuses,
+      localRef
+    );
+    const pass = new LinearPass({
+      store,
+      client: session.client,
+      config,
+      teamId: session.teamId,
+      state,
+      summary,
+      ctx,
+      docs,
+      batch,
+      note: (failure) => this.note(failure),
+    });
+    const direction = session.linear.direction;
+    const mayPull = direction !== 'push';
+    const mayPush = direction !== 'pull';
+    // An explicit push writes only the tasks it names; others a pull meets
+    // take Linear's changes and keep their own for an ordinary pass.
+    const pushable = (id: string): boolean =>
+      mayPush && (opts.taskIds === undefined || opts.taskIds.includes(id));
+    const touched = new Set<string>();
+
+    // A first sync reconciles nothing — no task to create, no link to update — so it
+    // takes a cursor instead of scanning a whole team it has no use for.
+    const baselining = state.bootstrappedAt === null && opts.mode !== 'import';
+    if (baselining) {
+      const now = new Date().toISOString();
+      state.cursor = rewind(now);
+      state.commentCursor = rewind(now);
+      // Everything on disk is accounted for BEFORE the push: nothing local has been
+      // reconciled yet, so a fresh clone must send none of it over a linked issue.
+      this.accountForAll(state, docs);
+      state.bootstrappedAt = now;
+      await pass.guarded(() => this.audit(pass, session, state, docs, true));
+    } else if (opts.mode === 'import' || (mayPull && opts.mode === 'both')) {
+      if (opts.mode === 'import')
+        this.setProgress({ phase: 'containers', done: 0, total: null });
+      await pass.guarded(() =>
+        this.pull(
+          pass,
+          session,
+          state,
+          ctx,
+          docs,
+          touched,
+          opts.mode === 'import',
+          mayPull,
+          pushable
+        )
+      );
+    }
+
+    if (opts.mode !== 'import' && mayPush && !pass.stopped && !baselining) {
+      await pass.guarded(() =>
+        this.push(
+          pass,
+          session,
+          state,
+          ctx,
+          docs,
+          touched,
+          opts.taskIds,
+          mayPull
+        )
+      );
+    } else if (
+      baselining &&
+      opts.taskIds !== undefined &&
+      mayPush &&
+      !pass.stopped
+    ) {
+      await pass.guarded(() =>
+        this.push(
+          pass,
+          session,
+          state,
+          ctx,
+          docs,
+          touched,
+          opts.taskIds,
+          mayPull
+        )
+      );
+    }
+
+    if (!baselining && !pass.stopped) {
+      await pass.guarded(() =>
+        this.audit(pass, session, state, docs, opts.mode === 'import')
+      );
+    }
+
+    if (pass.withheld > 0) {
+      summary.errors.push(
+        `withheld ${pass.withheld} issue update(s): Linear holds a newer copy, or its version could not be checked`
+      );
+    }
+
+    // The link is established once the team answered, not once a data pass came back
+    // clean — otherwise one persistent error would freeze the integration forever.
+    if (state.bootstrappedAt === null) {
+      // An import establishes the link without ever pushing, so the same rule as the
+      // baseline path applies: nothing already on disk goes up automatically.
+      this.accountForAll(state, docs);
+      state.bootstrappedAt = new Date().toISOString();
+    }
+    return this.finish(summary, state, batch, session.linear.intervalSec);
   }
 
-  // Returns false when the pull failed, which makes the push skip updates to
-  // linked issues: without pull data there is no conflict information to act on.
-  private async pull(
-    session: SyncSession,
+  // Records every task on disk at its current version, so establishing the link leaves
+  // nothing outstanding for the push to send.
+  private accountForAll(
     state: LinearSyncState,
+    docs: Map<string, TaskDoc>
+  ): void {
+    for (const doc of docs.values()) {
+      state.pushed[doc.meta.id] = doc.meta.updated;
+    }
+  }
+
+  // A state file written before per-task accounting carries only a watermark. Everything at
+  // or before it is recorded once, so an upgrade neither re-sends work nor strands it.
+  private foldLegacyWatermark(
+    state: LinearSyncState,
+    docs: Map<string, TaskDoc>
+  ): void {
+    if (state.lastPushAt === null) return;
+    if (Object.keys(state.pushed).length === 0) {
+      const mark = Date.parse(state.lastPushAt);
+      // Ids in `pushRetry` were outstanding despite the watermark covering them.
+      const queued = new Set(state.pushRetry ?? []);
+      for (const doc of docs.values()) {
+        if (queued.has(doc.meta.id)) continue;
+        if (Date.parse(doc.meta.updated) <= mark) {
+          state.pushed[doc.meta.id] = doc.meta.updated;
+        }
+      }
+    }
+    delete state.pushRetry;
+    state.lastPushAt = null;
+  }
+
+  // Records the pass: flushes the task batch, persists cursor/echo state, and
+  // tells connected clients the sync ran.
+  private finish(
     summary: LinearSyncSummary,
-    pulledTaskIds: Set<string>,
-    remoteWins: Set<string>,
-    verifiedIssues: Set<string>,
-    importing: boolean
-  ): Promise<boolean> {
-    // An import considers the whole team, not just what changed since the cursor.
-    const result = await session.client.issuesUpdatedSince(
-      session.teamId,
-      importing ? null : state.cursor
+    state: LinearSyncState,
+    batch: TaskChangeBatch | null,
+    intervalSec: number
+  ): LinearSyncSummary {
+    batch?.flush();
+    this.progress = null;
+    state.lastSyncAt = summary.at;
+    state.lastError = summary.errors[0] ?? null;
+    state.echoes = pruneEchoes(
+      state.echoes,
+      Date.now(),
+      echoTtlMs(intervalSec)
     );
-    if (!result.ok) {
-      summary.errors.push(this.note(result));
-      summary.rateLimited ||= result.kind === 'rate-limit';
-      return false;
-    }
+    writeLinearState(this.deps.rootDir, state);
+    this.lastSummary = summary;
+    this.deps.events.broadcast({ type: 'linear.changed', summary });
+    return summary;
+  }
 
-    const byExternal = new Map<string, TaskDoc>();
-    for (const doc of this.deps.store.listSafe().docs) {
-      const id = parseExternal(doc.meta.external);
-      if (id !== null) byExternal.set(id, doc);
+  private async pull(
+    pass: LinearPass,
+    session: Session,
+    state: LinearSyncState,
+    ctx: PassContext,
+    docs: Map<string, TaskDoc>,
+    touched: Set<string>,
+    importing: boolean,
+    mayPull: boolean,
+    pushable: (id: string) => boolean
+  ): Promise<void> {
+    const { client, teamId } = session;
+    const summary = pass.summary;
+    // An idle poll is one cheap probe. When anything moved, every kind is
+    // read against the same cursor, so no kind's change can fall behind it.
+    if (!importing && state.cursor !== null) {
+      // The cursor sits a second behind the newest record seen; the probe asks
+      // about anything after that record itself, or an idle team never looks idle.
+      const seen = new Date(Date.parse(state.cursor) + 1000).toISOString();
+      const probe = pass.take(await client.probe(teamId, seen));
+      if (probe === null) return;
+      const moved =
+        probe.issues || probe.projects || probe.milestones || probe.initiatives;
+      if (!moved) return;
     }
-    const statuses = session.config.statuses;
-    const issues = [...result.data.issues].sort((a, b) =>
-      a.updatedAt.localeCompare(b.updatedAt)
+    const since = importing ? null : state.cursor;
+    const projects = pass.take(await client.projects(teamId, since));
+    const milestones = pass.take(await client.projectMilestones(teamId, since));
+    const initiatives = pass.take(await client.initiatives(since));
+    if (importing) this.setProgress({ phase: 'issues', done: 0, total: null });
+    const page = pass.take(
+      await client.issuesUpdatedSince(teamId, since, (n) => {
+        if (importing)
+          this.setProgress({ phase: 'issues', done: n, total: null });
+      })
     );
-    let high = state.cursor;
+    const fetched: Fetched = {
+      initiatives: initiatives?.nodes ?? [],
+      projects: projects?.nodes ?? [],
+      milestones: milestones?.nodes ?? [],
+      issues: page?.issues ?? [],
+    };
+    const pages: (LinearPage<unknown> | null)[] = [
+      projects,
+      milestones,
+      initiatives,
+    ];
+    const containersOk = pages.every((p) => p !== null && !p.truncated);
+    const issuesOk = page !== null;
+    const issuesTruncated = page?.truncated ?? false;
 
-    for (const issue of issues) {
-      if (high === null || issue.updatedAt > high) high = issue.updatedAt;
-      verifiedIssues.add(issue.id);
-      const existing = byExternal.get(issue.id);
-      // Recorded before the already-applied check so a linked issue that never
-      // changes again still backfills the identifier its chip needs.
-      if (existing !== undefined) this.recordLink(state, issue);
-      if (this.isAlreadyApplied(state, issue.id, issue.updatedAt)) continue;
-      if (existing === undefined) {
-        if (issue.archivedAt !== null) continue;
-        const doc = this.deps.store.create(
-          taskCreateFromIssue(issue, {
-            statusMap: session.linear.statusMap,
-            statuses,
-            fallbackStatus: statuses[0] ?? 'todo',
-          }),
-          issue.createdAt
-        );
-        this.deps.store.update(
-          doc.meta.id,
-          { external: externalId(issue) },
-          issue.updatedAt
-        );
-        state.pushed[doc.meta.id] = issue.updatedAt;
-        this.recordSeen(state, issue);
-        pulledTaskIds.add(doc.meta.id);
-        summary.created++;
-        summary.pulled++;
-        continue;
-      }
-      const verdict = resolveConflict(existing.meta.updated, issue.updatedAt);
-      if (verdict === 'local') {
-        summary.conflicts++;
-        continue;
-      }
-      if (verdict === 'none') continue;
-      remoteWins.add(issue.id);
-      const patch = taskPatchFromIssue(issue, {
-        statusMap: session.linear.statusMap,
-        statuses,
-        fallbackStatus: existing.meta.status,
+    await this.fillReferences(pass, session, ctx, fetched);
+    await this.learnUsers(session, ctx, fetched);
+
+    if (importing) {
+      this.setProgress({
+        phase: 'applying',
+        done: 0,
+        total: fetched.issues.length + fetched.projects.length,
       });
-      if (issue.archivedAt !== null) patch.archivedAt = issue.archivedAt;
-      // Stamped with the snapshot's `updatedAt` rather than a fresh clock: the task now
-      // holds exactly this remote version, so the push has nothing left to send for it.
-      this.deps.store.update(existing.meta.id, patch, issue.updatedAt);
-      state.pushed[existing.meta.id] = issue.updatedAt;
-      this.recordSeen(state, issue);
-      pulledTaskIds.add(existing.meta.id);
-      summary.pulled++;
     }
+    await this.applyContainers(
+      pass,
+      ctx,
+      docs,
+      touched,
+      fetched,
+      mayPull,
+      pushable
+    );
+    await this.applyIssues(
+      pass,
+      session,
+      state,
+      ctx,
+      docs,
+      touched,
+      fetched.issues,
+      mayPull,
+      pushable
+    );
 
-    if (result.data.truncated) {
+    if (issuesTruncated) {
       // The cursor must not move past issues this walk never reached.
       summary.errors.push(
         'linear returned more issues than one sync could page through; cursor held'
       );
-      return false;
-    }
-    // Rewound a second before the newest issue seen: `gt` would otherwise drop any
-    // issue that shares that exact timestamp, and re-reading one issue is free.
-    state.cursor =
-      high === null ? null : new Date(Date.parse(high) - 1000).toISOString();
-    return true;
-  }
-
-  // True when this exact version of the issue has already been reconciled — either
-  // written by this engine or applied locally on an earlier pass.
-  private isAlreadyApplied(
-    state: LinearSyncState,
-    issueId: string,
-    updatedAt: string
-  ): boolean {
-    return state.echoes.some(
-      (e) => e.issueId === issueId && e.updatedAt === updatedAt
-    );
-  }
-
-  private async push(
-    session: SyncSession,
-    state: LinearSyncState,
-    summary: LinearSyncSummary,
-    opts: {
-      taskIds: string[] | undefined;
-      pulledTaskIds: Set<string>;
-      remoteWins: Set<string>;
-      verifiedIssues: Set<string>;
-      createOnly: boolean;
-      refs: IssueRefCache;
-    }
-  ): Promise<void> {
-    const { taskIds, pulledTaskIds, remoteWins, createOnly } = opts;
-    const explicit = taskIds !== undefined;
-    // A derived task's description is the artifact's own prose (a PR body),
-    // and it exists only to anchor a local review — so it never becomes an
-    // issue, not even on an explicit push, which is still a request to
-    // publish it to a whole team's tracker.
-    const publishable = this.deps.store
-      .listSafe()
-      .docs.filter((doc) => doc.meta.derivedFrom === undefined);
-    const candidates = publishable.filter((doc) =>
-      explicit
-        ? taskIds.includes(doc.meta.id)
-        : !pulledTaskIds.has(doc.meta.id) &&
-          doc.meta.archivedAt === undefined &&
-          isOutstanding(doc.meta.updated, state.pushed[doc.meta.id])
-    );
-    const unchecked = createOnly
-      ? new Set<string>()
-      : await this.verifyBeforeSending(session, state, summary, candidates, {
-          explicit,
-          verifiedIssues: opts.verifiedIssues,
-          remoteWins,
-          refs: opts.refs,
-        });
-    if (summary.rateLimited) return;
-    let skippedForFailedPull = 0;
-
-    for (const doc of candidates) {
-      // The version being decided on. Recording it is what marks the task handled; an
-      // edit landing mid-pass moves the task off it and so stays outstanding.
-      const version = doc.meta.updated;
-      const issueId = parseExternal(doc.meta.external);
-      if (unchecked.has(doc.meta.id)) continue;
-      if (issueId !== null && remoteWins.has(issueId)) {
-        state.pushed[doc.meta.id] = version;
-        continue;
-      }
-      if (issueId !== null && createOnly) {
-        // Left outstanding on purpose: with no conflict information there is no safe
-        // decision to record, so the next pass reconsiders it.
-        skippedForFailedPull++;
-        continue;
-      }
-      if (issueId === null && !explicit && !this.mayAutoCreate(state, doc)) {
-        state.pushed[doc.meta.id] = version;
-        continue;
-      }
-      const input = issueFromTask(doc, {
-        teamId: session.teamId,
-        statusMap: session.linear.statusMap,
-        states: session.states,
-        labels: session.labels,
-        description: getSection(doc.body, 'Description'),
-      });
-
-      if (issueId === null) {
-        const result = await session.client.createIssue(input);
-        if (!result.ok) {
-          summary.errors.push(this.note(result));
-          if (result.kind === 'rate-limit') {
-            summary.rateLimited = true;
-            break;
-          }
-          continue;
-        }
-        // Recording the link is bookkeeping, not a user edit, so the task's own
-        // `updated` is preserved — bumping it would re-queue the task next pass.
-        this.deps.store.update(
-          doc.meta.id,
-          { external: externalId(result.data) },
-          this.currentUpdatedAt(doc)
-        );
-        this.recordSeen(state, result.data);
-        state.pushed[doc.meta.id] = version;
-        summary.createdIssues++;
-        summary.pushed++;
-        continue;
-      }
-
-      // teamId would move the issue between teams. labelIds replaces the whole label set,
-      // which would silently drop labels a person added in Linear — neither is sent on an update.
-      const updateInput = { ...input };
-      delete updateInput.teamId;
-      delete updateInput.labelIds;
-      const result = await session.client.updateIssue(issueId, updateInput);
-      if (!result.ok) {
-        summary.errors.push(this.note(result));
-        if (result.kind === 'rate-limit') {
-          summary.rateLimited = true;
-          break;
-        }
-        continue;
-      }
-      this.recordSeen(state, result.data);
-      state.pushed[doc.meta.id] = version;
-      summary.pushed++;
-    }
-
-    if (skippedForFailedPull > 0) {
-      summary.errors.push(
-        `skipped ${skippedForFailedPull} issue update(s): the pull failed, so no conflict check was possible`
+    } else if (issuesOk && containersOk) {
+      state.cursor = rewind(
+        newest(
+          [
+            ...fetched.issues,
+            ...fetched.projects,
+            ...fetched.milestones,
+            ...fetched.initiatives,
+          ],
+          state.cursor
+        )
       );
     }
   }
 
-  // Re-read right before the write-back so a local edit made during the network
-  // round-trip keeps its own timestamp instead of being rolled backwards.
-  private currentUpdatedAt(doc: TaskDoc): string {
-    return this.deps.store.get(doc.meta.id)?.meta.updated ?? doc.meta.updated;
+  // A pulled record naming a container this project has never seen (a delta
+  // after the link, or a project added to an initiative) brings that
+  // container, and its own parents, down too.
+  private async fillReferences(
+    pass: LinearPass,
+    session: Session,
+    ctx: PassContext,
+    fetched: Fetched
+  ): Promise<void> {
+    const known = (id: string | null) =>
+      id === null || ctx.taskByRemote.has(id);
+    const have = new Set([
+      ...fetched.projects.map((p) => p.id),
+      ...fetched.milestones.map((m) => m.id),
+    ]);
+    const wantsContainers = fetched.issues.some(
+      (i) =>
+        (!known(i.projectId) && !have.has(i.projectId ?? '')) ||
+        (!known(i.projectMilestoneId) && !have.has(i.projectMilestoneId ?? ''))
+    );
+    if (wantsContainers) {
+      const projects = pass.take(
+        await session.client.projects(session.teamId, null)
+      );
+      const milestones = pass.take(
+        await session.client.projectMilestones(session.teamId, null)
+      );
+      const byId = new Map(fetched.projects.map((p) => [p.id, p]));
+      for (const p of projects?.nodes ?? [])
+        if (!byId.has(p.id)) byId.set(p.id, p);
+      fetched.projects = [...byId.values()];
+      const msById = new Map(fetched.milestones.map((m) => [m.id, m]));
+      for (const m of milestones?.nodes ?? [])
+        if (!msById.has(m.id)) msById.set(m.id, m);
+      fetched.milestones = [...msById.values()];
+    }
+    const initiativeIds = new Set(
+      fetched.projects.flatMap((p) => p.initiatives.map((i) => i.initiativeId))
+    );
+    const fetchedInitiatives = new Set(fetched.initiatives.map((i) => i.id));
+    const missing = [...initiativeIds].filter(
+      (id) => !known(id) && !fetchedInitiatives.has(id)
+    );
+    if (missing.length > 0) {
+      const all = pass.take(await session.client.initiatives(null));
+      for (const i of all?.nodes ?? []) {
+        if (missing.includes(i.id)) fetched.initiatives.push(i);
+      }
+    }
+    // Only the team's initiatives: ones a team project belongs to, or already linked.
+    fetched.initiatives = fetched.initiatives.filter(
+      (i) => initiativeIds.has(i.id) || ctx.taskByRemote.has(i.id)
+    );
+  }
+
+  // Users a record names who are not team members (a guest, someone from
+  // another team) are looked up and added to the people registry, so an
+  // assignment never silently maps to nobody.
+  private async learnUsers(
+    session: Session,
+    ctx: PassContext,
+    fetched: Fetched
+  ): Promise<void> {
+    const ids = new Set<string>();
+    const want = (id: string | null) => {
+      if (id !== null && !ctx.people.refByUser.has(id)) ids.add(id);
+    };
+    for (const i of fetched.issues) {
+      want(i.assigneeId);
+      want(i.creatorId);
+    }
+    for (const p of fetched.projects) want(p.leadId);
+    for (const i of fetched.initiatives) want(i.ownerId);
+    if (ids.size === 0) return;
+    const users = await session.client.users([...ids]);
+    if (!users.ok || users.data.length === 0) return;
+    const merged: LinearUser[] = [...session.workspace.members, ...users.data];
+    const result = syncPeople(
+      this.deps.rootDir,
+      loadConfig(this.deps.rootDir),
+      merged,
+      session.workspace.viewer.id,
+      ctx.people.localRef
+    );
+    if (result.changed) {
+      refreshPeople(this.deps.rootDir, ctx, result.config);
+      this.deps.events.broadcast({ type: 'config.changed' });
+    }
+  }
+
+  private async applyContainers(
+    pass: LinearPass,
+    ctx: PassContext,
+    docs: Map<string, TaskDoc>,
+    touched: Set<string>,
+    fetched: Fetched,
+    mayPull: boolean,
+    pushable: (id: string) => boolean
+  ): Promise<void> {
+    const ready = ctx.model.roles.ready;
+    // Created first, all of them, so every reference among them resolves.
+    const pairs: [
+      TaskDoc,
+      RemoteRecord,
+      'initiative' | 'project' | 'milestone',
+    ][] = [];
+    const lists: ['initiative' | 'project' | 'milestone', RemoteRecord[]][] = [
+      ['initiative', fetched.initiatives],
+      ['project', fetched.projects],
+      ['milestone', fetched.milestones],
+    ];
+    for (const [entity, records] of lists) {
+      for (const r of records) {
+        const taskId = ctx.taskByRemote.get(r.id);
+        if (taskId === undefined) {
+          if (r.archivedAt !== null || !mayPull) continue;
+          pairs.push([pass.createLocal(entity, r, ready), r, entity]);
+          continue;
+        }
+        const doc = docs.get(taskId);
+        if (doc === undefined) continue;
+        if (pass.isEcho(r.id, r.updatedAt)) {
+          pass.recordChip(r);
+          continue;
+        }
+        pairs.push([doc, r, entity]);
+      }
+    }
+    for (const [doc, r, entity] of pairs) {
+      const current = docs.get(doc.meta.id) ?? doc;
+      touched.add(current.meta.id);
+      const mode = { mayPull, mayPush: pushable(current.meta.id) };
+      if (entity === 'initiative') {
+        await pass.reconcileInitiative(current, r as LinearInitiative, mode);
+      } else if (entity === 'project') {
+        await pass.reconcileProject(current, r as LinearProject, mode);
+      } else {
+        await pass.reconcileMilestone(
+          current,
+          r as LinearProjectMilestone,
+          mode
+        );
+      }
+    }
+  }
+
+  private async applyIssues(
+    pass: LinearPass,
+    session: Session,
+    state: LinearSyncState,
+    ctx: PassContext,
+    docs: Map<string, TaskDoc>,
+    touched: Set<string>,
+    issues: LinearIssue[],
+    mayPull: boolean,
+    pushable: (id: string) => boolean
+  ): Promise<void> {
+    const sorted = [...issues].sort((a, b) =>
+      a.updatedAt.localeCompare(b.updatedAt)
+    );
+    const pairs: [TaskDoc, LinearIssue][] = [];
+    for (const issue of sorted) {
+      const taskId = ctx.taskByRemote.get(issue.id);
+      const inTeam = issue.team === null || issue.team.id === session.teamId;
+      if (taskId === undefined) {
+        if (issue.archivedAt !== null || !inTeam || !mayPull) continue;
+        const returning = state.movedOut[issue.id];
+        const relinked =
+          returning === undefined ? null : pass.relink(returning, issue);
+        pairs.push([relinked ?? pass.createLocal('issue', issue, ''), issue]);
+        continue;
+      }
+      const doc = docs.get(taskId);
+      if (doc === undefined) continue;
+      pass.recordLink(issue.id, issue.identifier, issue.url);
+      if (!inTeam) {
+        pass.unlinkMoved(doc, issue.id, issue.team?.key ?? 'another team');
+        continue;
+      }
+      if (pass.isEcho(issue.id, issue.updatedAt)) continue;
+      pairs.push([doc, issue]);
+    }
+    for (const [doc, issue] of pairs) {
+      const current = docs.get(doc.meta.id) ?? doc;
+      touched.add(current.meta.id);
+      await pass.reconcileIssue(current, issue, {
+        mayPull,
+        mayPush: pushable(current.meta.id),
+      });
+    }
+  }
+
+  private async push(
+    pass: LinearPass,
+    session: Session,
+    state: LinearSyncState,
+    ctx: PassContext,
+    docs: Map<string, TaskDoc>,
+    touched: Set<string>,
+    taskIds: string[] | undefined,
+    mayPull: boolean
+  ): Promise<void> {
+    const explicit = taskIds !== undefined;
+    const summary = pass.summary;
+    // A derived task's description is the artifact's own prose (a PR body),
+    // and it exists only to anchor a local review — so it never becomes an
+    // issue, not even on an explicit push, which is still a request to
+    // publish it to a whole team's tracker.
+    const candidates = [...docs.values()].filter(
+      (doc) =>
+        doc.meta.derivedFrom === undefined &&
+        (explicit
+          ? taskIds.includes(doc.meta.id)
+          : !touched.has(doc.meta.id) &&
+            isOutstanding(doc.meta.updated, state.pushed[doc.meta.id]))
+    );
+    const linked = candidates.filter(
+      (d) => parseLinearExternal(d.meta.external) !== null
+    );
+    const unlinked = candidates.filter(
+      (d) => parseLinearExternal(d.meta.external) === null
+    );
+
+    // Linked tasks are reconciled against a fresh copy, so a push is a real
+    // three-way merge and never a blind overwrite.
+    const issueIds = linked.flatMap((d) => {
+      const ref = parseLinearExternal(d.meta.external);
+      return ref?.entity === 'issue' ? [ref.id] : [];
+    });
+    if (issueIds.length > 0) {
+      const fresh = pass.take(await session.client.issuesByIds(issueIds));
+      if (fresh === null) {
+        summary.errors.push(
+          `skipped ${issueIds.length} issue update(s): their current copy could not be fetched`
+        );
+      } else {
+        const byId = new Map(fresh.map((i) => [i.id, i]));
+        await this.learnUsers(session, ctx, {
+          issues: fresh,
+          projects: [],
+          milestones: [],
+          initiatives: [],
+        });
+        for (const doc of linked) {
+          const ref = parseLinearExternal(doc.meta.external);
+          if (ref?.entity !== 'issue') continue;
+          const issue = byId.get(ref.id);
+          if (issue === undefined) continue;
+          const current = docs.get(doc.meta.id) ?? doc;
+          if (issue.team !== null && issue.team.id !== session.teamId) {
+            pass.unlinkMoved(current, issue.id, issue.team.key);
+            continue;
+          }
+          await pass.reconcileIssue(current, issue, {
+            mayPull,
+            mayPush: true,
+            explicit: explicit && taskIds.includes(current.meta.id),
+          });
+        }
+      }
+    }
+    const containers = linked.filter((d) => {
+      const entity = parseLinearExternal(d.meta.external)?.entity;
+      return entity !== undefined && entity !== 'issue';
+    });
+    if (containers.length > 0) {
+      await this.pushContainers(pass, session, docs, containers, {
+        mayPull,
+        mayPush: true,
+        explicit,
+      });
+    }
+
+    for (const doc of pass.creationOrder(unlinked)) {
+      const current = docs.get(doc.meta.id) ?? doc;
+      if (!explicit && !this.mayAutoCreate(state, current)) {
+        state.pushed[current.meta.id] = current.meta.updated;
+        continue;
+      }
+      // An archived task that never reached Linear stays local.
+      if (!explicit && current.meta.archivedAt !== undefined) {
+        state.pushed[current.meta.id] = current.meta.updated;
+        continue;
+      }
+      await pass.createRemote(current);
+    }
+  }
+
+  private async pushContainers(
+    pass: LinearPass,
+    session: Session,
+    docs: Map<string, TaskDoc>,
+    containers: TaskDoc[],
+    mode: ReconcileMode
+  ): Promise<void> {
+    const { client, teamId } = session;
+    const [projects, milestones, initiatives] = [
+      pass.take(await client.projects(teamId, null)),
+      pass.take(await client.projectMilestones(teamId, null)),
+      pass.take(await client.initiatives(null)),
+    ];
+    const byId = new Map<string, RemoteRecord>();
+    for (const r of [
+      ...(projects?.nodes ?? []),
+      ...(milestones?.nodes ?? []),
+      ...(initiatives?.nodes ?? []),
+    ]) {
+      byId.set(r.id, r);
+    }
+    for (const doc of containers) {
+      const ref = parseLinearExternal(doc.meta.external);
+      const remote = ref === null ? undefined : byId.get(ref.id);
+      if (ref === null || remote === undefined) continue;
+      const current = docs.get(doc.meta.id) ?? doc;
+      if (ref.entity === 'project') {
+        await pass.reconcileProject(current, remote as LinearProject, mode);
+      } else if (ref.entity === 'milestone') {
+        await pass.reconcileMilestone(
+          current,
+          remote as LinearProjectMilestone,
+          mode
+        );
+      } else if (ref.entity === 'initiative') {
+        await pass.reconcileInitiative(
+          current,
+          remote as LinearInitiative,
+          mode
+        );
+      }
+    }
+  }
+
+  /**
+   * Every so often (and on every import) checks each linked issue is still in
+   * the team: one moved elsewhere is unlinked, one deleted is archived and
+   * unlinked. The same walk refreshes every chip's identifier.
+   */
+  private async audit(
+    pass: LinearPass,
+    session: Session,
+    state: LinearSyncState,
+    docs: Map<string, TaskDoc>,
+    force: boolean
+  ): Promise<void> {
+    const due =
+      force ||
+      state.lastAuditAt === null ||
+      Date.now() - Date.parse(state.lastAuditAt) > AUDIT_EVERY_MS;
+    if (!due) return;
+    const linked = new Map<string, TaskDoc>();
+    for (const doc of docs.values()) {
+      const ref = parseLinearExternal(doc.meta.external);
+      if (ref?.entity === 'issue') linked.set(ref.id, doc);
+    }
+    if (linked.size === 0) {
+      state.lastAuditAt = new Date().toISOString();
+      return;
+    }
+    const refs = pass.take(await session.client.issueLinks(session.teamId));
+    if (refs === null) return;
+    const inTeam = new Set<string>();
+    for (const ref of refs) {
+      inTeam.add(ref.id);
+      if (linked.has(ref.id)) pass.recordLink(ref.id, ref.identifier, ref.url);
+    }
+    const missing = [...linked.keys()].filter((id) => !inTeam.has(id));
+    if (missing.length > 0) {
+      const found = pass.take(await session.client.issuesByIds(missing));
+      if (found === null) return;
+      const byId = new Map(found.map((i) => [i.id, i]));
+      for (const id of missing) {
+        const doc = docs.get(linked.get(id)?.meta.id ?? '');
+        if (doc === undefined) continue;
+        const issue = byId.get(id);
+        if (issue === undefined) pass.unlinkDeleted(doc);
+        else if (issue.team !== null && issue.team.id !== session.teamId) {
+          pass.recordLink(issue.id, issue.identifier, issue.url);
+          pass.unlinkMoved(doc, id, issue.team.key);
+        }
+      }
+    }
+    state.lastAuditAt = new Date().toISOString();
   }
 
   // Whether an unlinked task may be auto-created in Linear. Tasks predating the link
@@ -798,23 +1134,5 @@ export class LinearSync {
   private mayAutoCreate(state: LinearSyncState, doc: TaskDoc): boolean {
     if (state.bootstrappedAt === null) return false;
     return Date.parse(doc.meta.updated) >= Date.parse(state.bootstrappedAt);
-  }
-
-  // Marks this issue version as reconciled, and keeps its display identifier around
-  // for clients that only hold the UUID in `TaskMeta.external`.
-  private recordSeen(state: LinearSyncState, issue: LinearIssue): void {
-    state.echoes.push({
-      issueId: issue.id,
-      updatedAt: issue.updatedAt,
-      recordedAt: new Date().toISOString(),
-    });
-    this.recordLink(state, issue);
-  }
-
-  private recordLink(
-    state: LinearSyncState,
-    issue: { id: string; identifier: string; url: string }
-  ): void {
-    state.links[issue.id] = { identifier: issue.identifier, url: issue.url };
   }
 }

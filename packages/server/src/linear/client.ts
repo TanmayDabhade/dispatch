@@ -107,9 +107,11 @@ export interface LinearClient {
   cycles(teamId: string): Promise<LinearResult<TaskCycle[]>>;
   users(ids: string[]): Promise<LinearResult<LinearUser[]>>;
   probe(teamId: string, since: string): Promise<LinearResult<LinearProbe>>;
+  /** `onPage` hears the running count after each page, for progress. */
   issuesUpdatedSince(
     teamId: string,
-    since: string | null
+    since: string | null,
+    onPage?: (fetched: number) => void
   ): Promise<LinearResult<LinearIssuePage>>;
   issuesByIds(ids: string[]): Promise<LinearResult<LinearIssue[]>>;
   /** Just the display fields, for filling in chips on issues that may never change again. */
@@ -630,7 +632,8 @@ export class HttpLinearClient implements LinearClient {
   private async paginate<N>(
     query: string,
     variables: Record<string, unknown>,
-    pick: (data: unknown) => Connection<N> | null | undefined
+    pick: (data: unknown) => Connection<N> | null | undefined,
+    onPage?: (fetched: number) => void
   ): Promise<LinearResult<LinearPage<N>>> {
     const nodes: N[] = [];
     let after: string | null = null;
@@ -648,6 +651,7 @@ export class HttpLinearClient implements LinearClient {
       const connection = pick(result.data);
       if (connection === null || connection === undefined) break;
       nodes.push(...connection.nodes);
+      onPage?.(nodes.length);
       if (!connection.pageInfo.hasNextPage) break;
       after = connection.pageInfo.endCursor;
       if (after === null) break;
@@ -660,12 +664,14 @@ export class HttpLinearClient implements LinearClient {
     query: string,
     variables: Record<string, unknown>,
     key: string,
-    map: (node: N) => T | null
+    map: (node: N) => T | null,
+    onPage?: (fetched: number) => void
   ): Promise<LinearResult<LinearPage<T>>> {
     const result = await this.paginate<N>(
       query,
       variables,
-      (data) => (data as Record<string, Connection<N> | undefined>)[key]
+      (data) => (data as Record<string, Connection<N> | undefined>)[key],
+      onPage
     );
     if (!result.ok) return result;
     const nodes: T[] = [];
@@ -850,13 +856,15 @@ export class HttpLinearClient implements LinearClient {
 
   async issuesUpdatedSince(
     teamId: string,
-    since: string | null
+    since: string | null,
+    onPage?: (fetched: number) => void
   ): Promise<LinearResult<LinearIssuePage>> {
     const result = await this.walk<IssueNode, LinearIssue>(
       since === null ? Q.ISSUES_QUERY_ALL : Q.ISSUES_QUERY,
       since === null ? { teamId } : { teamId, since },
       'issues',
-      toIssue
+      toIssue,
+      onPage
     );
     return result.ok
       ? {

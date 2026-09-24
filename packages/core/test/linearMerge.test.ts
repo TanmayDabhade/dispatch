@@ -138,13 +138,24 @@ describe('mergeFields without a base', () => {
         localUpdated: LATE,
         remoteUpdated: EARLY,
       })
-    ).toEqual([{ field: 'f', action: 'push', conflict: false }]);
+    ).toEqual([{ field: 'f', action: 'push', conflict: true }]);
   });
 
   it('takes Linear’s value when Linear is newer, dirty or not', () => {
     expect(decide('mine', 'theirs', null, { localDirty: true })).toEqual([
-      { field: 'f', action: 'pull', conflict: false },
+      { field: 'f', action: 'pull', conflict: true },
     ]);
+  });
+
+  it('lets only the named fields push on first contact', () => {
+    expect(
+      decide('mine', 'theirs', null, {
+        localDirty: true,
+        localUpdated: LATE,
+        remoteUpdated: EARLY,
+        noBasePush: new Set(['other']),
+      })
+    ).toEqual([{ field: 'f', action: 'pull', conflict: false }]);
   });
 
   it('records agreement as a base straight away', () => {

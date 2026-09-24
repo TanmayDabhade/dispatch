@@ -107,7 +107,8 @@ describe('LinearSync.pull', () => {
     const docs = store.list();
     expect(docs).toHaveLength(1);
     expect(docs[0].meta.title).toBe('Ship the thing');
-    expect(docs[0].meta.status).toBe('working');
+    // Statuses are the team's workflow states once linked.
+    expect(docs[0].meta.status).toBe('In Progress');
     expect(docs[0].meta.priority).toBe('high');
     expect(docs[0].meta.labels).toEqual(['web']);
     expect(docs[0].meta.external).toBe(`linear:${fake.issues[0].id}`);
@@ -139,7 +140,7 @@ describe('LinearSync.pull', () => {
     expect(store.get(doc.meta.id)?.meta.title).toBe('Renamed in Linear');
   });
 
-  it('leaves a locally-newer task alone and counts it as a conflict', async () => {
+  it('keeps a locally-newer edit on first contact and records each conflict', async () => {
     const remote = fake.issue({
       title: 'Renamed in Linear',
       updatedAt: '2026-07-05T00:00:00.000Z',
@@ -151,11 +152,18 @@ describe('LinearSync.pull', () => {
 
     const summary = await makeSync().syncOnce();
 
-    expect(summary.conflicts).toBe(1);
-    expect(summary.pulled).toBe(0);
-    expect(store.get(doc.meta.id)?.meta.title).toBe('Newer locally');
-    // The local side won, so the same pass pushes it up rather than dropping it.
+    // Title, description, state and priority all differ with no base to say
+    // who moved, so each is a conflict the newer (local) edit wins.
+    expect(summary.conflicts).toBe(4);
+    const after = store.get(doc.meta.id);
+    expect(after?.meta.title).toBe('Newer locally');
+    expect(getSection(after?.body ?? '', 'Activity')).toContain(
+      'Linear sync conflict'
+    );
+    // Fields the old sync never pushed take Linear's value.
+    expect(after?.meta.labels).toEqual(['web']);
     expect(fake.updated).toHaveLength(1);
+    expect(fake.updated[0].input.title).toBe('Newer locally');
   });
 
   it('does not create a task for an issue that is already archived', async () => {
@@ -685,6 +693,8 @@ describe('LinearSync first pass baseline', () => {
     // so local edits still push and the integration keeps working.
     await new Promise((resolve) => setTimeout(resolve, 5));
     store.create({ title: 'Local work' });
+    // Something changed after the cursor, so the probe sends the pass to page.
+    fake.issues[0].updatedAt = new Date(Date.now() + 60_000).toISOString();
     const second = await sync.syncOnce();
     expect(second.errors.some((e) => e.includes('page through'))).toBe(true);
     expect(second.createdIssues).toBe(1);
@@ -879,8 +889,8 @@ describe('LinearSync branch switches', () => {
 });
 
 describe('LinearSync unrecorded links', () => {
-  // A linked task the engine holds no recorded version for: it cannot know whether the
-  // local file is ahead of the issue, so it must ask before writing.
+  // A linked task the engine holds no merge base for: it cannot know which side
+  // moved, so it fetches the issue and lets the newer copy win.
   function seedUnrecordedLink(remoteUpdatedAt: string): { id: string } {
     const remote = fake.issue({
       title: 'Owned by Linear',
@@ -897,15 +907,16 @@ describe('LinearSync unrecorded links', () => {
     return { id: doc.meta.id };
   }
 
-  it('checks Linear before writing to a link it has no recorded version for', async () => {
-    seedUnrecordedLink('2027-01-01T00:00:00.000Z');
+  it('takes Linear’s newer copy of a link it has no base for, writing nothing back', async () => {
+    const { id } = seedUnrecordedLink('2027-01-01T00:00:00.000Z');
 
     const summary = await makeSync().syncOnce();
 
     expect(fake.updated).toHaveLength(0);
     expect(fake.issues[0].title).toBe('Owned by Linear');
     expect(fake.issues[0].state?.name).toBe('Blocked');
-    expect(summary.errors.some((e) => e.includes('withheld'))).toBe(true);
+    expect(store.get(id)?.meta.title).toBe('Owned by Linear');
+    expect(summary.errors).toEqual([]);
   });
 
   it('sends it once the check shows the local copy is newer', async () => {
@@ -919,18 +930,20 @@ describe('LinearSync unrecorded links', () => {
 
   it('leaves it outstanding when the check could not be made', async () => {
     seedUnrecordedLink('2026-01-01T00:00:00.000Z');
-    fake.linkFailure = {
+    fake.failures.issuesByIds = {
       ok: false,
       kind: 'graphql',
-      error: 'link query blew up',
+      error: 'issue query blew up',
     };
 
     const sync = makeSync();
     const first = await sync.syncOnce();
     expect(fake.updated).toHaveLength(0);
-    expect(first.errors.some((e) => e.includes('withheld'))).toBe(true);
+    expect(first.errors.some((e) => e.includes('could not be fetched'))).toBe(
+      true
+    );
 
-    fake.linkFailure = null;
+    delete fake.failures.issuesByIds;
     await sync.syncOnce();
 
     expect(fake.updated).toHaveLength(1);
@@ -948,7 +961,7 @@ describe('LinearSync unrecorded links', () => {
 });
 
 describe('LinearSync explicit push conflict check', () => {
-  it('withholds an explicit update when Linear holds a newer copy', async () => {
+  it('lets Linear’s newer copy win an explicit push, and records the conflict', async () => {
     const { id } = seedClonedRepo();
 
     const summary = await makeSync().syncOnce([id]);
@@ -956,7 +969,8 @@ describe('LinearSync explicit push conflict check', () => {
     expect(fake.updated).toHaveLength(0);
     expect(fake.issues[0].title).toBe('Owned by Linear');
     expect(fake.issues[0].state?.name).toBe('Blocked');
-    expect(summary.errors.some((e) => e.includes('withheld'))).toBe(true);
+    expect(store.get(id)?.meta.title).toBe('Owned by Linear');
+    expect(summary.conflicts).toBeGreaterThan(0);
   });
 
   it('sends an explicit update when the local copy is the newer one', async () => {
@@ -984,18 +998,20 @@ describe('LinearSync explicit push conflict check', () => {
     expect(fake.updated[0].input.title).toBe('Second');
   });
 
-  it('withholds an explicit update when the check itself failed', async () => {
+  it('withholds an explicit update when the fresh copy could not be fetched', async () => {
     const { id } = seedClonedRepo('2026-01-01T00:00:00.000Z');
-    fake.linkFailure = {
+    fake.failures.issuesByIds = {
       ok: false,
       kind: 'graphql',
-      error: 'link query blew up',
+      error: 'issue query blew up',
     };
 
     const summary = await makeSync().syncOnce([id]);
 
     expect(fake.updated).toHaveLength(0);
-    expect(summary.errors.some((e) => e.includes('withheld'))).toBe(true);
+    expect(summary.errors.some((e) => e.includes('could not be fetched'))).toBe(
+      true
+    );
   });
 
   it('does not pay for a check when the named task is not linked yet', async () => {
@@ -1043,7 +1059,7 @@ describe('LinearSync link query failures', () => {
 });
 
 describe('LinearSync degraded pull', () => {
-  it('will not overwrite a linked issue when the pull failed', async () => {
+  it('still merges a linked task against a fresh copy when the pull failed', async () => {
     const remote = fake.issue({ updatedAt: '2026-07-01T00:00:00.000Z' });
     fake.issues = [remote];
     const linked = store.create({ title: 'Linked and edited' });
@@ -1058,12 +1074,11 @@ describe('LinearSync degraded pull', () => {
 
     const summary = await makeSync().syncOnce();
 
-    // No conflict information was available, so the update is withheld and said so.
-    expect(fake.updated).toHaveLength(0);
-    expect(summary.errors.some((e) => e.includes('no conflict check'))).toBe(
-      true
-    );
-    // Creating a genuinely new issue is still safe and still happens.
+    // The failure is reported, but the push merges against its own fresh
+    // copy of the issue, so the local edit still goes out safely.
+    expect(summary.errors).toContain('issues query blew up');
+    expect(fake.updated).toHaveLength(1);
+    expect(fake.updated[0].input.title).toBe('Linked and edited');
     expect(summary.createdIssues).toBe(1);
   });
 

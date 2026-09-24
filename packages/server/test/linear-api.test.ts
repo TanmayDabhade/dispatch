@@ -64,7 +64,7 @@ describe('GET /api/linear/status', () => {
     expect(body.enabled).toBe(false);
     expect(body.teamId).toBeNull();
     expect(body.direction).toBe('both');
-    expect(body.intervalSec).toBe(300);
+    expect(body.intervalSec).toBe(30);
     expect(body.statusMap.landed).toBe('Done');
     expect(body.keySource).toBeNull();
     expect(body.lastSyncAt).toBeNull();

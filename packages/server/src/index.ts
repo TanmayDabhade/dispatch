@@ -1532,6 +1532,7 @@ async function bootServer(
     cache,
     events,
     client: opts.linearClient,
+    localHumanRef: actorContext.humanRef,
   });
   const unsubscribeLinear = events.subscribe((event) => {
     if (event.type === 'task.changed') linearSync.notifyTaskChanged();
