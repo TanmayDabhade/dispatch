@@ -336,6 +336,14 @@ describe('CodexExecutor', () => {
       sessionId: 'thread-new',
       turns: 1,
       costUsd: 0.0027,
+      // Codex counts cached input inside inputTokens; the split separates it.
+      usage: {
+        inputTokens: 500,
+        cacheCreationInputTokens: 0,
+        cacheReadInputTokens: 500,
+        outputTokens: 200,
+        source: 'result',
+      },
     });
     expect(harness.entries.find((entry) => entry.kind === 'usage')?.text).toBe(
       'tokens: 1200 total (1000 in, 200 out) ≈ $0.0027'
@@ -560,6 +568,14 @@ describe('CodexExecutor', () => {
       state: 'finished',
       sessionId: 'thread-new',
       turns: 1,
+      // Tokens are reported even with no pricing to turn them into dollars.
+      usage: {
+        inputTokens: 1000,
+        cacheCreationInputTokens: 0,
+        cacheReadInputTokens: 0,
+        outputTokens: 200,
+        source: 'result',
+      },
     });
     expect(finishes[0]?.costUsd).toBeUndefined();
   });

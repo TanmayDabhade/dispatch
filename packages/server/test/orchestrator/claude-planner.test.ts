@@ -5,11 +5,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { CLAUDE_INSTALL_HINT } from '../../src/orchestrator/claudeCli.js';
+import { floorGuard } from '../../src/orchestrator/floorHook.js';
 import type { PlanProposal } from '../../src/orchestrator/planner.js';
 import {
   ClaudePlanner,
   EMPTY_TURN_MESSAGE,
 } from '../../src/orchestrator/planners/claude.js';
+import { floorDecision } from './helpers.js';
 
 // The exact text the Agent SDK throws when it can't resolve its own bundled
 // native CLI binary — mirrors claude-executor.test.ts's own fixture for the
@@ -90,10 +92,19 @@ describe('ClaudePlanner.start', () => {
       preset: 'claude_code',
     });
     expect(captured?.settingSources).toEqual(['project', 'local']);
-    expect(captured?.tools).toEqual(['Read', 'Grep', 'Glob', 'Bash']);
-    expect(captured?.allowedTools).toEqual(['Read', 'Grep', 'Glob', 'Bash']);
+    // No Bash: plan mode does not stop a shell command from writing.
+    expect(captured?.tools).toEqual(['Read', 'Grep', 'Glob']);
+    expect(captured?.allowedTools).toEqual(['Read', 'Grep', 'Glob']);
     expect(captured?.strictMcpConfig).toBe(true);
     expect(captured?.skills).toEqual([]);
+    // There is no human to ask, so a floor command is refused before it runs.
+    expect(
+      await floorDecision(captured?.hooks, 'Bash', { command: 'npm publish' })
+    ).toBe('deny');
+    expect(captured?.settings).toEqual(floorGuard('deny').settings);
+    expect(
+      await floorDecision(captured?.hooks, 'Bash', { command: 'git log -1' })
+    ).toBeUndefined();
   });
 
   it('rejects when the result message is an error subtype', async () => {

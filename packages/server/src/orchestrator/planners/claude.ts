@@ -4,6 +4,7 @@ import { loadConfig } from '@dispatch/core';
 import type { EffortLevel } from '@dispatch/core';
 
 import { openClaudeQuery, rewriteMissingCliError } from '../claudeCli.js';
+import { floorGuard } from '../floorHook.js';
 import type {
   Planner,
   PlannerMode,
@@ -225,8 +226,11 @@ function buildDraftFollowupPrompt(userMessage: string): string {
 }
 
 // Both `tools` and `allowedTools` set to the same list: the former restricts
-// model access, the latter auto-approves in plan mode.
-const PLANNER_TOOLS = ['Read', 'Grep', 'Glob', 'Bash'];
+// which tools the model sees, the latter pre-approves them. No Bash: plan mode
+// does not stop a shell command from writing, and against the bundled CLI a
+// pre-approved Bash wrote one file and deleted another in the checkout.
+// Reading and searching are all a plan needs.
+const PLANNER_TOOLS = ['Read', 'Grep', 'Glob'];
 
 // Shown when two consecutive attempts at a turn both end with no structured
 // output; tells the user their answers are kept and to resend.
@@ -237,7 +241,7 @@ export const EMPTY_TURN_MESSAGE =
 /**
  * The real planner backend: a read-only Agent SDK planning *conversation* in
  * the main checkout (no worktree — a plan proposes work, it never touches the
- * repo), `permissionMode: 'plan'` so no tool actually executes, and a
+ * repo), with only the reading and searching tools in PLANNER_TOOLS, and a
  * json_schema `outputFormat` so each turn arrives as structured data instead
  * of free text to parse. Every turn is a discrete `query()` call: the opening
  * turn starts a fresh session; each follow-up passes the prior turn's
@@ -323,6 +327,10 @@ export class ClaudePlanner implements Planner {
       settingSources: ['project', 'local'],
       tools: PLANNER_TOOLS,
       allowedTools: PLANNER_TOOLS,
+      // The planner has no shell, but it has no human on hand to approve
+      // anything either, so an irreversible command that reached it some
+      // other way is refused (see floorGuard).
+      ...floorGuard('deny'),
       strictMcpConfig: true,
       skills: [],
       ...(resume !== undefined ? { resume } : {}),

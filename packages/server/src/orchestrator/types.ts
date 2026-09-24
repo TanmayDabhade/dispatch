@@ -4,6 +4,8 @@ import type {
   SubagentSummary,
 } from '@dispatch/core';
 
+import type { RunUsage } from './usage.js';
+
 // The Vibe Kanban pattern: every executor, real or fake, streams a uniform
 // log shape so the transcript/UI never needs to know which executor produced
 // an entry. `kind: 'usage'` entries carry running cost/turn info; everything
@@ -117,6 +119,10 @@ export interface ExecutorEvents {
     turns?: number;
     sessionId?: string;
     error?: string;
+    // Token spend by billing type; absent when the executor measures none.
+    usage?: RunUsage;
+    // The harness experiments (experiments.ts) the run ran under, when any.
+    experiments?: string[];
   }): void;
 }
 
@@ -262,6 +268,14 @@ export interface RunMeta {
   updatedAt: string;
   costUsd?: number;
   turns?: number;
+  // Token spend by billing type (see usage.ts), set at finish alongside
+  // costUsd. Absent for runs recorded before it existed and for executors
+  // that measure no tokens.
+  usage?: RunUsage;
+  // The harness experiments this run ran under (see experiments.ts), so runs
+  // can be split by arm when comparing cost per completed task. Absent for a
+  // run under the defaults.
+  experiments?: string[];
   sessionId?: string;
   error?: string;
   // The Claude model this run was dispatched with, if one was chosen (see

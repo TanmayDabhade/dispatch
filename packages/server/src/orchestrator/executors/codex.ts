@@ -26,6 +26,7 @@ import type {
   ExecutorStartOptions,
   NormalizedEntry,
 } from '../types.js';
+import type { RunUsage } from '../usage.js';
 
 const STOP_MESSAGE =
   'The user asked this run to stop. Finish the current operation, start no new work, summarize what is complete and what remains, then end the turn.';
@@ -122,6 +123,20 @@ function tokenTotal(value: unknown): CodexTokenTotal | undefined {
     inputTokens: count('inputTokens'),
     cachedInputTokens: count('cachedInputTokens'),
     outputTokens: count('outputTokens'),
+  };
+}
+
+// Codex's cumulative thread totals in the provider-neutral billing split. Codex
+// counts cached input inside inputTokens and reports no cache writes, so the
+// uncached share is the difference and cache creation is always zero.
+function codexRunUsage(total: CodexTokenTotal): RunUsage {
+  const cached = Math.min(total.cachedInputTokens, total.inputTokens);
+  return {
+    inputTokens: total.inputTokens - cached,
+    cacheCreationInputTokens: 0,
+    cacheReadInputTokens: cached,
+    outputTokens: total.outputTokens,
+    source: 'result',
   };
 }
 
@@ -551,6 +566,7 @@ export class CodexExecutor implements Executor {
         sessionId: threadId,
         turns: 1,
         ...(costUsd === undefined ? {} : { costUsd }),
+        ...(lastUsage === undefined ? {} : { usage: codexRunUsage(lastUsage) }),
       });
       server.close();
     };

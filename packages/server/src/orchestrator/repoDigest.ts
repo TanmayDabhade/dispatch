@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 
 import { spawnGitSync } from '../blockingGit.js';
 import { openClaudeQuery, rewriteMissingCliError } from './claudeCli.js';
+import { floorGuard } from './floorHook.js';
 import { runsDir } from './paths.js';
 
 /**
@@ -40,6 +41,9 @@ const MAX_DIGEST_CHARS = 6000;
 // failure quickly is the intent; this only stops it happening every dispatch.
 const FAILED_ATTEMPT_BACKOFF_MS = 5 * 60 * 1000;
 
+// Reading and searching are all a map of the repo needs.
+const DIGEST_TOOLS = ['Read', 'Grep', 'Glob'];
+
 const DIGEST_PROMPT =
   'Write a concise orientation map of this repository for an engineer who is ' +
   'about to make a change in it and has never seen it before. Cover: what ' +
@@ -60,9 +64,6 @@ const DIGEST_SCHEMA: Record<string, unknown> = {
   required: ['markdown'],
   additionalProperties: false,
 };
-
-// Read-only exploration, same set the planner gets.
-const DIGEST_TOOLS = ['Read', 'Grep', 'Glob', 'Bash'];
 
 // Reads the cached digest, treating a missing, unreadable, or shapeless file as
 // "nothing cached yet" rather than throwing — same tolerance as MergeQueue's
@@ -129,7 +130,9 @@ export interface DigestResult {
 export type DigestGenerator = (rootDir: string) => Promise<DigestResult>;
 
 // The real generator: one read-only Agent SDK turn against the main checkout,
-// configured like ClaudePlanner's: plan permissions, the repo's own
+// configured like ClaudePlanner's: only reading and searching tools (no shell:
+// plan mode does not stop a shell command from writing in the checkout, and
+// this runs unattended over the repo's own content), the repo's own
 // AGENTS.md/CLAUDE.md but not the operator's user settings, plugins or MCP
 // connectors, and a json_schema outputFormat for the map itself.
 export async function generateRepoDigest(
@@ -143,9 +146,14 @@ export async function generateRepoDigest(
     settingSources: ['project', 'local'],
     tools: DIGEST_TOOLS,
     allowedTools: DIGEST_TOOLS,
+    // Only the MCP servers passed here, which is none: neither a project's
+    // `.mcp.json` servers nor the operator's connectors start.
     strictMcpConfig: true,
     skills: [],
     outputFormat: { type: 'json_schema', schema: DIGEST_SCHEMA },
+    // Nobody is on hand to approve anything, so an irreversible command that
+    // reached the session some other way is refused (see floorGuard).
+    ...floorGuard('deny'),
   };
   const sdkQuery: Query = openClaudeQuery(queryFn, DIGEST_PROMPT, options);
   try {
