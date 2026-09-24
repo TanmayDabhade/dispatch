@@ -1,4 +1,4 @@
-import { ActorContext, TaskStore } from '@dispatch/core';
+import { ActorContext, fanoutScope, TaskStore } from '@dispatch/core';
 import type { CreateInput } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -11,9 +11,11 @@ import { EpicEngine } from '../../src/orchestrator/epic.js';
 import { FakeExecutor } from '../../src/orchestrator/executors/fake.js';
 import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
 import { epicSessionsPath } from '../../src/orchestrator/paths.js';
-import { initGitRepo, WatchedTaskStore } from './helpers.js';
+import { OrchestratorConflictError } from '../../src/orchestrator/types.js';
+import { initGitRepo, runGitSync, WatchedTaskStore } from './helpers.js';
 
-// Who a fan-out may pick up: never a teammate's task.
+// Who a fan-out may pick up (never a teammate's task) and what it covers (a
+// project's milestone issues, exactly as its Flight Plan draws them).
 
 let fakeHome: string;
 let repo: string;
@@ -205,6 +207,75 @@ describe('a fan-out never picks up a teammate’s task', () => {
     if (run === undefined) throw new Error('no run');
     h.orchestrator.approve(run.id, 'go', true);
     await waitFor(() => h.epics.progress(m).session?.state === 'complete');
+  });
+});
+
+describe('a project fans out what its Flight Plan draws', () => {
+  // project → { M1 → { a1, parent issue → sub }, M2 → { b1 (blocked by a1) }, direct }
+  function project(h: ReturnType<typeof makeHarness>) {
+    const p = h.store.create({ title: 'Project', kind: 'project' }).meta.id;
+    const m1 = h.store.create({ title: 'M1', kind: 'milestone', parent: p })
+      .meta.id;
+    const m2 = h.store.create({ title: 'M2', kind: 'milestone', parent: p })
+      .meta.id;
+    const a1 = h.task('a1', { parent: m1 });
+    const parentIssue = h.task('parent-issue', { parent: m1 });
+    const sub = h.task('sub', { parent: parentIssue });
+    const b1 = h.task('b1', { parent: m2, blockedBy: [a1] });
+    const direct = h.task('direct', { parent: p });
+    return { p, m1, m2, a1, parentIssue, sub, b1, direct };
+  }
+
+  it('dispatches milestone issues across milestones, never a sub-issue, on the P1 branches', async () => {
+    const h = makeHarness();
+    const t = project(h);
+    const planned = fanoutScope(t.p, (id) =>
+      h.cache.query({ parent: id, includeArchived: true })
+    ).map((c) => c.meta.id);
+    expect(new Set(planned)).toEqual(
+      new Set([t.a1, t.parentIssue, t.b1, t.direct])
+    );
+    expect(new Set(h.epics.progress(t.p).children.map((c) => c.id))).toEqual(
+      new Set(planned)
+    );
+
+    await h.epics.start(t.p, { executor: 'fake', concurrency: 8 });
+    await waitFor(() => h.orchestrator.list().length === 2);
+    await sleep(50);
+    // b1 waits on a1 across milestones; the parent issue is a container.
+    expect(h.dispatched()).toEqual(new Set([t.a1, t.direct]));
+    const baseOf = (taskId: string) =>
+      h.orchestrator.list().find((r) => r.taskId === taskId)?.baseBranch;
+    expect(baseOf(t.a1)).toBe(`epic/${t.m1}`);
+    expect(baseOf(t.direct)).toBe('main');
+
+    const a1Run = h.orchestrator.list().find((r) => r.taskId === t.a1);
+    if (a1Run === undefined) throw new Error('no run for a1');
+    h.orchestrator.approve(a1Run.id, 'go', true);
+    await waitFor(() => h.dispatched().has(t.b1));
+    await sleep(50);
+    expect(h.dispatched().has(t.sub)).toBe(false);
+    expect(h.dispatched().has(t.parentIssue)).toBe(false);
+    // Only milestones and parent issues get integration branches.
+    expect(runGitSync(repo, ['branch', '--list', `epic/${t.p}`])).toBe('');
+  });
+
+  it('refuses a fan-out that overlaps a live one, either way round', async () => {
+    const h = makeHarness();
+    const t = project(h);
+    await h.epics.start(t.p, { executor: 'fake', concurrency: 1 });
+    await expect(
+      h.epics.start(t.m1, { executor: 'fake', concurrency: 1 })
+    ).rejects.toThrow(OrchestratorConflictError);
+    // A parent issue's sub-issues are outside the project's scope.
+    await h.epics.start(t.parentIssue, { executor: 'fake', concurrency: 1 });
+
+    h.epics.stop(t.p);
+    await h.epics.start(t.m1, { executor: 'fake', concurrency: 1 });
+    h.epics.pause(t.m1);
+    await expect(
+      h.epics.start(t.p, { executor: 'fake', concurrency: 1 })
+    ).rejects.toThrow(/overlap .*paused session on 2 task/);
   });
 });
 
