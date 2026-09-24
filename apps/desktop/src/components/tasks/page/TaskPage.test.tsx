@@ -156,7 +156,7 @@ describe('the mode follows the task', () => {
     expect(screen.getByText('abc1234')).not.toBeNull();
   });
 
-  test('a container opens on its plan, with the flight plan slot', () => {
+  test('a container opens on its plan, where the Flight Plan draws every sub-issue', () => {
     mount(
       fakeHost(newLog(), {
         tasks: [
@@ -166,8 +166,26 @@ describe('the mode follows the task', () => {
       })
     );
     expect(modeOf()).toBe('plan');
+    expect(document.querySelector('[data-slot=plan-mode]')).not.toBeNull();
+    // The plan is the list, so the rail leaves its sub-issue excerpt out.
+    expect(screen.queryByText('Sub-issues')).toBeNull();
+  });
+
+  test('a container’s spec lists its sub-issues once, with a way to add one', () => {
+    mount(
+      fakeHost(newLog(), {
+        tasks: [
+          task('t-1', { kind: 'milestone', status: 'working' }),
+          task('t-2', { parent: 't-1' }),
+        ],
+      })
+    );
+    fireEvent.click(screen.getByRole('tab', { name: /Spec/ }));
+    expect(modeOf()).toBe('spec');
+    expect(screen.getAllByText('Sub-issues')).toHaveLength(1);
+    expect(screen.getByText('Title of t-2')).not.toBeNull();
     expect(
-      document.querySelector('[data-slot=container-flight-plan]')
+      screen.getByRole('button', { name: 'Add sub-task to Title of t-1' })
     ).not.toBeNull();
   });
 

@@ -107,7 +107,8 @@ export interface TaskRailProps {
   showRelations: boolean;
   /** Summary mode shows the whole timeline, so the rail leaves its excerpt out. */
   showActivity: boolean;
-  /** Plan mode lists every sub-issue, so the rail leaves its excerpt out. */
+  /** Plan mode draws every sub-issue and a container's spec lists them, so there the
+   * rail leaves its excerpt out. */
   showSubIssues: boolean;
   className?: string;
 }

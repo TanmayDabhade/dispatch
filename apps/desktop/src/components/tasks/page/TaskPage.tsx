@@ -448,16 +448,25 @@ function TaskPageLoaded({
   });
 
   // Linear's single-key property shortcuts and `d` to dispatch, for a key that lands on
-  // this page or on nothing at all. A key typed into a field, a menu, or a dialog stacked
-  // above the page is left alone.
+  // this page or on nothing at all. A key typed into a field, a menu, a dialog stacked
+  // above the page, a task page nested in this one (the Flight Plan's pane), or already
+  // handled (the Flight Plan's own h/j/k/l and `d`) is left alone.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       const root = rootRef.current;
       const target = event.target;
       if (root === null || !(target instanceof HTMLElement)) return;
+      if (event.defaultPrevented) return;
+      // An unfocused key goes to the innermost page.
+      if (
+        target === document.body &&
+        root.querySelector('[data-slot="task-page"]') !== null
+      ) {
+        return;
+      }
       if (
         target !== document.body &&
-        !root.contains(target) &&
+        target.closest('[data-slot="task-page"]') !== root &&
         !target.contains(root)
       ) {
         return;
@@ -616,9 +625,13 @@ function TaskPageLoaded({
       </IconButton>
     );
 
-  // Spec, Summary and Plan read as a column that scrolls; Run and Review fill the pane
-  // and scroll inside (the transcript, the diff).
-  const fills = mode === 'run' || mode === 'review' || mode === 'preview';
+  // Spec and Summary read as a column that scrolls; Run, Review and Plan fill the pane and
+  // scroll inside (the transcript, the diff, the Flight Plan's canvas).
+  const fills =
+    mode === 'run' ||
+    mode === 'review' ||
+    mode === 'plan' ||
+    mode === 'preview';
   let modeView: ReactNode;
   switch (mode) {
     case 'spec':
@@ -649,7 +662,7 @@ function TaskPageLoaded({
       onPickerChange={setPicker}
       showRelations={mode !== 'spec'}
       showActivity={mode !== 'summary'}
-      showSubIssues={mode !== 'plan'}
+      showSubIssues={mode !== 'plan' && mode !== 'spec'}
       className={cn(
         layout === 'split'
           ? 'bg-surface-panel shadow-overlay absolute inset-y-0 right-0 z-20 w-[300px]'
@@ -741,9 +754,11 @@ function TaskPageLoaded({
           <div
             data-slot="task-mode"
             className={cn(
-              fills
-                ? 'flex min-h-0 flex-1 flex-col px-6 pb-4'
-                : 'max-w-[920px] px-2'
+              mode === 'plan'
+                ? 'flex min-h-0 flex-1 flex-col'
+                : fills
+                  ? 'flex min-h-0 flex-1 flex-col px-6 pb-4'
+                  : 'max-w-[920px] px-2'
             )}
           >
             <ErrorBoundary label="this view">{modeView}</ErrorBoundary>

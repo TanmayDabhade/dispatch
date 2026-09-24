@@ -18,12 +18,13 @@ import { AttachmentsRow, useAttachmentUpload } from './AttachmentsRow';
 import { DispatchCard } from './DispatchCard';
 import type { TaskPageModel } from './pageModel';
 import { RelationsEditor } from './RelationsEditor';
+import { SubtasksBlock } from './SubtasksBlock';
 
 /**
  * Spec mode — what a task is and whether it can go: the dispatch card with its readiness
  * checks up top, then the spec itself (TaskSpecView, editable in place), its dependencies,
- * attachments and amendments. The AI "Add detail" pass for a thin spec reviews its draft
- * here before anything is written.
+ * attachments and amendments, and a container's sub-issues. The AI "Add detail" pass for
+ * a thin spec reviews its draft here before anything is written.
  */
 export function SpecMode({ page }: { page: TaskPageModel }) {
   const { item, project } = page;
@@ -214,6 +215,18 @@ export function SpecMode({ page }: { page: TaskPageModel }) {
           )}
         </TaskSpecView>
       </div>
+      {page.isContainer && (
+        <div className="px-4">
+          <SubtasksBlock
+            title="Sub-issues"
+            parent={item}
+            tasks={page.children}
+            latestRunByTaskId={project.latestRunByTaskId}
+            onOpenTask={page.openTask}
+            createPreset={{ epic: meta.id }}
+          />
+        </div>
+      )}
     </div>
   );
 }

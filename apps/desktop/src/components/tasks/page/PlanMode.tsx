@@ -1,30 +1,22 @@
-import { ContainerFlightPlanSlot } from './ContainerFlightPlanSlot';
+import { ContainerFlightPlanSection } from '../../flightplan/ContainerFlightPlanSection';
 import type { TaskPageModel } from './pageModel';
-import { SubtasksBlock } from './SubtasksBlock';
 
 /**
- * Plan mode — a container's fan-out: its Flight Plan (the slot P4's full view mounts in),
- * then every sub-issue as a row with its status, run and owner.
+ * Plan mode — a container's Flight Plan as the main pane: its children as waves, live.
+ * On the full page a node opens in a pane beside the plan; a split pane or peek has no
+ * room for one, so there a node opens its own page.
  */
 export function PlanMode({ page }: { page: TaskPageModel }) {
-  const { item, project } = page;
+  const full = page.layout === 'full';
   return (
-    <div data-slot="plan-mode" className="flex flex-col gap-5 px-4 pb-10">
-      <ContainerFlightPlanSlot
-        container={item}
-        childTasks={page.children}
-        tasks={project.tasksIncludingArchived}
-        runs={project.runs}
-        progress={project.epicProgressById.get(item.meta.id)}
-        onOpenTask={page.openTask}
-      />
-      <SubtasksBlock
-        title="Sub-issues"
-        parent={item}
-        tasks={page.children}
-        latestRunByTaskId={project.latestRunByTaskId}
-        onOpenTask={page.openTask}
-        createPreset={{ epic: item.meta.id }}
+    <div
+      data-slot="plan-mode"
+      className="shadow-hairline-top flex min-h-0 flex-1 flex-col"
+    >
+      <ContainerFlightPlanSection
+        containerId={page.item.meta.id}
+        openIn={full ? 'pane' : 'page'}
+        focusOnMount={full}
       />
     </div>
   );
