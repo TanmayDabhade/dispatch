@@ -153,6 +153,7 @@ import {
 } from './judgments/landingChecklist.js';
 import type { ChecklistSummary } from './judgments/landingChecklist.js';
 import { readinessFor, ReadinessStore } from './judgments/readiness.js';
+import type { ReadinessReading } from './judgments/readiness.js';
 import { buildLandingSnapshot } from './landing.js';
 import type { LedgerStorePort } from './ledger.js';
 import { HttpLinearClient } from './linear/client.js';
@@ -4257,23 +4258,49 @@ async function clusterInbox(ctx: ApiContext): Promise<Response> {
   }
 }
 
+// A stored JSON object with `readiness` appended as its last key, which is
+// exactly where serializing `{ ...doc, readiness }` would put it.
+function withReadiness(
+  json: string,
+  readiness: ReadinessReading | undefined
+): string {
+  return readiness === undefined
+    ? json
+    : `${json.slice(0, -1)},"readiness":${JSON.stringify(readiness)}}`;
+}
+
 // GET /api/tasks/ready — the ready set with each task's readiness reading
 // attached (`readiness` absent when no judgment client is configured or the
 // task could not be judged). Stale tasks are judged here, on demand, so the
-// reading is as fresh as the text it describes.
-async function getReadyTasks(ctx: ApiContext): Promise<Response> {
-  const ready = ctx.cache.ready(statusModelFor(ctx.rootDir));
-  const readings = await readinessFor(
-    ctx.judgments,
-    ready,
-    new ReadinessStore(ctx.rootDir)
-  );
-  return jsonResponse(
-    ready.map((doc) => {
-      const readiness = readings[doc.meta.id];
-      return readiness === undefined ? doc : { ...doc, readiness };
-    })
-  );
+// reading is as fresh as the text it describes. `fields=meta` drops the
+// bodies and `fields=id` everything but the id, for a client that already
+// holds the task list and needs only the queue and its readings.
+async function getReadyTasks(
+  ctx: ApiContext,
+  fields: string | null
+): Promise<Response> {
+  if (fields !== null && fields !== 'meta' && fields !== 'id') {
+    return errorResponse(400, `unknown fields: ${fields}`);
+  }
+  const ids = ctx.cache.readyIds(statusModelFor(ctx.rootDir));
+  // Read before judging awaits, so the rows and readings are one snapshot.
+  const stored =
+    fields === 'id'
+      ? null
+      : ctx.cache.storedJson(ids, fields === 'meta' ? 'item' : 'json');
+  const readings =
+    ctx.judgments === null
+      ? {}
+      : await readinessFor(
+          ctx.judgments,
+          ctx.cache.getMany(ids),
+          new ReadinessStore(ctx.rootDir)
+        );
+  const items = ids.flatMap((id) => {
+    const json = stored === null ? JSON.stringify({ id }) : stored.get(id);
+    return json === undefined ? [] : [withReadiness(json, readings[id])];
+  });
+  return jsonTextResponse(`[${items.join(',')}]`);
 }
 
 // The readiness cache as `{ [taskId]: reading }`, with the hashes dropped:
@@ -5216,7 +5243,7 @@ export async function handleApi(
         segments[1] === 'ready' &&
         method === 'GET'
       ) {
-        return await getReadyTasks(ctx);
+        return await getReadyTasks(ctx, url.searchParams.get('fields'));
       }
       // GET /api/tasks/readiness — the cached readings as-is, for the board,
       // which renders the whole task list rather than the ready route.

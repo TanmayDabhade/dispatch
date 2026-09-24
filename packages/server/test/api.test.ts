@@ -414,6 +414,37 @@ describe('GET /api/tasks?fields=meta', () => {
   });
 });
 
+describe('GET /api/tasks/ready projections', () => {
+  it('serves the same queue without bodies or as bare ids', async () => {
+    for (const title of ['First', 'Second']) {
+      await fetch(`${baseUrl}/api/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title, description: 'Long prose' }),
+      });
+    }
+    const full = await json(await fetch(`${baseUrl}/api/tasks/ready`));
+    const lean = await json(
+      await fetch(`${baseUrl}/api/tasks/ready?fields=meta`)
+    );
+    const ids = await json(await fetch(`${baseUrl}/api/tasks/ready?fields=id`));
+    expect(full).toHaveLength(2);
+    expect(full[0].body).toContain('Long prose');
+    expect(lean).toEqual(
+      full.map((doc: { meta: unknown }) => ({ meta: doc.meta }))
+    );
+    expect(ids).toEqual(
+      full.map((doc: { meta: { id: string } }) => ({ id: doc.meta.id }))
+    );
+  });
+
+  it('400s an unknown projection', async () => {
+    const res = await fetch(`${baseUrl}/api/tasks/ready?fields=body`);
+    expect(res.status).toBe(400);
+    expect((await json(res)).error).toMatch(/unknown fields/);
+  });
+});
+
 describe('error paths', () => {
   it('404s a missing task id', async () => {
     const res = await fetch(`${baseUrl}/api/tasks/t-000000`);

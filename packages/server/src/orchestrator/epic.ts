@@ -11,6 +11,7 @@ import type {
   ActorContext,
   StatusModel,
   TaskDoc,
+  TaskListItem,
   TaskStorePort,
 } from '@dispatch/core';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -177,7 +178,7 @@ function describeSession(session: EpicSessionRecord): string {
 // The board as progress() reads it, shared by every epic in one request.
 interface ProgressBoard {
   statuses: StatusModel;
-  byId: Map<string, TaskDoc>;
+  byId: Map<string, TaskListItem>;
   dispatchable: Set<string>;
   runs: RunMeta[];
   runCostEstimateUsd: number;
@@ -460,7 +461,7 @@ export class EpicEngine {
   // which progressAll() used to repeat per milestone.
   private progressBoard(): ProgressBoard {
     const statuses = statusModelFor(this.ctx.rootDir);
-    const tasks = this.ctx.cache.query({ includeArchived: true });
+    const tasks = this.ctx.cache.allItems();
     return {
       statuses,
       byId: new Map(tasks.map((t) => [t.meta.id, t])),
