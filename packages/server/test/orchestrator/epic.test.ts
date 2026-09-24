@@ -14,7 +14,7 @@ import {
   OrchestratorConflictError,
   OrchestratorNotFoundError,
 } from '../../src/orchestrator/types.js';
-import { initGitRepo, withBrokenRepo } from './helpers.js';
+import { initGitRepo, WatchedTaskStore, withBrokenRepo } from './helpers.js';
 
 let fakeHome: string;
 let repo: string;
@@ -85,7 +85,9 @@ function makeHarness(): Harness {
     events,
     orchestrator,
   });
-  return { orchestrator, epics, store, cache, events };
+  // The test's own writes, seen the way a hand edit is: through a refresh.
+  const watched = new WatchedTaskStore(repo, cache);
+  return { orchestrator, epics, store: watched, cache, events };
 }
 
 // Each child gets a distinct `writes` entry — an empty write-set conflicts
@@ -945,7 +947,10 @@ describe('EpicEngine fill serialization', () => {
       events,
       orchestrator,
     });
-    const { epicId } = createEpicWithChildren(store, 6);
+    const { epicId } = createEpicWithChildren(
+      new WatchedTaskStore(repo, cache),
+      6
+    );
 
     await epics.start(epicId, { concurrency: 2, executor: 'fake' });
     // Let every chained fill drain.

@@ -22,7 +22,7 @@ import {
   OrchestratorClientError,
   OrchestratorConflictError,
 } from '../../src/orchestrator/types.js';
-import { initGitRepo, withBrokenRepo } from './helpers.js';
+import { initGitRepo, WatchedTaskStore, withBrokenRepo } from './helpers.js';
 
 let fakeHome: string;
 let repo: string;
@@ -105,7 +105,9 @@ function makeHarness(opts: HarnessOptions = {}): Harness {
     resumeDelayMs: opts.resumeDelayMs,
     eventDebounceMs: opts.eventDebounceMs ?? 0,
   });
-  return { orchestrator, epics, store, cache, events, received };
+  // The test's own writes, seen the way a hand edit is: through a refresh.
+  const watched = new WatchedTaskStore(repo, cache);
+  return { orchestrator, epics, store: watched, cache, events, received };
 }
 
 function createEpicWithChildren(

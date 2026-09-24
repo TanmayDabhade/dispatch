@@ -700,8 +700,9 @@ export class PlanManager {
       confirmedAt: now,
       ...(epicId !== undefined ? { epicId } : {}),
     });
-    this.ctx.cache.rebuild(this.ctx.store);
-    this.ctx.events.broadcast({ type: 'task.changed' });
+    const ids = epicId === undefined ? taskIds : [epicId, ...taskIds];
+    this.ctx.cache.refresh(this.ctx.store, ids);
+    this.ctx.events.broadcast({ type: 'task.changed', ids });
 
     return { epicId, taskIds };
   }

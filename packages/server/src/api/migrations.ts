@@ -34,11 +34,12 @@ export async function migrateMilestones(
     !dryRun &&
     (report.projectsCreated.length > 0 || report.reparented.length > 0)
   ) {
-    ctx.cache.rebuild(ctx.store);
-    ctx.events.broadcast({
-      type: 'task.changed',
-      ids: [...report.projectsCreated, ...report.reparented.map((r) => r.id)],
-    });
+    const ids = [
+      ...report.projectsCreated,
+      ...report.reparented.map((r) => r.id),
+    ];
+    ctx.cache.refresh(ctx.store, ids);
+    ctx.events.broadcast({ type: 'task.changed', ids });
   }
   return jsonResponse(report);
 }

@@ -975,7 +975,7 @@ export class EpicEngine {
       },
       now
     );
-    this.ctx.cache.rebuild(this.ctx.store);
+    this.ctx.cache.refresh(this.ctx.store, [epicId]);
     this.ctx.events.broadcast({ type: 'task.changed', ids: [epicId] });
   }
 

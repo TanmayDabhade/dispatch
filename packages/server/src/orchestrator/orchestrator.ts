@@ -773,7 +773,7 @@ export class Orchestrator {
       },
       now
     );
-    this.ctx.cache.rebuild(this.ctx.store);
+    this.ctx.cache.refresh(this.ctx.store, [taskId]);
     this.ctx.events.broadcast({ type: 'task.changed', ids: [taskId] });
 
     this.transition(runId, 'running');
@@ -928,7 +928,7 @@ export class Orchestrator {
           },
           now
         );
-        this.ctx.cache.rebuild(this.ctx.store);
+        this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
         this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
       });
       return;
@@ -976,7 +976,7 @@ export class Orchestrator {
         },
         now
       );
-      this.ctx.cache.rebuild(this.ctx.store);
+      this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
       this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
     });
   }
@@ -1124,7 +1124,7 @@ export class Orchestrator {
       { appendActivity: `${now} ${text}`, activityActor: 'none' },
       now
     );
-    this.ctx.cache.rebuild(this.ctx.store);
+    this.ctx.cache.refresh(this.ctx.store, [taskId]);
     this.ctx.events.broadcast({ type: 'task.changed', ids: [taskId] });
   }
 
@@ -1590,7 +1590,7 @@ export class Orchestrator {
         },
         now
       );
-      this.ctx.cache.rebuild(this.ctx.store);
+      this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
       this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
     });
 
@@ -1678,7 +1678,7 @@ export class Orchestrator {
         },
         now
       );
-      this.ctx.cache.rebuild(this.ctx.store);
+      this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
       this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
     });
     this.fireTerminalHooks(runId);
@@ -2074,6 +2074,8 @@ export class Orchestrator {
         this.ctx.store.update(taskId, {
           appendActivity: `${new Date().toISOString()} [run ${meta.id}] model ${model}: ${reason}`,
         });
+        this.ctx.cache.refresh(this.ctx.store, [taskId]);
+        this.ctx.events.broadcast({ type: 'task.changed', ids: [taskId] });
       });
     }
     return meta;
@@ -2448,7 +2450,7 @@ export class Orchestrator {
     if (action === 'merge') {
       this.closeSupersededPredecessors(runId, now, mergeCommit);
     }
-    this.ctx.cache.rebuild(this.ctx.store);
+    this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
     this.ctx.events.broadcast({ type: 'task.changed' });
     this.ctx.events.broadcast({ type: 'run.changed' });
     const reviewed = this.registry.get(runId)!;
@@ -2597,7 +2599,7 @@ export class Orchestrator {
       reviewAction: 'pr',
     });
     this.closeSupersededPredecessors(runId, now, undefined);
-    this.ctx.cache.rebuild(this.ctx.store);
+    this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
     this.ctx.events.broadcast({ type: 'task.changed' });
     const reviewedViaPr = this.registry.get(runId)!;
     this.invokeHooksSafely(this.reviewedHooks, reviewedViaPr);
@@ -2643,7 +2645,7 @@ export class Orchestrator {
       reviewAction: 'merge',
       mergeCommit,
     });
-    this.ctx.cache.rebuild(this.ctx.store);
+    this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
     this.ctx.events.broadcast({ type: 'task.changed' });
     const reviewed = this.registry.get(runId)!;
     this.invokeHooksSafely(this.reviewedHooks, reviewed);
@@ -2732,7 +2734,7 @@ export class Orchestrator {
         },
         now
       );
-      this.ctx.cache.rebuild(this.ctx.store);
+      this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
     });
     this.ctx.events.broadcast({ type: 'task.changed' });
     this.ctx.events.broadcast({ type: 'run.changed' });
@@ -3130,7 +3132,7 @@ export class Orchestrator {
 
     this.persistEpicDiffSnapshot(epicId, preDiff);
     this.worktrees.removeBranchRef(branch);
-    this.ctx.cache.rebuild(this.ctx.store);
+    this.ctx.cache.refresh(this.ctx.store, [epicId]);
     this.ctx.events.broadcast({ type: 'task.changed' });
     // The Branches surface just lost a row.
     this.ctx.events.broadcast({ type: 'run.changed' });
@@ -3177,7 +3179,7 @@ export class Orchestrator {
         },
         now
       );
-      this.ctx.cache.rebuild(this.ctx.store);
+      this.ctx.cache.refresh(this.ctx.store, [epicId]);
       this.ctx.events.broadcast({ type: 'task.changed', ids: [epicId] });
     }
     this.ctx.events.broadcast({ type: 'run.changed' });
@@ -3780,7 +3782,7 @@ export class Orchestrator {
       }
     }
     const now = new Date().toISOString();
-    let count = 0;
+    const archived: string[] = [];
     for (const task of doneTasks) {
       const run = newestMergedByTask.get(task.meta.id);
       if (run?.mergeCommit === undefined) continue;
@@ -3788,10 +3790,11 @@ export class Orchestrator {
         continue;
       }
       this.ctx.store.update(task.meta.id, { archivedAt: now }, now);
-      count++;
+      archived.push(task.meta.id);
     }
+    const count = archived.length;
     if (count > 0) {
-      this.ctx.cache.rebuild(this.ctx.store);
+      this.ctx.cache.refresh(this.ctx.store, archived);
       this.ctx.events.broadcast({ type: 'task.changed' });
     }
     return count;
@@ -3942,7 +3945,7 @@ export class Orchestrator {
       },
       now
     );
-    this.ctx.cache.rebuild(this.ctx.store);
+    this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
     this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
   }
 
@@ -4011,7 +4014,7 @@ export class Orchestrator {
         patch.status = model.roles.review;
       }
       this.ctx.store.update(meta.taskId, patch, now);
-      this.ctx.cache.rebuild(this.ctx.store);
+      this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
       this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
     }
     this.fireTerminalHooks(meta.id);
@@ -4310,7 +4313,7 @@ export class Orchestrator {
             },
             now
           );
-          this.ctx.cache.rebuild(this.ctx.store);
+          this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
           this.ctx.events.broadcast({
             type: 'task.changed',
             ids: [meta.taskId],
@@ -4538,7 +4541,7 @@ export class Orchestrator {
         patch.status = model.roles.review;
       }
       this.ctx.store.update(meta.taskId, patch, now);
-      this.ctx.cache.rebuild(this.ctx.store);
+      this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
       this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
     });
     this.fireTerminalHooks(runId);
@@ -4665,7 +4668,7 @@ export class Orchestrator {
       },
       now
     );
-    this.ctx.cache.rebuild(this.ctx.store);
+    this.ctx.cache.refresh(this.ctx.store, [oldMeta.taskId]);
     this.ctx.events.broadcast({ type: 'task.changed', ids: [oldMeta.taskId] });
 
     this.transition(runId, 'running');
@@ -4854,7 +4857,7 @@ export class Orchestrator {
       },
       now
     );
-    this.ctx.cache.rebuild(this.ctx.store);
+    this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
     this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
 
     this.transition(newRunId, 'running');

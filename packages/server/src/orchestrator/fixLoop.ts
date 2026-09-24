@@ -1031,7 +1031,7 @@ export class FixLoop {
       },
       now
     );
-    this.ctx.cache.rebuild(this.ctx.store);
+    this.ctx.cache.refresh(this.ctx.store, [taskId]);
     this.ctx.events.broadcast({ type: 'task.changed', ids: [taskId] });
   }
 
