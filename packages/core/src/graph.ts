@@ -44,11 +44,11 @@ export function isSatisfiedForDispatch(
  * isSatisfiedForDispatch). A single source of truth here ensures that future
  * changes to sort order or filtering strategy apply to both consistently.
  */
-function filterAndSortByReadiness(
-  tasks: TaskDoc[],
-  isSatisfied: (t: TaskDoc) => boolean,
+function filterAndSortByReadiness<T extends TaskListItem>(
+  tasks: readonly T[],
+  isSatisfied: (t: T) => boolean,
   model: StatusModel
-): TaskDoc[] {
+): T[] {
   // `byId` is the blocker-resolution set and MUST be built from everything
   // passed in, archived included, because an unresolvable blocker id counts as
   // satisfied below. Callers used to exclude archived tasks before calling in,
@@ -97,10 +97,10 @@ function filterAndSortByReadiness(
  * badge, and merge-queue ordering all mean by "ready", and none of those
  * should start calling a task with an unmerged blocker ready.
  */
-export function dispatchableTasks(
-  tasks: TaskDoc[],
+export function dispatchableTasks<T extends TaskListItem = TaskDoc>(
+  tasks: readonly T[],
   model: StatusModel = DEFAULT_STATUS_MODEL
-): TaskDoc[] {
+): T[] {
   return filterAndSortByReadiness(
     tasks,
     (t) => isSatisfiedForDispatch(t, model),
@@ -117,10 +117,10 @@ export function dispatchableTasks(
  * the results itself. Pre-filtering them out removes them from blocker
  * resolution too, which reads as "blocker satisfied".
  */
-export function readyTasks(
-  tasks: TaskDoc[],
+export function readyTasks<T extends TaskListItem = TaskDoc>(
+  tasks: readonly T[],
   model: StatusModel = DEFAULT_STATUS_MODEL
-): TaskDoc[] {
+): T[] {
   return filterAndSortByReadiness(tasks, (t) => isDone(t, model), model);
 }
 
