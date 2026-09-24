@@ -13,6 +13,7 @@ import { buildFeed } from './controlRoom';
 import type { FeedState } from './feedState';
 import { FEED_STATE_LABEL, isUrgentState } from './feedState';
 import type { InboxEntry } from './inbox';
+import { criteriaItems } from './reviewCriteria';
 import { isStatusDone } from './statusModel';
 import { parseTaskSections } from './taskDisplay';
 
@@ -526,12 +527,7 @@ export function specForTask(
 ): TaskSpec {
   const sections = parseTaskSections(doc.body);
   const titleById = new Map(tasks.map((t) => [t.meta.id, t.meta.title]));
-  const criteria = (sections.get('Acceptance Criteria') ?? '')
-    .split('\n')
-    .map((line) =>
-      line.replace(/^\s*(?:[-*]|\d+\.)\s*(?:\[[ xX]\]\s*)?/, '').trim()
-    )
-    .filter((line) => line !== '');
+  const criteria = criteriaItems(sections.get('Acceptance Criteria') ?? '');
   return {
     title: doc.meta.title,
     status: doc.meta.status,
