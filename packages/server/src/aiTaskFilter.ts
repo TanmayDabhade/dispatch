@@ -161,8 +161,10 @@ export class ClaudeAiTaskFilter implements AiTaskFilterPort {
         // summarize model is the cheap one-shot slot; a filter needs nothing more.
         model: loadConfig(this.rootDir).models.summarize,
         permissionMode: 'plan',
-        // No tools: this is a judgement about the strings in the prompt, not about the repo.
-        allowedTools: [],
+        // No tools: this is a judgement about the strings in the prompt, not
+        // about the repo. `tools: []` removes them; `allowedTools: []` left
+        // Bash in place.
+        tools: [],
         outputFormat: { type: 'json_schema', schema: AI_FILTER_SCHEMA },
         abortController,
       };

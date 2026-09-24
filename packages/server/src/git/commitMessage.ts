@@ -61,7 +61,10 @@ export class CommitMessageGenerator {
         cwd: this.rootDir,
         model: loadConfig(this.rootDir).models.summarize,
         permissionMode: 'plan',
-        allowedTools: [],
+        // No tools at all. `allowedTools: []` only pre-approves nothing: the
+        // model still had Bash, and plan mode runs a command a settings allow
+        // rule matches, on a prompt carrying an untrusted diff.
+        tools: [],
         outputFormat: { type: 'json_schema', schema: SCHEMA },
         abortController,
       };

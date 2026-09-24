@@ -145,8 +145,9 @@ export class InboxClusterer {
         // Read per call, so a settings change applies with no daemon restart.
         model: loadConfig(this.rootDir).models.cluster,
         permissionMode: 'plan',
-        // No tools: this is a judgement about the strings above, not about the repo.
-        allowedTools: [],
+        // No tools: this is a judgement about the strings above, not about the
+        // repo. `tools: []` removes them; `allowedTools: []` left Bash in place.
+        tools: [],
         outputFormat: { type: 'json_schema', schema: SCHEMA },
         abortController,
       };
