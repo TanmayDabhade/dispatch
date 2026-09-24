@@ -94,6 +94,12 @@ function blockersCheck(
   };
 }
 
+/** Whether `d` dispatches: whenever the card's button would, except going ahead of
+ * blockers, which takes the card's deliberate `Dispatch anyway`. */
+export function dispatchesOnKey(readiness: DispatchReadiness): boolean {
+  return readiness.canDispatch && !readiness.blocked;
+}
+
 function specCheck(input: ReadinessInput): ReadinessCheck {
   const { reading, body } = input;
   // The daemon's judgment wins when it has read this task; 0 is a bare title.

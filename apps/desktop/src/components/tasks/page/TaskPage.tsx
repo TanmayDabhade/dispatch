@@ -25,7 +25,12 @@ import { useTaskComments } from '../../../hooks/useTaskComments';
 import { useTaskDoc } from '../../../hooks/useTaskDoc';
 import { parseActivity } from '../../../lib/activityFeed';
 import type { TaskTab } from '../../../lib/appNav';
-import { unmetBlockers } from '../../../lib/dispatchReadiness';
+import { liveClaimsFrom } from '../../../lib/dispatchPreview';
+import {
+  dispatchesOnKey,
+  dispatchReadiness,
+  unmetBlockers,
+} from '../../../lib/dispatchReadiness';
 import {
   isTypingTagName,
   type ListKeyCommand,
@@ -281,6 +286,7 @@ function TaskPageLoaded({
     () => (body === null ? null : parseTaskSections(body)),
     [body]
   );
+  const description = sections?.get('Description') ?? '';
   const acceptance = sections?.get('Acceptance Criteria') ?? '';
   const activitySection = sections?.get('Activity') ?? '';
   const criteria = useMemo(() => criteriaItems(acceptance), [acceptance]);
@@ -399,11 +405,23 @@ function TaskPageLoaded({
     },
     [dispatchTask, taskId, layout, runs, fail]
   );
-  // The daemon refuses a completed or canceled task outright.
-  const canDispatch =
-    !container &&
-    !isStatusDone(meta.status) &&
-    !runs.some((r) => !isTerminalRunState(r.state));
+  // One verdict for the card, the header menu and `d`.
+  const liveClaims = useMemo(
+    () => liveClaimsFrom(project.runs),
+    [project.runs]
+  );
+  const readiness = dispatchReadiness({
+    task: item,
+    body: sections === null ? null : { description, criteria },
+    tasksById,
+    model,
+    liveRun: runs.find((r) => !isTerminalRunState(r.state)),
+    reading: project.readinessById.get(taskId),
+    liveClaims,
+  });
+  // A container goes out from its plan, never as one run.
+  const canDispatch = !container && readiness.canDispatch;
+  const keyDispatches = !container && dispatchesOnKey(readiness);
   const openTask =
     layout === 'full'
       ? host.peekTask
@@ -415,7 +433,7 @@ function TaskPageLoaded({
     layout,
     item,
     bodyLoaded: sections !== null,
-    description: sections?.get('Description') ?? '',
+    description,
     acceptance,
     criteria,
     amendments: sections?.get('Amendments') ?? '',
@@ -428,6 +446,7 @@ function TaskPageLoaded({
     children,
     tasksById,
     unmetBlockers: unmet,
+    readiness,
     patch,
     changeStatus,
     fail,
@@ -494,19 +513,14 @@ function TaskPageLoaded({
         setPicker(next);
         return;
       }
-      if (
-        command === 'list-dispatch' &&
-        canDispatch &&
-        !dispatching &&
-        project.readyIds.has(taskId)
-      ) {
+      if (command === 'list-dispatch' && keyDispatches && !dispatching) {
         event.preventDefault();
         void dispatch();
       }
     }
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [canDispatch, dispatching, dispatch, project.readyIds, taskId]);
+  }, [keyDispatches, dispatching, dispatch]);
 
   const ancestors = useMemo(
     () => ancestorsOf(item, tasksById),
@@ -573,7 +587,7 @@ function TaskPageLoaded({
             onClick={() => void dispatch()}
           >
             <Play />
-            Dispatch
+            {readiness.blocked ? 'Dispatch anyway' : 'Dispatch'}
           </DropdownMenuItem>
           {!linked && isLinearConfigured(project.linearStatus) && (
             <DropdownMenuItem onClick={() => void pushToLinear()}>

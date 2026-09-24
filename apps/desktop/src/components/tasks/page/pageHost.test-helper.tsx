@@ -135,7 +135,6 @@ export function fakeHost(
     tasksReady: true,
     runs,
     latestRunByTaskId,
-    readyIds: new Set(tasks.map((t) => t.meta.id)),
     readinessById: new Map(),
     linearLinks: {},
     linearStatus: null,

@@ -1,9 +1,7 @@
 import { Waypoints } from 'lucide-react';
-import { useMemo, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 
 import { filesFromDataTransfer } from '../../../lib/attachments';
-import { liveClaimsFrom } from '../../../lib/dispatchPreview';
-import { dispatchReadiness } from '../../../lib/dispatchReadiness';
 import { resolveExecuteModel } from '../../../lib/models';
 import { isTerminalRunState } from '../../../lib/runState';
 import { activeStatusModel, isStatusDone } from '../../../lib/statusModel';
@@ -67,22 +65,7 @@ export function SpecMode({ page }: { page: TaskPageModel }) {
   const [enrichStarted, setEnrichStarted] = useState(false);
   const [applyingEnrich, setApplyingEnrich] = useState(false);
 
-  const liveRun = page.runs.find((r) => !isTerminalRunState(r.state));
-  const liveClaims = useMemo(
-    () => liveClaimsFrom(project.runs),
-    [project.runs]
-  );
-  const readiness = dispatchReadiness({
-    task: item,
-    body: page.bodyLoaded
-      ? { description: page.description, criteria: page.criteria }
-      : null,
-    tasksById: page.tasksById,
-    model: activeStatusModel(),
-    liveRun,
-    reading: project.readinessById.get(meta.id),
-    liveClaims,
-  });
+  const live = page.runs.some((r) => !isTerminalRunState(r.state));
 
   // The enrich draft is app-level (it survives closing the page), so only this task's.
   const enrichPlan =
@@ -152,8 +135,8 @@ export function SpecMode({ page }: { page: TaskPageModel }) {
         <FanoutCard page={page} />
       ) : (
         <DispatchCard
-          readiness={readiness}
-          live={liveRun !== undefined}
+          readiness={page.readiness}
+          live={live}
           starting={page.dispatching}
           executors={project.executors ?? undefined}
           defaultModel={

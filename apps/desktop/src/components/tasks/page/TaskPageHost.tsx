@@ -18,7 +18,6 @@ export type TaskPageProject = Pick<
   | 'tasksReady'
   | 'runs'
   | 'latestRunByTaskId'
-  | 'readyIds'
   | 'readinessById'
   | 'linearLinks'
   | 'linearStatus'

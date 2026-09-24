@@ -16,6 +16,7 @@ import type {
   DispatchReadiness,
   ReadinessCheck,
 } from '../../../lib/dispatchReadiness';
+import { dispatchesOnKey } from '../../../lib/dispatchReadiness';
 import { modelLabel, MODELS, readDefaultModel } from '../../../lib/models';
 import { cn } from '@/lib/utils';
 import { PillButton, SelectPill } from '@/ui/ai/pill';
@@ -235,16 +236,11 @@ export function DispatchCard({
               onClick={() => dispatch()}
             >
               {readiness.blocked ? 'Dispatch anyway' : 'Dispatch'}
-              <Kbd
-                className={cn(
-                  'ml-0.5 border-transparent',
-                  readiness.blocked
-                    ? ''
-                    : 'bg-primary-foreground/15 text-primary-foreground'
-                )}
-              >
-                D
-              </Kbd>
+              {dispatchesOnKey(readiness) && (
+                <Kbd className="bg-primary-foreground/15 text-primary-foreground ml-0.5 border-transparent">
+                  D
+                </Kbd>
+              )}
             </Button>
           </>
         )}

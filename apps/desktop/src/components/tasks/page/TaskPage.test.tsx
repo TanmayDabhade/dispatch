@@ -85,6 +85,14 @@ function press(key: string) {
   });
 }
 
+// Opens the header's More actions menu and lets its popup settle inside act.
+async function openMoreActions() {
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  });
+}
+
 describe('opening a task', () => {
   test('metadata renders at once; the body streams in behind skeletons', () => {
     mount(fakeHost(newLog(), { tasks: [task('t-1')] }));
@@ -327,9 +335,49 @@ describe('dispatching from the spec', () => {
 
   test('a dropped task’s menu offers no dispatch', async () => {
     mount(fakeHost(newLog(), { tasks: [task('t-1', { status: 'dropped' })] }));
-    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
-    const item = await screen.findByRole('menuitem', { name: /Dispatch/ });
+    await openMoreActions();
+    const item = screen.getByRole('menuitem', { name: /Dispatch/ });
     expect(item.getAttribute('aria-disabled')).toBe('true');
+  });
+
+  test('d goes whenever the card offers D: a blocker in review is met', async () => {
+    const log = newLog();
+    mount(
+      fakeHost(log, {
+        tasks: [
+          task('t-1', { blockedBy: ['t-2'] }),
+          task('t-2', { status: 'review' }),
+        ],
+      }),
+      { layout: 'full' }
+    );
+    expect(
+      document.querySelector('[data-check=blockers]')?.textContent
+    ).toContain('Blockers done');
+    expect(screen.getByRole('button', { name: /^Dispatch/ }).textContent).toBe(
+      'DispatchD'
+    );
+    press('d');
+    await waitFor(() => expect(log.dispatches).toHaveLength(1));
+  });
+
+  test('d never goes ahead of blockers, and the card shows no D for it', async () => {
+    const log = newLog();
+    mount(
+      fakeHost(log, {
+        tasks: [task('t-1', { blockedBy: ['t-2'] }), task('t-2')],
+      }),
+      { layout: 'full' }
+    );
+    expect(screen.getByRole('button', { name: /^Dispatch/ }).textContent).toBe(
+      'Dispatch anyway'
+    );
+    press('d');
+    expect(log.dispatches).toEqual([]);
+    // The header menu offers the same deliberate go-ahead as the card.
+    await openMoreActions();
+    const item = screen.getByRole('menuitem', { name: /Dispatch anyway/ });
+    expect(item.getAttribute('aria-disabled')).toBeNull();
   });
 
   test('d dispatches a ready task from anywhere on the page', async () => {

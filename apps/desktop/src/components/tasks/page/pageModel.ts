@@ -2,6 +2,7 @@ import type { RunMeta } from '@dispatch/client';
 import type { TaskListItem, UpdatePatch } from '@dispatch/core/browser';
 
 import type { ActivityEntry } from '../../../lib/activityFeed';
+import type { DispatchReadiness } from '../../../lib/dispatchReadiness';
 import type { TaskPageMode } from '../../../lib/taskPageMode';
 import type { TaskPageHost, TaskPageProject } from './TaskPageHost';
 
@@ -39,6 +40,8 @@ export interface TaskPageModel {
   children: readonly TaskListItem[];
   tasksById: ReadonlyMap<string, TaskListItem>;
   unmetBlockers: string[];
+  /** Whether it can go now and what to check first; the card, the menu and `d` share it. */
+  readiness: DispatchReadiness;
   patch: (patch: UpdatePatch) => Promise<void>;
   changeStatus: (status: string) => void;
   fail: (title: string, err: unknown) => void;
