@@ -26,45 +26,134 @@ import type { RunMeta } from './orchestrator/types.js';
 
 // Each pattern scopes its scan to one shell segment (up to `|`, `;`, `&` or a
 // newline) so a marker in a later, unrelated command does not attach to an
-// innocent leading one.
-const SEGMENT = '[^|;&\\n]*';
+// innocent leading one. GAP is the stretch of one segment between two parts
+// of a pattern; it is lazy so a scan stops at the earliest next part.
+const GAP = '[^|;&\\n]*?';
+
+/**
+ * A pattern for `first … middles … last` within one shell segment, built to
+ * run in time linear in the command's length.
+ *
+ * The plain form, `first[^|;&\n]*middle[^|;&\n]*last`, backtracks over every
+ * pairing of `first` and `middle` occurrences in a segment: cubic time, and
+ * this runs on the daemon's event loop for every tool call. A 20 KB one-line
+ * command that merely mentioned "git" and "push" many times took about a
+ * minute. Three changes keep exactly the same matches without that:
+ *
+ * - Only the first `first` in a segment is tried: a later one can only reach
+ *   a subset of what the first one reaches. The negative lookbehind that
+ *   rules the later ones out comes after `first`, so it runs only where
+ *   `first` matched, and it stops at the nearest earlier `first`.
+ * - Each middle part commits to its earliest occurrence, the one that leaves
+ *   the most of the segment for what follows. A lookahead's capture replayed
+ *   by a backreference is JavaScript's stand-in for an atomic group, so the
+ *   engine cannot backtrack into later occurrences. A middle part must not be
+ *   able to match a segment delimiter, or a later occurrence could reach a
+ *   segment the earliest one cannot.
+ * - `last` is only looked for, from the end of the last middle part. Its
+ *   source is the lookahead body, so it states its own gap; most callers wrap
+ *   it in inSegment().
+ *
+ * test/floor.test.ts checks these against the plain form on generated
+ * commands, and times them on the inputs that stalled the plain form.
+ */
+function segmentChain(
+  first: string,
+  middles: readonly string[],
+  last: string
+): RegExp {
+  let source = `${first}(?<!${first}${GAP}${first})`;
+  middles.forEach((middle, i) => {
+    source += `(?=(${GAP}${middle}))\\${String(i + 1)}`;
+  });
+  return new RegExp(`${source}(?=${last})`);
+}
+
+// `last` found anywhere from the current point to the end of the segment. Each
+// alternative must cost constant or run-bounded time at one starting point,
+// since the gap tries every starting point once.
+function inSegment(alternatives: string): string {
+  return `${GAP}(?:${alternatives})`;
+}
+
+const GIT = '\\bgit\\b';
+const PUSH = '\\bpush\\b';
+const GH = '\\bgh\\b';
 
 // `git push` carrying --force, --force-with-lease, a short -f (alone or
-// bundled), or a `+refspec` — every spelling git accepts for "overwrite the
+// bundled), or a `+refspec`: every spelling git accepts for "overwrite the
 // remote ref". The merge queue's own --force-with-lease on a run's PR branch
-// is not a tool call and never reaches these detectors.
-const FORCE_PUSH = new RegExp(
-  `\\bgit\\b${SEGMENT}\\bpush\\b${SEGMENT}(?:--force(?:-with-lease)?(?![\\w-])|\\s-[a-zA-Z]*f[a-zA-Z]*\\b|\\s\\+\\S+)`
+// is not a tool call and never reaches these detectors. The bundled-flag
+// test is `-` then a run of letters holding an `f` and ending at a word
+// boundary, checked with a lookahead so a long run of letters costs linear
+// rather than quadratic time.
+const FORCE_PUSH = segmentChain(
+  GIT,
+  [PUSH],
+  inSegment(
+    '--force(?:-with-lease)?(?![\\w-])|\\s-(?=[a-zA-Z]*f)[a-zA-Z]+\\b|\\s\\+\\S+'
+  )
 );
 
 // `git push` deleting a remote ref: `--delete`, `-d`, or the empty-source
 // refspec `:branch`. A ref the run does not own is outside its declared
 // writes by definition.
-const REMOTE_REF_DELETE = new RegExp(
-  `\\bgit\\b${SEGMENT}\\bpush\\b${SEGMENT}(?:--delete\\b|\\s-d\\b|\\s:\\S+)`
+const REMOTE_REF_DELETE = segmentChain(
+  GIT,
+  [PUSH],
+  inSegment('--delete\\b|\\s-d\\b|\\s:\\S+')
 );
 
 // A package manager invoking publish (or unpublish, strictly more
 // destructive). The lookahead keeps script names like `publish-check` out.
-const REGISTRY_PUBLISH =
-  /\b(?:npm|pnpm|yarn|bun|npx|cargo)\b[^|;&\n]*\s(?:un)?publish(?![\w-])/;
+const REGISTRY_PUBLISH = segmentChain(
+  '\\b(?:npm|pnpm|yarn|bun|npx|cargo)\\b',
+  [],
+  inSegment('\\s(?:un)?publish(?![\\w-])')
+);
 
 // A tag push is this repo's release trigger (release.yml builds on v*), so
 // pushing tags is publishing under a different spelling: `--tags`,
 // `--follow-tags`, an explicit `refs/tags/` refspec, or a bare `vN[.N...]`
 // ref. `gh release create/upload` publishes a release directly.
-const TAG_PUSH = new RegExp(
-  `\\bgit\\b${SEGMENT}\\bpush\\b${SEGMENT}(?:--tags(?![\\w-])|--follow-tags(?![\\w-])|\\S*refs/tags/|\\s(?:\\S+:)?v\\d+(?:\\.\\d+)*(?=\\s|$))`
+const TAG_PUSH = segmentChain(
+  GIT,
+  [PUSH],
+  inSegment(
+    '--tags(?![\\w-])|--follow-tags(?![\\w-])|\\s(?:\\S+:)?v\\d+(?:\\.\\d+)*(?=\\s|$)'
+  )
 );
-const GH_RELEASE = /\bgh\b[^|;&\n]*\brelease\b[^|;&\n]*\b(?:create|upload)\b/;
+// The `refs/tags/` refspec, split out because `\S*refs/tags/` tried from every
+// point of a long word is quadratic. The run of non-space characters ending at
+// `refs/tags/` starts either where the scan starts or just after a space
+// inside the segment, so only those two starting points are tried.
+const TAG_REFSPEC_PUSH = segmentChain(
+  GIT,
+  [PUSH],
+  `(?:\\S*|${GAP}[^\\S\\n]\\S*)refs/tags/`
+);
+const GH_RELEASE = segmentChain(
+  GH,
+  ['\\brelease\\b'],
+  inSegment('\\b(?:create|upload)\\b')
+);
 
 // `gh` touching a repository's settings: visibility (`gh repo edit
 // --visibility`, `gh api -f visibility=`, `-f private=`), the default branch,
 // or the repository itself (`gh repo delete`, `gh repo archive`, a DELETE
-// against /repos/).
-const REPO_SETTINGS = new RegExp(
-  `\\bgh\\b${SEGMENT}(?:\\bvisibility\\b|\\bdefault[-_]branch\\b|\\bprivate=|\\brepo\\b${SEGMENT}\\b(?:delete|archive)\\b|-X\\s+DELETE${SEGMENT}/repos/)`
-);
+// against /repos/). The DELETE form is two patterns because `-X` and `DELETE`
+// may be split by a newline, and a middle part must not cross one: once on
+// the same line, and once across the newline that ends the `-X` line.
+const REPO_SETTINGS: readonly RegExp[] = [
+  segmentChain(
+    GH,
+    [],
+    inSegment('\\bvisibility\\b|\\bdefault[-_]branch\\b|\\bprivate=')
+  ),
+  segmentChain(GH, ['\\brepo\\b'], inSegment('\\b(?:delete|archive)\\b')),
+  segmentChain(GH, ['-X[^\\S\\n]+DELETE'], inSegment('/repos/')),
+  segmentChain(GH, ['-X[^\\S\\n]*\\n\\s*DELETE'], inSegment('/repos/')),
+];
 
 // Order matters only when one command trips several patterns; the first
 // match names the hold, and any match blocks.
@@ -72,8 +161,12 @@ const COMMAND_CHECKS: readonly { check: FloorCheck; pattern: RegExp }[] = [
   { check: 'force-push', pattern: FORCE_PUSH },
   { check: 'publish', pattern: REGISTRY_PUBLISH },
   { check: 'publish', pattern: TAG_PUSH },
+  { check: 'publish', pattern: TAG_REFSPEC_PUSH },
   { check: 'publish', pattern: GH_RELEASE },
-  { check: 'repo-settings', pattern: REPO_SETTINGS },
+  ...REPO_SETTINGS.map((pattern) => ({
+    check: 'repo-settings' as const,
+    pattern,
+  })),
   { check: 'delete-outside-writes', pattern: REMOTE_REF_DELETE },
 ];
 
