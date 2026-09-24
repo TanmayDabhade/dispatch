@@ -251,6 +251,14 @@ export class ClaudeOverseer implements OverseerBackend {
       // (see floorGuard). With no one to ask, the call is refused, as
       // canUseTool refuses it.
       ...floorGuard(holdForHuman),
+      // No background tasks: a sub-agent or shell that outlives the turn keeps
+      // running after the query closes, when nothing can answer the floor
+      // hook, and under bypassPermissions a background sub-agent's floor
+      // command then ran, held or not (reproduced against the bundled CLI).
+      // Sub-agents run inside the turn instead, so a held call keeps the turn
+      // open until the human answers. `env` replaces the CLI's environment,
+      // hence the spread.
+      env: { ...process.env, CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' },
       mcpServers: {
         [SERVER_NAME]: createSdkMcpServer({
           name: SERVER_NAME,

@@ -192,10 +192,36 @@ const RUN_ENDED_DENIAL =
   'The run ended before a human decided on this call, so it was not run.';
 
 // How long windDown waits for the CLI to confirm it stopped the background
-// tasks, and then lets it take in the answers it was just sent, before the
-// query is closed.
+// tasks and took the deny rules, and then lets it take in the answers it was
+// just sent, before the query is closed.
 const WIND_DOWN_STOP_MS = 5_000;
 const WIND_DOWN_FLUSH_MS = 250;
+
+// The tools denied once a run has ended: everything that can run a command,
+// change files, or start more work. MCP tools are named by server, for the
+// servers this executor adds.
+export const RUN_ENDED_DENY_RULES = [
+  'Bash',
+  'PowerShell',
+  'Write',
+  'Edit',
+  'MultiEdit',
+  'NotebookEdit',
+  'Agent',
+  'Task',
+  'Skill',
+  'Workflow',
+  'mcp__dispatch',
+  'mcp__carto',
+] as const;
+
+// Resolves when `work` settles or after `ms`, whichever comes first.
+function withinMs(ms: number, work: Promise<unknown>): Promise<unknown> {
+  return Promise.race([
+    work,
+    new Promise((resolve) => setTimeout(resolve, ms)),
+  ]);
+}
 
 export const STOP_DENIAL_MESSAGE =
   'The user asked this run to stop. Do not start any new tool calls. ' +
@@ -751,7 +777,7 @@ export class ClaudeExecutor implements Executor {
       // approves, and a settings PermissionRequest hook can answer before it
       // — see floorGuard.
       ...floorGuard(holdForHuman, () =>
-        stopRequested ? STOP_DENIAL_MESSAGE : null
+        stopRequested ? STOP_DENIAL_MESSAGE : ending ? RUN_ENDED_DENIAL : null
       ),
       // Same "query() doesn't auto-load what the CLI does" class of bug as
       // the `.mcp.json` fix directly below: a dispatched run must behave
@@ -793,30 +819,54 @@ export class ClaudeExecutor implements Executor {
     };
     const sdkQuery: Query = this.openQuery(queue, sdkOptions);
 
-    // Settles everything still pending when the session's result arrives,
-    // before the query is closed. The run ends at its result, but background
-    // sub-agents can still be working, and closing the query leaves the CLI
-    // with no way to hear an answer: a background sub-agent's held floor call
-    // then went ahead as if no hook had decided (reproduced through this
-    // executor under bypassPermissions). So: refuse anything new, deny what is
-    // pending, stop the background tasks, and give the CLI a moment to take
-    // those answers in. A run with nothing pending skips all of it.
+    // Makes the session's end final before the query closes. The run ends at
+    // its result, but the CLI does not stop there: background sub-agents keep
+    // working, and a background task that finishes or is stopped queues a
+    // notification that starts a fresh main-agent turn. Once the query is
+    // closed nobody can answer the floor hook, and the CLI treats an
+    // unanswered hook as no decision, so under bypassPermissions a floor
+    // command in any of that later work ran (each case reproduced through this
+    // executor against the bundled CLI). So, on every result:
+    //
+    // - `ending` makes the hook refuse every call while the query is still
+    //   attached, and refuse any hold outright;
+    // - pending holds are answered with a refusal;
+    // - live background tasks are stopped;
+    // - flag-layer deny rules for every tool that can run a command or change
+    //   files are applied, so the CLI refuses those calls by itself once
+    //   nothing can answer it. Deny rules held under bypassPermissions and
+    //   over a hook's allow;
+    // - the CLI gets a moment to take those answers in.
+    //
+    // Each step's wait is bounded, so an unresponsive CLI cannot keep the run
+    // from finishing.
     const windDown = async (liveTasks: readonly string[]): Promise<void> => {
       ending = true;
-      if (pendingApprovals.size === 0 && liveTasks.length === 0) return;
+      const answeredHolds = pendingApprovals.size > 0;
       for (const resolve of pendingApprovals.values()) {
         resolve({ allow: false, reason: RUN_ENDED_DENIAL });
       }
       pendingApprovals.clear();
-      // Bounded: a CLI that never confirms a stop must not keep the run from
-      // finishing. Closing the query ends its tasks within seconds anyway.
-      await Promise.race([
-        Promise.allSettled(
-          liveTasks.map((taskId) => sdkQuery.stopTask(taskId))
-        ),
-        new Promise((resolve) => setTimeout(resolve, WIND_DOWN_STOP_MS)),
-      ]);
-      await new Promise((resolve) => setTimeout(resolve, WIND_DOWN_FLUSH_MS));
+      // Each SDK call is started inside a promise, so one that throws at
+      // once still leaves the others running and the run still finishes.
+      await withinMs(
+        WIND_DOWN_STOP_MS,
+        Promise.allSettled([
+          ...liveTasks.map((taskId) =>
+            Promise.resolve().then(() => sdkQuery.stopTask(taskId))
+          ),
+          Promise.resolve().then(() =>
+            sdkQuery.applyFlagSettings({
+              permissions: { deny: [...RUN_ENDED_DENY_RULES] },
+            })
+          ),
+        ])
+      );
+      // Awaiting applyFlagSettings confirms the rules; the answers to holds
+      // and the stop requests are only written, so give the CLI a moment.
+      if (answeredHolds || liveTasks.length > 0) {
+        await new Promise((resolve) => setTimeout(resolve, WIND_DOWN_FLUSH_MS));
+      }
     };
 
     // Fire-and-forget: `start()` must return the ExecutorRun handle

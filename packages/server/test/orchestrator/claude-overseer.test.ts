@@ -148,6 +148,10 @@ describe('ClaudeOverseer session wiring', () => {
     expect(captured?.permissionMode).toBe('auto');
     expect(captured?.maxTurns).toBe(40);
     expect(captured?.maxBudgetUsd).toBe(2.5);
+    // No background tasks: one outliving the turn ran floor commands after
+    // the query closed. The rest of the environment is inherited.
+    expect(captured?.env?.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBe('1');
+    expect(captured?.env?.PATH).toBe(process.env.PATH);
     // With no one to authorize anything, a floor command is refused, as
     // canUseTool refuses every gated call.
     expect(

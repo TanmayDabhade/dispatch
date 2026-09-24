@@ -457,6 +457,7 @@ describe('ClaudeExecutor CLI-parity system prompt and setting sources', () => {
       releaseResult = resolve;
     });
     const stopped: string[] = [];
+    const applied: unknown[] = [];
     const executor = new ClaudeExecutor((args: { options?: Options }) => {
       captured = args.options;
       const messages = (async function* (): AsyncGenerator<unknown> {
@@ -492,6 +493,10 @@ describe('ClaudeExecutor CLI-parity system prompt and setting sources', () => {
           stopped.push(taskId);
           return Promise.resolve();
         },
+        applyFlagSettings: (settings: unknown) => {
+          applied.push(settings);
+          return Promise.resolve();
+        },
         interrupt: () => Promise.resolve(),
         close: () => {},
       }) as unknown as Query;
@@ -518,10 +523,78 @@ describe('ClaudeExecutor CLI-parity system prompt and setting sources', () => {
     );
     await finished;
     expect(stopped).toEqual(['task-sub']);
+    expect(applied).toHaveLength(1);
     // Nothing raised after the result can be approved either.
     expect(
       await floorDecision(captured?.hooks, 'Bash', { command: 'npm publish' })
     ).toBe('deny');
+  });
+
+  // The CLI keeps working after the result (a finished or stopped background
+  // task starts a fresh main-agent turn) and once the query closes nothing
+  // can answer the floor hook; under bypassPermissions a floor command in
+  // that turn ran. Every result therefore denies every call at the hook and
+  // applies deny rules the CLI enforces by itself, even with nothing pending.
+  it('makes every result final: deny rules applied, every later call refused', async () => {
+    let captured: Options | undefined;
+    const applied: unknown[] = [];
+    const executor = new ClaudeExecutor((args: { options?: Options }) => {
+      captured = args.options;
+      return Object.assign(
+        (function* (): Generator<unknown> {
+          yield { type: 'system', subtype: 'init', session_id: 's' };
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'done' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            is_error: false,
+            num_turns: 1,
+            total_cost_usd: 0.01,
+            session_id: 's',
+            result: 'done',
+            terminal_reason: 'completed',
+            modelUsage: {},
+            errors: [],
+          };
+        })(),
+        {
+          applyFlagSettings: (settings: unknown) => {
+            applied.push(settings);
+            return Promise.resolve();
+          },
+          interrupt: () => Promise.resolve(),
+          close: () => {},
+        }
+      ) as unknown as Query;
+    });
+    await new Promise<void>((resolve) => {
+      executor.start(
+        {
+          cwd: '/tmp/dispatch-worktree-x',
+          prompt: 'x',
+          permissionMode: 'bypassPermissions',
+        },
+        { ...noopEvents, onFinish: () => resolve() }
+      );
+    });
+    expect(applied).toHaveLength(1);
+    const deny = (applied[0] as { permissions: { deny: string[] } }).permissions
+      .deny;
+    for (const tool of ['Bash', 'Write', 'Edit', 'Agent']) {
+      expect(deny).toContain(tool);
+    }
+    // Floor or not, nothing more runs once the result is in.
+    for (const [toolName, toolInput] of [
+      ['Bash', { command: 'bun test' }],
+      ['Edit', { file_path: 'a.ts' }],
+    ] as const) {
+      expect(
+        await preToolUse(captured?.hooks, toolName, toolInput)
+      ).toMatchObject({ permissionDecision: 'deny' });
+    }
   });
 
   it('still finishes when the CLI never confirms a background task stopped', async () => {
