@@ -3,6 +3,7 @@ import {
   getSection,
   labelRef,
   loadConfig,
+  MILESTONE_FIELDS,
   PROJECT_FIELDS,
   TaskStore,
   updateConfig,
@@ -620,6 +621,55 @@ describe('relations and hierarchy', () => {
     beta.updatedAt = fake.stamp();
     await sync.syncOnce();
     expect(store.get(byTitle.get('Beta')?.id ?? '')?.meta.sortOrder).toBe(-1);
+  });
+
+  it('reads every linked milestone once after the upgrade that added its order', async () => {
+    const project = fake.project({ name: 'Checkout' });
+    fake.projectList = [project];
+    fake.milestoneList = [
+      {
+        id: 'ms-1',
+        name: 'Beta',
+        description: null,
+        targetDate: null,
+        sortOrder: 7,
+        projectId: project.id,
+        createdAt: '2026-07-01T00:00:00.000Z',
+        updatedAt: '2026-07-01T00:00:00.000Z',
+        archivedAt: null,
+      },
+    ];
+    const sync = makeSync();
+    await sync.importIssues();
+    const beta = store.list().find((d) => d.meta.title === 'Beta');
+    if (beta === undefined) throw new Error('no milestone');
+    // Rewind to a link made before sortOrder: no local order, none in the base.
+    store.update(beta.meta.id, { sortOrder: null }, beta.meta.updated);
+    const state = readLinearState(root);
+    const base = readBase(state, beta.meta.id, 'milestone');
+    if (base === null) throw new Error('no base');
+    delete base.local.sortOrder;
+    delete base.remote.sortOrder;
+    writeBase(state, beta.meta.id, 'milestone', MILESTONE_FIELDS, base);
+    state.baseVersion = 3;
+    state.echoes = [];
+    writeLinearState(root, state);
+    // One the cursor has passed with no task here (deleted locally, say).
+    fake.milestoneList.push({
+      ...fake.milestoneList[0],
+      id: 'ms-2',
+      name: 'Old',
+    });
+
+    await sync.syncOnce();
+
+    expect(store.get(beta.meta.id)?.meta.sortOrder).toBe(7);
+    expect(store.list().map((d) => d.meta.title)).not.toContain('Old');
+    expect(readLinearState(root).milestoneWalk).toBeUndefined();
+    // The walk happens once: later passes read from the cursor again.
+    fake.calls = [];
+    await sync.syncOnce();
+    expect(fake.calls).not.toContain('projectMilestones');
   });
 
   it('publishes a legacy epic as a parent issue with its tasks as sub-issues', async () => {

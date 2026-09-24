@@ -387,6 +387,6 @@ describe('several linked teams', () => {
     expect(summary.conflicts).toBe(0);
     expect(fake.updated).toEqual([]);
     expect(store.get(id)?.meta.status).toBe('In Review');
-    expect(readLinearState(root).baseVersion).toBe(3);
+    expect(readLinearState(root).baseVersion).toBe(4);
   });
 });

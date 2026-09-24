@@ -849,6 +849,7 @@ export class LinearSync {
       const idle =
         !moved &&
         (!pulls || probe !== null) &&
+        !(pulls && state.milestoneWalk === true) &&
         !this.localDirty &&
         !this.auditDue(state) &&
         this.webhookSettled(state, session);
@@ -1267,6 +1268,7 @@ export class LinearSync {
     const summary = pass.summary;
     let records = true;
     let comments = true;
+    const walk = state.milestoneWalk === true;
     // An idle poll is one cheap probe. When any record moved, every kind is
     // read against the same cursor, so no kind's change can fall behind it.
     const probeFrom = earliest(state.cursor, state.commentCursor);
@@ -1277,7 +1279,11 @@ export class LinearSync {
       const probe = run.probe ?? pass.take(await probeTeams(session, seen));
       if (probe === null) return;
       records =
-        probe.issues || probe.projects || probe.milestones || probe.initiatives;
+        walk ||
+        probe.issues ||
+        probe.projects ||
+        probe.milestones ||
+        probe.initiatives;
       comments = probe.comments;
       if (!records && !comments) return;
     }
@@ -1296,7 +1302,9 @@ export class LinearSync {
         await acrossTeams(teamIds, (id) => client.projects(id, since))
       );
       const milestones = pass.take(
-        await acrossTeams(teamIds, (id) => client.projectMilestones(id, since))
+        await acrossTeams(teamIds, (id) =>
+          client.projectMilestones(id, walk ? null : since)
+        )
       );
       const initiatives = pass.take(await client.initiatives(since));
       if (importing)
@@ -1310,7 +1318,15 @@ export class LinearSync {
       );
       fetched.initiatives = initiatives?.nodes ?? [];
       fetched.projects = projects?.nodes ?? [];
-      fetched.milestones = milestones?.nodes ?? [];
+      // A walk reads every milestone but brings in only linked ones and
+      // those the cursor would have, so it resurrects nothing deleted here.
+      fetched.milestones = (milestones?.nodes ?? []).filter(
+        (m) =>
+          !walk ||
+          since === null ||
+          m.updatedAt > since ||
+          run.ctx.taskByRemote.has(m.id)
+      );
       fetched.issues = page?.issues ?? [];
       const pages: (LinearPage<unknown> | null)[] = [
         projects,
@@ -1341,6 +1357,7 @@ export class LinearSync {
       });
     }
     await this.applyContainers(run, fetched);
+    if (walk && records && recordsOk) delete state.milestoneWalk;
     await this.applyIssues(run, fetched.issues);
     if (run.comments !== null && commentPage !== null) {
       // An import read every comment of the team, so a twin missing from it

@@ -112,6 +112,9 @@ export interface LinearSyncState {
   /** Which value spaces the stored bases were hashed in (see upgradeBases);
    *  absent on a state written before the first upgrade. */
   baseVersion?: number;
+  /** Set by an upgrade that added a milestone field: the next pull reads
+   *  every linked milestone once, not just those newer than the cursor. */
+  milestoneWalk?: boolean;
 }
 
 // Sync state is user-level, not project-level: `.dispatch/` is committed to the
@@ -275,7 +278,8 @@ export function writeBase(
  * v3: a project's or initiative's `status` compares by name where both sides
  * spell it; old category hashes cannot say which name, so they are dropped.
  * A dropped field syncs as on first contact: Linear's value, unless the task
- * holds a newer unsent edit.
+ * holds a newer unsent edit. v4: milestones gained `sortOrder`, which only a
+ * read of each one brings, so linked milestones are walked once.
  */
 export function upgradeBases(
   state: LinearSyncState,
@@ -306,6 +310,12 @@ export function upgradeBases(
       () => undefined
     );
     version = 3;
+  }
+  if (version < 4) {
+    if (Object.values(state.bases).some((b) => b.e === 'milestone')) {
+      state.milestoneWalk = true;
+    }
+    version = 4;
   }
   state.baseVersion = version;
 }
