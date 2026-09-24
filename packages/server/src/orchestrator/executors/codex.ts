@@ -2,8 +2,9 @@ import type { ExecutorPricing } from '@dispatch/core';
 import { CORE_VERSION, loadConfig } from '@dispatch/core';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 
+import { FLOOR_COMMAND_ACTIONS, floorCheckForToolInput } from '../../floor.js';
 import {
   CodexAppServer,
   type CodexAppServerMessage,
@@ -293,41 +294,30 @@ function closeDescription(close: {
 }
 
 export interface CodexPermission {
-  approvalPolicy: 'on-request' | 'never';
-  approvalsReviewer: 'auto_review' | 'user';
+  approvalPolicy: 'untrusted' | 'never';
+  // Pinned: a user's config.toml may default to Codex's own reviewer, which
+  // answers inside Codex and never asks Dispatch.
+  approvalsReviewer: 'user';
   sandbox: 'read-only' | 'workspace-write' | 'danger-full-access';
 }
 
-// Dispatch's permission vocabulary is the Claude SDK's; this is what each
-// mode means to Codex. `auto` lets Codex's own reviewer answer approvals,
-// the two asking modes route them to Dispatch's approval flow, the two
-// unattended modes never ask, and `plan` cannot write at all.
+// What each Dispatch mode means to Codex. `untrusted` is the one policy that
+// asks before every non-read-only command, which the floor needs; `plan`'s
+// read-only sandbox and `never` leave a floor command nothing it could reach.
 export function codexPermission(
   permissionMode: string
 ): CodexPermission | null {
   switch (permissionMode) {
-    case 'auto':
-      return {
-        approvalPolicy: 'on-request',
-        approvalsReviewer: 'auto_review',
-        sandbox: 'workspace-write',
-      };
     case 'default':
     case 'acceptEdits':
       return {
-        approvalPolicy: 'on-request',
-        approvalsReviewer: 'user',
-        sandbox: 'workspace-write',
-      };
-    case 'dontAsk':
-      return {
-        approvalPolicy: 'never',
+        approvalPolicy: 'untrusted',
         approvalsReviewer: 'user',
         sandbox: 'workspace-write',
       };
     case 'bypassPermissions':
       return {
-        approvalPolicy: 'never',
+        approvalPolicy: 'untrusted',
         approvalsReviewer: 'user',
         sandbox: 'danger-full-access',
       };
@@ -342,17 +332,92 @@ export function codexPermission(
   }
 }
 
+// Modes whose Codex settings keep approvals away from Dispatch, so the
+// irreversibility floor (floor.ts) could not hold a command for a human.
+const CODEX_FLOOR_REFUSALS = new Map([
+  [
+    'auto',
+    "Codex's auto mode sends approvals to Codex's own reviewer instead of Dispatch",
+  ],
+  ['dontAsk', 'Codex never asks for approval under dontAsk'],
+]);
+
 // Codex reports token usage but no dollar cost, runs one turn per prompt,
 // and has no equivalent of the SDK's turn/budget caps.
 export const CODEX_EXECUTOR_PROFILE: ExecutorProfile = {
   reportsCost: false,
   reportsTurns: true,
   enforcesCaps: false,
-  permissionRefusal: (mode) =>
-    codexPermission(mode) === null
+  permissionRefusal: (mode) => {
+    const floorGap = CODEX_FLOOR_REFUSALS.get(mode);
+    if (floorGap !== undefined) {
+      return `${floorGap}, so ${FLOOR_COMMAND_ACTIONS} could run without a human. Use default (Dispatch reviews each command) or bypassPermissions (unattended; Dispatch still holds those actions) for Codex runs`;
+    }
+    return codexPermission(mode) === null
       ? `Codex has no mapping for permissionMode "${mode}"`
-      : null,
+      : null;
+  },
 };
+
+// The answer the executor gives a Codex approval itself, or undefined to hand
+// it to Dispatch's approval flow. A floor command is never answered here.
+function selfAnswer(
+  permissionMode: string,
+  approval: PendingCodexApproval,
+  cwd: string,
+  editPaths: ReadonlyMap<string, string[]>
+): ApprovalDecision | undefined {
+  const params = objectValue(approval.params);
+  if (approval.method === 'item/commandExecution/requestApproval') {
+    // Accepting may lift a sandbox the model asked to leave, which looks
+    // like any other ask, so only a mode with no sandbox answers here.
+    const readable =
+      typeof params?.command === 'string' &&
+      (params.kind ?? 'command') === 'command';
+    return permissionMode === 'bypassPermissions' &&
+      readable &&
+      floorCheckForToolInput(params) === null
+      ? { allow: true }
+      : undefined;
+  }
+  if (permissionMode === 'bypassPermissions') return { allow: true };
+  if (
+    permissionMode === 'acceptEdits' &&
+    approval.method === 'item/fileChange/requestApproval' &&
+    (params?.grantRoot === undefined || params.grantRoot === null) &&
+    typeof params?.itemId === 'string'
+  ) {
+    // The ask names no paths; its item/started notification, which Codex
+    // sends first, does.
+    const paths = editPaths.get(params.itemId);
+    return paths?.every((path) => isInside(cwd, path)) === true
+      ? { allow: true }
+      : undefined;
+  }
+  return undefined;
+}
+
+function isInside(root: string, path: string): boolean {
+  const rel = relative(root, path);
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+}
+
+// Every path a fileChange item writes, a move's destination included, or
+// undefined when any entry is unreadable so a partial list never passes.
+function fileChangePaths(item: CodexItem): string[] | undefined {
+  if (!Array.isArray(item.changes) || item.changes.length === 0) {
+    return undefined;
+  }
+  const paths: string[] = [];
+  for (const change of item.changes) {
+    const entry = objectValue(change);
+    if (typeof entry?.path !== 'string') return undefined;
+    paths.push(entry.path);
+    const movePath = objectValue(entry.kind)?.move_path;
+    if (typeof movePath === 'string') paths.push(movePath);
+  }
+  return paths;
+}
 
 /** One Codex App Server process, one persisted thread, and one Codex turn. */
 export interface CodexExecutorOptions {
@@ -402,6 +467,7 @@ export class CodexExecutor implements Executor {
     const bufferedTurnMessages: CodexAppServerMessage[] = [];
     const pendingApprovals = new Map<string, PendingCodexApproval>();
     let nextApprovalId = 1;
+    const editPaths = new Map<string, string[]>();
 
     server.onServerRequest((request) => {
       if (!isCodexApprovalMethod(request.method)) return false;
@@ -413,6 +479,16 @@ export class CodexExecutor implements Executor {
       };
       if (stopping) {
         server.respond(request.id, approvalResult(approval, { allow: false }));
+        return true;
+      }
+      const answer = selfAnswer(
+        opts.permissionMode,
+        approval,
+        opts.cwd,
+        editPaths
+      );
+      if (answer !== undefined) {
+        server.respond(request.id, approvalResult(approval, answer));
         return true;
       }
       const requestId = `codex-approval-${nextApprovalId++}`;
@@ -489,6 +565,16 @@ export class CodexExecutor implements Executor {
           });
         }
         return;
+      }
+      // Recorded before the turn-start buffering below: an edit's approval
+      // can arrive while its item/started is still buffered.
+      if (message.method === 'item/started') {
+        const item = itemFrom(message);
+        const paths =
+          item?.type === 'fileChange' ? fileChangePaths(item) : undefined;
+        if (typeof item?.id === 'string' && paths !== undefined) {
+          editPaths.set(item.id, paths);
+        }
       }
       if (
         turnStartPending &&
