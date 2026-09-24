@@ -20,6 +20,7 @@ import {
   ClaudeExecutor,
   STOP_DENIAL_MESSAGE,
 } from '../../src/orchestrator/executors/claude.js';
+import { floorGuard } from '../../src/orchestrator/floorHook.js';
 import type {
   ExecutorEvents,
   NormalizedEntry,
@@ -300,9 +301,10 @@ describe('ClaudeExecutor CLI-parity system prompt and setting sources', () => {
   });
 
   // The CLI skips canUseTool under bypassPermissions and on a matching
-  // settings allow rule (verified against the bundled CLI); the hook sends
-  // every floor command to canUseTool anyway, in every permission mode.
-  it('routes floor commands to canUseTool through a PreToolUse hook in every permission mode', async () => {
+  // settings allow rule (verified against the bundled CLI); the guard's hook
+  // sends floor commands to canUseTool anyway. This checks the wiring; the CLI
+  // routing itself was verified against the real CLI (see floorGuard).
+  it('wires the floor guard whatever the permission mode', async () => {
     for (const permissionMode of ['bypassPermissions', 'auto', 'acceptEdits']) {
       let captured: Options | undefined;
       const executor = new ClaudeExecutor((args: { options?: Options }) => {
@@ -321,6 +323,7 @@ describe('ClaudeExecutor CLI-parity system prompt and setting sources', () => {
       expect(
         await floorDecision(captured?.hooks, 'Bash', { command: 'bun test' })
       ).toBeUndefined();
+      expect(captured?.settings).toEqual(floorGuard('ask').settings);
     }
   });
 

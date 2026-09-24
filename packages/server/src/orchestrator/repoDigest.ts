@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 
 import { spawnGitSync } from '../blockingGit.js';
 import { openClaudeQuery, rewriteMissingCliError } from './claudeCli.js';
-import { floorHooks } from './floorHook.js';
+import { floorGuard } from './floorHook.js';
 import { runsDir } from './paths.js';
 
 /**
@@ -117,9 +117,9 @@ export interface DigestResult {
 export type DigestGenerator = (rootDir: string) => Promise<DigestResult>;
 
 // The real generator: one read-only Agent SDK turn against the main checkout,
-// configured exactly like ClaudePlanner's (plan permissions so no tool
-// executes, and settingSources so the repo's own AGENTS.md/CLAUDE.md ground
-// the answer).
+// configured like ClaudePlanner's: plan permissions so it cannot edit files
+// (read-only commands still run, and floorGuard refuses irreversible ones),
+// and settingSources so the repo's own AGENTS.md/CLAUDE.md ground the answer.
 export async function generateRepoDigest(
   rootDir: string,
   queryFn: typeof query = query
@@ -129,10 +129,10 @@ export async function generateRepoDigest(
     permissionMode: 'plan',
     systemPrompt: { type: 'preset', preset: 'claude_code' },
     settingSources: ['user', 'project', 'local'],
-    // No canUseTool here, but a settings allow rule still lets a matching
-    // command run in plan mode; an irreversible one is refused before it can
-    // (see floorHooks).
-    hooks: floorHooks('deny'),
+    // No canUseTool here, but plan mode still runs a command a settings
+    // allow rule matches; an irreversible one is refused before it can (see
+    // floorGuard).
+    ...floorGuard('deny'),
   };
   const sdkQuery: Query = openClaudeQuery(queryFn, DIGEST_PROMPT, options);
   try {

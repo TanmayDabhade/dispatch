@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'bun:test';
 
-import { floorHooks } from '../../src/orchestrator/floorHook.js';
+import { floorGuard } from '../../src/orchestrator/floorHook.js';
 import { floorDecision } from './helpers.js';
 
-describe('floorHooks', () => {
+describe('floorGuard', () => {
   it('asks for a human on every floor command, from any tool carrying a command', async () => {
-    const hooks = floorHooks('ask');
+    const hooks = floorGuard('ask').hooks;
     for (const command of [
       'git push --force origin main',
       'npm publish',
@@ -25,14 +25,14 @@ describe('floorHooks', () => {
 
   it('denies floor commands outright in a session with no human to ask', async () => {
     expect(
-      await floorDecision(floorHooks('deny'), 'Bash', {
+      await floorDecision(floorGuard('deny').hooks, 'Bash', {
         command: 'cargo publish',
       })
     ).toBe('deny');
   });
 
   it('names the floor check in the reason the CLI passes on', async () => {
-    const hook = floorHooks('ask').PreToolUse?.[0]?.hooks[0];
+    const hook = floorGuard('ask').hooks.PreToolUse?.[0]?.hooks[0];
     const output = await hook?.(
       {
         hook_event_name: 'PreToolUse',
@@ -47,7 +47,7 @@ describe('floorHooks', () => {
   });
 
   it('gives no decision for anything the floor does not cover', async () => {
-    const hooks = floorHooks('ask');
+    const hooks = floorGuard('ask').hooks;
     // No decision (not "allow"): the call takes the session's normal path.
     expect(
       await floorDecision(hooks, 'Bash', { command: 'git push origin HEAD' })
@@ -59,7 +59,7 @@ describe('floorHooks', () => {
   });
 
   it('gives no decision for events other than PreToolUse', async () => {
-    const hook = floorHooks('deny').PreToolUse?.[0]?.hooks[0];
+    const hook = floorGuard('deny').hooks.PreToolUse?.[0]?.hooks[0];
     const output = await hook?.(
       {
         hook_event_name: 'PostToolUse',
@@ -69,5 +69,25 @@ describe('floorHooks', () => {
       { signal: new AbortController().signal }
     );
     expect(output).toEqual({});
+  });
+
+  // No matcher: a command can reach the shell through any tool whose input
+  // carries one, so the hook has to see every tool call.
+  it('hooks every tool, with no matcher narrowing it', () => {
+    const matchers = floorGuard('ask').hooks.PreToolUse ?? [];
+    expect(matchers).toHaveLength(1);
+    expect(matchers[0]?.matcher).toBeUndefined();
+  });
+
+  // Both were verified against the bundled CLI: a repo's settings `env` could
+  // switch on bare mode, which drops SDK hooks, and a SKILL.md's inline shell
+  // ran a force-push without reaching any hook or canUseTool.
+  it('pins bare mode off and disables inline skill shell in the flag settings layer', () => {
+    for (const action of ['ask', 'deny'] as const) {
+      expect(floorGuard(action).settings).toEqual({
+        env: { CLAUDE_CODE_SIMPLE: '0' },
+        disableSkillShellExecution: true,
+      });
+    }
   });
 });

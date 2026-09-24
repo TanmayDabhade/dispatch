@@ -2,6 +2,7 @@ import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it } from 'bun:test';
 
 import { CLAUDE_INSTALL_HINT } from '../../src/orchestrator/claudeCli.js';
+import { floorGuard } from '../../src/orchestrator/floorHook.js';
 import type { PlanProposal } from '../../src/orchestrator/planner.js';
 import {
   ClaudePlanner,
@@ -97,6 +98,7 @@ describe('ClaudePlanner.start', () => {
     expect(
       await floorDecision(captured?.hooks, 'Bash', { command: 'npm publish' })
     ).toBe('deny');
+    expect(captured?.settings).toEqual(floorGuard('deny').settings);
     expect(
       await floorDecision(captured?.hooks, 'Bash', { command: 'git log -1' })
     ).toBeUndefined();

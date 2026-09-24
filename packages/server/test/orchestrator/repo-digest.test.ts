@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { floorGuard } from '../../src/orchestrator/floorHook.js';
 import {
   generateRepoDigest,
   headCommit,
@@ -58,7 +59,7 @@ describe('generateRepoDigest', () => {
   // The digest session has no canUseTool, but a settings allow rule still
   // let a matching command run in plan mode (verified against the bundled
   // CLI); the hook refuses a floor command before it can.
-  it('refuses floor commands in its read-only session', async () => {
+  it('denies floor commands in the digest session', async () => {
     let captured: Options | undefined;
     const result = await generateRepoDigest('/tmp/does-not-matter', ((args: {
       options?: Options;
@@ -80,6 +81,7 @@ describe('generateRepoDigest', () => {
         command: 'git push --tags',
       })
     ).toBe('deny');
+    expect(captured?.settings).toEqual(floorGuard('deny').settings);
   });
 });
 

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'bun:test';
 import { z } from 'zod';
 
 import { CLAUDE_INSTALL_HINT } from '../../src/orchestrator/claudeCli.js';
+import { floorGuard } from '../../src/orchestrator/floorHook.js';
 import type {
   OverseerToolResult,
   OverseerToolset,
@@ -154,6 +155,7 @@ describe('ClaudeOverseer session wiring', () => {
         command: 'gh release create v2.0.0',
       })
     ).toBe('ask');
+    expect(captured?.settings).toEqual(floorGuard('ask').settings);
   });
 
   it('leaves the caps and policy to the SDK defaults when the project sets none', async () => {

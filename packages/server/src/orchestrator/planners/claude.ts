@@ -2,7 +2,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
 
 import { openClaudeQuery, rewriteMissingCliError } from '../claudeCli.js';
-import { floorHooks } from '../floorHook.js';
+import { floorGuard } from '../floorHook.js';
 import type {
   Planner,
   PlannerMode,
@@ -227,7 +227,8 @@ function buildDraftFollowupPrompt(userMessage: string): string {
 }
 
 // Both `tools` and `allowedTools` set to the same list: the former restricts
-// model access, the latter auto-approves in plan mode.
+// which tools the model sees, the latter pre-approves them. Plan mode still
+// runs Bash commands; floorGuard('deny') refuses the irreversible ones.
 const PLANNER_TOOLS = ['Read', 'Grep', 'Glob', 'Bash'];
 
 // Shown when two consecutive attempts at a turn both end with no structured
@@ -239,7 +240,8 @@ export const EMPTY_TURN_MESSAGE =
 /**
  * The real planner backend: a read-only Agent SDK planning *conversation* in
  * the main checkout (no worktree — a plan proposes work, it never touches the
- * repo), `permissionMode: 'plan'` so no tool actually executes, and a
+ * repo), `permissionMode: 'plan'` so it cannot edit files (read-only
+ * commands still run; floorGuard refuses irreversible ones), and a
  * json_schema `outputFormat` so each turn arrives as structured data instead
  * of free text to parse. Every turn is a discrete `query()` call: the opening
  * turn starts a fresh session; each follow-up passes the prior turn's
@@ -306,10 +308,11 @@ export class ClaudePlanner implements Planner {
       settingSources: ['project', 'local'],
       tools: PLANNER_TOOLS,
       allowedTools: PLANNER_TOOLS,
-      // Plan mode leaves Bash to the SDK's own classifier, and a planner has
+      // Plan mode still runs Bash: the SDK's classifier decides, or a
+      // matching settings allow rule lets it straight through. A planner has
       // no human on hand to approve anything, so an irreversible command is
-      // refused before it can run (see floorHooks).
-      hooks: floorHooks('deny'),
+      // refused before it can run (see floorGuard).
+      ...floorGuard('deny'),
       strictMcpConfig: true,
       skills: [],
       ...(resume !== undefined ? { resume } : {}),
