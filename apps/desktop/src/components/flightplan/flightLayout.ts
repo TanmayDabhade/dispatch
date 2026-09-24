@@ -22,7 +22,7 @@ export interface FlightLayoutInput {
   created: string;
   blockedBy: readonly string[];
   wave: number;
-  /** The band key, or null for an unbanded plan. */
+  /** The band key, or null for a plan without bands. */
   band: string | null;
 }
 
@@ -35,20 +35,20 @@ export interface FlightBox {
   column: number;
 }
 
-export interface FlightColumn {
+interface FlightColumn {
   wave: number;
   x: number;
   width: number;
 }
 
-export interface FlightBandBox {
+interface FlightBandBox {
   key: string;
   /** The band header's top; its nodes start `BAND_HEADER_HEIGHT` below. */
   top: number;
   height: number;
 }
 
-export interface FlightEdgeGeometry {
+interface FlightEdgeGeometry {
   from: string;
   to: string;
   d: string;

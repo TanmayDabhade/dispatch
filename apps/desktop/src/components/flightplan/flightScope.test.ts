@@ -28,7 +28,7 @@ function task(
 }
 
 describe('flightScope', () => {
-  test('a milestone plans its direct children, unbanded', () => {
+  test('a milestone plans its direct children, in no bands', () => {
     const tasks = [
       task('e-m', { kind: 'milestone' }),
       task('t-b', { parent: 'e-m' }),
@@ -92,7 +92,7 @@ describe('flightScope', () => {
     expect(scope.nodes.map((t) => t.meta.id).sort()).toEqual(['t-1', 't-2']);
   });
 
-  test('a project without milestones is one unbanded plan', () => {
+  test('a project without milestones is one plan without bands', () => {
     const tasks = [
       task('e-p', { kind: 'project' }),
       task('t-1', { parent: 'e-p' }),

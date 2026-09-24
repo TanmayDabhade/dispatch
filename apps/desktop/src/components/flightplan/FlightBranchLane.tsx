@@ -30,7 +30,7 @@ function writeOpen(open: boolean): void {
 /** One integration branch and the children merging into it. */
 export interface BranchLaneGroup {
   key: string;
-  /** A band's name; null for an unbanded plan. */
+  /** A band's name; null for a plan without bands. */
   title: string | null;
   /** `epic/<id>`, or null for a container too broad to share one (a project). */
   integration: string | null;

@@ -47,7 +47,7 @@ export interface FlightNode {
 }
 
 /** One wave's tally, for the bar. */
-export interface FlightWave {
+interface FlightWave {
   /** 0-based. */
   index: number;
   total: number;
@@ -83,13 +83,6 @@ export interface FlightPlanOptions {
 // A person (not an agent, not nobody) owns the task.
 function ownedByPerson(task: TaskListItem): boolean {
   return assigneeRef(task.meta.assignee)?.kind === 'human';
-}
-
-/** Each child's wave by id — structure only, so a caller can hold it across state changes. */
-export function flightWaves(
-  children: readonly TaskListItem[]
-): Map<string, number> {
-  return dagWaves(children.map(dagTaskFromDoc));
 }
 
 // One child's state, first match wins: finished, a live run, a teammate's hands, the
@@ -137,7 +130,7 @@ export function buildFlightPlan(
     waves: knownWaves,
   }: FlightPlanOptions
 ): FlightPlan {
-  const waveOf = knownWaves ?? flightWaves(children);
+  const waveOf = knownWaves ?? dagWaves(children.map(dagTaskFromDoc));
   const byId = new Map(children.map((c) => [c.meta.id, c]));
   const nodes: FlightNode[] = children.map((task) => {
     const id = task.meta.id;

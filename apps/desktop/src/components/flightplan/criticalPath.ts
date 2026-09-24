@@ -78,11 +78,7 @@ export interface PathNode {
  * dependents can already start), the unspent part of a median while an agent is on it,
  * a whole median otherwise.
  */
-export function remainingMs(
-  node: PathNode,
-  medianMs: number,
-  now: number
-): number {
+function remainingMs(node: PathNode, medianMs: number, now: number): number {
   switch (node.state) {
     case 'done':
     case 'review':

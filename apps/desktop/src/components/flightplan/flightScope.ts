@@ -10,7 +10,7 @@ import { canonicalKind, isContainerKind } from '@dispatch/core/browser';
 /** A band's key for the scope container's own direct tasks. */
 export const DIRECT_BAND = '__direct';
 
-export interface FlightBandDef {
+interface FlightBandDef {
   key: string;
   /** The band's container; null for the scope's own direct tasks. */
   container: TaskListItem | null;
@@ -19,7 +19,7 @@ export interface FlightBandDef {
 export interface FlightScope {
   /** The work to plan, in a stable order (created, then id). */
   nodes: TaskListItem[];
-  /** Bands in display order; null when the plan is one unbanded set. */
+  /** Bands in display order; null when the plan is one set without bands. */
   bands: FlightBandDef[] | null;
   /** Each node's band key; empty when `bands` is null. */
   bandOf: ReadonlyMap<string, string>;
