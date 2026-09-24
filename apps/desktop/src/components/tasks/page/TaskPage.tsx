@@ -16,7 +16,7 @@ import {
   hasStatusRole,
   isContainer,
   parentIdsOf,
-  parseExternal,
+  parseLinearExternal,
 } from '@dispatch/core/browser';
 import {
   Archive,
@@ -316,7 +316,8 @@ export function TaskPage({
   const hasOpenRun = run !== undefined && !isTerminalRunState(run.state);
 
   const linearLink = resolveLinearLink(doc.meta.external, linearLinks);
-  const linearLinked = parseExternal(doc.meta.external) !== null;
+  // Any Linear record counts: an issue, or a project, milestone or initiative.
+  const linearLinked = parseLinearExternal(doc.meta.external) !== null;
 
   const { findings, error: findingsError } = useTaskFindings(
     client,
