@@ -3,10 +3,14 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
 import { type ReactElement, useState } from 'react';
 
+import { dayFromNow } from '../../lib/taskDates';
 import { PeopleProvider } from '../people/PeopleContext';
 import {
   AssigneeControl,
+  CycleControl,
+  DueDateControl,
   EpicControl,
+  EstimateControl,
   LabelsControl,
   PriorityControl,
   StatusControl,
@@ -475,5 +479,73 @@ describe('the assignee picker lists people and agents', () => {
     expect(
       screen.getByRole('button', { name: 'Change assignee' }).textContent
     ).toContain('Wyat Soule');
+  });
+});
+
+describe('estimate, due date and cycle', () => {
+  test('an estimate is picked from the scale', async () => {
+    const picks: (number | null)[] = [];
+    await renderOpen(
+      <EstimateControl value={null} onChange={(n) => picks.push(n)} open />
+    );
+    await settle(() =>
+      fireEvent.click(screen.getByRole('menuitem', { name: '5 points' }))
+    );
+    expect(picks).toEqual([5]);
+  });
+
+  test('No estimate clears one', async () => {
+    const picks: (number | null)[] = [];
+    await renderOpen(
+      <EstimateControl value={5} onChange={(n) => picks.push(n)} open />
+    );
+    await settle(() =>
+      fireEvent.click(screen.getByRole('menuitem', { name: 'No estimate' }))
+    );
+    expect(picks).toEqual([null]);
+  });
+
+  test('an off-scale estimate still lists, and reads on the row', () => {
+    render(<EstimateControl value={4} onChange={() => {}} />);
+    expect(
+      screen.getByRole('button', { name: 'Change estimate' }).textContent
+    ).toBe('4 points');
+  });
+
+  test('a cycle is picked by id and handed back whole', async () => {
+    const cycle = {
+      id: 'c-42',
+      number: 42,
+      name: null,
+      startsAt: '2026-09-17T00:00:00Z',
+      endsAt: '2026-10-01T00:00:00Z',
+    };
+    const picks: unknown[] = [];
+    await renderOpen(
+      <CycleControl
+        value={null}
+        cycles={[cycle]}
+        onChange={(c) => picks.push(c)}
+        open
+      />
+    );
+    await settle(() =>
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Cycle 42' }))
+    );
+    expect(picks).toEqual([cycle]);
+  });
+
+  test('a due date comes from a quick pick, and clears', async () => {
+    const picks: (string | null)[] = [];
+    await renderOpen(
+      <DueDateControl value="2026-09-30" onChange={(d) => picks.push(d)} open />
+    );
+    await settle(() =>
+      fireEvent.click(screen.getByRole('button', { name: 'Tomorrow' }))
+    );
+    await settle(() =>
+      fireEvent.click(screen.getByRole('button', { name: 'Clear due date' }))
+    );
+    expect(picks).toEqual([dayFromNow(1), null]);
   });
 });
