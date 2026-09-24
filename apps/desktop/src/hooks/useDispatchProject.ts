@@ -427,6 +427,7 @@ export interface DispatchProjectData {
     linear?: {
       enabled?: boolean;
       teamId?: string | null;
+      teamIds?: string[];
       statusMap?: Record<string, string>;
       intervalSec?: number;
       direction?: 'both' | 'pull' | 'push';
@@ -2744,6 +2745,7 @@ export function useDispatchProject(
       linear?: {
         enabled?: boolean;
         teamId?: string | null;
+        teamIds?: string[];
         statusMap?: Record<string, string>;
         intervalSec?: number;
         direction?: 'both' | 'pull' | 'push';
