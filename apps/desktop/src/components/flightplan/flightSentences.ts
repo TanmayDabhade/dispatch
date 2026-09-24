@@ -77,6 +77,9 @@ function blockedSentence(input: SentenceInput): NodeSentence {
   const { node, refFor, sessionActive, phase, run, model } = input;
   const status = node.task.meta.status;
   if (node.subPlan) return { text: 'Fans out on its own plan', tone: 'muted' };
+  if (node.task.meta.derivedFrom !== undefined) {
+    return { text: 'Anchors a review · agents never start it', tone: 'muted' };
+  }
   if (node.waitingOn.length > 0) {
     const refs = joinRefs(node.waitingOn.map(refFor));
     const verb = node.waitingOn.length === 1 ? 'finishes' : 'finish';

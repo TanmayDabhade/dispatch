@@ -310,6 +310,26 @@ describe('FlightPlan', () => {
     expect(sentenceOf('t-3')).toBe('#2 in queue');
   });
 
+  test('a node the server will not start never reads as next up', () => {
+    mount(
+      dataWith(
+        [
+          task('e-1', { kind: 'milestone', parent: null }),
+          task('e-9', { kind: 'milestone', parent: null }),
+          task('t-9', { parent: 'e-9', status: 'working' }),
+          task('t-1', { blockedBy: ['t-9'] }),
+          task('t-2', { derivedFrom: 'github-pr:7' }),
+          task('t-3'),
+        ],
+        [],
+        [progress('active', 4)]
+      )
+    );
+    expect(sentenceOf('t-1')).toBe('Auto-starts when t-9 finishes');
+    expect(sentenceOf('t-2')).toBe('Anchors a review · agents never start it');
+    expect(sentenceOf('t-3')).toBe('Next up');
+  });
+
   test('a project session from before plan-wide fan-outs owns only its direct band', () => {
     const tasks = [
       task('e-p', { kind: 'project', parent: null }),

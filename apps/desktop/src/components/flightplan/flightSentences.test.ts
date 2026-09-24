@@ -101,6 +101,9 @@ describe('nodeSentence', () => {
     expect(text(input(node('blocked', {}, { subPlan: true })))).toBe(
       'Fans out on its own plan'
     );
+    expect(text(input(node('blocked', { derivedFrom: 'github-pr:7' })))).toBe(
+      'Anchors a review · agents never start it'
+    );
     expect(
       text(
         input(node('blocked', { status: 'working' }), {

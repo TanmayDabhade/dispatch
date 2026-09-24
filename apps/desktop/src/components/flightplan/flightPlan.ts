@@ -28,8 +28,8 @@ import { isTerminalRunState } from '../../lib/runState';
  *   already start when it has a run branch to stack on (core's
  *   `releasesFanoutDependents`).
  * - `queued`: unstarted and unblocked — next when a slot frees.
- * - `blocked`: waiting on something: a blocker in the container, a spec (backlog), a
- *   hand dispatch (critical risk), or a failed run.
+ * - `blocked`: waiting on something: a blocker, a spec (backlog), a hand dispatch
+ *   (critical risk), or a failed run — or never an agent's (a derived task).
  */
 export type FlightNodeState =
   | 'done'
@@ -44,8 +44,8 @@ export interface FlightNode {
   state: FlightNodeState;
   /** 0-based wave (`dagWaves`). */
   wave: number;
-  /** Ids of this child's blockers inside the container that still hold its dispatch
-   * (core's `fanoutWaitingOn`, the server's rule). */
+  /** Ids of this child's blockers that still hold its dispatch, in the container or out
+   * of it (`FlightPlanOptions.lookup`) — core's `fanoutWaitingOn`, the server's rule. */
   waitingOn: string[];
   /** The child is itself a container: it fans out on its own plan, never this one's. */
   subPlan: boolean;
@@ -98,6 +98,9 @@ export interface FlightPlanOptions {
   /** Tasks with a run branch a dependent can stack on (`tasksWithRunBranch`); a blocker in
    * review without one holds its dependents until done. Omitted: none. */
   withRunBranch?: ReadonlySet<string>;
+  /** Blockers outside `children`, archived ones included: an unfinished one holds its
+   * dependent as on the server, though never a wave. Omitted: none are known. */
+  lookup?: (id: string) => TaskListItem | undefined;
 }
 
 const NONE: ReadonlySet<string> = new Set();
@@ -150,6 +153,7 @@ function stateOf(
     !subPlan &&
     waitingOn.length === 0 &&
     task.meta.risk !== 'critical' &&
+    task.meta.derivedFrom === undefined &&
     isUnstartedStatus(status, model)
   ) {
     return 'queued';
@@ -158,9 +162,9 @@ function stateOf(
 }
 
 /**
- * Where every child of a container stands, and the waves they form. `children` are the
- * container's direct children; blockers outside them never hold a wave (they are the
- * container's inputs, not its plan).
+ * Where every child of a container stands, and the waves they form. Blockers outside
+ * `children` never hold a wave (they are the container's inputs, not its plan), though
+ * an unfinished one still holds its dependent.
  */
 export function buildFlightPlan(
   children: readonly TaskListItem[],
@@ -174,6 +178,7 @@ export function buildFlightPlan(
     ownerOf,
     startedByOf,
     withRunBranch = NONE,
+    lookup,
   }: FlightPlanOptions
 ): FlightPlan {
   const waveOf = knownWaves ?? dagWaves(children.map(dagTaskFromDoc));
@@ -190,7 +195,8 @@ export function buildFlightPlan(
     const holder = holderOf(task);
     const waitingOn = fanoutWaitingOn(
       task,
-      (blocker) => (blocker === id ? undefined : byId.get(blocker)),
+      (blocker) =>
+        blocker === id ? undefined : (byId.get(blocker) ?? lookup?.(blocker)),
       model,
       (b) => ({
         held: holderOf(b) !== null,

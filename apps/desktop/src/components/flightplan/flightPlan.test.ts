@@ -115,6 +115,33 @@ describe('buildFlightPlan', () => {
     });
   });
 
+  test('an unfinished blocker outside the plan still holds its dependent, never its wave', () => {
+    const outside = new Map([
+      ['t-x', child('t-x', { parent: 'e-9', status: 'working' })],
+      ['t-y', child('t-y', { parent: 'e-9', status: 'landed' })],
+    ]);
+    const plan = buildFlightPlan(
+      [
+        child('t-a', { blockedBy: ['t-x'] }),
+        child('t-b', { blockedBy: ['t-y'] }),
+      ],
+      { ...opts(), lookup: (id) => outside.get(id) }
+    );
+    expect(plan.nodes.map((n) => [n.state, n.wave, n.waitingOn])).toEqual([
+      ['blocked', 0, ['t-x']],
+      ['queued', 0, []],
+    ]);
+  });
+
+  test('a derived task never reads as queued (the server never dispatches one)', () => {
+    const plan = buildFlightPlan(
+      [child('t-a', { derivedFrom: 'github-pr:7' })],
+      opts()
+    );
+    expect(plan.nodes[0]?.state).toBe('blocked');
+    expect(plan.queued).toBe(0);
+  });
+
   test('a blocker in review no longer holds its dependent (the server stacks it)', () => {
     const plan = buildFlightPlan(
       [

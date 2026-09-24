@@ -104,9 +104,9 @@ function useNow(intervalMs: number): number {
   return now;
 }
 
-// Whether `d` may send an agent at a node: unstarted, nothing in the plan ahead of it,
-// not its own plan, not a teammate's, and not already running. A held (critical) node
-// qualifies — by hand is exactly how it starts.
+// Whether `d` may send an agent at a node: unstarted, no blocker ahead of it, not its
+// own plan, not a teammate's or a derived task, and not already running. A held
+// (critical) node qualifies — by hand is exactly how it starts.
 function canDispatch(
   node: FlightNode | undefined,
   model: Parameters<typeof isUnstartedStatus>[1]
@@ -116,6 +116,7 @@ function canDispatch(
     node.state !== 'running' &&
     node.state !== 'teammate' &&
     !node.subPlan &&
+    node.task.meta.derivedFrom === undefined &&
     node.waitingOn.length === 0 &&
     isUnstartedStatus(node.task.meta.status, model)
   );
@@ -188,6 +189,39 @@ export function FlightPlan({
     () => new Map(nodes.map((t) => [t.meta.id, t])),
     [nodes]
   );
+  // Blockers outside the plan hold their dependents too (the server reads the whole
+  // board). Kept as the same map while none of them moves, so a task event elsewhere
+  // never rebuilds the plan.
+  const lastOutside = useRef<ReadonlyMap<string, TaskListItem>>(new Map());
+  const outside = useMemo(() => {
+    let byId: Map<string, TaskListItem> | null = null;
+    const next = new Map<string, TaskListItem>();
+    for (const task of nodes) {
+      for (const id of task.meta.blockedBy) {
+        if (nodeById.has(id) || next.has(id)) continue;
+        byId ??= new Map(tasks.map((t) => [t.meta.id, t]));
+        const blocker = byId.get(id);
+        if (blocker !== undefined) next.set(id, blocker);
+      }
+    }
+    const prev = lastOutside.current;
+    const same =
+      prev.size === next.size &&
+      [...next].every(([id, t]) => {
+        const was = prev.get(id)?.meta;
+        return (
+          was !== undefined &&
+          was.status === t.meta.status &&
+          was.assignee === t.meta.assignee &&
+          was.external === t.meta.external
+        );
+      });
+    return same ? prev : next;
+  }, [nodes, nodeById, tasks]);
+  useEffect(() => {
+    lastOutside.current = outside;
+  }, [outside]);
+  const lookup = useCallback((id: string) => outside.get(id), [outside]);
 
   // Structure only (ids, blockers, bands): a status change keeps the key, so waves, the
   // layout and the keyboard grid are never redone for one.
@@ -355,6 +389,7 @@ export function FlightPlan({
         ownerOf,
         startedByOf,
         withRunBranch,
+        lookup,
       }),
     [
       nodes,
@@ -367,6 +402,7 @@ export function FlightPlan({
       ownerOf,
       startedByOf,
       withRunBranch,
+      lookup,
     ]
   );
   const planNodeById = useMemo(
@@ -404,10 +440,10 @@ export function FlightPlan({
   const refFor = useCallback(
     (id: string) =>
       resolveLinearLink(
-        nodeById.get(id)?.meta.external ?? null,
+        (nodeById.get(id) ?? outside.get(id))?.meta.external ?? null,
         data.linearLinks
       )?.identifier ?? id,
-    [nodeById, data.linearLinks]
+    [nodeById, outside, data.linearLinks]
   );
   const queue = useMemo(
     () =>
