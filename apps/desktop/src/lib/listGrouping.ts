@@ -1,13 +1,10 @@
 import type { Assignee, Priority, TaskListItem } from '@dispatch/core/browser';
-import {
-  isContainerKind,
-  isDoneStatus,
-  PRIORITY_ORDER,
-} from '@dispatch/core/browser';
+import { isContainerKind, PRIORITY_ORDER } from '@dispatch/core/browser';
 
 import { statusColor } from '../components/tasks/StatusIcon';
 import { isMilestoneFinished, rollupMilestoneStatus } from './milestoneRollup';
 import { colorForEpic } from './projectColor';
+import { isStatusDone } from './statusModel';
 import {
   assigneeLabel,
   assigneeRef,
@@ -116,9 +113,10 @@ export function sortTasks(
   }
   const sorted = decorated.map((d) => d.doc);
   if (!prefs.completedByRecency) return sorted;
-  const open = sorted.filter((doc) => !isDoneStatus(doc.meta.status));
+  // The project's own status types, so Linear's "Done"/"Canceled" sink too.
+  const open = sorted.filter((doc) => !isStatusDone(doc.meta.status));
   const done = sorted
-    .filter((doc) => isDoneStatus(doc.meta.status))
+    .filter((doc) => isStatusDone(doc.meta.status))
     .map((doc, index) => ({ doc, index }))
     .sort((a, b) => {
       const cmp = byDateDesc('updated')(a.doc, b.doc);

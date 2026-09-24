@@ -1,7 +1,9 @@
 import type { TaskDoc } from '@dispatch/core/browser';
-import { describe, expect, test } from 'bun:test';
+import { statusModelOf } from '@dispatch/core/browser';
+import { afterEach, describe, expect, test } from 'bun:test';
 
 import { groupTasks, nestRows, sortTasks, visibleRowIds } from './listGrouping';
+import { setActiveStatusModel } from './statusModel';
 import { DEFAULT_TASKS_DISPLAY, type TasksDisplayPrefs } from './tasksPrefs';
 
 type Meta = TaskDoc['meta'];
@@ -34,6 +36,8 @@ function task(id: string, overrides: Partial<Meta> = {}, title = id): TaskDoc {
 }
 
 const STATUSES = ['draft', 'ready', 'working', 'review', 'landed', 'dropped'];
+
+afterEach(() => setActiveStatusModel(null));
 
 function prefs(overrides: Partial<TasksDisplayPrefs> = {}): TasksDisplayPrefs {
   return { ...DEFAULT_TASKS_DISPLAY, ...overrides };
@@ -336,6 +340,25 @@ describe('sortTasks', () => {
         (t) => t.meta.id
       )
     ).toEqual(['l', 'u']);
+  });
+
+  test("completedByRecency reads the project's own status types", () => {
+    setActiveStatusModel(
+      statusModelOf({
+        statuses: ['Todo', 'Done', 'Canceled'],
+        statusDefinitions: [
+          { name: 'Todo', type: 'unstarted', color: null },
+          { name: 'Done', type: 'completed', color: null },
+          { name: 'Canceled', type: 'canceled', color: null },
+        ],
+      })
+    );
+    const done = task('d', { status: 'Done', priority: 'urgent' });
+    const canceled = task('c', { status: 'Canceled', priority: 'urgent' });
+    const todo = task('o', { status: 'Todo', priority: 'low' });
+    expect(
+      sortTasks([done, canceled, todo], prefs()).map((t) => t.meta.id)
+    ).toEqual(['o', 'd', 'c']);
   });
 
   test('completedByRecency sinks landed/dropped below open rows, newest first', () => {
