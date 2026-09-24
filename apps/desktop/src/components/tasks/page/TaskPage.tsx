@@ -648,6 +648,7 @@ function TaskPageLoaded({
       onPickerChange={setPicker}
       showRelations={mode !== 'spec'}
       showActivity={mode !== 'summary'}
+      showSubIssues={mode !== 'plan'}
       className={cn(
         layout === 'split'
           ? 'bg-surface-panel shadow-overlay absolute inset-y-0 right-0 z-20 w-[300px]'

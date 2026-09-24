@@ -107,6 +107,8 @@ export interface TaskRailProps {
   showRelations: boolean;
   /** Summary mode shows the whole timeline, so the rail leaves its excerpt out. */
   showActivity: boolean;
+  /** Plan mode lists every sub-issue, so the rail leaves its excerpt out. */
+  showSubIssues: boolean;
   className?: string;
 }
 
@@ -124,6 +126,7 @@ export function TaskRail({
   onPickerChange,
   showRelations,
   showActivity,
+  showSubIssues,
   className,
 }: TaskRailProps) {
   const { item, project } = page;
@@ -367,7 +370,7 @@ export function TaskRail({
         </RailSection>
       )}
 
-      {plan !== null && (
+      {plan !== null && showSubIssues && (
         <RailSection title="Sub-issues">
           <div className="flex flex-col gap-1">
             <button
