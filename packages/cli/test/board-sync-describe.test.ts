@@ -14,6 +14,16 @@ describe('describeSync', () => {
     );
   });
 
+  // Both switches push with the owner's git credentials, so the daemon lets
+  // only the person running it flip them from Settings.
+  test('says who can turn sharing or committing on', () => {
+    for (const reason of ['off', 'files'] as const) {
+      expect(describeSync({ enabled: false, reason }).join('\n')).toContain(
+        'The person running Dispatch for this project'
+      );
+    }
+  });
+
   // Turning sync on does nothing for a board kept as files.
   test('a board kept as files is pointed at committing its task files', () => {
     const lines = describeSync({ enabled: false, reason: 'files' }).join('\n');
