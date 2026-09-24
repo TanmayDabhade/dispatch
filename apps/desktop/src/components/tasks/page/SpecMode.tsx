@@ -1,3 +1,4 @@
+import { Waypoints } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 
 import { filesFromDataTransfer } from '../../../lib/attachments';
@@ -5,7 +6,7 @@ import { liveClaimsFrom } from '../../../lib/dispatchPreview';
 import { dispatchReadiness } from '../../../lib/dispatchReadiness';
 import { resolveExecuteModel } from '../../../lib/models';
 import { isTerminalRunState } from '../../../lib/runState';
-import { activeStatusModel } from '../../../lib/statusModel';
+import { activeStatusModel, isStatusDone } from '../../../lib/statusModel';
 import {
   enrichDraftFromPlan,
   enrichPatch,
@@ -19,12 +20,44 @@ import { DispatchCard } from './DispatchCard';
 import type { TaskPageModel } from './pageModel';
 import { RelationsEditor } from './RelationsEditor';
 import { SubtasksBlock } from './SubtasksBlock';
+import { Button } from '@/ui/button';
+
+/** A container's call to action: it goes out as waves of its sub-issues from its plan,
+ * never as one run of its own. */
+function FanoutCard({ page }: { page: TaskPageModel }) {
+  const total = page.children.length;
+  const done = page.children.filter((c) => isStatusDone(c.meta.status)).length;
+  return (
+    <section
+      data-slot="fanout-card"
+      aria-label="Fan out"
+      className="rounded-card border-border-strong bg-surface-quaternary mx-4 flex flex-wrap items-center gap-x-3 gap-y-1 border-[0.5px] px-3.5 py-3"
+    >
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <p className="text-foreground text-[13px] font-semibold">
+          {total === 0
+            ? 'No sub-issues yet'
+            : `${done} of ${total} sub-issues done`}
+        </p>
+        <p className="font-book text-[12px] text-(--text-secondary)">
+          Agents take its sub-issues in waves from the plan, each as its
+          blockers land.
+        </p>
+      </div>
+      <Button size="sm" onClick={() => page.selectMode('plan')}>
+        <Waypoints />
+        Open plan
+      </Button>
+    </section>
+  );
+}
 
 /**
  * Spec mode — what a task is and whether it can go: the dispatch card with its readiness
- * checks up top, then the spec itself (TaskSpecView, editable in place), its dependencies,
- * attachments and amendments, and a container's sub-issues. The AI "Add detail" pass for
- * a thin spec reviews its draft here before anything is written.
+ * checks up top (a container's points at its plan instead), then the spec itself
+ * (TaskSpecView, editable in place), its dependencies, attachments and amendments, and a
+ * container's sub-issues. The AI "Add detail" pass for a thin spec reviews its draft here
+ * before anything is written.
  */
 export function SpecMode({ page }: { page: TaskPageModel }) {
   const { item, project } = page;
@@ -115,25 +148,31 @@ export function SpecMode({ page }: { page: TaskPageModel }) {
         if (attach(e.clipboardData)) e.preventDefault();
       }}
     >
-      <DispatchCard
-        readiness={readiness}
-        live={liveRun !== undefined}
-        starting={page.dispatching}
-        executors={project.executors ?? undefined}
-        defaultModel={config === null ? undefined : resolveExecuteModel(config)}
-        onDispatch={(executor, model) => void page.dispatch(executor, model)}
-        onOpenRun={() => page.selectMode('run')}
-        onOpenTask={page.openTask}
-        onEnrich={enrich}
-        enriching={enriching}
-        onAddWrites={() => {
-          const input = writesRef.current?.querySelector<HTMLInputElement>(
-            'input[aria-label="Add a write path"]'
-          );
-          input?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-          input?.focus();
-        }}
-      />
+      {page.isContainer ? (
+        <FanoutCard page={page} />
+      ) : (
+        <DispatchCard
+          readiness={readiness}
+          live={liveRun !== undefined}
+          starting={page.dispatching}
+          executors={project.executors ?? undefined}
+          defaultModel={
+            config === null ? undefined : resolveExecuteModel(config)
+          }
+          onDispatch={(executor, model) => void page.dispatch(executor, model)}
+          onOpenRun={() => page.selectMode('run')}
+          onOpenTask={page.openTask}
+          onEnrich={enrich}
+          enriching={enriching}
+          onAddWrites={() => {
+            const input = writesRef.current?.querySelector<HTMLInputElement>(
+              'input[aria-label="Add a write path"]'
+            );
+            input?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            input?.focus();
+          }}
+        />
+      )}
       {enrichError !== null && (
         <p className="text-red font-book px-4 text-[12px]">{enrichError}</p>
       )}

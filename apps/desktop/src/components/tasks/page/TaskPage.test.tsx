@@ -187,6 +187,10 @@ describe('the mode follows the task', () => {
     expect(
       screen.getByRole('button', { name: 'Add sub-task to Title of t-1' })
     ).not.toBeNull();
+    // A container fans out from its plan, never as one run of its own.
+    expect(document.querySelector('[data-slot=dispatch-card]')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Open plan' }));
+    expect(modeOf()).toBe('plan');
   });
 
   test('a stage picked by hand holds; picking the state’s own follows again', () => {
