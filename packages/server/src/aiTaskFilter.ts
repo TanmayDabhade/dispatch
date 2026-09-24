@@ -161,10 +161,11 @@ export class ClaudeAiTaskFilter implements AiTaskFilterPort {
         // summarize model is the cheap one-shot slot; a filter needs nothing more.
         model: loadConfig(this.rootDir).models.summarize,
         permissionMode: 'plan',
-        // No tools: this is a judgement about the strings in the prompt, not
-        // about the repo. `tools: []` removes them; `allowedTools: []` left
-        // Bash in place.
+        // No built-in tools and no MCP servers: this is a judgement about the
+        // strings in the prompt, not about the repo. `allowedTools: []` left
+        // Bash in place; strictMcpConfig keeps project `.mcp.json` servers out.
         tools: [],
+        strictMcpConfig: true,
         outputFormat: { type: 'json_schema', schema: AI_FILTER_SCHEMA },
         abortController,
       };

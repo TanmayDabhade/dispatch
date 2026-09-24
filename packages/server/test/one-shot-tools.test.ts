@@ -41,8 +41,9 @@ function item(id: string, text: string): InboxItem {
 // These one-shot judgements read untrusted text (a diff, inbox captures, a
 // filter sentence) and need no tools. `allowedTools: []` only pre-approved
 // nothing: the model still had Bash, and plan mode runs a command that a
-// settings allow rule matches. `tools: []` is what removes them.
-describe('one-shot model calls run with no tools', () => {
+// settings allow rule matches. `tools: []` is what removes them, and
+// strictMcpConfig keeps a project's `.mcp.json` servers from starting.
+describe('one-shot model calls run with no tools and no MCP servers', () => {
   it('commit message generation', async () => {
     const seen: { options?: Options } = {};
     const generator = new CommitMessageGenerator(
@@ -51,6 +52,7 @@ describe('one-shot model calls run with no tools', () => {
     );
     expect(await generator.generate('diff --git a/x b/x')).toBe('fix: x');
     expect(seen.options?.tools).toEqual([]);
+    expect(seen.options?.strictMcpConfig).toBe(true);
   });
 
   it('inbox clustering', async () => {
@@ -65,6 +67,7 @@ describe('one-shot model calls run with no tools', () => {
       item('i-3', 'c'),
     ]);
     expect(seen.options?.tools).toEqual([]);
+    expect(seen.options?.strictMcpConfig).toBe(true);
   });
 
   it('natural-language task filtering', async () => {
@@ -81,5 +84,6 @@ describe('one-shot model calls run with no tools', () => {
       runStates: [],
     });
     expect(seen.options?.tools).toEqual([]);
+    expect(seen.options?.strictMcpConfig).toBe(true);
   });
 });

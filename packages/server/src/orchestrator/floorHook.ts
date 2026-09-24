@@ -80,7 +80,7 @@ function floorHook(
       action,
       action === 'ask'
         ? `This command matches Dispatch's irreversible-action floor (${check}), so it waits for a human decision.`
-        : `This command matches Dispatch's irreversible-action floor (${check}) and cannot run in this read-only session, which has no human to approve it. If you only meant to search for or read that text, use Grep or Read instead.`
+        : `This command matches Dispatch's irreversible-action floor (${check}) and cannot run in this session, which has no human to approve it. If you only meant to find or read that text, use a search pattern or command that does not spell out the whole command.`
     );
   };
 }
