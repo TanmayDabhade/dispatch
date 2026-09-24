@@ -104,6 +104,16 @@ describe('syncLinearLabels', () => {
     expect(pushOnly.base['l-bug']).toBe('#eb5757');
   });
 
+  it('pushes the registry’s color on first contact when only pushes are allowed', () => {
+    const result = run({
+      configured: [{ name: 'type/bug', color: '#0f783c', external: null }],
+      linear: [BUG],
+      mayPull: false,
+    });
+    expect(result.push).toEqual([{ id: 'l-bug', color: '#0f783c' }]);
+    expect(result.base['l-bug']).toBe('#0f783c');
+  });
+
   it('follows a rename, and unlinks an entry whose label is gone', () => {
     const renamed = run({
       configured: [linkedBug('#eb5757')],

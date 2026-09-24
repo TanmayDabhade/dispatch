@@ -136,9 +136,13 @@ export function syncLinearLabels(input: LabelSyncInput): LabelSyncResult {
     entry.external = external;
     const local = entry.color;
     const was = input.base[label.id];
+    // A local color Linear has not moved from is an edit; with no base, only
+    // a push-only project reads it as one (Linear's wins where it may pull).
+    const edited =
+      local !== null && (was === undefined ? !input.mayPull : remote === was);
     if (local === remote) {
       base[label.id] = remote;
-    } else if (local === null || was === undefined || remote !== was) {
+    } else if (!edited) {
       // No local color, first contact, or Linear moved: Linear's color wins.
       if (input.mayPull) {
         entry.color = remote;
@@ -149,7 +153,7 @@ export function syncLinearLabels(input: LabelSyncInput): LabelSyncResult {
     } else if (input.mayPush) {
       push.push({ id: label.id, color: local });
       base[label.id] = local;
-    } else {
+    } else if (was !== undefined) {
       base[label.id] = was;
     }
   }

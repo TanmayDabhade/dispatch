@@ -375,6 +375,22 @@ describe('label registry', () => {
     expect(registry()).toEqual([['web', '#f2c94c', 'linear:l-web']]);
   });
 
+  it('pushes the registry’s colors from a push-only project', async () => {
+    writeConfig('push');
+    updateConfig(root, { labels: [{ name: 'web', color: '#111111' }] });
+    fake.labelList = [
+      { id: 'l-web', name: 'web', color: '#222222', teamId: 'team-1' },
+    ];
+    const sync = makeSync();
+    await sync.syncOnce();
+    expect(fake.labelList[0]?.color).toBe('#111111');
+
+    recolor('web', '#333333');
+    await sync.syncOnce();
+    expect(fake.labelList[0]?.color).toBe('#333333');
+    expect(fake.calls.filter((c) => c === 'updateLabel')).toHaveLength(2);
+  });
+
   it('retries a recolor Linear refused', async () => {
     fake.labelList = [
       { id: 'l-web', name: 'web', color: '#5e6ad2', teamId: 'team-1' },
