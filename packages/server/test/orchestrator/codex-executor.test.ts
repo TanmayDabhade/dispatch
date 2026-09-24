@@ -1235,6 +1235,44 @@ function answerTo(
   )?.result;
 }
 
+// A command item's item/completed as codex-cli 0.153 sends it.
+function commandCompleted(
+  id: string,
+  command: string,
+  status: 'completed' | 'failed' | 'declined'
+): Record<string, unknown> {
+  return {
+    threadId: 'thread-new',
+    turnId: 'turn-1',
+    item: {
+      type: 'commandExecution',
+      id,
+      command,
+      cwd: 'C:\\worktree',
+      status,
+      aggregatedOutput: '',
+      exitCode: status === 'completed' ? 0 : null,
+    },
+  };
+}
+
+// Input written into a running shell, as the terminalInteraction notification
+// carries it: the shell's own item id, never a new item.
+function typed(stdin: string, turnId = 'turn-1'): Record<string, unknown> {
+  return {
+    threadId: 'thread-new',
+    turnId,
+    itemId: 'call-1',
+    processId: '16691',
+    stdin,
+  };
+}
+
+const TURN_COMPLETED = {
+  threadId: 'thread-new',
+  turn: { id: 'turn-1', status: 'completed', error: null },
+};
+
 describe('the irreversibility floor for Codex runs', () => {
   for (const mode of REFUSED_MODES) {
     it(`refuses a ${mode} run before the App Server starts`, () => {
@@ -1484,5 +1522,126 @@ describe('the irreversibility floor for Codex runs', () => {
       expect(answerTo(process, id)).toBeUndefined();
     }
     await harness.run.interrupt();
+  });
+
+  it('stops a run whose floor command ran without asking Dispatch', async () => {
+    // A ~/.codex/rules allow rule skips the ask: the item just starts and ends.
+    const process = scriptedProcess({
+      afterTurn(fake) {
+        fake.notify(
+          'item/completed',
+          commandCompleted('call-1', FORCE_PUSH_ASK.command, 'completed')
+        );
+        fake.notify('turn/completed', TURN_COMPLETED);
+      },
+    });
+    const harness = startHarness(process);
+    await waitFor(() => harness.finishes.length === 1);
+
+    const error = harness.finishes[0]?.error ?? '';
+    expect(harness.finishes).toEqual([
+      { state: 'failed', sessionId: 'thread-new', turns: 1, error },
+    ]);
+    expect(error).toContain('force-push');
+    expect(error).toContain("/bin/zsh -lc 'git push --force origin main'");
+    expect(error).toContain('allow rule');
+    expect(harness.entries.map((entry) => entry.kind)).toEqual([
+      'tool',
+      'system',
+    ]);
+    expect(harness.entries[1]?.text).toBe(error);
+    expect(process.killed).toBe(true);
+  });
+
+  it('stops a run that types a floor command into a shell it started', async () => {
+    const process = scriptedProcess({
+      afterTurn(fake) {
+        fake.serverRequest('item/commandExecution/requestApproval', 'shell', {
+          ...FORCE_PUSH_ASK,
+          command: '/bin/zsh -lc bash',
+        });
+      },
+    });
+    const harness = startHarness(process);
+    await waitFor(() => harness.approvals.length === 1);
+    // The shell itself is an ordinary ask; what is typed into it never is.
+    harness.run.approve(harness.approvals[0]?.requestId ?? '', { allow: true });
+    process.notify(
+      'item/commandExecution/terminalInteraction',
+      typed('git push --force origin other\n', 'turn-other')
+    );
+    process.notify('item/commandExecution/terminalInteraction', typed('ls\n'));
+    process.notify(
+      'item/commandExecution/terminalInteraction',
+      typed('git push --for')
+    );
+    process.notify(
+      'item/commandExecution/terminalInteraction',
+      typed('ce origin main; exit\n')
+    );
+    await waitFor(() => harness.finishes.length === 1);
+
+    const error = harness.finishes[0]?.error ?? '';
+    expect(harness.finishes[0]?.state).toBe('failed');
+    expect(error).toContain('force-push');
+    expect(error).toContain('git push --force origin main; exit');
+    expect(error).toContain('shell');
+    expect(harness.entries.filter((entry) => entry.kind === 'system')).toEqual([
+      expect.objectContaining({ text: error }),
+    ]);
+  });
+
+  it('leaves a floor command alone when Dispatch was asked or it never ran', async () => {
+    const process = scriptedProcess({
+      afterTurn(fake) {
+        fake.serverRequest(
+          'item/commandExecution/requestApproval',
+          'floor-1',
+          FORCE_PUSH_ASK
+        );
+        fake.serverRequest('item/commandExecution/requestApproval', 'stdin', {
+          ...FORCE_PUSH_ASK,
+          kind: 'writeStdin',
+          itemId: 'shell-1',
+          command: 'git push --force origin main',
+        });
+      },
+    });
+    const harness = startHarness(process);
+    await waitFor(() => harness.approvals.length === 2);
+    for (const approval of harness.approvals) {
+      harness.run.approve(approval.requestId, { allow: true });
+    }
+    process.notify(
+      'item/completed',
+      commandCompleted('call-1', FORCE_PUSH_ASK.command, 'completed')
+    );
+    process.notify('item/commandExecution/terminalInteraction', {
+      ...typed('git push --force origin main\n'),
+      itemId: 'shell-1',
+    });
+    // A forbid rule or a declined ask ends the item without running it.
+    process.notify(
+      'item/completed',
+      commandCompleted('call-2', FORCE_PUSH_ASK.command, 'failed')
+    );
+    process.notify(
+      'item/completed',
+      commandCompleted('call-3', FORCE_PUSH_ASK.command, 'declined')
+    );
+    // An allow rule on a command clear of the floor is not Dispatch's concern.
+    process.notify(
+      'item/completed',
+      commandCompleted('call-4', "/bin/zsh -lc 'pnpm test'", 'completed')
+    );
+    process.notify('turn/completed', TURN_COMPLETED);
+    await waitFor(() => harness.finishes.length === 1);
+
+    expect(harness.finishes).toEqual([
+      { state: 'finished', sessionId: 'thread-new', turns: 1 },
+    ]);
+    expect(harness.entries.some((entry) => entry.kind === 'system')).toBe(
+      false
+    );
   });
 });
