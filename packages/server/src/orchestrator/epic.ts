@@ -1,8 +1,10 @@
 import {
   claimConflictsWithWrites,
   dispatchableTasks,
+  fanoutHolder,
   hasStatusRole,
   isContainerKind,
+  isSatisfiedForDispatchStatus,
   isUnstartedStatus,
   loadConfig,
   schedulableBatch,
@@ -61,6 +63,10 @@ interface EpicSessionRecord {
   maxRuns: number | null;
   /** Fixed for the session's life — pause/resume never reset it. */
   startedAt: string;
+  /** The `human:` ref that started it: the one person whose assigned tasks
+   *  it may pick up. Null on a session persisted before this was recorded,
+   *  which works for the daemon's local human. */
+  startedBy: string | null;
   updatedAt: string;
   completedAt?: string;
   /** Critical-risk children already noted as held on the epic's Activity,
@@ -88,6 +94,8 @@ export interface EpicSession {
   maxSpendUsd: number | null;
   maxRuns: number | null;
   startedAt: string;
+  /** Who started it; teammates' tasks are never auto-dispatched for them. */
+  startedBy: string | null;
   updatedAt: string;
   completedAt?: string;
   /** `state === 'active'` — kept for `formatEpicProgress` and `--watch`. */
@@ -188,10 +196,12 @@ interface ProgressBoard {
  * an epic dispatches its ready children up to a concurrency cap, and every
  * time a child run reaches a terminal state, newly-unblocked siblings
  * auto-dispatch to fill any freed slot — all driven by Orchestrator's
- * `onRunTerminal` push hook, never a poll. A session pauses itself at its
- * spend or run ceiling (or after a fill keeps failing) and waits for
- * `resume()`; `stop()` and a pause only halt *new* dispatches — runs already
- * live keep running to their own completion.
+ * `onRunTerminal` push hook (plus `task.changed` for a blocker satisfied
+ * outside any run), never a poll. A session never starts a teammate's task:
+ * one assigned to a person other than whoever started it.
+ * A session pauses itself at its spend or run ceiling (or after a fill keeps
+ * failing) and waits for `resume()`; `stop()` and a pause only halt *new*
+ * dispatches — runs already live keep running to their own completion.
  *
  * The session record is persisted to `epicSessionsPath` (write-through, like
  * MergeQueue) so a restart re-arms it through resumeOnBoot(); the durable
@@ -222,6 +232,9 @@ export class EpicEngine {
     ReturnType<typeof setTimeout>
   >();
   private fixLoop: EpicFixLoopPort | null = null;
+  // Per active session, the unsatisfied blockers its unstarted work waited on
+  // at the last fill (see onTasksChanged). Memory only; the next fill rebuilds it.
+  private readonly waitingOn = new Map<string, Set<string>>();
 
   constructor(private readonly ctx: EpicEngineContext) {
     this.fillRetryDelayMs = ctx.fillRetryDelayMs ?? DEFAULT_FILL_RETRY_DELAY_MS;
@@ -240,6 +253,9 @@ export class EpicEngine {
     // would (see I3 in onRunReviewed's own doc comment).
     ctx.orchestrator.onRunTerminal((meta) => this.onRunTerminal(meta));
     ctx.orchestrator.onRunReviewed((meta) => this.onRunReviewed(meta));
+    ctx.events.subscribe((event) => {
+      if (event.type === 'task.changed') this.onTasksChanged(event.ids);
+    });
   }
 
   // Whether any epic is still dispatching work. A paused, stopped or complete
@@ -267,7 +283,7 @@ export class EpicEngine {
   // throws (see the catch below), which a fire-and-forget `void` could not.
   async start(
     epicId: string,
-    opts: EpicSessionOptions & { executor?: string } = {}
+    opts: EpicSessionOptions & { executor?: string; startedBy?: string } = {}
   ): Promise<EpicSession> {
     const epic = this.requireEpic(epicId);
     const existing = this.sessions.get(epicId);
@@ -307,6 +323,7 @@ export class EpicEngine {
       maxSpendUsd,
       maxRuns,
       startedAt: now,
+      startedBy: opts.startedBy ?? this.ctx.actorContext?.humanRef ?? null,
       updatedAt: now,
       heldCritical: new Set(),
     };
@@ -316,7 +333,8 @@ export class EpicEngine {
     try {
       this.appendEpicActivity(
         epicId,
-        `epic dispatch started ${describeSession(session)}`
+        `epic dispatch started ${describeSession(session)}`,
+        session.startedBy ?? undefined
       );
       // Chained like every other fill (see enqueueFill) — a run reaching a
       // terminal state *inside* this very dispatch fires the lifecycle hooks
@@ -437,6 +455,7 @@ export class EpicEngine {
     delete session.pausedDetail;
     session.updatedAt = new Date().toISOString();
     this.armed.delete(epicId);
+    this.waitingOn.delete(epicId);
     this.clearFillRetry(epicId);
     this.appendEpicActivity(
       epicId,
@@ -490,6 +509,7 @@ export class EpicEngine {
     }
     const waves = deriveWaves(children);
     const session = this.sessions.get(epicId);
+    const { holder } = this.holderFor(session);
     const progressChildren: EpicProgressChild[] = children.map((task) => {
       const id = task.meta.id;
       const latestRun = latestByTask.get(id) ?? null;
@@ -505,6 +525,7 @@ export class EpicEngine {
           statuses
         ),
         dispatchable: dispatchable.has(id),
+        heldBy: holder(task),
         statuses,
       });
       return {
@@ -775,7 +796,8 @@ export class EpicEngine {
 
   // Dispatches ready children via schedulableBatch (conflicts.ts): concurrency
   // cap, then the run and spend ceilings, no two overlapping `writes` in one
-  // batch. Readiness runs over the FULL task set first, since dispatchableTasks
+  // batch. A teammate's task is never a candidate, but still blocks its
+  // dependents. Readiness runs over the FULL task set first, since dispatchableTasks
   // treats a blocker it wasn't given as satisfied — a blocker in another epic,
   // or in none, must still count. The ceilings are only consulted once there
   // is something to gate, so a session never pauses with nothing to dispatch.
@@ -791,16 +813,26 @@ export class EpicEngine {
         (r) => childIds.has(r.taskId) && !TERMINAL_RUN_STATES.has(r.state)
       ).length;
     let slots = session.concurrency - liveCount;
+    // A full session refills on its next terminal, which re-reads all this.
     if (slots <= 0) return;
 
+    const tasks = this.ctx.cache.query({ includeArchived: true });
+    const statuses = statusModelFor(this.ctx.rootDir);
+    const { holder } = this.holderFor(session);
+    const mine = new Set(
+      children.filter((t) => holder(t) === null).map((t) => t.meta.id)
+    );
+    this.noteWaiting(
+      epicId,
+      children.filter((t) => mine.has(t.meta.id)),
+      new Map(tasks.map((t) => [t.meta.id, t])),
+      statuses
+    );
     // childIds now includes archived children (see childrenOf); dispatchability
     // must exclude them explicitly rather than rely on childrenOf's filtering.
-    const ready = dispatchableTasks(
-      this.ctx.cache.query({ includeArchived: true }),
-      statusModelFor(this.ctx.rootDir)
-    ).filter(
+    const ready = dispatchableTasks(tasks, statuses).filter(
       (t) =>
-        childIds.has(t.meta.id) &&
+        mine.has(t.meta.id) &&
         t.meta.archivedAt === undefined &&
         !this.holdCritical(session, epicId, t)
     );
@@ -906,16 +938,19 @@ export class EpicEngine {
   // runnable. A session with only capped loops left stays active — those
   // wait on a ruling, which is the human's queue. An epic with zero children
   // never "completes" on its own (there is nothing to wait on, but also
-  // nothing accomplished).
+  // nothing accomplished). A teammate's task is theirs to finish: only the
+  // session's own work waiting on it keeps the session open.
   private isEpicComplete(epicId: string): boolean {
     const children = this.childrenOf(epicId);
     if (children.length === 0) return false;
     const statuses = statusModelFor(this.ctx.rootDir);
+    const { holder } = this.holderFor(this.sessions.get(epicId));
     if (
       children.some(
         (c) =>
-          isUnstartedStatus(c.meta.status, statuses) ||
-          hasStatusRole(c.meta.status, 'dispatched', statuses)
+          holder(c) === null &&
+          (isUnstartedStatus(c.meta.status, statuses) ||
+            hasStatusRole(c.meta.status, 'dispatched', statuses))
       )
     ) {
       return false;
@@ -944,6 +979,7 @@ export class EpicEngine {
     session.completedAt = now;
     session.updatedAt = now;
     this.armed.delete(epicId);
+    this.waitingOn.delete(epicId);
     this.clearFillRetry(epicId);
     this.appendEpicActivity(
       epicId,
@@ -960,6 +996,71 @@ export class EpicEngine {
     return this.ctx.cache
       .query({ parent: epicId, includeArchived: true })
       .filter((t) => !isContainerKind(t.meta.kind));
+  }
+
+  // Who holds a task against `session` (core's fanoutHolder): the teammate
+  // it belongs to, or null when the session may start it. Without a session,
+  // the local human's view.
+  private holderFor(session: EpicSessionRecord | undefined): {
+    dispatcher: string;
+    holder: (task: TaskDoc) => string | null;
+  } {
+    const local = this.ctx.actorContext?.humanRef;
+    const dispatcher = session?.startedBy ?? local ?? 'human';
+    const localRef = local ?? dispatcher;
+    return {
+      dispatcher,
+      holder: (task) => fanoutHolder(task.meta.assignee, dispatcher, localRef),
+    };
+  }
+
+  // Records the unsatisfied blockers `work` (the session's own unstarted
+  // tasks) waits on, for onTasksChanged.
+  private noteWaiting(
+    epicId: string,
+    work: readonly TaskDoc[],
+    byId: ReadonlyMap<string, TaskDoc>,
+    statuses: StatusModel
+  ): void {
+    const waiting = new Set<string>();
+    for (const task of work) {
+      if (task.meta.archivedAt !== undefined) continue;
+      if (!isUnstartedStatus(task.meta.status, statuses)) continue;
+      for (const id of task.meta.blockedBy) {
+        const blocker = byId.get(id);
+        if (
+          blocker !== undefined &&
+          !isSatisfiedForDispatchStatus(blocker.meta.status, statuses)
+        ) {
+          waiting.add(id);
+        }
+      }
+    }
+    this.waitingOn.set(epicId, waiting);
+  }
+
+  // A blocker can be satisfied outside any run: a teammate's issue landing
+  // through Linear, a hand edit. Runs fire onRunTerminal; this catches the
+  // rest, refilling a session only when a blocker it waited on now lets go.
+  private onTasksChanged(ids: readonly string[] | undefined): void {
+    let statuses: StatusModel | null = null;
+    for (const [epicId, waiting] of this.waitingOn) {
+      if (waiting.size === 0 || !this.armed.has(epicId)) continue;
+      if (this.sessions.get(epicId)?.state !== 'active') continue;
+      const touched =
+        ids === undefined ? [...waiting] : ids.filter((id) => waiting.has(id));
+      if (touched.length === 0) continue;
+      statuses ??= statusModelFor(this.ctx.rootDir);
+      const model = statuses;
+      const released = touched.some((id) => {
+        const blocker = this.ctx.cache.get(id);
+        return (
+          blocker === null ||
+          isSatisfiedForDispatchStatus(blocker.meta.status, model)
+        );
+      });
+      if (released) this.scheduleFill(epicId);
+    }
   }
 
   private requireEpic(epicId: string): TaskDoc {
@@ -1105,6 +1206,8 @@ export class EpicEngine {
           typeof record.maxSpendUsd === 'number' ? record.maxSpendUsd : null,
         maxRuns: typeof record.maxRuns === 'number' ? record.maxRuns : null,
         startedAt: record.startedAt,
+        startedBy:
+          typeof record.startedBy === 'string' ? record.startedBy : null,
         updatedAt:
           typeof record.updatedAt === 'string'
             ? record.updatedAt
@@ -1139,6 +1242,7 @@ export class EpicEngine {
       maxSpendUsd: session.maxSpendUsd,
       maxRuns: session.maxRuns,
       startedAt: session.startedAt,
+      startedBy: session.startedBy,
       updatedAt: session.updatedAt,
       ...(session.completedAt !== undefined
         ? { completedAt: session.completedAt }

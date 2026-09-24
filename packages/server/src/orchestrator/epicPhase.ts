@@ -83,6 +83,9 @@ export interface ChildPhaseInput {
   unsatisfiedBlockers: string[];
   /** Whether core's `dispatchableTasks` over the full set includes the task. */
   dispatchable: boolean;
+  /** The teammate the task belongs to (core's `fanoutHolder`): the fan-out
+   *  never starts it. Null or omitted when it may. */
+  heldBy?: string | null;
   /** The project's status model; the built-in one when omitted. */
   statuses?: StatusModel;
 }
@@ -163,6 +166,8 @@ export function deriveChildPhase(input: ChildPhaseInput): ChildPhase {
   if (inReview) return withRun(input, 'needs-review');
   if (isUnstartedStatus(status, model)) {
     if (task.meta.risk === 'critical') return withRun(input, 'held');
+    const heldBy = input.heldBy ?? null;
+    if (heldBy !== null) return withRun(input, 'held', `assigned to ${heldBy}`);
     if (input.unsatisfiedBlockers.length > 0) {
       return withRun(
         input,

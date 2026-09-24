@@ -1147,6 +1147,9 @@ export interface EpicSession {
   /** `null` = no run ceiling. */
   maxRuns: number | null;
   startedAt: string;
+  /** The `human:` ref that started it; its fan-out never starts a teammate's
+   *  task. Null (or absent from an older daemon): the local human. */
+  startedBy?: string | null;
   updatedAt: string;
   completedAt?: string;
   /** `state === 'active'` — kept for `formatEpicProgress` and `--watch`. */

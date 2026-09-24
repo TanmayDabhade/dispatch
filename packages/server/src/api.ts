@@ -3791,7 +3791,11 @@ async function startEpic(
   if (!parsed.ok) return parsed.response;
   const checked = parseEpicSessionBody(parsed.value);
   if (!checked.ok) return checked.response;
-  const session = await ctx.epicEngine.start(epicId, checked.body);
+  // The caller, never the body: their teammates' tasks stay theirs.
+  const session = await ctx.epicEngine.start(epicId, {
+    ...checked.body,
+    startedBy: humanActor(ctx),
+  });
   return jsonResponse(session, 201);
 }
 
