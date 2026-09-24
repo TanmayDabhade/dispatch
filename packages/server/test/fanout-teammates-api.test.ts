@@ -180,6 +180,20 @@ describe('POST /api/epics/:id/dispatch and teammates', () => {
     );
   });
 
+  it('tells a teammate’s window whom a bare human assignee means', async () => {
+    const daemon = await boot();
+    daemon.team.license = licensedManager(50);
+    const adaToken = daemon.team.teammates.issue('ada', 'request');
+    const res = await rawFetch(`${baseUrl}/api/people`, {
+      headers: { authorization: `Bearer ${adaToken}` },
+    });
+    // Her window is Ada; the fan-out's bare `human` is the daemon's operator.
+    expect(await json(res)).toMatchObject({
+      me: 'human:ada',
+      local: 'human:test',
+    });
+  });
+
   it('never takes the starter from the request body', async () => {
     const { epicId, ids } = milestone({ samTask: 'human:sam' });
     await boot();

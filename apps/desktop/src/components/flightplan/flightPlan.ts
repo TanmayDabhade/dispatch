@@ -87,9 +87,12 @@ export interface FlightPlanOptions {
   containerIds?: ReadonlySet<string>;
   /** Precomputed waves for `children` — the full view keeps them with its layout. */
   waves?: ReadonlyMap<string, number>;
-  /** This window's own ref; the legacy bare `human` means it. Null until known, when
-   * every named person reads as a teammate rather than promise a start. */
+  /** This window's own ref: who a fan-out not yet started would work for. Null until
+   * known, when every named person reads as a teammate rather than promise a start. */
   me?: string | null;
+  /** The daemon's own human, whom the legacy bare `human` means (the server's rule).
+   * Null or omitted: `me`. */
+  local?: string | null;
   /** The container whose fan-out would start `task`: the nearest one with a live
    * session (the server's rule). Omitted: its parent. */
   ownerOf?: (task: TaskListItem) => string | null;
@@ -175,6 +178,7 @@ export function buildFlightPlan(
     containerIds,
     waves: knownWaves,
     me = null,
+    local = null,
     ownerOf,
     startedByOf,
     withRunBranch = NONE,
@@ -183,15 +187,16 @@ export function buildFlightPlan(
 ): FlightPlan {
   const waveOf = knownWaves ?? dagWaves(children.map(dagTaskFromDoc));
   const byId = new Map(children.map((c) => [c.meta.id, c]));
-  // Bare `human` stays itself while `me` is unknown, so it is never a teammate.
-  const local = me ?? 'human';
+  // Bare `human` stays itself while nobody is known, so it is never a teammate.
+  const localHuman = local ?? me ?? 'human';
+  const viewer = me ?? localHuman;
   const nodes: FlightNode[] = children.map((task) => {
     const id = task.meta.id;
     const subPlan = containerIds?.has(id) ?? false;
     const owner = ownerOf === undefined ? task.meta.parent : ownerOf(task);
     const starter = owner === null ? null : (startedByOf?.(owner) ?? null);
     const holderOf = (t: TaskListItem) =>
-      fanoutHolder(t.meta.assignee, starter ?? local, local);
+      fanoutHolder(t.meta.assignee, starter ?? viewer, localHuman);
     const holder = holderOf(task);
     const waitingOn = fanoutWaitingOn(
       task,

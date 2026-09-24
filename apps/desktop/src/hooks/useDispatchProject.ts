@@ -248,6 +248,9 @@ export interface DispatchProjectData {
   /** This window's own ActorRef (`human:<handle>`), or `null` until the daemon
    *  has said. While null, nothing is treated as a teammate's. */
   me: string | null;
+  /** The daemon's own human, whom a fan-out takes a legacy bare `human`
+   *  assignee to mean; `null` until the daemon has said (or an older one). */
+  localHuman: string | null;
   /** The project's people registry (team roster + config `people`) — what pickers offer
    *  and avatars resolve names from. Empty until fetched. */
   people: readonly Person[];
@@ -2881,6 +2884,7 @@ export function useDispatchProject(
         connection === undefined ? null : daemonBaseUrl(connection),
       presence: presence ?? [],
       me: whoami?.ref ?? null,
+      localHuman: peopleSnapshot?.local ?? null,
       people: peopleSnapshot?.people ?? NO_PEOPLE,
       myTier: whoami?.tier ?? null,
       portLoading,

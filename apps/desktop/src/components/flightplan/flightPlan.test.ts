@@ -300,6 +300,22 @@ describe('teammates in the plan', () => {
     expect(plan.nodes.every((n) => n.owner === 'p-1')).toBe(true);
   });
 
+  test('bare human is the daemon’s own human, whoever is viewing', () => {
+    const bare = [child('t-a', { assignee: 'human' })];
+    // Ada's window on the operator's daemon: bare `human` is the operator's.
+    const adas = (startedBy: string) =>
+      stateById(
+        buildFlightPlan(bare, {
+          ...opts(),
+          me: 'human:ada',
+          local: 'human:wyat',
+          startedByOf: () => startedBy,
+        })
+      );
+    expect(adas('human:ada')).toEqual({ 't-a': 'teammate' });
+    expect(adas('human:wyat')).toEqual({ 't-a': 'queued' });
+  });
+
   test('before the viewer is known, only bare human is theirs', () => {
     const plan = buildFlightPlan(
       [

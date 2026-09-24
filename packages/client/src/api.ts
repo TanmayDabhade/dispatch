@@ -634,6 +634,9 @@ export interface CreateLedgerInput {
 // (what the legacy bare `human` assignee means).
 export interface PeopleSnapshot {
   me: string;
+  /** The daemon's own human, whom a fan-out takes a bare `human` assignee to
+   *  mean (core's fanoutHolder). Absent from an older daemon. */
+  local?: string;
   people: Person[];
 }
 
