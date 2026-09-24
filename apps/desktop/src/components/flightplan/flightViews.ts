@@ -149,6 +149,7 @@ export function flightNodeViews(
         ? (pendingAt ??
           (liveRun === undefined ? null : Date.parse(liveRun.createdAt)))
         : null,
+      runId: running ? (liveRun?.id ?? null) : null,
       costUsd:
         (running || node.state === 'done' || node.state === 'review') &&
         run?.costUsd !== undefined

@@ -2,6 +2,7 @@ import type { MergeQueueEntryState } from '@dispatch/client';
 import { Bot, Layers, Play } from 'lucide-react';
 import { memo } from 'react';
 
+import { useRunStep } from '../../hooks/useRunStep';
 import {
   type CockpitItem,
   formatAge,
@@ -51,6 +52,21 @@ const NEEDS_MARK: Record<NeedsReason, FeedState> = {
 // A live clock for a running row. Its own component so only it re-renders each second.
 function Elapsed({ since }: { since: number }) {
   return <MetaText>{useElapsed(since)}</MetaText>;
+}
+
+// The run's latest step. Its own component so a chatty run re-renders only this text.
+function LiveStep({ runId }: { runId: string }) {
+  const step = useRunStep(runId);
+  if (step === null) return null;
+  return (
+    <span
+      data-slot="run-step"
+      title={step}
+      className="font-book text-muted-foreground max-w-44 truncate text-[12px]"
+    >
+      {step}
+    </span>
+  );
 }
 
 interface CockpitRowProps {
@@ -156,6 +172,7 @@ export const CockpitRow = memo(function CockpitRow({
           trailing={
             <>
               {landingBadge}
+              <LiveStep runId={run.id} />
               <MetaText className="max-w-24 truncate">
                 {kind === 'agent' ? run.executor : `${kind} run`}
               </MetaText>

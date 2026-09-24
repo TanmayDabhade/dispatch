@@ -1,6 +1,7 @@
-import { render } from '@testing-library/react';
+import { act, render } from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
 
+import { runSteps } from '../../lib/runStep';
 import { FlightNodeCard, type FlightNodeView } from './FlightNodeCard';
 
 function view(overrides: Partial<FlightNodeView> = {}): FlightNodeView {
@@ -14,6 +15,7 @@ function view(overrides: Partial<FlightNodeView> = {}): FlightNodeView {
     tone: 'review',
     owner: null,
     startedAt: null,
+    runId: null,
     costUsd: null,
     landing: null,
     critical: false,
@@ -70,5 +72,43 @@ describe('FlightNodeCard landing', () => {
     const { container } = renderCard();
     expect(sentence(container)).toBe('Ready for review');
     expect(container.querySelector('[data-slot=landing-badge]')).toBeNull();
+  });
+});
+
+describe('FlightNodeCard live step', () => {
+  test('a running node replaces "Working" with its run’s latest step', async () => {
+    const { container } = renderCard({
+      state: 'running',
+      sentence: 'Working',
+      tone: 'working',
+      runId: 'r-step-flight',
+    });
+    expect(sentence(container)).toBe('Working');
+    await act(async () => {
+      runSteps.record('r-step-flight', {
+        ts: '2026-09-20T00:00:01.000Z',
+        kind: 'tool',
+        toolName: 'Bash',
+        toolInput: { command: 'bun test' },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
+    expect(sentence(container)).toBe('Running tests');
+    // The accessible name keeps the coarse sentence, so a screen reader is not re-read
+    // on every step.
+    expect(
+      container
+        .querySelector('[data-slot=flight-node]')
+        ?.getAttribute('aria-label')
+    ).toBe('ENG-1 Cache the index: Working');
+  });
+
+  test('a node that is not running ignores the run’s steps', async () => {
+    await act(async () => {
+      runSteps.record('r-step-idle', { ts: '', kind: 'thinking' });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
+    const { container } = renderCard({ runId: 'r-step-idle' });
+    expect(sentence(container)).toBe('Ready for review');
   });
 });

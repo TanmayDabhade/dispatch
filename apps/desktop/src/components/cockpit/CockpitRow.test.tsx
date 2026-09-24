@@ -1,8 +1,10 @@
+import type { RunMeta } from '@dispatch/client';
 import type { TaskListItem } from '@dispatch/core/browser';
-import { render } from '@testing-library/react';
+import { act, render } from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
 
 import type { CockpitItem } from '../../lib/cockpit';
+import { runSteps } from '../../lib/runStep';
 import { CockpitRow } from './CockpitRow';
 
 const ME = 'human:wyat';
@@ -94,5 +96,44 @@ describe('CockpitRow landing badge', () => {
       task: task('t-3', 'In Progress'),
     });
     expect(badge(container)).toBeNull();
+  });
+});
+
+describe('CockpitRow live step', () => {
+  test('an in-flight row shows its run’s latest step once the log says it', async () => {
+    const run: RunMeta = {
+      id: 'r-step-cockpit',
+      taskId: 't-9',
+      taskTitle: 'Title t-9',
+      executor: 'claude',
+      state: 'running',
+      branch: 'b',
+      baseBranch: 'main',
+      worktreePath: '/wt/r-step-cockpit',
+      createdAt: '2026-09-20T00:00:00.000Z',
+      updatedAt: '2026-09-20T00:00:00.000Z',
+    };
+    const { container } = renderRow({
+      kind: 'run',
+      key: `run:${run.id}`,
+      taskId: run.taskId,
+      owner: ME,
+      run,
+      task: undefined,
+      nested: false,
+    });
+    const step = () =>
+      container.querySelector('[data-slot=run-step]')?.textContent ?? null;
+    expect(step()).toBeNull();
+    await act(async () => {
+      runSteps.record(run.id, {
+        ts: '2026-09-20T00:00:01.000Z',
+        kind: 'tool',
+        toolName: 'Edit',
+        toolInput: { file_path: '/wt/r-step-cockpit/src/foo.ts' },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
+    expect(step()).toBe('Editing src/foo.ts');
   });
 });

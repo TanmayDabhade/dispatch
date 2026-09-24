@@ -2,8 +2,10 @@ import type { MergeQueueEntryState } from '@dispatch/client';
 import { CircleDashed, Hourglass } from 'lucide-react';
 import { memo } from 'react';
 
+import { useRunStep } from '../../hooks/useRunStep';
 import { formatUsd } from '../../lib/epicSession';
 import { landingBadgeTitle } from '../../lib/landingBadge';
+import { withLiveStep } from '../../lib/runStep';
 import { AssigneeAvatar } from '../tasks/AssigneeAvatar';
 import { LandingBadge } from '../tasks/LandingBadge';
 import { StatusIcon } from '../tasks/StatusIcon';
@@ -34,6 +36,8 @@ export interface FlightNodeView {
   owner: string | null;
   /** The live run's start, for a ticking clock. */
   startedAt: number | null;
+  /** The live run, for a running node's latest step. */
+  runId: string | null;
   /** The run's cost so far, for a running or finished node. */
   costUsd: number | null;
   /** Where the task's run stands in the merge queue, while it is landing. */
@@ -99,6 +103,25 @@ function NodeGlyph({
   );
 }
 
+// The node's sentence, with a running node's latest step folded in. Its own component so a
+// chatty run re-renders only this line, never the card.
+function Sentence({
+  text,
+  runId,
+  className,
+}: {
+  text: string;
+  runId: string | null;
+  className: string;
+}) {
+  const shown = withLiveStep(text, useRunStep(runId));
+  return (
+    <span data-slot="flight-node-sentence" title={shown} className={className}>
+      {shown}
+    </span>
+  );
+}
+
 // A live clock. Its own component so only it re-renders each second.
 function Elapsed({ since }: { since: number }) {
   return (
@@ -126,6 +149,7 @@ export const FlightNodeCard = memo(function FlightNodeCard({
   tone,
   owner,
   startedAt,
+  runId,
   costUsd,
   landing,
   critical,
@@ -198,16 +222,14 @@ export const FlightNodeCard = memo(function FlightNodeCard({
       >
         {title}
       </span>
-      <span
-        data-slot="flight-node-sentence"
-        title={text}
+      <Sentence
+        text={text}
+        runId={state === 'running' ? runId : null}
         className={cn(
           'truncate text-[12px] leading-4',
           landingSentence === null ? TONE_CLASS[tone] : 'text-state-landing'
         )}
-      >
-        {text}
-      </span>
+      />
     </button>
   );
 });

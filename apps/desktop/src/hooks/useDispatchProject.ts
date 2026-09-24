@@ -89,6 +89,7 @@ import {
 import type { PendingApproval } from '../lib/pendingApprovals';
 import { mergePendingApprovals } from '../lib/pendingApprovals';
 import { isTerminalRunState, runSurveyNotice } from '../lib/runState';
+import { runSteps } from '../lib/runStep';
 import { setActiveStatusModel } from '../lib/statusModel';
 import type { TaskAttention } from '../lib/taskAttention';
 import { deriveTaskAttentionById } from '../lib/taskAttention';
@@ -1442,6 +1443,7 @@ export function useDispatchProject(
           // one signal the Branches surface needs.
           void queryClient.invalidateQueries({ queryKey: branchesQueryKey });
         } else if (event.type === 'run.log') {
+          runSteps.record(event.runId, event.entry);
           queryClient.setQueryData<RunDetail>(
             ['dispatch-run', port, event.runId],
             (prev) =>
