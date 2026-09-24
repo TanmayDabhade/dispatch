@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 
 import {
   type BranchEdge,
+  type BranchLayout,
   branchLayout,
   type BranchRow,
 } from '../../lib/branchLayout';
@@ -300,6 +301,11 @@ export interface BranchGraphProps {
   focusedId?: string | null;
   ariaLabel?: string;
   className?: string;
+  /** `branchLayout(tasks)` when the caller already has it. */
+  layout?: BranchLayout;
+  /** Draw only lines `start`..`end - 1`, with the gutter clipped to the same band — one
+   * slice of a long graph drawn in virtualized bands. Omitted draws every line. */
+  band?: { start: number; end: number };
 }
 
 /**
@@ -319,8 +325,13 @@ export function BranchGraph({
   focusedId = null,
   ariaLabel = 'Branch graph',
   className,
+  layout: givenLayout,
+  band,
 }: BranchGraphProps) {
-  const layout = useMemo(() => branchLayout(tasks), [tasks]);
+  const layout = useMemo(
+    () => givenLayout ?? branchLayout(tasks),
+    [givenLayout, tasks]
+  );
   const tasksById = useMemo(
     () => new Map(tasks.map((t) => [t.id, t])),
     [tasks]
@@ -342,7 +353,12 @@ export function BranchGraph({
   }
 
   const gutter = gutterWidth(layout.laneCount);
-  const height = layout.rows.length * BRANCH_LINE_HEIGHT;
+  const first = band?.start ?? 0;
+  const last = band?.end ?? layout.rows.length;
+  const inBand = (row: number) => row >= first && row < last;
+  const crosses = (from: number, to: number) =>
+    Math.max(from, to) >= first && Math.min(from, to) < last;
+  const height = (last - first) * BRANCH_LINE_HEIGHT;
   const onPathIds = new Set(layout.path);
   const trunk = trunkSegments(layout.rows, layout.edges);
   const dotRows = dotRowsByLane(layout.rows);
@@ -356,7 +372,7 @@ export function BranchGraph({
     >
       {layout.rows.map((row) => {
         const task = tasksById.get(row.id);
-        if (task === undefined) return null;
+        if (task === undefined || !inBand(row.row)) return null;
         return (
           <BranchLine
             key={row.id}
@@ -376,22 +392,25 @@ export function BranchGraph({
         data-slot="branch-gutter"
         width={gutter}
         height={height}
-        viewBox={`0 0 ${gutter} ${height}`}
+        viewBox={`0 ${first * BRANCH_LINE_HEIGHT} ${gutter} ${height}`}
         aria-hidden
         className="pointer-events-none absolute top-0 left-0"
       >
-        {trunk.map((segment) => (
-          <path
-            key={`trunk:${segment.fromRow}->${segment.toRow}`}
-            data-slot="branch-lane"
-            data-path={segment.onPath || undefined}
-            d={`M ${laneX(0)} ${rowY(segment.fromRow) + DOT_RADIUS} L ${laneX(0)} ${rowY(segment.toRow) - DOT_RADIUS}`}
-            fill="none"
-            stroke={segment.onPath ? STRONG : MUTED}
-            strokeWidth={segment.onPath ? PATH_STROKE : MUTED_STROKE}
-          />
-        ))}
+        {trunk.map((segment) =>
+          crosses(segment.fromRow, segment.toRow) ? (
+            <path
+              key={`trunk:${segment.fromRow}->${segment.toRow}`}
+              data-slot="branch-lane"
+              data-path={segment.onPath || undefined}
+              d={`M ${laneX(0)} ${rowY(segment.fromRow) + DOT_RADIUS} L ${laneX(0)} ${rowY(segment.toRow) - DOT_RADIUS}`}
+              fill="none"
+              stroke={segment.onPath ? STRONG : MUTED}
+              strokeWidth={segment.onPath ? PATH_STROKE : MUTED_STROKE}
+            />
+          ) : null
+        )}
         {layout.edges.map((edge) => {
+          if (!crosses(edge.fromRow, edge.toRow)) return null;
           const onPath = onPathIds.has(edge.from) && onPathIds.has(edge.to);
           return (
             <path
@@ -407,7 +426,7 @@ export function BranchGraph({
         })}
         {layout.rows.map((row) => {
           const task = tasksById.get(row.id);
-          if (task === undefined) return null;
+          if (task === undefined || !inBand(row.row)) return null;
           return (
             <BranchDot
               key={row.id}

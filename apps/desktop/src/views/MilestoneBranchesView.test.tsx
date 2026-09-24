@@ -595,4 +595,20 @@ describe('MilestoneBranchesView', () => {
     expect(container.textContent).toContain('No tasks match');
     expect(container.textContent).not.toContain('No milestones with tasks yet');
   });
+
+  test('a long milestone mounts only the bands of lines on screen', () => {
+    const long = Array.from({ length: 300 }, (_, i) =>
+      task(`t-${String(i).padStart(3, '0')}`, `Step ${i}`, {
+        parent: 'e-1',
+        blockedBy: i === 0 ? [] : [`t-${String(i - 1).padStart(3, '0')}`],
+      })
+    );
+    const { container } = renderBranches(
+      dataWith([payments, ...long], [payments])
+    );
+    const drawn = lineIds(container);
+    expect(drawn[0]).toBe('t-000');
+    expect(drawn.length).toBeGreaterThan(0);
+    expect(drawn.length).toBeLessThan(100);
+  });
 });
