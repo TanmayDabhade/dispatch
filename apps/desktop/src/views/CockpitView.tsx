@@ -1,4 +1,4 @@
-import type { TaskListItem } from '@dispatch/core/browser';
+import type { Person, TaskListItem } from '@dispatch/core/browser';
 import {
   DEFAULT_STATUS_MODEL,
   isUnstartedStatus,
@@ -7,6 +7,7 @@ import {
 import { Users } from 'lucide-react';
 import {
   type KeyboardEvent,
+  memo,
   useCallback,
   useDeferredValue,
   useEffect,
@@ -63,6 +64,8 @@ import {
 
 const SCOPE_STORAGE_KEY = 'dispatch:cockpit-scope';
 const ROSTER_STORAGE_KEY = 'dispatch:cockpit-roster';
+/** How long the cursor rests on a row before an open split pane follows it. */
+const PANE_FOLLOW_MS = 120;
 
 // The persisted scope, tolerating a missing, blocked or malformed store.
 function readScope(): CockpitScope {
@@ -137,6 +140,104 @@ interface CockpitViewProps {
   /** The peek dialog (Space). */
   onPeekTask: (taskId: string) => void;
 }
+
+interface CockpitHeaderProps {
+  projectName: string | null;
+  scope: CockpitScope;
+  setScope: (next: CockpitScope) => void;
+  people: readonly Person[];
+  me: string | null;
+  roster: boolean;
+  toggleRoster: () => void;
+}
+
+// The page header: crumb, whose-work tabs, person filter and roster toggle. Memoized so a
+// cursor move, which re-renders the view, never re-renders its menus.
+const CockpitHeader = memo(function CockpitHeader({
+  projectName,
+  scope,
+  setScope,
+  people,
+  me,
+  roster,
+  toggleRoster,
+}: CockpitHeaderProps) {
+  const scopePerson =
+    scope.kind === 'person'
+      ? people.find((p) => p.ref === scope.ref)
+      : undefined;
+  const scopeTabs = [
+    { id: 'me', label: 'Mine' },
+    { id: 'team', label: 'Team' },
+    ...(scope.kind === 'person'
+      ? [{ id: 'person', label: scopePerson?.name ?? scope.ref }]
+      : []),
+  ];
+  const crumb = [...(projectName === null ? [] : [projectName]), 'Home'];
+
+  return (
+    <PageHeader
+      crumb={crumb}
+      tabs={
+        <ViewTabs
+          tabs={scopeTabs}
+          active={scope.kind}
+          label="Whose work"
+          onChange={(id) => {
+            if (id === 'me' || id === 'team') setScope({ kind: id });
+          }}
+        />
+      }
+      controls={
+        <div className="flex items-center gap-1">
+          {people.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={<SelectPill aria-label="Filter by person" />}
+              >
+                {scopePerson !== undefined ? (
+                  <span className="flex items-center gap-1.5">
+                    <AssigneeAvatar assignee={scopePerson.ref} size={16} />
+                    {scopePerson.name}
+                  </span>
+                ) : (
+                  'Person'
+                )}
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-[200px]">
+                {people.map((person) => (
+                  <DropdownMenuItem
+                    key={person.ref}
+                    onClick={() =>
+                      setScope({ kind: 'person', ref: person.ref })
+                    }
+                  >
+                    <AssigneeAvatar assignee={person.ref} size={16} />
+                    <span className="truncate">{person.name}</span>
+                    {person.ref === me && (
+                      <span className="text-muted-foreground ml-auto text-[12px]">
+                        You
+                      </span>
+                    )}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+          <IconButton
+            label={
+              roster ? 'Stop grouping by person (G P)' : 'Group by person (G P)'
+            }
+            active={roster}
+            onClick={toggleRoster}
+          >
+            <Users aria-hidden />
+          </IconButton>
+        </div>
+      }
+    />
+  );
+});
 
 /**
  * The home view: three lanes in the order work moves — Ready for you, In flight, Needs you —
@@ -321,19 +422,22 @@ export function CockpitView({
     else if (cursor.key !== null) setCursor({ lane: cursor.lane, key: null });
   }, [laneKeys, cursor]);
 
-  // The split pane follows the cursor while it is open.
+  // The split pane follows the cursor while it is open, once the cursor rests: holding j
+  // then costs the lanes alone, not a task page per row passed.
   const cursorTaskId =
     cursor.key === null
       ? null
       : (itemByKey.get(cursor.key)?.item.taskId ?? null);
   useEffect(() => {
     if (
-      paneTaskId !== null &&
-      cursorTaskId !== null &&
-      cursorTaskId !== paneTaskId
+      paneTaskId === null ||
+      cursorTaskId === null ||
+      cursorTaskId === paneTaskId
     ) {
-      setPaneTaskId(cursorTaskId);
+      return;
     }
+    const timer = setTimeout(() => setPaneTaskId(cursorTaskId), PANE_FOLLOW_MS);
+    return () => clearTimeout(timer);
   }, [cursorTaskId, paneTaskId]);
 
   // The lanes take focus once they are on screen (the daemon may still be starting on
@@ -382,9 +486,12 @@ export function CockpitView({
     [itemByKey, onOpenTask]
   );
 
+  // On the stable `dispatch`, not the hook's per-render object: a new identity here would
+  // re-render every Ready row on each j.
+  const optimisticDispatch = optimistic.dispatch;
   const dispatchFromRow = useCallback(
-    (taskId: string) => void optimistic.dispatch(taskId),
-    [optimistic]
+    (taskId: string) => void optimisticDispatch(taskId),
+    [optimisticDispatch]
   );
 
   function handleKeyDown(e: KeyboardEvent<HTMLDivElement>) {
@@ -465,82 +572,17 @@ export function CockpitView({
   }
 
   const split = deferredPaneTaskId !== null;
-  const scopePerson =
-    scope.kind === 'person'
-      ? directory.people.find((p) => p.ref === scope.ref)
-      : undefined;
-  const scopeTabs = [
-    { id: 'me', label: 'Mine' },
-    { id: 'team', label: 'Team' },
-    ...(scope.kind === 'person'
-      ? [{ id: 'person', label: scopePerson?.name ?? scope.ref }]
-      : []),
-  ];
-  const crumb = [...(projectName === null ? [] : [projectName]), 'Home'];
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <PageHeader
-        crumb={crumb}
-        tabs={
-          <ViewTabs
-            tabs={scopeTabs}
-            active={scope.kind}
-            label="Whose work"
-            onChange={(id) => {
-              if (id === 'me' || id === 'team') setScope({ kind: id });
-            }}
-          />
-        }
-        controls={
-          <div className="flex items-center gap-1">
-            {directory.people.length > 0 && (
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  render={<SelectPill aria-label="Filter by person" />}
-                >
-                  {scopePerson !== undefined ? (
-                    <span className="flex items-center gap-1.5">
-                      <AssigneeAvatar assignee={scopePerson.ref} size={16} />
-                      {scopePerson.name}
-                    </span>
-                  ) : (
-                    'Person'
-                  )}
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="min-w-[200px]">
-                  {directory.people.map((person) => (
-                    <DropdownMenuItem
-                      key={person.ref}
-                      onClick={() =>
-                        setScope({ kind: 'person', ref: person.ref })
-                      }
-                    >
-                      <AssigneeAvatar assignee={person.ref} size={16} />
-                      <span className="truncate">{person.name}</span>
-                      {person.ref === me && (
-                        <span className="text-muted-foreground ml-auto text-[12px]">
-                          You
-                        </span>
-                      )}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-            <IconButton
-              label={
-                roster
-                  ? 'Stop grouping by person (G P)'
-                  : 'Group by person (G P)'
-              }
-              active={roster}
-              onClick={toggleRoster}
-            >
-              <Users aria-hidden />
-            </IconButton>
-          </div>
-        }
+      <CockpitHeader
+        projectName={projectName}
+        scope={scope}
+        setScope={setScope}
+        people={directory.people}
+        me={me}
+        roster={roster}
+        toggleRoster={toggleRoster}
       />
       <div className="flex min-h-0 flex-1">
         <div
