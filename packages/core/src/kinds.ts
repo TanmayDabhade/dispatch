@@ -62,6 +62,56 @@ export function usesIntegrationBranch(parentKind: string): boolean {
   return kind === 'milestone' || kind === 'task';
 }
 
+interface HierarchyNode {
+  meta: { id: string; kind: string; parent: string | null };
+}
+
+/**
+ * Every task a container's fan-out covers, breadth first: its
+ * non-container-kind descendants, reached only through container kinds. A
+ * project's covers the issues under its milestones; a parent issue is one
+ * item, and its sub-issues are its own fan-out's. Cycle-safe.
+ */
+export function fanoutScope<T extends HierarchyNode>(
+  rootId: string,
+  childrenOf: (id: string) => readonly T[]
+): T[] {
+  const out: T[] = [];
+  const seen = new Set<string>([rootId]);
+  const queue = [rootId];
+  // An array iterator reads the length each step, so pushed ids are visited too.
+  for (const id of queue) {
+    for (const child of childrenOf(id)) {
+      if (seen.has(child.meta.id)) continue;
+      seen.add(child.meta.id);
+      if (isContainerKind(child.meta.kind)) queue.push(child.meta.id);
+      else out.push(child);
+    }
+  }
+  return out;
+}
+
+/**
+ * The containers whose `fanoutScope` holds `task`, nearest first: its parent,
+ * then on up through container kinds only. Empty for a container kind.
+ */
+export function fanoutCoverers(
+  task: HierarchyNode,
+  lookup: (id: string) => HierarchyNode | null | undefined
+): string[] {
+  if (isContainerKind(task.meta.kind)) return [];
+  const out: string[] = [];
+  let id = task.meta.parent;
+  while (id !== null && !out.includes(id)) {
+    out.push(id);
+    const node = lookup(id);
+    if (node === null || node === undefined) break;
+    if (!isContainerKind(node.meta.kind)) break;
+    id = node.meta.parent;
+  }
+  return out;
+}
+
 const KIND_RANK: Record<string, number> = {
   task: 0,
   milestone: 1,

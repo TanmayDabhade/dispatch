@@ -1,6 +1,7 @@
 // The project's people registry: who a `human:<handle>` ref is, for pickers
 // and avatars. Pure shapes and merging, no node:* imports.
 import { parseActorRef } from './actor.js';
+import type { ActorRef } from './actor.js';
 import type { TeamMember } from './team.js';
 
 export interface Person {
@@ -89,4 +90,35 @@ export function personFor(
 ): Person | undefined {
   const canonical = canonicalAssignee(ref, localHumanRef);
   return people.find((p) => p.ref === canonical);
+}
+
+/**
+ * Who holds a task against a fan-out working for `dispatcher` (a `human:`
+ * ref): the other person it belongs to (assigned to them, or to an agent they
+ * run), else null and the fan-out may start it: unassigned, an unowned agent,
+ * or the dispatcher's own. An unreadable assignee is somebody's. Bare `human`
+ * means `localHumanRef`.
+ */
+export function fanoutHolder(
+  assignee: string | null | undefined,
+  dispatcher: string,
+  localHumanRef: string
+): string | null {
+  if (assignee === null || assignee === undefined || assignee === '') {
+    return null;
+  }
+  const canonical = canonicalAssignee(assignee, localHumanRef);
+  let ref: ActorRef | null;
+  try {
+    ref = parseActorRef(canonical);
+  } catch {
+    return canonical;
+  }
+  if (ref === null) return null;
+  if (ref.kind === 'agent') {
+    if (ref.operator === null) return null;
+    const operator = `human:${ref.operator}`;
+    return operator === dispatcher ? null : operator;
+  }
+  return canonical === dispatcher ? null : canonical;
 }

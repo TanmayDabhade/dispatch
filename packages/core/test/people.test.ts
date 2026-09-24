@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { ConfigError, loadConfig, updateConfig } from '../src/config.js';
 import {
   canonicalAssignee,
+  fanoutHolder,
   personError,
   personFor,
   resolvePeople,
@@ -93,5 +94,36 @@ describe('people registry', () => {
     ]);
     updateConfig(root, { people: null });
     expect(loadConfig(root).people).toBeUndefined();
+  });
+});
+
+describe('fanoutHolder', () => {
+  const holder = (assignee: string) =>
+    fanoutHolder(assignee, 'human:wyat', 'human:wyat');
+
+  it('lets a fan-out start unassigned, agent and its starter’s own work', () => {
+    for (const assignee of [
+      'none',
+      '',
+      'agent',
+      'agent:claude',
+      'agent:wyat/claude',
+      'human:wyat',
+      'human',
+    ]) {
+      expect(holder(assignee)).toBeNull();
+    }
+  });
+
+  it('names the teammate who holds anything else', () => {
+    expect(holder('human:sam')).toBe('human:sam');
+    expect(holder('agent:sam/claude')).toBe('human:sam');
+    expect(holder('Sam Rivera')).toBe('Sam Rivera');
+  });
+
+  it('reads bare human as the local user, not the starter', () => {
+    // A teammate's fan-out on a shared daemon: bare `human` is the operator.
+    expect(fanoutHolder('human', 'human:ada', 'human:wyat')).toBe('human:wyat');
+    expect(fanoutHolder('human:ada', 'human:ada', 'human:wyat')).toBeNull();
   });
 });
