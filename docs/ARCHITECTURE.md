@@ -224,7 +224,10 @@ approval. To hold the irreversibility floor (`floor.ts`), Codex runs under its
 accepts all but floor commands itself, and `plan` stays read-only. `auto` and
 `dontAsk` are refused, since Codex would answer or skip approvals without
 Dispatch. Two paths still skip the ask: a `~/.codex/rules` rule allowing the
-command, and input typed into a shell the run already started. The MCP servers a
+command, and input typed into a shell the run already started. Dispatch cannot
+hold either, but it sees both afterwards: a floor command that completes with no
+ask behind it, or a typed line that trips the floor, fails the run with a system
+entry naming the command, so it waits in the decision feed. The MCP servers a
 person configured for their own interactive Codex in `~/.codex/config.toml` are
 switched off for every dispatched run (a system entry names them); the run gets
 only Dispatch's own server and carto.

@@ -4,7 +4,11 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
 
-import { FLOOR_COMMAND_ACTIONS, floorCheckForToolInput } from '../../floor.js';
+import {
+  FLOOR_COMMAND_ACTIONS,
+  floorCheckForCommand,
+  floorCheckForToolInput,
+} from '../../floor.js';
 import {
   CodexAppServer,
   type CodexAppServerMessage,
@@ -419,6 +423,23 @@ function fileChangePaths(item: CodexItem): string[] | undefined {
   return paths;
 }
 
+// A floor command Codex ran without asking Dispatch, or undefined when it did
+// not run or an ask for its item already carried a floor command.
+function unaskedFloorCommand(
+  item: CodexItem,
+  flooredAsks: ReadonlySet<string>
+): string | undefined {
+  if (item.type !== 'commandExecution' || item.status !== 'completed') {
+    return undefined;
+  }
+  if (typeof item.id !== 'string' || flooredAsks.has(`command:${item.id}`)) {
+    return undefined;
+  }
+  const check = floorCheckForToolInput(item);
+  if (check === null) return undefined;
+  return `Codex ran a floor command (${check}) without asking Dispatch, most likely under an allow rule in $CODEX_HOME/rules: ${String(item.command)}. The run is stopped so a human can review it.`;
+}
+
 /** One Codex App Server process, one persisted thread, and one Codex turn. */
 export interface CodexExecutorOptions {
   /** Carto discovery, injectable so tests never depend on a local carto. */
@@ -468,10 +489,23 @@ export class CodexExecutor implements Executor {
     const pendingApprovals = new Map<string, PendingCodexApproval>();
     let nextApprovalId = 1;
     const editPaths = new Map<string, string[]>();
+    // `${kind}:${itemId}` of each ask carrying a floor command; a floor act
+    // with none behind it never reached Dispatch.
+    const flooredAsks = new Set<string>();
+    // The unfinished last line typed into each running shell, by item.
+    const stdinTails = new Map<string, string>();
 
     server.onServerRequest((request) => {
       if (!isCodexApprovalMethod(request.method)) return false;
       if (terminal || interrupted) return true;
+      const asked = objectValue(request.params);
+      if (
+        typeof asked?.itemId === 'string' &&
+        floorCheckForToolInput(asked) !== null
+      ) {
+        const kind = typeof asked.kind === 'string' ? asked.kind : 'command';
+        flooredAsks.add(`${kind}:${asked.itemId}`);
+      }
       const approval: PendingCodexApproval = {
         method: request.method,
         params: request.params,
@@ -519,6 +553,13 @@ export class CodexExecutor implements Executor {
         ...(costUsd === undefined ? {} : { costUsd }),
       });
       server.close();
+    };
+
+    // The act already happened; failing the run puts it in front of a human
+    // (a blocking run-stalled item) before the agent builds on it.
+    const stopForFloorBypass = (text: string): void => {
+      events.onEntry({ ts: new Date().toISOString(), kind: 'system', text });
+      finish({ state: 'failed', error: text });
     };
 
     const sendSteer = (message: string): void => {
@@ -581,6 +622,7 @@ export class CodexExecutor implements Executor {
         turnId === undefined &&
         (message.method === 'item/started' ||
           message.method === 'item/completed' ||
+          message.method === 'item/commandExecution/terminalInteraction' ||
           message.method === 'thread/tokenUsage/updated' ||
           message.method === 'turn/completed')
       ) {
@@ -600,6 +642,34 @@ export class CodexExecutor implements Executor {
         const completed = message.method === 'item/completed';
         const entry = entryForItem(item, completed);
         if (entry !== undefined) events.onEntry(entry);
+        const bypass = completed
+          ? unaskedFloorCommand(item, flooredAsks)
+          : undefined;
+        if (bypass !== undefined) stopForFloorBypass(bypass);
+        return;
+      }
+      // Codex asks before starting a shell but not about what is typed into
+      // it, so each finished line is read against the floor here.
+      if (message.method === 'item/commandExecution/terminalInteraction') {
+        const params = objectValue(message.params);
+        if (params?.threadId !== threadId || params?.turnId !== turnId) return;
+        const itemId = params?.itemId;
+        if (typeof itemId !== 'string' || typeof params?.stdin !== 'string') {
+          return;
+        }
+        const lines = `${stdinTails.get(itemId) ?? ''}${params.stdin}`.split(
+          /\r\n|\r|\n/
+        );
+        stdinTails.set(itemId, lines.pop() ?? '');
+        if (flooredAsks.has(`writeStdin:${itemId}`)) return;
+        for (const line of lines) {
+          const check = floorCheckForCommand(line);
+          if (check === null) continue;
+          stopForFloorBypass(
+            `Codex typed a floor command (${check}) into a shell it started, and Codex does not ask about shell input: ${line.trim()}. The run is stopped so a human can review it.`
+          );
+          return;
+        }
         return;
       }
       if (message.method === 'thread/tokenUsage/updated') {
