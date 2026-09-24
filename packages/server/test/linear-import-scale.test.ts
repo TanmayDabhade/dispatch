@@ -115,9 +115,18 @@ describe(`importing ${ISSUES} issues through the GraphQL client`, () => {
       localHumanRef: 'human:wyat',
     });
 
+    // What a timer sees of the apply phase: it only ever fires mid-apply if
+    // the import hands the event loop back as it writes.
+    const seenApplying: number[] = [];
+    const tick = setInterval(() => {
+      const progress = sync.status().progress;
+      if (progress?.phase === 'applying') seenApplying.push(progress.done);
+    }, 1);
     const started = Date.now();
     const summary = await sync.importIssues();
     const elapsed = Date.now() - started;
+    clearInterval(tick);
+    expect(seenApplying.some((done) => done < ISSUES)).toBe(true);
 
     expect(summary.errors).toEqual([]);
     expect(summary.created).toBe(ISSUES + 1);
