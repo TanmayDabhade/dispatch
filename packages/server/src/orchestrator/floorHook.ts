@@ -43,12 +43,20 @@ export type FloorHookAction = 'ask' | 'deny';
  *   tool hook nor `canUseTool`; a checkout's own skill ran a force-push that
  *   way. The model can still run the same command through Bash, where the
  *   hook sees it.
+ *
+ * `refusal` is checked ahead of the floor on every call: while it returns a
+ * reason, every call is denied with that reason, floor commands included. The
+ * Claude executor's graceful stop uses it, since the stop has to reach the
+ * agent in the same modes where canUseTool never runs. Checking both in one
+ * callback means the outcome does not depend on how the CLI merges two hooks
+ * that disagree.
  */
 export function floorGuard(
-  action: FloorHookAction
+  action: FloorHookAction,
+  refusal: () => string | null = () => null
 ): Required<Pick<Options, 'hooks' | 'settings'>> {
   return {
-    hooks: { PreToolUse: [{ hooks: [floorHook(action)] }] },
+    hooks: { PreToolUse: [{ hooks: [floorHook(action, refusal)] }] },
     settings: {
       env: { CLAUDE_CODE_SIMPLE: '0' },
       disableSkillShellExecution: true,
@@ -58,23 +66,37 @@ export function floorGuard(
 
 // The PreToolUse callback itself. It sees every tool (no matcher), because a
 // command can reach the shell through any tool whose input carries one.
-function floorHook(action: FloorHookAction): HookCallback {
+function floorHook(
+  action: FloorHookAction,
+  refusal: () => string | null
+): HookCallback {
   return (input) => {
     if (input.hook_event_name !== 'PreToolUse') return noDecision();
+    const refused = refusal();
+    if (refused !== null) return decision('deny', refused);
     const check = floorCheckForToolInput(input.tool_input);
     if (check === null) return noDecision();
-    const output: HookJSONOutput = {
-      hookSpecificOutput: {
-        hookEventName: 'PreToolUse',
-        permissionDecision: action,
-        permissionDecisionReason:
-          action === 'ask'
-            ? `This command matches Dispatch's irreversible-action floor (${check}), so it waits for a human decision.`
-            : `This command matches Dispatch's irreversible-action floor (${check}) and cannot run in this read-only session, which has no human to approve it. If you only meant to search for or read that text, use Grep or Read instead.`,
-      },
-    };
-    return Promise.resolve(output);
+    return decision(
+      action,
+      action === 'ask'
+        ? `This command matches Dispatch's irreversible-action floor (${check}), so it waits for a human decision.`
+        : `This command matches Dispatch's irreversible-action floor (${check}) and cannot run in this read-only session, which has no human to approve it. If you only meant to search for or read that text, use Grep or Read instead.`
+    );
   };
+}
+
+// A PreToolUse decision, with the reason the CLI shows the model.
+function decision(
+  permissionDecision: FloorHookAction,
+  permissionDecisionReason: string
+): Promise<HookJSONOutput> {
+  return Promise.resolve({
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision,
+      permissionDecisionReason,
+    },
+  });
 }
 
 // An empty hook output: no decision, so the CLI carries on exactly as if the

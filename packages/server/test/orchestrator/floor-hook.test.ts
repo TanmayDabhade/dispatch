@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import { floorGuard } from '../../src/orchestrator/floorHook.js';
-import { floorDecision } from './helpers.js';
+import { floorDecision, preToolUse } from './helpers.js';
 
 describe('floorGuard', () => {
   it('asks for a human on every floor command, from any tool carrying a command', async () => {
@@ -56,6 +56,29 @@ describe('floorGuard', () => {
       await floorDecision(hooks, 'Edit', { file_path: 'a.ts' })
     ).toBeUndefined();
     expect(await floorDecision(hooks, 'Read', null)).toBeUndefined();
+  });
+
+  it('denies every call with the refusal reason while there is one, floor or not', async () => {
+    let reason: string | null = null;
+    const hooks = floorGuard('ask', () => reason).hooks;
+    expect(await floorDecision(hooks, 'Edit', { file_path: 'a.ts' })).toBe(
+      undefined
+    );
+    expect(await floorDecision(hooks, 'Bash', { command: 'npm publish' })).toBe(
+      'ask'
+    );
+
+    reason = 'stop now';
+    for (const [toolName, toolInput] of [
+      ['Edit', { file_path: 'a.ts' }],
+      ['Read', null],
+      ['Bash', { command: 'npm publish' }],
+    ] as const) {
+      expect(await preToolUse(hooks, toolName, toolInput)).toMatchObject({
+        permissionDecision: 'deny',
+        permissionDecisionReason: 'stop now',
+      });
+    }
   });
 
   it('gives no decision for events other than PreToolUse', async () => {

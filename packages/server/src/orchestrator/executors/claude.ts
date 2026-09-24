@@ -171,11 +171,13 @@ function experimentOptions(
 /**
  * What a tool call is refused with once the user has asked this run to stop.
  *
- * A graceful stop has exactly one lever against a live Agent SDK session: the
- * `canUseTool` gate. Whatever the agent is doing at the moment Stop is pressed
- * has already been through that gate, so it runs to completion untouched; every
- * NEXT tool call is refused with this text, which the SDK hands back to the
- * model as the tool result. The wording is an instruction rather than a bare
+ * A graceful stop's lever against a live Agent SDK session is the gate every
+ * tool call passes before it runs: the PreToolUse hook (floorGuard's
+ * `refusal`), which fires in every permission mode, and `canUseTool` behind
+ * it. Whatever the agent is doing at the moment Stop is pressed has already
+ * been through that gate, so it runs to completion untouched; every NEXT tool
+ * call is refused with this text, which the SDK hands back to the model as the
+ * tool result. The wording is an instruction rather than a bare
  * refusal for the same reason a human denial's `reason` is passed through: the
  * model reads it, writes its closing summary, and ends the turn, which produces
  * an ordinary `result` message and therefore an ordinary `onFinish` — the run
@@ -611,7 +613,8 @@ export class ClaudeExecutor implements Executor {
   start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
     const pendingApprovals = new Map<string, ApprovalResolver>();
     let interrupted = false;
-    // Set by requestStop(); read by canUseTool below. See STOP_DENIAL_MESSAGE.
+    // Set by requestStop(); read by canUseTool and the PreToolUse hook below.
+    // See STOP_DENIAL_MESSAGE.
     let stopRequested = false;
     // Tools the user said "always, for this run" about. Session-scoped by construction: this
     // Set lives inside start(), so it dies with the run rather than leaking a permission grant
@@ -681,10 +684,11 @@ export class ClaudeExecutor implements Executor {
       resume: opts.resumeSessionId,
       canUseTool,
       // Routes every irreversible call to canUseTool above, which parks it
-      // for a human. Without this the CLI skips canUseTool under
-      // bypassPermissions or on a matching settings allow rule — see
-      // floorGuard.
-      ...floorGuard('ask'),
+      // for a human, and after a stop denies every call outright. Without
+      // this the CLI skips canUseTool under bypassPermissions, on a matching
+      // settings allow rule, or when the auto-mode classifier approves —
+      // see floorGuard.
+      ...floorGuard('ask', () => (stopRequested ? STOP_DENIAL_MESSAGE : null)),
       // Same "query() doesn't auto-load what the CLI does" class of bug as
       // the `.mcp.json` fix directly below: a dispatched run must behave
       // like a human running `claude` in this checkout, not like a bare SDK

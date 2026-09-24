@@ -25,7 +25,7 @@ import type {
   ExecutorEvents,
   NormalizedEntry,
 } from '../../src/orchestrator/types.js';
-import { floorDecision, initGitRepo } from './helpers.js';
+import { floorDecision, initGitRepo, preToolUse } from './helpers.js';
 
 // A no-op ExecutorEvents sink for tests below that only care about what
 // gets *sent* to the SDK's query() (the mcpServers wiring), not about any
@@ -1565,9 +1565,9 @@ describe('carto MCP entry honors carto.enabled', () => {
 });
 
 /**
- * The graceful-stop path against the one lever a live Agent SDK session gives
- * us: the `canUseTool` gate (see STOP_DENIAL_MESSAGE). These drive the gate
- * directly off the `Options` the executor hands to `query()` — the same
+ * The graceful-stop path against the lever a live Agent SDK session gives us:
+ * the PreToolUse hook and the `canUseTool` gate (see STOP_DENIAL_MESSAGE).
+ * These drive both directly off the `Options` the executor hands to `query()` — the same
  * `queryFn` seam the wiring tests above use — because the alternative is a real
  * credentialed Claude session, which CI cannot assume.
  */
@@ -1616,7 +1616,10 @@ describe('ClaudeExecutor graceful stop', () => {
     };
   }
 
-  function startStopped(events: ExecutorEvents = noopEvents) {
+  function startStopped(
+    events: ExecutorEvents = noopEvents,
+    permissionMode = 'acceptEdits'
+  ) {
     let captured: Options | undefined;
     const stub = stubQuery();
     const executor = new ClaudeExecutor((args: { options?: Options }) => {
@@ -1628,7 +1631,7 @@ describe('ClaudeExecutor graceful stop', () => {
         cwd: '/tmp/dispatch-worktree-stop',
         projectRoot: '/tmp/dispatch-project-stop',
         prompt: 'do the thing',
-        permissionMode: 'acceptEdits',
+        permissionMode,
       },
       events
     );
@@ -1691,6 +1694,46 @@ describe('ClaudeExecutor graceful stop', () => {
       expect(result.message).toBe(STOP_DENIAL_MESSAGE);
     } finally {
       stub.release();
+    }
+  });
+
+  // The CLI skips canUseTool under bypassPermissions, on a settings allow rule
+  // and for calls the auto-mode classifier approves; the hook runs in every
+  // mode, so it is what gets the stop to the agent there.
+  it('denies every call from the PreToolUse hook after the stop, in every permission mode', async () => {
+    for (const permissionMode of [
+      'default',
+      'acceptEdits',
+      'auto',
+      'bypassPermissions',
+    ]) {
+      const { run, stub, options } = startStopped(noopEvents, permissionMode);
+      try {
+        expect(
+          await floorDecision(options.hooks, 'Edit', { file_path: 'a.ts' })
+        ).toBeUndefined();
+        expect(
+          await floorDecision(options.hooks, 'Bash', { command: 'bun test' })
+        ).toBeUndefined();
+
+        run.requestStop();
+
+        for (const [toolName, toolInput] of [
+          ['Edit', { file_path: 'a.ts' }],
+          ['Bash', { command: 'bun test' }],
+          // Refused, not parked for a human: the run is winding down.
+          ['Bash', { command: 'git push --force origin main' }],
+        ] as const) {
+          expect(
+            await preToolUse(options.hooks, toolName, toolInput)
+          ).toMatchObject({
+            permissionDecision: 'deny',
+            permissionDecisionReason: STOP_DENIAL_MESSAGE,
+          });
+        }
+      } finally {
+        stub.release();
+      }
     }
   });
 

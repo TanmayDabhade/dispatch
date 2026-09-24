@@ -153,8 +153,24 @@ export async function floorDecision(
   toolName: string,
   toolInput: unknown
 ): Promise<unknown> {
+  if (hooks?.PreToolUse?.[0]?.hooks[0] === undefined) {
+    return 'no PreToolUse hook';
+  }
+  return (await preToolUse(hooks, toolName, toolInput))?.permissionDecision;
+}
+
+// The decision and the reason the CLI shows the model, from the same hook
+// floorDecision reads.
+export async function preToolUse(
+  hooks: Options['hooks'],
+  toolName: string,
+  toolInput: unknown
+): Promise<
+  | { permissionDecision?: unknown; permissionDecisionReason?: unknown }
+  | undefined
+> {
   const hook = hooks?.PreToolUse?.[0]?.hooks[0];
-  if (hook === undefined) return 'no PreToolUse hook';
+  if (hook === undefined) return undefined;
   const output = await hook(
     {
       hook_event_name: 'PreToolUse',
@@ -168,6 +184,12 @@ export async function floorDecision(
     'tu-1',
     { signal: new AbortController().signal }
   );
-  return (output as { hookSpecificOutput?: { permissionDecision?: unknown } })
-    .hookSpecificOutput?.permissionDecision;
+  return (
+    output as {
+      hookSpecificOutput?: {
+        permissionDecision?: unknown;
+        permissionDecisionReason?: unknown;
+      };
+    }
+  ).hookSpecificOutput;
 }
