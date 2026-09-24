@@ -72,6 +72,25 @@ describe('taskQueryString', () => {
   });
 });
 
+describe('ready-queue projections', () => {
+  it('ask the ready route for body-less items or bare ids', async () => {
+    const stub = stubFetch();
+    try {
+      const client = createApiClient('http://example.test');
+      await client.fetchReadyTasks();
+      await client.fetchReadyTaskList();
+      await client.fetchReadyTaskIds();
+      expect(stub.calls.map((c) => c.url)).toEqual([
+        'http://example.test/api/tasks/ready',
+        'http://example.test/api/tasks/ready?fields=meta',
+        'http://example.test/api/tasks/ready?fields=id',
+      ]);
+    } finally {
+      stub.restore();
+    }
+  });
+});
+
 describe('taskDraftToCreateInput', () => {
   it('folds acceptanceCriteria into the description (createTask ignores a separate field)', () => {
     const draft: TaskDraft = {

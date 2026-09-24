@@ -1392,6 +1392,13 @@ export interface ReadinessReading {
   splitProbability: number;
 }
 
+/** One ready task as `GET /api/tasks/ready?fields=id` sends it: the id, plus
+ * its readiness reading when the daemon has judged it. */
+export interface ReadyTaskRef {
+  id: string;
+  readiness?: ReadinessReading;
+}
+
 /** What the triage judged one capture to be — mirrors InboxTriage in
  * packages/server/src/judgments/inboxTriage.ts. */
 export interface InboxTriage {
@@ -2300,8 +2307,15 @@ export interface ApiClient {
   fetchTaskList(filter?: TaskFilter): Promise<TaskListItem[]>;
   /** Each doc carries `readiness` when the daemon has a judgment client. */
   fetchReadyTasks(): Promise<(TaskDoc & { readiness?: ReadinessReading })[]>;
+  /** `fetchReadyTasks` without bodies (`fields=meta`). */
+  fetchReadyTaskList(): Promise<
+    (TaskListItem & { readiness?: ReadinessReading })[]
+  >;
+  /** The ready queue as ids and readings only (`fields=id`), for a client
+   * that already holds the task list. Judges stale tasks like the others. */
+  fetchReadyTaskIds(): Promise<ReadyTaskRef[]>;
   /** The cached readiness readings by task id, for the board — no judging
-   * happens here; `fetchReadyTasks` is what refreshes stale ones. */
+   * happens here; the ready-queue fetches are what refresh stale ones. */
   fetchReadiness(): Promise<Record<string, ReadinessReading>>;
   fetchTask(id: string): Promise<TaskDoc>;
   createTask(input: CreateInput): Promise<TaskDoc>;
@@ -2969,6 +2983,8 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     fetchTaskList: (filter = {}) =>
       request(target, `/api/tasks${taskQueryString(filter, true)}`),
     fetchReadyTasks: () => request(target, '/api/tasks/ready'),
+    fetchReadyTaskList: () => request(target, '/api/tasks/ready?fields=meta'),
+    fetchReadyTaskIds: () => request(target, '/api/tasks/ready?fields=id'),
     fetchReadiness: () => request(target, '/api/tasks/readiness'),
     fetchTask: (id) => request(target, `/api/tasks/${id}`),
     createTask: (input) =>
