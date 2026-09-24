@@ -111,4 +111,49 @@ describe('buildFlightPlan', () => {
       waitingOn: [],
     });
   });
+
+  test('a blocker in review no longer holds its dependent (the server stacks it)', () => {
+    const plan = buildFlightPlan(
+      [
+        child('t-a', { status: 'review' }),
+        child('t-b', { blockedBy: ['t-a'] }),
+      ],
+      opts()
+    );
+    expect(plan.nodes.map((n) => [n.task.meta.id, n.state])).toEqual([
+      ['t-a', 'review'],
+      ['t-b', 'queued'],
+    ]);
+    expect(plan.nodes[1]?.waitingOn).toEqual([]);
+  });
+
+  test('critical work, a sub-plan and a backlog child never read as queued', () => {
+    const plan = buildFlightPlan(
+      [
+        child('t-a', { risk: 'critical' }),
+        child('t-b'),
+        child('t-c', { status: 'draft' }),
+      ],
+      { ...opts(), containerIds: new Set(['t-b']) }
+    );
+    expect(plan.nodes.map((n) => [n.state, n.subPlan])).toEqual([
+      ['blocked', false],
+      ['blocked', true],
+      ['blocked', false],
+    ]);
+    expect(plan.queued).toBe(0);
+  });
+
+  test('uses the waves it is handed instead of recomputing them', () => {
+    const plan = buildFlightPlan(CHAIN, {
+      ...opts(),
+      waves: new Map([
+        ['t-a', 3],
+        ['t-b', 3],
+        ['t-c', 4],
+        ['t-d', 5],
+      ]),
+    });
+    expect(plan.nodes.map((n) => n.wave)).toEqual([3, 3, 4, 5]);
+  });
 });

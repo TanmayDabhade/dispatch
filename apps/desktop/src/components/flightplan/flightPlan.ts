@@ -1,6 +1,8 @@
 import type { StatusModel, TaskListItem } from '@dispatch/core/browser';
 import {
+  hasStatusRole,
   isDoneStatus,
+  isSatisfiedForDispatchStatus,
   isStartedStatus,
   isUnstartedStatus,
 } from '@dispatch/core/browser';
@@ -18,22 +20,34 @@ import { assigneeRef } from '../../lib/taskDisplay';
  * - `done`: landed or dropped — finished either way.
  * - `running`: an agent is on it now.
  * - `teammate`: a person owns it and has started it; the fan-out never auto-picks it.
+ * - `review`: the agent is done and it waits in review or landing — its dependents may
+ *   already start (the server stacks them on its branch).
  * - `queued`: unstarted and unblocked — next when a slot frees.
- * - `blocked`: waiting on something in the container that has not landed.
+ * - `blocked`: waiting on something: a blocker in the container, a spec (backlog), a
+ *   hand dispatch (critical risk), or a failed run.
  */
-type FlightNodeState = 'done' | 'running' | 'teammate' | 'queued' | 'blocked';
+export type FlightNodeState =
+  | 'done'
+  | 'running'
+  | 'teammate'
+  | 'review'
+  | 'queued'
+  | 'blocked';
 
-interface FlightNode {
+export interface FlightNode {
   task: TaskListItem;
   state: FlightNodeState;
   /** 0-based wave (`dagWaves`). */
   wave: number;
-  /** Ids of this child's blockers inside the container that have not finished. */
+  /** Ids of this child's blockers inside the container that still hold its dispatch
+   * (not yet in review, landing or done — the server's rule). */
   waitingOn: string[];
+  /** The child is itself a container: it fans out on its own plan, never this one's. */
+  subPlan: boolean;
 }
 
 /** One wave's tally, for the bar. */
-interface FlightWave {
+export interface FlightWave {
   /** 0-based. */
   index: number;
   total: number;
@@ -60,11 +74,52 @@ export interface FlightPlanOptions {
   model: StatusModel;
   /** The fan-out session's concurrency, or null when nothing is fanning out. */
   concurrency: number | null;
+  /** Ids that are containers themselves (`parentIdsOf`); omitted treats none as one. */
+  containerIds?: ReadonlySet<string>;
+  /** Precomputed waves for `children` — the full view keeps them with its layout. */
+  waves?: ReadonlyMap<string, number>;
 }
 
 // A person (not an agent, not nobody) owns the task.
 function ownedByPerson(task: TaskListItem): boolean {
   return assigneeRef(task.meta.assignee)?.kind === 'human';
+}
+
+/** Each child's wave by id — structure only, so a caller can hold it across state changes. */
+export function flightWaves(
+  children: readonly TaskListItem[]
+): Map<string, number> {
+  return dagWaves(children.map(dagTaskFromDoc));
+}
+
+// One child's state, first match wins: finished, a live run, a teammate's hands, the
+// review/landing roles, then the unstarted ready/blocked split.
+function stateOf(
+  task: TaskListItem,
+  waitingOn: readonly string[],
+  subPlan: boolean,
+  live: boolean,
+  model: StatusModel
+): FlightNodeState {
+  const status = task.meta.status;
+  if (isDoneStatus(status, model)) return 'done';
+  if (live) return 'running';
+  if (ownedByPerson(task) && isStartedStatus(status, model)) return 'teammate';
+  if (
+    hasStatusRole(status, 'review', model) ||
+    hasStatusRole(status, 'landing', model)
+  ) {
+    return 'review';
+  }
+  if (
+    !subPlan &&
+    waitingOn.length === 0 &&
+    task.meta.risk !== 'critical' &&
+    isUnstartedStatus(status, model)
+  ) {
+    return 'queued';
+  }
+  return 'blocked';
 }
 
 /**
@@ -74,30 +129,34 @@ function ownedByPerson(task: TaskListItem): boolean {
  */
 export function buildFlightPlan(
   children: readonly TaskListItem[],
-  { liveTaskIds, model, concurrency }: FlightPlanOptions
+  {
+    liveTaskIds,
+    model,
+    concurrency,
+    containerIds,
+    waves: knownWaves,
+  }: FlightPlanOptions
 ): FlightPlan {
-  const waveOf = dagWaves(children.map(dagTaskFromDoc));
+  const waveOf = knownWaves ?? flightWaves(children);
   const byId = new Map(children.map((c) => [c.meta.id, c]));
   const nodes: FlightNode[] = children.map((task) => {
     const id = task.meta.id;
     const waitingOn = task.meta.blockedBy.filter((blocker) => {
       const b = byId.get(blocker);
       return (
-        b !== undefined && blocker !== id && !isDoneStatus(b.meta.status, model)
+        b !== undefined &&
+        blocker !== id &&
+        !isSatisfiedForDispatchStatus(b.meta.status, model)
       );
     });
-    let state: FlightNodeState;
-    if (isDoneStatus(task.meta.status, model)) state = 'done';
-    else if (liveTaskIds.has(id)) state = 'running';
-    else if (ownedByPerson(task) && isStartedStatus(task.meta.status, model))
-      state = 'teammate';
-    else if (
-      waitingOn.length === 0 &&
-      isUnstartedStatus(task.meta.status, model)
-    )
-      state = 'queued';
-    else state = 'blocked';
-    return { task, state, wave: waveOf.get(id) ?? 0, waitingOn };
+    const subPlan = containerIds?.has(id) ?? false;
+    return {
+      task,
+      state: stateOf(task, waitingOn, subPlan, liveTaskIds.has(id), model),
+      wave: waveOf.get(id) ?? 0,
+      waitingOn,
+      subPlan,
+    };
   });
 
   const waveCount = nodes.reduce((max, n) => Math.max(max, n.wave + 1), 0);
