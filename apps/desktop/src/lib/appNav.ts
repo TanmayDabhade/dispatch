@@ -1,5 +1,7 @@
 import type { ImpactSubjectKind } from '@dispatch/client';
 
+import type { TaskPageMode } from './taskPageMode';
+
 // The whole app's navigation state, modeled as one pure reducer so routing decisions (what
 // the sidebar highlights, what the main pane renders, whether the task peek/run
 // split/command palette are open) are unit-testable without mounting React. App.tsx is the
@@ -42,11 +44,13 @@ export type ProjectView =
   /** The blast-radius browser — `impactSubject` says which file/run/task, or
    * `null` for the picker with nothing preselected. */
   | 'impact'
-  /** One task, full-window, with Details/Chat/Diff tabs — `activeTaskId` says which. */
+  /** One task, full-window, on a mode that follows its state — `activeTaskId` says which. */
   | 'task'
   | 'new-task';
 
-export type TaskTab = 'details' | 'chat' | 'diff' | 'preview';
+/** Which mode the task page shows: `auto` follows the task's state (see
+ * defaultTaskPageMode); `preview` is the run's live app, full page only. */
+export type TaskTab = 'auto' | TaskPageMode | 'preview';
 
 /** One file/run/task to show the blast radius of — what `ImpactView` fetches
  * and what the two "open in Impact" entry points (Review case panel, Git
@@ -166,7 +170,7 @@ export const initialNavState: NavState = {
   activePrNumber: null,
   impactSubject: null,
   activeTaskId: null,
-  taskTab: 'details',
+  taskTab: 'auto',
   newTaskReturnView: 'board',
   paletteOpen: false,
   shortcutsOpen: false,
@@ -180,7 +184,7 @@ export const initialNavState: NavState = {
       activePrNumber: null,
       impactSubject: null,
       activeTaskId: null,
-      taskTab: 'details',
+      taskTab: 'auto',
     },
   ],
   historyIndex: 0,
@@ -442,7 +446,7 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         section: 'project',
         projectView: 'task',
         activeTaskId: action.taskId,
-        taskTab: action.tab ?? 'details',
+        taskTab: action.tab ?? 'auto',
         activeRunId: action.runId ?? null,
         peekTaskId: null,
       };

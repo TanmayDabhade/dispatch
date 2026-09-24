@@ -40,7 +40,7 @@ export function SubtasksBlock({
   title?: string;
   parent: TaskListItem;
   /** The child rows, in the order to draw them. */
-  tasks: TaskListItem[];
+  tasks: readonly TaskListItem[];
   latestRunByTaskId: Map<string, RunMeta>;
   onOpenTask?: (taskId: string) => void;
   /** What the `+` pre-fills; omitted hides the button (a `Blocks` list has no creator). */

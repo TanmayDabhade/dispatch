@@ -101,10 +101,6 @@ const MODE_LABEL: Record<TaskPageMode, string> = {
   plan: 'Plan',
 };
 
-export function taskPageModeLabel(mode: TaskPageMode): string {
-  return MODE_LABEL[mode];
-}
-
 function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
 }

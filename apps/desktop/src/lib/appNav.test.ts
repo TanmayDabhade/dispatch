@@ -244,7 +244,7 @@ describe('navReducer', () => {
     state = navReducer(state, {
       type: 'openTask',
       taskId: 'task-42',
-      tab: 'chat',
+      tab: 'run',
       runId: 'run-42',
     });
 
@@ -259,7 +259,7 @@ describe('navReducer', () => {
     state = navReducer(state, {
       type: 'openTask',
       taskId: 'task-9',
-      tab: 'chat',
+      tab: 'run',
       runId: 'run-7',
     });
 
@@ -523,22 +523,22 @@ describe('openTask', () => {
     const state = navReducer(peeked, {
       type: 'openTask',
       taskId: 't-1',
-      tab: 'chat',
+      tab: 'run',
       runId: 'r-9',
     });
     expect(state.projectView).toBe('task');
     expect(state.activeTaskId).toBe('t-1');
-    expect(state.taskTab).toBe('chat');
+    expect(state.taskTab).toBe('run');
     expect(state.activeRunId).toBe('r-9');
     expect(state.peekTaskId).toBeNull();
   });
 
-  test('defaults tab to details and run to null', () => {
+  test('defaults tab to auto and run to null', () => {
     const state = navReducer(initialNavState, {
       type: 'openTask',
       taskId: 't-1',
     });
-    expect(state.taskTab).toBe('details');
+    expect(state.taskTab).toBe('auto');
     expect(state.activeRunId).toBeNull();
   });
 
@@ -553,7 +553,7 @@ describe('openTask', () => {
     const forward = navReducer(back, { type: 'forward' });
     expect(forward.projectView).toBe('task');
     expect(forward.activeTaskId).toBe('t-1');
-    expect(forward.taskTab).toBe('details');
+    expect(forward.taskTab).toBe('auto');
   });
 
   test('re-opening the identical task/tab/run is not a new destination', () => {
@@ -577,15 +577,15 @@ describe('setTaskTab', () => {
       type: 'openTask',
       taskId: 't-1',
     });
-    const switched = navReducer(opened, { type: 'setTaskTab', tab: 'diff' });
-    expect(switched.taskTab).toBe('diff');
+    const switched = navReducer(opened, { type: 'setTaskTab', tab: 'review' });
+    expect(switched.taskTab).toBe('review');
     expect(switched.history.length).toBe(opened.history.length);
   });
 
   test('is a no-op off the task view', () => {
     const state = navReducer(initialNavState, {
       type: 'setTaskTab',
-      tab: 'diff',
+      tab: 'review',
     });
     expect(state).toBe(initialNavState);
   });

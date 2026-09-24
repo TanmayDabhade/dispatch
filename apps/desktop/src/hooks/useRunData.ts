@@ -2,6 +2,7 @@ import type {
   ApiClient,
   DiffResult,
   ReviewComment,
+  ReviewVerdict,
   RunDetail,
 } from '@dispatch/client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -12,7 +13,7 @@ import { useCallback, useMemo } from 'react';
 // The keys are the ones useDispatchProject uses for the selected run, so both share one
 // cache: `run.log` appends to this detail, and `run.changed`/`review.changed` refresh it.
 
-export function runDetailKey(port: number | undefined, runId: string) {
+function runDetailKey(port: number | undefined, runId: string) {
   return ['dispatch-run', port, runId] as const;
 }
 
@@ -86,6 +87,12 @@ export interface RunReviewThreads {
   resolve: (commentId: string, resolved: boolean) => Promise<void>;
   reply: (commentId: string, body: string) => Promise<void>;
   apply: (commentId: string) => Promise<void>;
+  /** Publishes the staged comments and acts on the verdict. */
+  submit: (
+    verdict: ReviewVerdict,
+    body: string,
+    postToGitHub: boolean
+  ) => Promise<{ published: number; error?: string }>;
 }
 
 const NO_COMMENTS: ReviewComment[] = [];
@@ -158,8 +165,24 @@ export function useRunReviewThreads(
     },
     [ready, refresh]
   );
+  const submit = useCallback<RunReviewThreads['submit']>(
+    async (verdict, body, postToGitHub) => {
+      const { client: c, runId: id } = ready();
+      const res = await c.submitReview(id, verdict, body, postToGitHub);
+      refresh();
+      return { published: res.published, error: res.error };
+    },
+    [ready, refresh]
+  );
   return useMemo(
-    () => ({ comments: data ?? NO_COMMENTS, add, resolve, reply, apply }),
-    [data, add, resolve, reply, apply]
+    () => ({
+      comments: data ?? NO_COMMENTS,
+      add,
+      resolve,
+      reply,
+      apply,
+      submit,
+    }),
+    [data, add, resolve, reply, apply, submit]
   );
 }

@@ -23,13 +23,14 @@ describe('timelineKind', () => {
 test('the timeline is newest first, tags stripped, undated lines last', () => {
   const entries = parseActivity(
     [
-      '- 2026-09-20T10:00:00.000Z dispatched (claude, branch b)',
+      '- 2026-09-20T10:00:00.000Z dispatched (claude, branch b) — human:wyat',
       '- an old undated note',
       '- 2026-09-21T10:00:00.000Z [run r-1] finished: finished — 2 files, $0.30',
     ].join('\n')
   );
+  // The dispatch is credited to a person and still reads as a dispatch.
   expect(taskTimeline(entries).map((i) => [i.kind, i.text])).toEqual([
-    ['finished', 'finished: finished — 2 files, $0.30'],
+    ['finished', 'finished — 2 files, $0.30'],
     ['dispatched', 'dispatched (claude, branch b)'],
     ['note', 'an old undated note'],
   ]);

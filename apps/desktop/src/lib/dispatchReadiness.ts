@@ -129,7 +129,9 @@ export function dispatchReadiness(input: ReadinessInput): DispatchReadiness {
         }
   );
 
-  const overlapping = liveClaims
+  // With no declared writes the writes check already says it runs alone; naming every
+  // live run as an overlap would only repeat that.
+  const overlapping = (writes.length === 0 ? [] : liveClaims)
     .filter(
       (live) =>
         live.taskId !== task.meta.id &&

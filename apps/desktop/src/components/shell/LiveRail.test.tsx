@@ -161,7 +161,7 @@ test('renders a 28px row per live run; clicking opens its task on Chat', () => {
   const row = screen.getByRole('button', { name: 'Do the thing' });
   expect(row.className).toContain('h-7');
   fireEvent.click(row);
-  expect(calls).toEqual([['t-1', 'chat', 'r-1']]);
+  expect(calls).toEqual([['t-1', 'run', 'r-1']]);
 });
 
 test('the section has no tabs and no attention strip any more', () => {

@@ -126,6 +126,19 @@ describe('dispatchReadiness', () => {
     });
   });
 
+  test('no declared writes is one warning, not an overlap with every live run', () => {
+    const result = dispatchReadiness(
+      input(task('t-1'), [], {
+        liveClaims: [{ runId: 'r-9', taskId: 't-9', claims: ['a.ts'] }],
+      })
+    );
+    expect(result.checks.map((c) => c.id)).toEqual([
+      'blockers',
+      'spec',
+      'writes',
+    ]);
+  });
+
   test('its own live run is the one hard stop', () => {
     const result = dispatchReadiness(
       input(task('t-1'), [], {

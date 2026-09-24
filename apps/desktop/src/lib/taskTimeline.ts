@@ -32,9 +32,14 @@ export function timelineKind(text: string): TimelineKind {
   return 'note';
 }
 
-/** An Activity line without its `[run r-…]`/`[epic]` routing tag, which the row shows apart. */
-export function timelineText(text: string): string {
-  return text.replace(/^\[(?:run [^\]]+|epic|plan)\]\s*/, '');
+/** An Activity line as a timeline row reads it: no `[run r-…]`/`[epic]` routing tag, and
+ * a run's `finished: finished — …` said once. */
+function timelineText(text: string): string {
+  return text
+    .replace(/^\[(?:run [^\]]+|epic|plan)\]\s*/, '')
+    .replace(/^finished: (\S+)/, (_, state: string) =>
+      state === 'finished' ? 'finished' : state
+    );
 }
 
 export interface TimelineItem {
@@ -51,7 +56,9 @@ export function taskTimeline(
 ): TimelineItem[] {
   const items = entries.map((entry) => ({
     at: entry.at,
-    kind: entry.kind === 'comment' ? 'note' : timelineKind(entry.text),
+    // Classified by what the line says: a dispatch credited to a person is still a
+    // dispatch, and a free-form note matches no rule.
+    kind: timelineKind(entry.text),
     text: timelineText(entry.text),
     actor: entry.actor,
   }));

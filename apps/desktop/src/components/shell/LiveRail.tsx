@@ -174,7 +174,7 @@ function RunRow({
   return (
     <button
       type="button"
-      onClick={() => onOpenTask(run.taskId, 'chat', run.id)}
+      onClick={() => onOpenTask(run.taskId, 'run', run.id)}
       // The kind is in the name rather than on screen: "review" or "verify" matters
       // when there are two rows for one task, which the title alone can't tell apart.
       aria-label={

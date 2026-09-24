@@ -358,7 +358,7 @@ export function CockpitView({
       }
       onOpenTask(
         item.taskId,
-        isTerminalRunState(run.state) ? 'diff' : 'chat',
+        isTerminalRunState(run.state) ? 'review' : 'run',
         run.id
       );
     },

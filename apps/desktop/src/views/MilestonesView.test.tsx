@@ -711,8 +711,8 @@ test('rows under a session carry a phase pill, the run cost and open findings, a
   fireEvent.click(rowOf('t-1'));
   fireEvent.click(rowOf('t-2'));
   expect(opened).toEqual([
-    ['t-3', 'chat', 'r-9'],
-    ['t-1', 'details', undefined],
+    ['t-3', 'run', 'r-9'],
+    ['t-1', 'auto', undefined],
     ['t-2', undefined, undefined],
   ]);
 });

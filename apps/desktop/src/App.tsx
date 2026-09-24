@@ -1,4 +1,3 @@
-import type { TaskDoc } from '@dispatch/core/browser';
 import { useQuery } from '@tanstack/react-query';
 import { Plus, TriangleAlert } from 'lucide-react';
 import {
@@ -28,7 +27,6 @@ import {
   type NotificationInbox,
   NotificationInboxProvider,
 } from './components/shell/NotificationInboxContext';
-import { AlsoViewing } from './components/shell/PresenceStack';
 import { ProjectSwitcher } from './components/shell/ProjectSwitcher';
 import { QuickCaptureDialog } from './components/shell/QuickCaptureDialog';
 import { SavedViewsProvider } from './components/shell/SavedViewsContext';
@@ -52,11 +50,11 @@ import {
 import { useToasts } from './components/shell/Toasts';
 import { AiTaskComposer } from './components/tasks/AiTaskComposer';
 import { CreateTaskModal } from './components/tasks/CreateTaskModal';
-import type { TaskDetailPanelProps } from './components/tasks/detail';
+import { TaskPage } from './components/tasks/page/TaskPage';
 import {
-  type TaskPaneHost,
-  TaskPaneHostContext,
-} from './components/tasks/TaskPane';
+  type TaskPageHost,
+  TaskPageHostContext,
+} from './components/tasks/page/TaskPageHost';
 import { TaskPeekDialog } from './components/tasks/TaskPeekDialog';
 import { useDataChangedEvents } from './hooks/useDataChangedEvents';
 import { useDeepLinkRouter } from './hooks/useDeepLinkRouter';
@@ -64,7 +62,6 @@ import { useDispatchProject } from './hooks/useDispatchProject';
 import { useGlobalKeyboard } from './hooks/useGlobalKeyboard';
 import { useOverseerSession } from './hooks/useOverseerSession';
 import { useSavedViews } from './hooks/useSavedViews';
-import { useTaskDoc, withBody } from './hooks/useTaskDoc';
 import {
   type ActionFeedbackCache,
   withActionFeedback,
@@ -80,8 +77,6 @@ import { hideArchivedRuns } from './lib/archiveFilter';
 import type { InboxTarget } from './lib/inbox';
 import { projectViewForInboxTarget, unreadCount } from './lib/inbox';
 import { buildInbox } from './lib/inboxQueue';
-import { isLinearConfigured } from './lib/linearSettings';
-import { resolveExecuteModel } from './lib/models';
 import { buildPaletteEntries } from './lib/paletteEntries';
 import { basename } from './lib/projectName';
 import { prNumberFromUrl } from './lib/reviewTarget';
@@ -123,7 +118,6 @@ import { PlansView } from './views/PlansView';
 import { PrReviewView } from './views/PrReviewView';
 import { SessionsHubView } from './views/SessionsHubView';
 import { SettingsView } from './views/SettingsView';
-import { TaskView } from './views/TaskView';
 import { TerminalsView } from './views/TerminalsView';
 import { cn } from '@/lib/utils';
 import { PageHeaderShellContext } from '@/ui/ai/page-header';
@@ -412,9 +406,9 @@ function App() {
   }, []);
 
   // Moves nav state to the newly (re-)dispatched run. The task view is the only run surface
-  // now, and a run that has just been created is live, so it opens on Chat.
+  // now, and a run that has just been created is live, so it opens on Run.
   const onRunDispatched = useCallback((runId: string, taskId: string) => {
-    dispatchNav({ type: 'openTask', taskId, tab: 'chat', runId });
+    dispatchNav({ type: 'openTask', taskId, tab: 'run', runId });
   }, []);
 
   const rawData = useDispatchProject(activeProject?.path ?? null, {
@@ -473,7 +467,7 @@ function App() {
               dispatchNav({
                 type: 'openTask',
                 taskId: id,
-                tab: 'details',
+                tab: 'auto',
                 runId: rawDataRef.current.latestRunByTaskId.get(id)?.id ?? null,
               })
             ),
@@ -509,7 +503,7 @@ function App() {
   // Opens the full task view; unspecified runId resolves to the task's latest
   // run so Chat/Diff have something to show immediately.
   const openTaskView = useCallback(
-    (taskId: string, tab: TaskTab = 'details', runId?: string) => {
+    (taskId: string, tab: TaskTab = 'auto', runId?: string) => {
       const resolved =
         runId ?? rawData.latestRunByTaskId.get(taskId)?.id ?? null;
       dispatchNav({ type: 'openTask', taskId, tab, runId: resolved });
@@ -554,7 +548,7 @@ function App() {
       if (run === undefined) return;
       openTaskView(
         run.taskId,
-        isTerminalRunState(run.state) ? 'diff' : 'chat',
+        isTerminalRunState(run.state) ? 'review' : 'run',
         run.id
       );
     },
@@ -694,99 +688,33 @@ function App() {
     },
   });
 
-  // Resolved from the archived-inclusive list: an archived task's Board card or List row
-  // must still open its detail dialog when the Archived toggle is on. The list carries no
-  // bodies, so the open task's own doc supplies one; `null` until it loads.
-  const peekBody = useTaskDoc(data.client, data.port, navState.peekTaskId);
-  const selectedDoc = withBody(
-    data.tasksIncludingArchived,
-    navState.peekTaskId,
-    peekBody
-  );
-
-  // The task the full task view is showing, resolved the same way as `selectedDoc` — `null`
-  // once a task has been deleted/archived out from under an open view.
-  const activeBody = useTaskDoc(data.client, data.port, navState.activeTaskId);
-  const activeTaskDoc = withBody(
-    data.tasksIncludingArchived,
-    navState.activeTaskId,
-    activeBody
-  );
-
-  // Local consts so narrowing survives the closure (TaskDetailPanel has no `data` prop).
-  // Raw `sendPlanMessage`, not the `data.` wrapper, which answers a different plan slot.
-  const enrichPlanRecord = data.enrichPlanRecord;
-  const enrichClient = data.client;
-  const onAnswerEnrich =
-    enrichClient !== null && enrichPlanRecord !== undefined
-      ? async (message: string) => {
-          await enrichClient.sendPlanMessage(enrichPlanRecord.id, message);
-        }
-      : undefined;
-
-  // The shared `TaskDetailPanel` prop bundle for one task, used by both the peek dialog and
-  // the full task view so the two mounts render identically. Callers only invoke this once
-  // `data.config` has loaded (both call sites already gate on that), so a still-loading
-  // config is a caller bug rather than a state this needs to render around.
-  const buildTaskPanelProps = (doc: TaskDoc): TaskDetailPanelProps => {
-    if (data.config === null) {
-      throw new Error('buildTaskPanelProps requires a loaded project config');
-    }
-    return {
-      doc,
-      defaultModel: resolveExecuteModel(data.config),
-      executors: data.executors ?? undefined,
-      statuses: data.config.statuses,
-      ready: data.readyIds.has(doc.meta.id),
-      run: data.latestRunByTaskId.get(doc.meta.id),
-      runs: data.runs.filter((r) => r.taskId === doc.meta.id),
-      epics: data.epics,
-      tasks: data.tasksIncludingArchived,
-      latestRunByTaskId: data.latestRunByTaskId,
-      onUpdate: data.handleUpdate,
-      onMoveStatus: data.moveTaskStatus,
-      onDispatch: data.handleDispatch,
-      onEnrich: data.handleEnrichTask,
-      // The slot is app-level so a draft survives closing the peek; only hand it over when
-      // it belongs to the task being shown.
-      enrichPlan:
-        data.enrichTaskId === doc.meta.id ? data.enrichPlanRecord : undefined,
-      onDismissEnrich: data.handleDismissEnrich,
-      onAnswerEnrich,
-      onOpenSession: (runId) => openTaskView(doc.meta.id, 'chat', runId),
-      onOpenTask: (taskId) => dispatchNav({ type: 'openPeek', taskId }),
-      linearLinks: data.linearLinks,
-      linearConfigured: isLinearConfigured(data.linearStatus),
-      onPushToLinear: (taskId) => data.handleSyncLinear([taskId]),
-      client: data.client,
-      port: data.port,
-      fixLoopEscalation: data.config.fixLoop.escalation,
-      headerTrailing: (
-        <AlsoViewing
-          viewers={data.presence.filter(
-            (p) => p.viewing === doc.meta.id && p.ref !== data.me
-          )}
-        />
-      ),
-    };
-  };
-
-  // What a `<TaskPane>` (the Cockpit's split view) draws a task with: the same prop
-  // bundle the peek and the task page use. Absent until the config has loaded.
-  const taskPaneHost: TaskPaneHost | null =
+  // What every task page — the Cockpit's split pane, the peek, the full page — draws a
+  // task with: the project and where its links go. Absent until the config has loaded.
+  const rawHandleDispatch = rawData.handleDispatch;
+  const projectRuns = data.runs;
+  const taskPageHost: TaskPageHost | null =
     data.config === null
       ? null
       : {
           projectName: activeProject?.name ?? null,
-          client: data.client,
-          port: data.port,
-          tasks: data.tasksIncludingArchived,
-          panelProps: buildTaskPanelProps,
+          project: data,
+          peekTask: (taskId) => dispatchNav({ type: 'openPeek', taskId }),
+          openTaskPage: (taskId, mode, runId) =>
+            openTaskView(taskId, mode, runId),
+          // Raw, so a refusal reaches the page (which reports it) instead of resolving.
+          dispatchTask: (taskId, executor, model, stayInPlace) =>
+            rawHandleDispatch(taskId, executor, model, { batch: stayInPlace }),
+          openPr: (runId) => {
+            const number = prNumberFromUrl(
+              projectRuns.find((r) => r.id === runId)?.prUrl
+            );
+            if (number !== null) dispatchNav({ type: 'openPr', number });
+          },
+          openImpact: (subject) => dispatchNav({ type: 'openImpact', subject }),
         };
 
   // The Cockpit's `d`: dispatch without following the run (it moves into In flight in
   // place), rejecting on failure so the Cockpit can roll its optimistic move back.
-  const rawHandleDispatch = rawData.handleDispatch;
   const cockpitDispatch = useCallback(
     (taskId: string) =>
       rawHandleDispatch(taskId, undefined, undefined, { batch: true }),
@@ -1068,7 +996,7 @@ function App() {
             <SavedViewsProvider value={savedViews}>
               <PageHeaderShellContext.Provider value={pageHeaderShell}>
                 <PeopleProvider people={data.people} me={data.me}>
-                  <TaskPaneHostContext.Provider value={taskPaneHost}>
+                  <TaskPageHostContext.Provider value={taskPageHost}>
                     {/* Linear's frame: the window is the dark frame, the rail sits directly on it, and
           the content is one rounded panel inset 8px from the top and right with the status
           strip in the 36px below. Views own their inset from here on — the panel has no
@@ -1277,7 +1205,7 @@ function App() {
                                         navState.settingsPage ?? 'general'
                                       }
                                       onOpenTask={(taskId) =>
-                                        openTaskView(taskId, 'details')
+                                        openTaskView(taskId, 'auto')
                                       }
                                     />
                                   )}
@@ -1324,7 +1252,7 @@ function App() {
                                         if (run !== undefined) {
                                           openTaskView(
                                             run.taskId,
-                                            'diff',
+                                            'review',
                                             run.id
                                           );
                                         }
@@ -1351,7 +1279,7 @@ function App() {
                                       projectName={activeProject?.name ?? null}
                                       data={data}
                                       onOpenRun={(taskId, runId) =>
-                                        openTaskView(taskId, 'diff', runId)
+                                        openTaskView(taskId, 'review', runId)
                                       }
                                       onOpenPr={(number) =>
                                         dispatchNav({ type: 'openPr', number })
@@ -1410,21 +1338,18 @@ function App() {
                                   {navState.projectView === 'task' &&
                                     navState.activeTaskId !== null &&
                                     data.config !== null && (
-                                      <TaskView
-                                        projectName={
-                                          activeProject?.name ?? null
-                                        }
+                                      <TaskPage
                                         key={navState.activeTaskId}
-                                        data={data}
+                                        layout="full"
                                         taskId={navState.activeTaskId}
-                                        tab={navState.taskTab}
-                                        activeRunId={navState.activeRunId}
-                                        onSetTab={(tab) =>
+                                        mode={navState.taskTab}
+                                        onModeChange={(tab) =>
                                           dispatchNav({
                                             type: 'setTaskTab',
                                             tab,
                                           })
                                         }
+                                        runId={navState.activeRunId}
                                         onSelectRun={(runId) =>
                                           openTaskView(
                                             navState.activeTaskId,
@@ -1434,34 +1359,6 @@ function App() {
                                         }
                                         onBack={() =>
                                           dispatchNav({ type: 'back' })
-                                        }
-                                        // `undefined` when the task has gone away (deleted/archived out from
-                                        // under an open view) — TaskView's own lookup finds the same absence
-                                        // and renders its "no longer available" state before ever touching
-                                        // this prop.
-                                        panelProps={
-                                          activeTaskDoc !== null
-                                            ? buildTaskPanelProps(activeTaskDoc)
-                                            : undefined
-                                        }
-                                        onViewPr={(runId) => {
-                                          const number = prNumberFromUrl(
-                                            data.runs.find(
-                                              (r) => r.id === runId
-                                            )?.prUrl
-                                          );
-                                          if (number !== null) {
-                                            dispatchNav({
-                                              type: 'openPr',
-                                              number,
-                                            });
-                                          }
-                                        }}
-                                        onOpenImpact={(subject) =>
-                                          dispatchNav({
-                                            type: 'openImpact',
-                                            subject,
-                                          })
                                         }
                                       />
                                     )}
@@ -1595,14 +1492,14 @@ function App() {
                         }}
                       />
 
-                      {selectedDoc !== null && data.config !== null && (
-                        // Remount per task so per-task state (model choice, in-flight dispatch) can't leak across stack-rail navigation.
+                      {navState.peekTaskId !== null && (
+                        // Remount per task so per-task state (a picked run, an in-flight
+                        // dispatch) never leaks across a peek re-pointed at another task.
                         <TaskPeekDialog
-                          projectName={activeProject?.name ?? null}
-                          key={selectedDoc.meta.id}
-                          {...buildTaskPanelProps(selectedDoc)}
+                          key={navState.peekTaskId}
+                          taskId={navState.peekTaskId}
                           onClose={() => dispatchNav({ type: 'closePeek' })}
-                          onExpand={() => openTaskView(selectedDoc.meta.id)}
+                          onExpand={(taskId) => openTaskView(taskId)}
                         />
                       )}
 
@@ -1645,7 +1542,7 @@ function App() {
                         onClose={() => dispatchNav({ type: 'closePalette' })}
                       />
                     </div>
-                  </TaskPaneHostContext.Provider>
+                  </TaskPageHostContext.Provider>
                 </PeopleProvider>
               </PageHeaderShellContext.Provider>
             </SavedViewsProvider>

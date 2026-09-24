@@ -6,7 +6,7 @@ import { DependencyGraph } from '../graph/DependencyGraph';
 
 export interface EpicDagViewProps {
   /** The epic's children — see `DependencyGraph` for how edges outside this set are treated. */
-  tasks: TaskListItem[];
+  tasks: readonly TaskListItem[];
   /** Opens the clicked node's task in the peek/detail dialog. Omitted renders every node as
    * plain, non-interactive text — matching StackRail's `onOpenTask`-optional convention. */
   onOpenTask?: (taskId: string) => void;

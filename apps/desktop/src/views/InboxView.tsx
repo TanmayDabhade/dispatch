@@ -91,10 +91,10 @@ interface InboxViewProps {
   onOpenPr: (number: number) => void;
 }
 
-/** Which task tab a row's click lands on: asks about the diff go to the diff;
- * everything else lands in the conversation. */
+/** Which task mode a row's click lands on: asks about the diff go to the review;
+ * everything else lands in the run's transcript. */
 function tabFor(state: FeedState): TaskTab {
-  return state === 'review' || state === 'ruling' ? 'diff' : 'chat';
+  return state === 'review' || state === 'ruling' ? 'review' : 'run';
 }
 
 // The question an answer row surfaces: the oldest still-unanswered one, or — if every
@@ -267,7 +267,7 @@ export function InboxView({
         openTask(item.row.taskId, tabFor(item.row.state), item.row.runId);
         return;
       case 'landing':
-        openTask(item.row.taskId, 'diff', item.row.runId);
+        openTask(item.row.taskId, 'review', item.row.runId);
         return;
       case 'pr':
         onOpenPr(item.pr.number);
