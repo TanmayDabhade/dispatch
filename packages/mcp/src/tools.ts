@@ -8,6 +8,7 @@ import {
   loadConfig,
   PRIORITIES,
   readyTasks,
+  resolveMilestoneRef,
   statusModelOf,
   TASK_RISKS,
   TaskParseError,
@@ -103,7 +104,8 @@ const taskSummaryShape = {
   status: z.string(),
   kind: z.enum(KINDS as unknown as [string, ...string[]]),
   parent: z.string().nullable(),
-  // The grouping above epics, free-form and `null` when unassigned.
+  // Legacy and read-only: the free-form milestone name old task files carry.
+  // A task's container is `parent`; task_save's `milestone` input sets that.
   milestone: z.string().nullable(),
   blockedBy: z.array(z.string()),
   labels: z.array(z.string()),
@@ -589,12 +591,29 @@ interface TaskSaveInput {
   status?: string;
   kind?: string;
   parent?: string | null;
+  milestone?: string;
   blockedBy?: string[];
   labels?: string[];
   priority?: string;
   assignee?: string;
   description?: string;
   writes?: string[];
+}
+
+// The parent a task_save's `milestone` names, for the local path; through
+// the daemon the raw `milestone` goes along and dispatchd resolves it.
+function localMilestoneParent(
+  store: TaskStore,
+  input: TaskSaveInput,
+  childKind: string
+): string | undefined {
+  if (input.milestone === undefined) return undefined;
+  const resolved = resolveMilestoneRef(store.list(), input.milestone, {
+    childKind,
+    parent: input.parent ?? null,
+  });
+  if (!resolved.ok) throw new ToolError(resolved.error);
+  return resolved.id;
 }
 
 async function taskSave(
@@ -629,14 +648,24 @@ async function taskSave(
       assignee,
       writes: input.writes,
     };
-    const doc =
-      route.via === 'daemon'
-        ? await daemonRequest<TaskDoc>(
-            route.daemon,
-            '/api/tasks',
-            daemonJsonBody('POST', create)
-          )
-        : requireStore(rootDir).create(create);
+    if (route.via === 'daemon') {
+      const doc = await daemonRequest<TaskDoc>(
+        route.daemon,
+        '/api/tasks',
+        daemonJsonBody(
+          'POST',
+          input.milestone === undefined
+            ? create
+            : { ...create, milestone: input.milestone }
+        )
+      );
+      return toolResult({ meta: doc.meta, body: doc.body });
+    }
+    const store = requireStore(rootDir);
+    const parent = localMilestoneParent(store, input, kind ?? 'task');
+    const doc = store.create(
+      parent === undefined ? create : { ...create, parent }
+    );
     return toolResult({ meta: doc.meta, body: doc.body });
   }
 
@@ -644,6 +673,7 @@ async function taskSave(
     title: input.title,
     status,
     parent: input.parent,
+    milestone: input.milestone,
     blockedBy: input.blockedBy,
     labels: input.labels,
     priority,
@@ -679,7 +709,13 @@ async function taskSave(
   if (!hasChange) {
     return toolResult({ meta: existing.meta, body: existing.body });
   }
-  const doc = store.update(input.id, patch);
+  // The store never writes the legacy field: it becomes the parent.
+  const { milestone, ...fields } = patch;
+  const parent =
+    milestone === undefined
+      ? input.parent
+      : localMilestoneParent(store, input, existing.meta.kind);
+  const doc = store.update(input.id, { ...fields, parent });
   return toolResult({ meta: doc.meta, body: doc.body });
 }
 
@@ -1550,7 +1586,8 @@ export function registerDispatchTools(
         'only the provided fields change — omitted fields are untouched, ' +
         'blockedBy/labels/writes are full replacements. kind and description apply on ' +
         'create only; there is no supported way to change kind or rewrite the ' +
-        'description section after creation.',
+        'description section after creation. milestone files the task under ' +
+        'the project or milestone with that title (or id) by setting parent.',
       // Enum-shaped fields (kind, priority, assignee) are typed as plain
       // strings here — deliberately not z.enum — so an invalid value reaches
       // our own validate() below and produces the same CLI-style error
@@ -1561,6 +1598,8 @@ export function registerDispatchTools(
         status: z.string().optional(),
         kind: z.string().optional(),
         parent: z.string().nullable().optional(),
+        // A project or milestone by title or id, resolved to `parent`.
+        milestone: z.string().optional(),
         blockedBy: z.array(z.string()).optional(),
         labels: z.array(z.string()).optional(),
         priority: z.string().optional(),

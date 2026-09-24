@@ -128,6 +128,48 @@ describe('task_save', () => {
     expect(updatedMeta.writes).toEqual(['c.ts']);
   });
 
+  it('files a task under the milestone its title names, by setting parent', async () => {
+    const store = new TaskStore(root);
+    const project = store.create({ title: 'Payments', kind: 'project' });
+    const beta = store.create({
+      title: 'Beta',
+      kind: 'milestone',
+      parent: project.meta.id,
+    });
+    const created = (await client.callTool({
+      name: 'task_save',
+      arguments: { title: 'Refunds', milestone: 'beta' },
+    })) as ToolCallResult;
+    expect(created.isError).toBeUndefined();
+    const meta = created.structuredContent?.meta as {
+      id: string;
+      parent: string | null;
+      milestone: string | null;
+    };
+    expect(meta.parent).toBe(beta.meta.id);
+    expect(meta.milestone).toBeNull();
+
+    const moved = (await client.callTool({
+      name: 'task_save',
+      arguments: { id: meta.id, milestone: 'Payments' },
+    })) as ToolCallResult;
+    const movedMeta = moved.structuredContent?.meta as
+      | { parent: string | null }
+      | undefined;
+    expect(movedMeta?.parent).toBe(project.meta.id);
+  });
+
+  it('reports a milestone no container is titled', async () => {
+    const result = (await client.callTool({
+      name: 'task_save',
+      arguments: { title: 'Refunds', milestone: 'Gamma' },
+    })) as ToolCallResult;
+    expect(result.isError).toBe(true);
+    expect(callToolText(result)).toBe(
+      'invalid milestone: no project or milestone is titled "Gamma" — create it first, or send parent'
+    );
+  });
+
   it('rejects an empty title on create', async () => {
     const result = (await client.callTool({
       name: 'task_save',

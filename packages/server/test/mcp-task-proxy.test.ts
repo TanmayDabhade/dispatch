@@ -295,6 +295,27 @@ describe('task_save through a live daemon', () => {
     expect(meta.updated).toBe(before.meta.updated);
   });
 
+  it('lets the daemon turn a milestone name into the parent', async () => {
+    const beta = await createTaskViaApi('Beta', { kind: 'milestone' });
+    const result = await callTool('task_save', {
+      title: 'in beta',
+      milestone: 'Beta',
+    });
+    const meta = structured(result).meta as { id: string };
+    const fetched = await getTaskViaApi(meta.id);
+    expect(fetched.meta.parent).toBe(beta);
+    expect(fetched.meta.milestone).toBeNull();
+
+    const unknown = await callTool('task_save', {
+      title: 'nowhere',
+      milestone: 'Gamma',
+    });
+    expect(unknown.isError).toBe(true);
+    expect(resultText(unknown)).toContain(
+      'no project or milestone is titled "Gamma"'
+    );
+  });
+
   it('reports an unknown id rather than creating one', async () => {
     const result = await callTool('task_save', {
       id: 't-nope00',
