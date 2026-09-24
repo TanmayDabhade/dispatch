@@ -12,7 +12,7 @@ export function describeSync(status: SyncStatus): string[] {
       case 'files':
         return [
           "Board sync isn't available: it shares boards kept in Dispatch's database, and this project keeps its tasks as files.",
-          'They reach teammates through "Commit task files to the main branch" in Settings → Board sync, or `autoCommit: true` in .dispatch/config.yml.',
+          'They reach teammates through "Commit task files to the main branch". The person running Dispatch for this project turns it on in Settings → Board sync, or with `autoCommit: true` in .dispatch/config.yml.',
         ];
       case 'not-started':
         return [
@@ -22,7 +22,7 @@ export function describeSync(status: SyncStatus): string[] {
       default:
         return [
           'Board sync is off. It shares a database-backed project with teammates.',
-          'Turn it on in Settings → Board sync, or with `sync: { enabled: true }` in .dispatch/config.yml, then restart Dispatch for this project.',
+          'The person running Dispatch for this project can turn it on in Settings → Board sync, or with `sync: { enabled: true }` in .dispatch/config.yml, then restart Dispatch.',
         ];
     }
   }

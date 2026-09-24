@@ -16,6 +16,7 @@ import {
   resolveMappedStateId,
   statusMapCompleteness,
 } from '../../lib/linearSettings';
+import { useSettingsAccess } from './access';
 import { SettingsSwitch } from './fields';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
 import { cn } from '@/lib/utils';
@@ -157,6 +158,9 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
   const [importResult, setImportResult] = useState<LinearSyncSummary | null>(
     null
   );
+  // The key decides whose Linear account the board is sent to, so the daemon
+  // lets only the owner set or remove it; import and sync just use it.
+  const { canOperate } = useSettingsAccess();
 
   if (config === null || linearStatus === null) return null;
 
@@ -237,8 +241,9 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
 
   return (
     <>
-      {/* Connect, disconnect, import and sync use Linear's own routes, open to
-          any teammate, so they stay usable when config is read-only. */}
+      {/* Connect, disconnect, import and sync use Linear's own routes, not
+          config, so the group stays open when config is read-only. Import
+          and sync are any teammate's; the key rows lock to the owner. */}
       <SettingsGroup
         title="Connection"
         hint="Your API key is stored on this machine, never in the repo."
@@ -251,6 +256,7 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
             subtitle={keyNote}
             htmlFor="linear-api-key"
             stacked
+            locked={!canOperate}
             control={
               <>
                 <Input
@@ -259,11 +265,12 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
                   autoComplete="off"
                   placeholder="Linear API key"
                   value={apiKey}
+                  disabled={!canOperate}
                   onChange={(e) => setApiKey(e.target.value)}
                   className="max-w-xs"
                 />
                 <Button
-                  disabled={connecting || apiKey.trim() === ''}
+                  disabled={!canOperate || connecting || apiKey.trim() === ''}
                   onClick={() => void connect()}
                 >
                   {connecting ? 'Connecting…' : 'Connect'}
@@ -287,10 +294,11 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
                 Connected{viewer !== null ? ` as ${viewer.name}` : ''}
               </span>
             }
+            locked={linearStatus.keySource === 'project' && !canOperate}
             control={
               linearStatus.keySource === 'project' ? (
                 <PillButton
-                  disabled={disconnecting}
+                  disabled={!canOperate || disconnecting}
                   onClick={() => void disconnect()}
                 >
                   {disconnecting ? 'Disconnecting…' : 'Disconnect'}
