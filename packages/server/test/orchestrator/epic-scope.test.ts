@@ -195,6 +195,53 @@ describe('a fan-out never picks up a teammate’s task', () => {
     expect(h.dispatched()).toEqual(new Set([dependent]));
   });
 
+  it('skips a task reassigned to a teammate while the batch is mid-dispatch', async () => {
+    const h = makeHarness();
+    const m = h.store.create({ title: 'Milestone', kind: 'milestone' }).meta.id;
+    // Same priority, so the older `first` dispatches first.
+    const first = h.task('first', { parent: m });
+    await sleep(5);
+    const second = h.task('second', { parent: m });
+    const secondBefore = h.store.get(second);
+
+    // A Linear pull reassigns `second` while dispatch(first) is still awaiting.
+    const original = h.orchestrator.dispatchOrResume.bind(h.orchestrator);
+    h.orchestrator.dispatchOrResume = (taskId, request) => {
+      const pending = original(taskId, request);
+      if (taskId === first) {
+        h.store.update(second, { assignee: 'human:sam' });
+        h.events.broadcast({ type: 'task.changed', ids: [second] });
+      }
+      return pending;
+    };
+
+    await h.epics.start(m, { executor: 'fake', concurrency: 4 });
+    await waitFor(() => h.dispatched().has(first));
+    await sleep(50);
+    expect(h.dispatched()).toEqual(new Set([first]));
+    const secondAfter = h.store.get(second);
+    expect(secondAfter?.meta.status).toBe(secondBefore?.meta.status);
+    expect(secondAfter?.meta.assignee).toBe('human:sam');
+  });
+
+  it('refuses a task reassigned to a teammate during its own dispatch', async () => {
+    const h = makeHarness();
+    const m = h.store.create({ title: 'Milestone', kind: 'milestone' }).meta.id;
+    const only = h.task('only', { parent: m });
+    const original = h.orchestrator.dispatchOrResume.bind(h.orchestrator);
+    h.orchestrator.dispatchOrResume = (taskId, request) => {
+      const pending = original(taskId, request);
+      // Lands after the fill's own checks, before the run registers.
+      h.store.update(only, { assignee: 'human:sam' });
+      return pending;
+    };
+
+    await h.epics.start(m, { executor: 'fake', concurrency: 4 });
+    await sleep(50);
+    expect(h.orchestrator.list()).toHaveLength(0);
+    expect(h.store.get(only)?.meta.status).toBe('ready');
+  });
+
   it('does not complete on a teammate’s leftover task alone', async () => {
     const h = makeHarness();
     const m = h.store.create({ title: 'Milestone', kind: 'milestone' }).meta.id;

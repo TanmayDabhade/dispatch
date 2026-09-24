@@ -307,6 +307,20 @@ function refuseExecuteOnDerivedTask(task: TaskDoc): void {
   );
 }
 
+/** A caller's last say on a dispatch: why `task`, as it now stands, must not
+ *  start (a fan-out's teammate rule), or null to go ahead. */
+type DispatchGuard = (task: TaskDoc) => string | null;
+
+// A 409, which the fan-out's fill skips like any lost race.
+function checkGuard(task: TaskDoc, guard: DispatchGuard | undefined): void {
+  const reason = guard?.(task) ?? null;
+  if (reason !== null) {
+    throw new OrchestratorConflictError(
+      `not dispatching ${task.meta.id}: ${reason}`
+    );
+  }
+}
+
 // How a reviewed run was closed out, for refusal messages: a run merged by
 // hand and picked up by the external-merge reconciler reads "merged as
 // <sha>", which tells the operator why their resume was refused far better
@@ -750,13 +764,14 @@ export class Orchestrator {
     // dispatch) defaults to the daemon's human, but an automatic caller
     // (EpicEngine's auto-fill) passes 'none' explicitly — no human pressed
     // dispatch for that specific task.
-    opts: { model?: string; actor?: string } = {}
+    opts: { model?: string; actor?: string; guard?: DispatchGuard } = {}
   ): Promise<RunMeta> {
     const task = this.ctx.store.get(taskId);
     if (task === null) {
       throw new OrchestratorNotFoundError(`task not found: ${taskId}`);
     }
     refuseExecuteOnDerivedTask(task);
+    checkGuard(task, opts.guard);
     const live = this.registry.liveRunForTask(taskId);
     if (live !== undefined) {
       throw new OrchestratorConflictError(
@@ -773,6 +788,10 @@ export class Orchestrator {
     );
 
     const { base: baseBranch, stackParents } = await this.resolveBase(task);
+    // Nothing awaits from here to registration, so this read is the last word.
+    if (opts.guard !== undefined) {
+      checkGuard(this.ctx.store.get(taskId) ?? task, opts.guard);
+    }
     const now = new Date().toISOString();
     const runId = generateRunId(now);
     // Suffixed with the run's own hex tag (stripping its `r-` prefix) so two
@@ -2102,8 +2121,14 @@ export class Orchestrator {
       fresh?: boolean;
       actor?: string;
       defaults?: { executor?: string; model?: string };
+      /** Re-checked on the task as it stands just before a run registers. */
+      guard?: DispatchGuard;
     } = {}
   ): Promise<RunMeta> {
+    if (request.guard !== undefined) {
+      const current = this.ctx.store.get(taskId);
+      if (current !== null) checkGuard(current, request.guard);
+    }
     if (request.fresh !== true) {
       const resumable = this.resumableRunForTask(taskId);
       if (resumable !== null && this.resumeHonoursRequest(resumable, request)) {
@@ -2122,6 +2147,7 @@ export class Orchestrator {
     const meta = await this.dispatch(taskId, executorName, {
       model,
       actor: request.actor,
+      guard: request.guard,
     });
     if (reason !== null) {
       // Logged on the task so a run on the cheaper tier is explainable from

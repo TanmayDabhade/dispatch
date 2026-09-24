@@ -933,6 +933,15 @@ export class EpicEngine {
       clearOfLiveRuns.map((t) => ({ id: t.meta.id, writes: t.meta.writes })),
       slots
     );
+    // The orchestrator re-asks this of the task as it stands right before its
+    // run registers: a Linear pull can hand it to a teammate mid-batch.
+    const guard = (task: TaskDoc): string | null => {
+      const heldBy = holder(task);
+      if (heldBy !== null) return `assigned to ${heldBy}`;
+      return isUnstartedStatus(task.meta.status, statuses)
+        ? null
+        : `status is now ${task.meta.status}`;
+    };
     for (const taskId of batch) {
       try {
         // The epic scheduler's own auto-fill decided this task was next —
@@ -943,10 +952,12 @@ export class EpicEngine {
         await this.ctx.orchestrator.dispatchOrResume(taskId, {
           executor: session.executor,
           actor: 'none',
+          guard,
         });
       } catch (err) {
-        // A task that already picked up a live run outside this session
-        // (raced between the readiness snapshot and here) just gets skipped.
+        // A task that already picked up a live run outside this session, or
+        // that the guard refused (raced between the readiness snapshot and
+        // here), just gets skipped.
         if (err instanceof OrchestratorConflictError) continue;
         throw err;
       }
