@@ -773,7 +773,7 @@ export class Orchestrator {
         cwd: wtPath,
         projectRoot: this.ctx.rootDir,
         runId,
-        prompt: this.promptForTask(task),
+        prompt: this.promptForTask(task, executorName),
         permissionMode: caps.permissionMode,
         maxTurns: caps.maxTurns,
         maxBudgetUsd: caps.maxBudgetUsd,
@@ -4792,7 +4792,7 @@ export class Orchestrator {
     const prompt = [
       continuing
         ? renderContinuationPrompt(meta, newRunId)
-        : `${this.promptForTask(task)}\n\n${renderFreshSessionNotice(meta, newRunId)}`,
+        : `${this.promptForTask(task, executorName)}\n\n${renderFreshSessionNotice(meta, newRunId)}`,
       renderScopeRequestsSection(carried),
     ]
       .filter((section): section is string => section !== null)
@@ -4876,7 +4876,7 @@ export class Orchestrator {
   // exact text is unit-testable independent of the orchestrator. A corrupt
   // parent epic file degrades to "no epic context" rather than failing the
   // whole dispatch — the task being dispatched is still perfectly valid.
-  private promptForTask(task: TaskDoc): string {
+  private promptForTask(task: TaskDoc, executorName: string): string {
     let parentEpic: TaskDoc | null = null;
     if (task.meta.parent !== null) {
       try {
@@ -4893,7 +4893,8 @@ export class Orchestrator {
       task,
       parentEpic,
       ledgerEntries,
-      this.orientationFor(task.meta.id)
+      this.orientationFor(task.meta.id),
+      this.executorProfile(executorName).dispatchMcp !== false
     );
   }
 

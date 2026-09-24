@@ -48,8 +48,21 @@ const DIGEST_PROMPT =
   'conventions a change has to follow that are not obvious from a single ' +
   'file; and anything structurally surprising. Be specific and name real ' +
   'paths — a list of directory names is worthless. Do not describe how to ' +
-  'run tests or lint (the reader is told that separately). Output GitHub ' +
-  'markdown under 400 words, no preamble, starting directly with the content.';
+  'run tests or lint (the reader is told that separately). Return the map ' +
+  'as `markdown`: GitHub markdown under 400 words, no preamble, starting ' +
+  'directly with the content.';
+
+// The map comes back as structured output rather than the final message: in
+// plan mode the last message can be commentary about the map, not the map.
+const DIGEST_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: { markdown: { type: 'string' } },
+  required: ['markdown'],
+  additionalProperties: false,
+};
+
+// Read-only exploration, same set the planner gets.
+const DIGEST_TOOLS = ['Read', 'Grep', 'Glob', 'Bash'];
 
 // Reads the cached digest, treating a missing, unreadable, or shapeless file as
 // "nothing cached yet" rather than throwing — same tolerance as MergeQueue's
@@ -116,9 +129,9 @@ export interface DigestResult {
 export type DigestGenerator = (rootDir: string) => Promise<DigestResult>;
 
 // The real generator: one read-only Agent SDK turn against the main checkout,
-// configured exactly like ClaudePlanner's (plan permissions so no tool
-// executes, and settingSources so the repo's own AGENTS.md/CLAUDE.md ground
-// the answer).
+// configured like ClaudePlanner's: plan permissions, the repo's own
+// AGENTS.md/CLAUDE.md but not the operator's user settings, plugins or MCP
+// connectors, and a json_schema outputFormat for the map itself.
 export async function generateRepoDigest(
   rootDir: string,
   queryFn: typeof query = query
@@ -127,7 +140,12 @@ export async function generateRepoDigest(
     cwd: rootDir,
     permissionMode: 'plan',
     systemPrompt: { type: 'preset', preset: 'claude_code' },
-    settingSources: ['user', 'project', 'local'],
+    settingSources: ['project', 'local'],
+    tools: DIGEST_TOOLS,
+    allowedTools: DIGEST_TOOLS,
+    strictMcpConfig: true,
+    skills: [],
+    outputFormat: { type: 'json_schema', schema: DIGEST_SCHEMA },
   };
   const sdkQuery: Query = openClaudeQuery(queryFn, DIGEST_PROMPT, options);
   try {
@@ -136,8 +154,15 @@ export async function generateRepoDigest(
       if (message.subtype !== 'success') {
         throw new Error(`repo digest failed: ${message.subtype}`);
       }
+      const markdown = (
+        message.structured_output as { markdown?: unknown } | undefined
+      )?.markdown;
+      // Thrown, not cached: the failed-attempt backoff retries it later.
+      if (typeof markdown !== 'string' || markdown.trim() === '') {
+        throw new Error('repo digest produced no map');
+      }
       return {
-        markdown: message.result,
+        markdown,
         costUsd:
           typeof message.total_cost_usd === 'number'
             ? message.total_cost_usd

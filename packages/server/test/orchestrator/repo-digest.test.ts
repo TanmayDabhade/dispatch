@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  generateRepoDigest,
   headCommit,
   readRepoDigest,
   RepoDigestCache,
@@ -424,5 +425,55 @@ describe('RepoDigestCache', () => {
     } finally {
       rmSync(plain, { recursive: true, force: true });
     }
+  });
+});
+
+// One SDK result message for generateRepoDigest, recording the options it got.
+function digestQuery(
+  result: Record<string, unknown>,
+  seen: { options?: Record<string, unknown> } = {}
+) {
+  return ((args: { options: Record<string, unknown> }) => {
+    seen.options = args.options;
+    return (function* () {
+      yield { type: 'result', subtype: 'success', session_id: 's', ...result };
+    })();
+  }) as never;
+}
+
+describe('generateRepoDigest', () => {
+  // A plan-mode session can end on commentary about the map ("the map above is
+  // the deliverable…"); the final message must never be cached as the map.
+  it('returns the structured map, not the final message', async () => {
+    const out = await generateRepoDigest(
+      rootDir,
+      digestQuery({
+        result: 'The orientation map above is the complete deliverable.',
+        structured_output: { markdown: '# Map\n\n- `src/` — the code' },
+        total_cost_usd: 0.5,
+      })
+    );
+    expect(out).toEqual({
+      markdown: '# Map\n\n- `src/` — the code',
+      costUsd: 0.5,
+    });
+  });
+
+  it('throws rather than caching a turn that produced no map', async () => {
+    await expect(
+      generateRepoDigest(rootDir, digestQuery({ result: 'Done.' }))
+    ).rejects.toThrow('repo digest produced no map');
+  });
+
+  it("keeps the operator's settings, plugins and MCP connectors out", async () => {
+    const seen: { options?: Record<string, unknown> } = {};
+    await generateRepoDigest(
+      rootDir,
+      digestQuery({ structured_output: { markdown: 'x' } }, seen)
+    );
+    expect(seen.options?.settingSources).toEqual(['project', 'local']);
+    expect(seen.options?.strictMcpConfig).toBe(true);
+    expect(seen.options?.skills).toEqual([]);
+    expect(seen.options?.outputFormat).toBeDefined();
   });
 });
