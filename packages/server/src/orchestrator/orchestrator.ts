@@ -204,6 +204,9 @@ interface ScopeRequestCarrier {
 // invisible to the Branches surface.
 const DISPATCH_BRANCH_PREFIX = 'dispatch/';
 
+// A commit named in full (SHA-1 or SHA-256), as `git rev-list` prints it.
+const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
 // Minimum gap between opportunistic claims refreshes for one run — see
 // scheduleClaimsRefresh.
 const CLAIMS_REFRESH_COOLDOWN_MS = 5_000;
@@ -395,6 +398,12 @@ export class Orchestrator {
   // When each failed run was last re-surveyed for orphan-landed work — see
   // scheduleOrphanRecheck.
   private readonly lastOrphanCheck = new Map<string, number>();
+  // Per base: the origin tip last seen, and which merge commits it contains.
+  // See pushedMerges.
+  private readonly pushedAtTip = new Map<
+    string,
+    { tip: string; commits: Map<string, boolean> }
+  >();
   private readonly claimsRefreshCooldownMs: number;
   // Pending "this stop has taken too long" timers, keyed by run — see
   // scheduleStopEscalation, and transition() for where they are cleared.
@@ -622,21 +631,68 @@ export class Orchestrator {
   decorateRunsWithPushed(
     runs: RunMeta[]
   ): (RunMeta & { pushedToOrigin?: boolean })[] {
-    const hasOrigin = this.worktrees.hasOriginRemote();
-    const cache = new Map<string, boolean>();
+    const merged = runs.flatMap((run) =>
+      run.reviewAction === 'merge' && run.mergeCommit !== undefined
+        ? [{ commit: run.mergeCommit, base: run.baseBranch }]
+        : []
+    );
+    // Asked only when some run is merged: a board with none spawns no git.
+    const hasOrigin = merged.length > 0 && this.worktrees.hasOriginRemote();
+    const isPushed = hasOrigin ? this.pushedMerges(merged) : () => false;
     return runs.map((run) => {
       if (run.reviewAction !== 'merge' || run.mergeCommit === undefined) {
         return run;
       }
-      if (!hasOrigin) return { ...run, pushedToOrigin: false };
-      const key = `${run.mergeCommit}\0${run.baseBranch}`;
-      let pushed = cache.get(key);
-      if (pushed === undefined) {
-        pushed = this.worktrees.isOnOriginBase(run.mergeCommit, run.baseBranch);
-        cache.set(key, pushed);
-      }
-      return { ...run, pushedToOrigin: pushed };
+      return {
+        ...run,
+        pushedToOrigin: isPushed(run.mergeCommit, run.baseBranch),
+      };
     });
+  }
+
+  /**
+   * Which of these merge commits have reached origin's copy of their base.
+   *
+   * Asked per commit, that is a git process per merged run on every GET
+   * /api/runs: 300 merged runs stalled the daemon for 8s a request. Instead
+   * each base's origin tip is read once, one `git rev-list` names the commits
+   * it does not contain, and the answers are kept for as long as that tip
+   * stands — they cannot change until origin moves.
+   */
+  private pushedMerges(
+    merges: readonly { commit: string; base: string }[]
+  ): (commit: string, base: string) => boolean {
+    const byBase = new Map<string, Set<string>>();
+    for (const { commit, base } of merges) {
+      const commits = byBase.get(base) ?? new Set<string>();
+      commits.add(commit);
+      byBase.set(base, commits);
+    }
+    const answers = new Map<string, Map<string, boolean>>();
+    for (const [base, commits] of byBase) {
+      // No origin/<base> locally: unpushed is the safe answer.
+      const tip = this.worktrees.originBaseTip(base);
+      if (tip === null) continue;
+      let known = this.pushedAtTip.get(base);
+      if (known?.tip !== tip) {
+        known = { tip, commits: new Map() };
+        this.pushedAtTip.set(base, known);
+      }
+      const unknown = [...commits].filter((c) => !known.commits.has(c));
+      const full = unknown.filter((c) => FULL_SHA.test(c));
+      const unpushed =
+        full.length > 0 ? this.worktrees.commitsNotOn(full, tip) : null;
+      for (const commit of unknown) {
+        known.commits.set(
+          commit,
+          unpushed !== null && FULL_SHA.test(commit)
+            ? !unpushed.has(commit)
+            : this.worktrees.isMergedInto(commit, tip)
+        );
+      }
+      answers.set(base, known.commits);
+    }
+    return (commit, base) => answers.get(base)?.get(commit) ?? false;
   }
 
   // Thin passthroughs so MergeQueue can gate its own push-retry/auto-refresh
@@ -3783,12 +3839,18 @@ export class Orchestrator {
     }
     const now = new Date().toISOString();
     const archived: string[] = [];
+    const isPushed = this.pushedMerges(
+      doneTasks.flatMap((task) => {
+        const run = newestMergedByTask.get(task.meta.id);
+        return run?.mergeCommit === undefined
+          ? []
+          : [{ commit: run.mergeCommit, base: run.baseBranch }];
+      })
+    );
     for (const task of doneTasks) {
       const run = newestMergedByTask.get(task.meta.id);
       if (run?.mergeCommit === undefined) continue;
-      if (!this.worktrees.isOnOriginBase(run.mergeCommit, run.baseBranch)) {
-        continue;
-      }
+      if (!isPushed(run.mergeCommit, run.baseBranch)) continue;
       this.ctx.store.update(task.meta.id, { archivedAt: now }, now);
       archived.push(task.meta.id);
     }

@@ -346,6 +346,40 @@ export class WorktreeManager {
     return result.stdout.split('\n').filter((line) => line.trim() !== '');
   }
 
+  // The commit origin's copy of `base` points at; null when there is none.
+  originBaseTip(base: string): string | null {
+    const result = runGit(this.mainRepoDir, [
+      'rev-parse',
+      '--verify',
+      '--quiet',
+      `refs/remotes/origin/${base}^{commit}`,
+    ]);
+    return result.ok ? result.stdout.trim() : null;
+  }
+
+  /**
+   * Which of `commits` are NOT ancestors of `tip`, in one `git rev-list`
+   * rather than a `merge-base --is-ancestor` each: it lists every commit the
+   * given ones reach that `tip` does not, which is short when the commits are
+   * mostly on it. Full SHAs only, since the listing names commits in full.
+   * Null when git refuses (a commit it no longer has).
+   */
+  commitsNotOn(commits: readonly string[], tip: string): Set<string> | null {
+    const listed = new Set<string>();
+    // Chunked so the argument list stays far below the OS limit.
+    for (let i = 0; i < commits.length; i += 2000) {
+      const chunk = commits.slice(i, i + 2000);
+      const result = runGit(this.mainRepoDir, [
+        'rev-list',
+        ...chunk,
+        `^${tip}`,
+      ]);
+      if (!result.ok) return null;
+      for (const line of result.stdout.split('\n')) listed.add(line);
+    }
+    return new Set(commits.filter((commit) => listed.has(commit)));
+  }
+
   // False when origin/<base> doesn't exist locally — unpushed is the safe answer.
   isOnOriginBase(commit: string, base: string): boolean {
     return runGit(this.mainRepoDir, [

@@ -2821,6 +2821,42 @@ describe('Orchestrator.decorateRunsWithPushed', () => {
       orchestrator.decorateRunsWithPushed([reviewed])[0].pushedToOrigin
     ).toBe(true);
   });
+
+  it('tells pushed merges from unpushed ones across many runs at once', async () => {
+    const origin = initBareGitRepo();
+    runGitSync(repo, ['remote', 'add', 'origin', origin]);
+    const { orchestrator, meta } = await dispatchFinishedRun(repo);
+    const commitFile = (name: string): string => {
+      writeFileSync(join(repo, name), `${name}\n`);
+      runGitSync(repo, ['add', name]);
+      runGitSync(repo, ['commit', '-m', name]);
+      return runGitSync(repo, ['rev-parse', 'HEAD']).trim();
+    };
+    const pushed = commitFile('pushed.txt');
+    runGitSync(repo, ['push', 'origin', 'main']);
+    const local = commitFile('local.txt');
+    const merged = (mergeCommit: string): RunMeta => ({
+      ...meta,
+      reviewAction: 'merge',
+      mergeCommit,
+    });
+
+    const decorate = () =>
+      orchestrator
+        .decorateRunsWithPushed([
+          merged(pushed),
+          merged(local),
+          // An abbreviated SHA is checked on its own rather than by listing.
+          merged(pushed.slice(0, 12)),
+        ])
+        .map((run) => run.pushedToOrigin);
+
+    expect(decorate()).toEqual([true, false, true]);
+    // Remembered against origin's tip, and asked again once it moves.
+    expect(decorate()).toEqual([true, false, true]);
+    runGitSync(repo, ['push', 'origin', 'main']);
+    expect(decorate()).toEqual([true, true, true]);
+  });
 });
 
 describe('Orchestrator.freeWorktreeDisk', () => {
