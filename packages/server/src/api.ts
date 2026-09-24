@@ -53,6 +53,7 @@ import {
 import { humanActor } from './api/caller.js';
 import {
   addComment,
+  addLegacyTaskNote,
   deleteComment,
   listComments,
   updateComment,
@@ -722,44 +723,6 @@ async function updateTask(
   }
 
   const doc = ctx.store.update(id, patch);
-  ctx.cache.refresh(ctx.store, [id]);
-  ctx.events.broadcast({ type: 'task.changed', ids: [id] });
-  return jsonResponse(doc);
-}
-
-// Credits whoever actually left the comment. `runId` is how the MCP
-// `task_comment` tool (called BY an agent from inside a run) says "this came
-// from the run I'm in" — mirrors findings.ts's ledgerAuthorFor, but unlike
-// that helper a missing/unresolvable runId here is NEVER the daemon's human:
-// this endpoint has no other caller, so an unresolvable run must still yield
-// 'none' rather than crediting whoever happens to be operating the daemon.
-function commentAuthorFor(ctx: ApiContext, runId: string | null): string {
-  if (runId === null) return 'none';
-  const run = ctx.orchestrator.getRun(runId);
-  return run === null ? 'none' : ctx.actorContext.agentRef(run.meta.executor);
-}
-
-// POST /api/tasks/:id/comment — task_comment's proxy target: an agent's
-// mid-run note appended to the task's Activity log.
-async function createTaskComment(
-  req: Request,
-  ctx: ApiContext,
-  id: string
-): Promise<Response> {
-  if (ctx.store.get(id) === null) {
-    return errorResponse(404, `task not found: ${id}`);
-  }
-  const parsed = await readJsonBody(req);
-  if (!parsed.ok) return parsed.response;
-  const body = parsed.value as { text?: unknown; runId?: unknown };
-  if (typeof body.text !== 'string' || body.text.trim() === '') {
-    return errorResponse(400, 'invalid text: text is required');
-  }
-  const runId = typeof body.runId === 'string' ? body.runId : null;
-  const doc = ctx.store.update(id, {
-    appendActivity: `${new Date().toISOString()} ${body.text}`,
-    activityActor: commentAuthorFor(ctx, runId),
-  });
   ctx.cache.refresh(ctx.store, [id]);
   ctx.events.broadcast({ type: 'task.changed', ids: [id] });
   return jsonResponse(doc);
@@ -5267,7 +5230,7 @@ export async function handleApi(
         segments[2] === 'comment' &&
         method === 'POST'
       ) {
-        return await createTaskComment(req, ctx, segments[1]);
+        return await addLegacyTaskNote(req, ctx, segments[1]);
       }
       if (
         segments.length === 3 &&

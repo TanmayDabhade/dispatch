@@ -96,11 +96,11 @@ export function buildTaskPrompt(
           'and `task_comment` available now — other agents may be dispatched ' +
           'on other tasks in this tracker at the same time, so call `run_list` ' +
           'before assuming you have exclusive access to the repo, and log ' +
-          "meaningful progress with `task_comment`; this task's Activity log " +
+          "meaningful progress with `task_comment`; this task's comment thread " +
           'is the shared record other agents and humans will read.'
       : 'The dispatch MCP server is connected in this session, with ' +
           '`task_comment` available now — log meaningful progress with it; this ' +
-          "task's Activity log is the shared record other agents and humans will " +
+          "task's comment thread is the shared record other agents and humans will " +
           'read. Concurrency is already reported above, so you do not need to ' +
           'open with `run_list`.'
   );

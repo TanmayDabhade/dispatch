@@ -488,7 +488,7 @@ describe('task_comment against a database-backed daemon', () => {
     rmSync(dbRoot, { recursive: true, force: true });
   });
 
-  it('appends through the daemon rather than falling back to a file', async () => {
+  it('comments through the daemon rather than falling back to a file', async () => {
     const created = (await json(
       await fetch(`http://127.0.0.1:${dbHandle.port}/api/tasks`, {
         method: 'POST',
@@ -511,14 +511,17 @@ describe('task_comment against a database-backed daemon', () => {
     );
     expect(result.isError).toBeUndefined();
 
-    const doc = (await json(
+    const thread = (await json(
       await fetch(
-        `http://127.0.0.1:${dbHandle.port}/api/tasks/${created.meta.id}`,
+        `http://127.0.0.1:${dbHandle.port}/api/tasks/${created.meta.id}/comments`,
         {
           headers: { authorization: `Bearer ${dbHandle.tokens.appToken}` },
         }
       )
-    )) as { body: string };
-    expect(doc.body).toContain('progress from the agent');
+    )) as { author: string; body: string }[];
+    // The agent token, with no live run behind the id: the bare agent.
+    expect(thread).toMatchObject([
+      { author: 'agent', body: 'progress from the agent' },
+    ]);
   });
 });

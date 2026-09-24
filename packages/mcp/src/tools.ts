@@ -55,11 +55,10 @@ class ToolError extends Error {}
 //    a worktree path hashes to a different, nonexistent file, so these tools
 //    would always report "dispatchd not running" for a project whose daemon
 //    is, in fact, running.
-//  - task_comment's write: a comment appended to the worktree's copy of a
-//    task file lives on the run's own branch and is discarded the moment
-//    that branch is squash-merged or the worktree is torn down — comments
-//    need to land in the PROJECT's .dispatch/tasks, the one copy that
-//    outlives any single run.
+//  - task_comment's write: a comment written into the worktree lives on the
+//    run's own branch and is discarded the moment that branch is
+//    squash-merged or the worktree is torn down — comments need to land in
+//    the PROJECT's .dispatch, the one copy that outlives any single run.
 // The executor sets DISPATCH_PROJECT_ROOT to the project root whenever it
 // differs from the worktree `--root` it passes; every other tool in this
 // file keeps resolving against the raw `rootDir` argument.
@@ -121,6 +120,18 @@ const taskSummaryShape = {
   created: z.string(),
   updated: z.string(),
 };
+
+// One record of a task's comment thread — mirrors core's TaskComment.
+const commentShape = z.object({
+  id: z.string(),
+  taskId: z.string(),
+  author: z.string(),
+  body: z.string(),
+  created: z.string(),
+  updated: z.string(),
+  parentId: z.string().nullable(),
+  external: z.string().nullable(),
+});
 
 // The daemon's readiness reading — mirrors ReadinessReading in
 // packages/server/src/judgments/readiness.ts.
@@ -518,8 +529,8 @@ async function taskList(
   });
 }
 
-// A task's first-class comment thread (people's discussion, distinct from the
-// Activity log task_comment appends to), oldest first.
+// A task's first-class comment thread (what people and agents said about it,
+// task_comment's notes included), oldest first.
 async function taskComments(rootDir: string, id: string): Promise<ToolOutcome> {
   const route = await resolveStoreRoute(rootDir);
   if (route.via === 'refused') return toolError(route.message);
@@ -767,15 +778,13 @@ async function taskNext(rootDir: string): Promise<ToolOutcome> {
   });
 }
 
-// Appends a task_comment line, crediting whoever actually said it. When
-// there's a live run and a reachable daemon, this proxies `POST
-// /api/tasks/:id/comment` so dispatchd can resolve the calling agent's
-// identity server-side (see api.ts's commentAuthorFor — this call is BY an
-// agent from inside a run, so it must never be credited to the human
-// operating the daemon). Otherwise — no DISPATCH_RUN_ID, no daemon, or the
-// proxy attempt itself failed — this falls back to writing the comment
-// directly via the store, same as task_comment always has, crediting 'none'
-// rather than guessing at an actor it can't actually resolve.
+// Adds a comment to a task's thread (the same records task_comments reads),
+// crediting whoever actually said it. With a reachable daemon this proxies
+// `POST /api/tasks/:id/comments` with the agent token and the calling run's
+// id, so dispatchd credits that run's agent (or the bare `agent` with no
+// run) and never the human operating it. With no daemon it writes through
+// the file comment store directly, crediting 'none' rather than guessing at
+// an actor it cannot resolve.
 async function taskComment(
   rootDir: string,
   args: { id: string; text: string }
@@ -786,9 +795,8 @@ async function taskComment(
   const projRoot = projectRoot(rootDir);
   const runId = callingRunId();
   // Gated on a LIVE DAEMON, not on having a run id. dispatchd is the single
-  // writer whoever is asking, and `POST /api/tasks/:id/comment` takes a
-  // missing runId perfectly well — it credits 'none', exactly what the direct
-  // write below does. Gating on the run id instead meant a plain `dispatch
+  // writer whoever is asking, and the comments route takes a missing runId
+  // perfectly well. Gating on the run id instead meant a plain `dispatch
   // mcp` session (no DISPATCH_RUN_ID) skipped the proxy entirely and then
   // refused with "dispatchd is not running" on a database-backed project
   // while the daemon was, in fact, running.
@@ -802,20 +810,20 @@ async function taskComment(
   // tell a lost write from a rejected one, so the real cause has to survive.
   let proxyFailure: string | null = null;
   if (live !== null) {
+    const path = `/api/tasks/${encodeURIComponent(args.id)}/comments`;
     try {
       // `daemonAuth` is load-bearing, not decoration: every route but
-      // /api/health requires a token, so a request without one 401s and
-      // this silently fell through to the direct write below — losing the
-      // agent attribution the proxy exists to get, on every single call.
-      const doc = await daemonRequest<{ meta: Record<string, unknown> }>(
+      // /api/health requires a token, and the agent token is what makes the
+      // daemon credit an agent rather than its operator.
+      const comment = await daemonRequest<TaskComment>(
         live.info,
-        `/api/tasks/${encodeURIComponent(args.id)}/comment`,
+        path,
         daemonJsonBody(
           'POST',
-          runId === undefined ? { text: args.text } : { text: args.text, runId }
+          runId === undefined ? { body: args.text } : { body: args.text, runId }
         )
       );
-      return toolResult({ meta: doc.meta });
+      return toolResult({ comment });
     } catch (err) {
       // The daemon's own store agrees with what a direct write would find
       // — no point falling through to re-derive the same 404.
@@ -827,7 +835,7 @@ async function taskComment(
       // through to the direct write below, remembering why.
       proxyFailure =
         err instanceof DaemonHttpError
-          ? `dispatchd answered ${err.status} for POST /api/tasks/${args.id}/comment: ${err.message}`
+          ? `dispatchd answered ${err.status} for POST ${path}: ${err.message}`
           : (err as Error).message;
     }
   }
@@ -846,17 +854,17 @@ async function taskComment(
   }
 
   // projectRoot(), not the raw rootDir — see its doc comment above: a
-  // comment written to a run's worktree copy of a task file would be
-  // discarded the moment that run's branch is merged or discarded.
-  const store = requireStore(projRoot);
-  if (store.get(args.id) === null) {
+  // comment written into a run's worktree would be discarded the moment
+  // that run's branch is merged or discarded.
+  if (requireStore(projRoot).get(args.id) === null) {
     return toolError(`task not found: ${args.id}`);
   }
-  const doc = store.update(args.id, {
-    appendActivity: `${new Date().toISOString()} ${args.text}`,
-    activityActor: 'none',
+  const comment = new FileCommentStore(projRoot).add({
+    taskId: args.id,
+    author: 'none',
+    body: args.text,
   });
-  return toolResult({ meta: doc.meta });
+  return toolResult({ comment });
 }
 
 // Proxies `POST /api/runs/:id/inject` — the messaging half of agent
@@ -1621,9 +1629,12 @@ export function registerDispatchTools(
     'task_comment',
     {
       title: 'Comment on a task',
-      description: "Append a timestamped line to a task's Activity log.",
+      description:
+        "Add a comment to a task's thread, credited to you — for progress " +
+        'notes and questions others should see. Read the thread back with ' +
+        'task_comments.',
       inputSchema: { id: z.string(), text: z.string() },
-      outputSchema: { meta: z.object(taskMetaShape) },
+      outputSchema: { comment: commentShape },
     },
     ({ id, text }) => taskComment(rootDir, { id, text })
   );
@@ -1636,20 +1647,7 @@ export function registerDispatchTools(
         "List a task's comment thread (what people said about it), oldest " +
         'first. Replies carry the parentId of the comment they answer.',
       inputSchema: { id: z.string() },
-      outputSchema: {
-        comments: z.array(
-          z.object({
-            id: z.string(),
-            taskId: z.string(),
-            author: z.string(),
-            body: z.string(),
-            created: z.string(),
-            updated: z.string(),
-            parentId: z.string().nullable(),
-            external: z.string().nullable(),
-          })
-        ),
-      },
+      outputSchema: { comments: z.array(commentShape) },
     },
     ({ id }) => wrapAsync(() => taskComments(rootDir, id))
   );
