@@ -141,12 +141,13 @@ function driverUnavailableMessage(driver: SqliteDriver, err: Error): string {
  * Wraps a raw driver handle in the branded SqliteDatabase surface. Both
  * drivers go through here, so there is one adapter rather than one per module.
  *
- * It does exactly two things. It records which module the handle came from
- * (see SqliteDatabase.driver). And it normalizes `Statement.get()`, which is
- * the one behavioural difference that reaches callers: bun:sqlite answers a
- * miss with null where node:sqlite answers undefined, and `queryOne` is typed
- * `Row | undefined`. Left raw, a caller testing `row === undefined` would read
- * a missing task as a present one whose every column is null.
+ * It does two things for correctness, plus a statement cache for speed. It
+ * records which module the handle came from (see SqliteDatabase.driver). And
+ * it normalizes `Statement.get()`, which is the one behavioural difference
+ * that reaches callers: bun:sqlite answers a miss with null where node:sqlite
+ * answers undefined, and `queryOne` is typed `Row | undefined`. Left raw, a
+ * caller testing `row === undefined` would read a missing task as a present
+ * one whose every column is null.
  *
  * What the two drivers were checked to agree on, and therefore what is
  * forwarded untouched: multi-statement `exec` (the DDL below is one script),
@@ -164,6 +165,8 @@ function driverUnavailableMessage(driver: SqliteDriver, err: Error): string {
  * revisit it: both drivers read the same file, so it is a hard error on the
  * Node-run CLI and a silently wrong number on the Bun-run desktop.
  */
+const STATEMENT_CACHE_LIMIT = 256;
+
 function adaptDriver(
   driver: SqliteDriver,
   Raw: RawSqliteDatabaseCtor
@@ -171,18 +174,33 @@ function adaptDriver(
   return class AdaptedSqliteDatabase implements SqliteDatabase {
     readonly driver: SqliteDriver = driver;
     private readonly db: RawSqliteDatabase;
+    // Statements by SQL text, reused rather than re-prepared: preparing parses
+    // and plans the SQL, which the per-row reads of an export or an import paid
+    // thousands of times over. Every call site passes fixed text, so this stays
+    // small; the cap covers any that ever builds SQL per call.
+    private readonly statements = new Map<
+      string,
+      { raw: SqliteStatement; adapted: SqliteStatement }
+    >();
 
     constructor(path: string) {
       this.db = new Raw(path);
     }
 
     prepare(sql: string): SqliteStatement {
+      const cached = this.statements.get(sql);
+      if (cached !== undefined) return cached.adapted;
       const statement = this.db.prepare(sql);
-      return {
+      const adapted: SqliteStatement = {
         all: (...params) => statement.all(...params),
         get: (...params) => statement.get(...params) ?? undefined,
         run: (...params) => statement.run(...params),
       };
+      // Dropped, not finalized: a caller may still hold one it got earlier.
+      if (this.statements.size >= STATEMENT_CACHE_LIMIT)
+        this.statements.clear();
+      this.statements.set(sql, { raw: statement, adapted });
+      return adapted;
     }
 
     exec(sql: string): void {
@@ -190,7 +208,17 @@ function adaptDriver(
     }
 
     close(): void {
+      this.finalizeAll();
       this.db.close();
+    }
+
+    // bun:sqlite statements hold the file open until finalized; node:sqlite's
+    // have no finalize and are released by close().
+    private finalizeAll(): void {
+      for (const { raw } of this.statements.values()) {
+        (raw as { finalize?: () => void }).finalize?.();
+      }
+      this.statements.clear();
     }
   };
 }
