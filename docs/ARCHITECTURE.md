@@ -216,11 +216,18 @@ Codex caveats: it reports token usage but no dollar cost unless
 `executors.codex.pricing` (USD per million input/cached-input/output tokens) is
 configured, so the finish line otherwise says `cost n/a`; it cannot enforce the
 run caps (a system entry notes any that were set); and Codex protects `.git` —
-including a worktree's gitdir — under `workspace-write`, so each commit goes
-through Codex's own approval reviewer under `permissionMode: auto`. The MCP
-servers a person configured for their own interactive Codex in
-`~/.codex/config.toml` are switched off for every dispatched run (a system entry
-names them); the run gets only Dispatch's own server and carto.
+including a worktree's gitdir — under `workspace-write`, so each commit asks for
+approval. To hold the irreversibility floor (`floor.ts`), Codex runs under its
+`untrusted` policy, which asks before every command that is not read-only:
+`default` and `acceptEdits` send those asks to Dispatch's approval flow
+(`acceptEdits` accepts edits inside the worktree itself), `bypassPermissions`
+accepts all but floor commands itself, and `plan` stays read-only. `auto` and
+`dontAsk` are refused, since Codex would answer or skip approvals without
+Dispatch. Two paths still skip the ask: a `~/.codex/rules` rule allowing the
+command, and input typed into a shell the run already started. The MCP servers a
+person configured for their own interactive Codex in `~/.codex/config.toml` are
+switched off for every dispatched run (a system entry names them); the run gets
+only Dispatch's own server and carto.
 
 Notable modules:
 

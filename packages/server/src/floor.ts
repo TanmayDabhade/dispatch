@@ -24,6 +24,10 @@ import type { RunMeta } from './orchestrator/types.js';
  * failure mode must be a needless question, never a silent irreversible act.
  */
 
+/** The command floor's members in plain words, for messages that name them. */
+export const FLOOR_COMMAND_ACTIONS =
+  'a force-push, a publish, a repo-settings change or a remote ref deletion';
+
 // Each pattern scopes its scan to one shell segment (up to `|`, `;`, `&` or a
 // newline) so a marker in a later, unrelated command does not attach to an
 // innocent leading one.
