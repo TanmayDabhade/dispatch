@@ -293,6 +293,22 @@ describe('dispatching from the spec', () => {
     ).not.toBeNull();
   });
 
+  test('a blocker id naming no task does not hold the task back', () => {
+    mount(
+      fakeHost(newLog(), {
+        tasks: [task('t-1', { blockedBy: ['t-gone'], writes: ['src/**'] })],
+        body: BODY,
+      })
+    );
+    expect(
+      document.querySelector('[data-check=blockers]')?.getAttribute('data-tone')
+    ).toBe('warn');
+    expect(screen.queryByText('Waiting on its blockers')).toBeNull();
+    expect(screen.getByRole('button', { name: /^Dispatch/ }).textContent).toBe(
+      'DispatchD'
+    );
+  });
+
   test('d dispatches a ready task from anywhere on the page', async () => {
     const log = newLog();
     mount(fakeHost(log, { tasks: [task('t-1')] }), { layout: 'full' });

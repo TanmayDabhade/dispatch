@@ -1,6 +1,6 @@
 import type { RunMeta } from '@dispatch/client';
 import type { TaskListItem } from '@dispatch/core/browser';
-import { DEFAULT_STATUS_MODEL } from '@dispatch/core/browser';
+import { DEFAULT_STATUS_MODEL, readyTasks } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
 import type { ReadinessInput } from './dispatchReadiness';
@@ -149,9 +149,33 @@ describe('dispatchReadiness', () => {
   });
 });
 
-test('an unknown blocker id still counts as unmet', () => {
+describe('a blocker id naming no task', () => {
   const subject = task('t-1', { blockedBy: ['t-gone'] });
-  expect(
-    unmetBlockers(subject, new Map([['t-1', subject]]), DEFAULT_STATUS_MODEL)
-  ).toEqual(['t-gone']);
+
+  test('never blocks, as in the daemon’s ready queue', () => {
+    const tasks = [subject];
+    expect(readyTasks(tasks).map((t) => t.meta.id)).toEqual(['t-1']);
+    expect(
+      unmetBlockers(subject, new Map([['t-1', subject]]), DEFAULT_STATUS_MODEL)
+    ).toEqual([]);
+  });
+
+  test('reads as a warning, not a hold', () => {
+    const result = dispatchReadiness(input(subject));
+    expect(result.blocked).toBe(false);
+    expect(result.checks[0]).toMatchObject({
+      tone: 'warn',
+      label: '1 blocker not found',
+    });
+  });
+
+  test('an unmet blocker beside it still holds the task back', () => {
+    const result = dispatchReadiness(
+      input(task('t-1', { blockedBy: ['t-gone', 't-2'] }), [task('t-2')])
+    );
+    expect(result.checks[0]).toMatchObject({
+      tone: 'block',
+      taskIds: ['t-2'],
+    });
+  });
 });

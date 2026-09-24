@@ -46,7 +46,8 @@ function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
 }
 
-/** The blockers that still hold `task` back — unknown ids count, since the daemon would wait. */
+/** The blockers that still hold `task` back. An id naming no task never blocks, as in the
+ * daemon's ready queue. */
 export function unmetBlockers(
   task: TaskListItem,
   tasksById: ReadonlyMap<string, TaskListItem>,
@@ -55,10 +56,38 @@ export function unmetBlockers(
   return task.meta.blockedBy.filter((id) => {
     const blocker = tasksById.get(id);
     return (
-      blocker === undefined ||
+      blocker !== undefined &&
       !isSatisfiedForDispatchStatus(blocker.meta.status, model)
     );
   });
+}
+
+function blockersCheck(
+  task: TaskListItem,
+  tasksById: ReadonlyMap<string, TaskListItem>,
+  unmet: string[]
+): ReadinessCheck {
+  if (unmet.length > 0) {
+    return {
+      id: 'blockers',
+      tone: 'block',
+      label: `Waits on ${plural(unmet.length, 'task')}`,
+      taskIds: unmet,
+    };
+  }
+  const missing = task.meta.blockedBy.filter((id) => !tasksById.has(id)).length;
+  if (missing > 0) {
+    return {
+      id: 'blockers',
+      tone: 'warn',
+      label: `${plural(missing, 'blocker')} not found`,
+    };
+  }
+  return {
+    id: 'blockers',
+    tone: 'pass',
+    label: task.meta.blockedBy.length === 0 ? 'No blockers' : 'Blockers done',
+  };
 }
 
 function specCheck(input: ReadinessInput): ReadinessCheck {
@@ -100,21 +129,7 @@ export function dispatchReadiness(input: ReadinessInput): DispatchReadiness {
   const checks: ReadinessCheck[] = [];
 
   const unmet = unmetBlockers(task, tasksById, model);
-  checks.push(
-    unmet.length > 0
-      ? {
-          id: 'blockers',
-          tone: 'block',
-          label: `Waits on ${plural(unmet.length, 'task')}`,
-          taskIds: unmet,
-        }
-      : {
-          id: 'blockers',
-          tone: 'pass',
-          label:
-            task.meta.blockedBy.length === 0 ? 'No blockers' : 'Blockers done',
-        }
-  );
+  checks.push(blockersCheck(task, tasksById, unmet));
 
   checks.push(specCheck(input));
 
