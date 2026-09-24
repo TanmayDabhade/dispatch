@@ -78,6 +78,7 @@ import {
   markRead,
   saveInbox,
 } from '../lib/inbox';
+import { applyLabelColors } from '../lib/labelColor';
 import { resolveExecuteModel } from '../lib/models';
 import { notify, setNotificationKinds } from '../lib/notifications';
 import {
@@ -900,6 +901,7 @@ export function useDispatchProject(
   useEffect(() => {
     setNotificationKinds(config?.notifications.kinds ?? null);
     setActiveStatusModel(config === undefined ? null : statusModelOf(config));
+    applyLabelColors(config?.labels ?? null);
   }, [config]);
   // The sync chip's data source — refetched only on mount and on the
   // `board.sync` WS event below (see the effect's invalidation), not polled.
