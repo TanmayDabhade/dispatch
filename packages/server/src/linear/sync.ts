@@ -8,8 +8,10 @@ import {
   writeProjectCredential,
 } from '@dispatch/core';
 import type {
+  CommentStorePort,
   CredentialSource,
   DispatchConfig,
+  LinearComment,
   LinearConfig,
   LinearInitiative,
   LinearIssue,
@@ -31,6 +33,7 @@ import type {
   LinearWorkspace,
 } from './client.js';
 import { HttpLinearClient } from './client.js';
+import { CommentSync } from './comments.js';
 import type {
   LinearSyncSummary,
   ReconcileMode,
@@ -90,6 +93,8 @@ export interface LinearSyncDeps {
   store: TaskStorePort;
   cache: TaskCache;
   events: EventBus;
+  /** Task comments; absent, comments are not synced. */
+  comments?: CommentStorePort;
   /** A ready-made client, bypassing credential lookup entirely. Tests inject a fake here. */
   client?: LinearClient;
   /** Overridden in tests that need a real client against a stub endpoint. */
@@ -118,21 +123,39 @@ interface Session {
   labels: LinearLabel[];
 }
 
+/** Everything one pass holds while it runs. */
+interface Run {
+  pass: LinearPass;
+  session: Session;
+  state: LinearSyncState;
+  ctx: PassContext;
+  docs: Map<string, TaskDoc>;
+  /** Tasks the pull already reconciled; the push skips them. */
+  touched: Set<string>;
+  comments: CommentSync | null;
+  mayPull: boolean;
+  /** Whether a pair may push: every task, or only those an explicit push names. */
+  pushable: (id: string) => boolean;
+  importing: boolean;
+  taskIds: string[] | undefined;
+}
+
 /** Everything the pull fetched, by kind. */
 interface Fetched {
   initiatives: LinearInitiative[];
   projects: LinearProject[];
   milestones: LinearProjectMilestone[];
   issues: LinearIssue[];
+  comments: LinearComment[];
 }
 
 const DEFAULT_PUSH_DEBOUNCE_MS = 5_000;
 const WORKSPACE_TTL_MS = 5 * 60_000;
 const AUDIT_EVERY_MS = 30 * 60_000;
 
+// A second before the newest record seen: `gt` would otherwise drop any
+// record sharing that exact timestamp, and re-reading one is free.
 function rewind(high: string | null): string | null {
-  // A second before the newest record seen: `gt` would otherwise drop any
-  // record sharing that exact timestamp, and re-reading one is free.
   return high === null ? null : new Date(Date.parse(high) - 1000).toISOString();
 }
 
@@ -147,12 +170,18 @@ function newest(
   return high;
 }
 
+function earliest(a: string | null, b: string | null): string | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return a < b ? a : b;
+}
+
 /**
  * Keeps a project's tasks and one Linear team as two faithful copies: every
  * field both ways, merged field by field against a per-field base in
- * `~/.dispatch/`, with the team's workflow states as the project's statuses
- * and its users as the project's people. Its own writes are recorded and
- * skipped on the next pull.
+ * `~/.dispatch/`, with the team's workflow states as the project's statuses,
+ * its users as the project's people, and issue comments as task comments.
+ * Its own writes are recorded and skipped on the next pull.
  */
 export class LinearSync {
   private readonly deps: LinearSyncDeps;
@@ -173,6 +202,9 @@ export class LinearSync {
   // True while this engine broadcasts its own writes, so they do not schedule
   // a push of what it just wrote.
   private selfBroadcast = false;
+  // Local comment changes since the last pass, by task; folded into the
+  // persisted queue when the next pass starts.
+  private readonly commentChanges = new Map<string, Set<string>>();
   private workspaceCache: {
     teamId: string;
     at: number;
@@ -284,6 +316,16 @@ export class LinearSync {
     this.schedulePush();
   }
 
+  /** Local comments changed (added, edited or removed): queue them for the next push. */
+  notifyCommentChanged(taskId: string, commentIds: readonly string[]): void {
+    if (!this.enabled || this.selfBroadcast) return;
+    if (this.deps.comments === undefined) return;
+    const ids = this.commentChanges.get(taskId) ?? new Set<string>();
+    for (const id of commentIds) ids.add(id);
+    this.commentChanges.set(taskId, ids);
+    this.schedulePush();
+  }
+
   private schedulePush(): void {
     if (this.debounce !== null) clearTimeout(this.debounce);
     const delay = this.deps.pushDebounceMs ?? DEFAULT_PUSH_DEBOUNCE_MS;
@@ -304,7 +346,7 @@ export class LinearSync {
     return this.enqueue({ mode: 'both', taskIds });
   }
 
-  /** Brings the team's whole backlog down: containers, issues, links. */
+  /** Brings the team's whole backlog down: containers, issues, comments, links. */
   async importIssues(): Promise<LinearSyncSummary> {
     return this.enqueue({ mode: 'import' });
   }
@@ -344,10 +386,11 @@ export class LinearSync {
     }
   }
 
-  private broadcastTasks(ids: string[]): void {
+  // Broadcasts this engine's own writes without queueing a push of them.
+  private quietly(send: () => void): void {
     this.selfBroadcast = true;
     try {
-      this.deps.events.broadcast({ type: 'task.changed', ids });
+      send();
     } finally {
       this.selfBroadcast = false;
     }
@@ -369,34 +412,25 @@ export class LinearSync {
       return { ok: false, error: 'no Linear API key configured' };
     }
     const cached = this.workspaceCache;
-    if (
+    const fresh =
       !force &&
       cached !== null &&
       cached.teamId === teamId &&
-      Date.now() - cached.at < WORKSPACE_TTL_MS
-    ) {
-      return {
-        ok: true,
-        session: {
-          client,
-          config,
-          linear: config.linear,
-          teamId,
-          workspace: cached.workspace,
-          labels: cached.labels,
-        },
+      Date.now() - cached.at < WORKSPACE_TTL_MS;
+    if (!fresh) {
+      const workspace = await client.workspace(teamId);
+      if (!workspace.ok) return { ok: false, error: this.note(workspace) };
+      const labels = await client.labels(teamId);
+      if (!labels.ok) return { ok: false, error: this.note(labels) };
+      this.workspaceCache = {
+        teamId,
+        at: Date.now(),
+        workspace: workspace.data,
+        labels: labels.data,
       };
     }
-    const workspace = await client.workspace(teamId);
-    if (!workspace.ok) return { ok: false, error: this.note(workspace) };
-    const labels = await client.labels(teamId);
-    if (!labels.ok) return { ok: false, error: this.note(labels) };
-    this.workspaceCache = {
-      teamId,
-      at: Date.now(),
-      workspace: workspace.data,
-      labels: labels.data,
-    };
+    const current = this.workspaceCache;
+    if (current === null) return { ok: false, error: 'no Linear workspace' };
     return {
       ok: true,
       session: {
@@ -404,8 +438,8 @@ export class LinearSync {
         config,
         linear: config.linear,
         teamId,
-        workspace: workspace.data,
-        labels: labels.data,
+        workspace: current.workspace,
+        labels: current.labels,
       },
     };
   }
@@ -415,27 +449,18 @@ export class LinearSync {
     if (Date.now() < this.backoffUntil) {
       summary.rateLimited = true;
       summary.errors.push('linear rate limit backoff in effect');
-      return this.finish(
-        summary,
-        readLinearState(this.deps.rootDir),
-        null,
-        300
-      );
+      return this.finish(summary, readLinearState(this.deps.rootDir), null);
     }
     const opened = await this.openSession(opts.mode === 'import');
     if (!opened.ok) {
       summary.errors.push(opened.error);
       // Persisted so `status().lastError` explains a misconfiguration, not just the summary.
-      return this.finish(
-        summary,
-        readLinearState(this.deps.rootDir),
-        null,
-        300
-      );
+      return this.finish(summary, readLinearState(this.deps.rootDir), null);
     }
     const session = opened.session;
     const { store, cache, rootDir } = this.deps;
     const state = readLinearState(rootDir);
+    this.takeCommentChanges(state);
     const docs = new Map(store.listSafe().docs.map((d) => [d.meta.id, d]));
     this.foldLegacyWatermark(state, docs);
     const batch = new TaskChangeBatch(
@@ -443,7 +468,9 @@ export class LinearSync {
       cache,
       (id) => docs.get(id),
       (ids) => {
-        this.broadcastTasks(ids);
+        this.quietly(() =>
+          this.deps.events.broadcast({ type: 'task.changed', ids })
+        );
         if (this.progress !== null) {
           this.setProgress({
             ...this.progress,
@@ -497,18 +524,40 @@ export class LinearSync {
       batch,
       note: (failure) => this.note(failure),
     });
+    const changedComments = new Map<string, Set<string>>();
     const direction = session.linear.direction;
     const mayPull = direction !== 'push';
     const mayPush = direction !== 'pull';
-    // An explicit push writes only the tasks it names; others a pull meets
-    // take Linear's changes and keep their own for an ordinary pass.
-    const pushable = (id: string): boolean =>
-      mayPush && (opts.taskIds === undefined || opts.taskIds.includes(id));
-    const touched = new Set<string>();
+    const run: Run = {
+      pass,
+      session,
+      state,
+      ctx,
+      docs,
+      touched: new Set(),
+      comments:
+        this.deps.comments === undefined
+          ? null
+          : new CommentSync({
+              comments: this.deps.comments,
+              client: session.client,
+              state,
+              ctx,
+              pass,
+              changed: changedComments,
+            }),
+      mayPull,
+      // An explicit push writes only the tasks it names; others a pull meets
+      // take Linear's changes and keep their own for an ordinary pass.
+      pushable: (id) =>
+        mayPush && (opts.taskIds === undefined || opts.taskIds.includes(id)),
+      importing: opts.mode === 'import',
+      taskIds: opts.taskIds,
+    };
 
     // A first sync reconciles nothing — no task to create, no link to update — so it
     // takes a cursor instead of scanning a whole team it has no use for.
-    const baselining = state.bootstrappedAt === null && opts.mode !== 'import';
+    const baselining = state.bootstrappedAt === null && !run.importing;
     if (baselining) {
       const now = new Date().toISOString();
       state.cursor = rewind(now);
@@ -517,62 +566,21 @@ export class LinearSync {
       // reconciled yet, so a fresh clone must send none of it over a linked issue.
       this.accountForAll(state, docs);
       state.bootstrappedAt = now;
-      await pass.guarded(() => this.audit(pass, session, state, docs, true));
-    } else if (opts.mode === 'import' || (mayPull && opts.mode === 'both')) {
-      if (opts.mode === 'import')
+      await pass.guarded(() => this.audit(run, true));
+    } else if (run.importing || (mayPull && opts.mode === 'both')) {
+      if (run.importing) {
         this.setProgress({ phase: 'containers', done: 0, total: null });
-      await pass.guarded(() =>
-        this.pull(
-          pass,
-          session,
-          state,
-          ctx,
-          docs,
-          touched,
-          opts.mode === 'import',
-          mayPull,
-          pushable
-        )
-      );
+      }
+      await pass.guarded(() => this.pull(run));
     }
 
-    if (opts.mode !== 'import' && mayPush && !pass.stopped && !baselining) {
-      await pass.guarded(() =>
-        this.push(
-          pass,
-          session,
-          state,
-          ctx,
-          docs,
-          touched,
-          opts.taskIds,
-          mayPull
-        )
-      );
-    } else if (
-      baselining &&
-      opts.taskIds !== undefined &&
-      mayPush &&
-      !pass.stopped
-    ) {
-      await pass.guarded(() =>
-        this.push(
-          pass,
-          session,
-          state,
-          ctx,
-          docs,
-          touched,
-          opts.taskIds,
-          mayPull
-        )
-      );
+    const pushing = baselining ? opts.taskIds !== undefined : !run.importing;
+    if (pushing && mayPush && !pass.stopped) {
+      await pass.guarded(() => this.push(run));
     }
 
     if (!baselining && !pass.stopped) {
-      await pass.guarded(() =>
-        this.audit(pass, session, state, docs, opts.mode === 'import')
-      );
+      await pass.guarded(() => this.audit(run, run.importing));
     }
 
     if (pass.withheld > 0) {
@@ -589,7 +597,26 @@ export class LinearSync {
       this.accountForAll(state, docs);
       state.bootstrappedAt = new Date().toISOString();
     }
+    this.quietly(() => {
+      for (const [taskId, ids] of changedComments) {
+        this.deps.events.broadcast({
+          type: 'comment.changed',
+          taskId,
+          commentIds: [...ids],
+        });
+      }
+    });
     return this.finish(summary, state, batch, session.linear.intervalSec);
+  }
+
+  // Moves comment changes noted since the last pass into the persisted queue.
+  private takeCommentChanges(state: LinearSyncState): void {
+    for (const [taskId, ids] of this.commentChanges) {
+      state.pendingComments[taskId] = [
+        ...new Set([...(state.pendingComments[taskId] ?? []), ...ids]),
+      ];
+    }
+    this.commentChanges.clear();
   }
 
   // Records every task on disk at its current version, so establishing the link leaves
@@ -631,7 +658,7 @@ export class LinearSync {
     summary: LinearSyncSummary,
     state: LinearSyncState,
     batch: TaskChangeBatch | null,
-    intervalSec: number
+    intervalSec = 300
   ): LinearSyncSummary {
     batch?.flush();
     this.progress = null;
@@ -648,59 +675,74 @@ export class LinearSync {
     return summary;
   }
 
-  private async pull(
-    pass: LinearPass,
-    session: Session,
-    state: LinearSyncState,
-    ctx: PassContext,
-    docs: Map<string, TaskDoc>,
-    touched: Set<string>,
-    importing: boolean,
-    mayPull: boolean,
-    pushable: (id: string) => boolean
-  ): Promise<void> {
+  private async pull(run: Run): Promise<void> {
+    const { pass, session, state, importing } = run;
     const { client, teamId } = session;
     const summary = pass.summary;
-    // An idle poll is one cheap probe. When anything moved, every kind is
+    let records = true;
+    let comments = true;
+    // An idle poll is one cheap probe. When any record moved, every kind is
     // read against the same cursor, so no kind's change can fall behind it.
-    if (!importing && state.cursor !== null) {
-      // The cursor sits a second behind the newest record seen; the probe asks
+    const probeFrom = earliest(state.cursor, state.commentCursor);
+    if (!importing && probeFrom !== null) {
+      // Cursors sit a second behind the newest record seen; the probe asks
       // about anything after that record itself, or an idle team never looks idle.
-      const seen = new Date(Date.parse(state.cursor) + 1000).toISOString();
+      const seen = new Date(Date.parse(probeFrom) + 1000).toISOString();
       const probe = pass.take(await client.probe(teamId, seen));
       if (probe === null) return;
-      const moved =
+      records =
         probe.issues || probe.projects || probe.milestones || probe.initiatives;
-      if (!moved) return;
+      comments = probe.comments;
+      if (!records && !comments) return;
     }
-    const since = importing ? null : state.cursor;
-    const projects = pass.take(await client.projects(teamId, since));
-    const milestones = pass.take(await client.projectMilestones(teamId, since));
-    const initiatives = pass.take(await client.initiatives(since));
-    if (importing) this.setProgress({ phase: 'issues', done: 0, total: null });
-    const page = pass.take(
-      await client.issuesUpdatedSince(teamId, since, (n) => {
-        if (importing)
-          this.setProgress({ phase: 'issues', done: n, total: null });
-      })
-    );
     const fetched: Fetched = {
-      initiatives: initiatives?.nodes ?? [],
-      projects: projects?.nodes ?? [],
-      milestones: milestones?.nodes ?? [],
-      issues: page?.issues ?? [],
+      initiatives: [],
+      projects: [],
+      milestones: [],
+      issues: [],
+      comments: [],
     };
-    const pages: (LinearPage<unknown> | null)[] = [
-      projects,
-      milestones,
-      initiatives,
-    ];
-    const containersOk = pages.every((p) => p !== null && !p.truncated);
-    const issuesOk = page !== null;
-    const issuesTruncated = page?.truncated ?? false;
+    const since = importing ? null : state.cursor;
+    let recordsOk = true;
+    let issuesTruncated = false;
+    if (records) {
+      const projects = pass.take(await client.projects(teamId, since));
+      const milestones = pass.take(
+        await client.projectMilestones(teamId, since)
+      );
+      const initiatives = pass.take(await client.initiatives(since));
+      if (importing)
+        this.setProgress({ phase: 'issues', done: 0, total: null });
+      const page = pass.take(
+        await client.issuesUpdatedSince(teamId, since, (n) => {
+          if (importing) {
+            this.setProgress({ phase: 'issues', done: n, total: null });
+          }
+        })
+      );
+      fetched.initiatives = initiatives?.nodes ?? [];
+      fetched.projects = projects?.nodes ?? [];
+      fetched.milestones = milestones?.nodes ?? [];
+      fetched.issues = page?.issues ?? [];
+      const pages: (LinearPage<unknown> | null)[] = [
+        projects,
+        milestones,
+        initiatives,
+      ];
+      recordsOk =
+        page !== null && pages.every((p) => p !== null && !p.truncated);
+      issuesTruncated = page?.truncated ?? false;
+    }
+    let commentPage: LinearPage<LinearComment> | null = null;
+    if (comments && run.comments !== null) {
+      commentPage = pass.take(
+        await client.comments(teamId, importing ? null : state.commentCursor)
+      );
+      fetched.comments = commentPage?.nodes ?? [];
+    }
 
-    await this.fillReferences(pass, session, ctx, fetched);
-    await this.learnUsers(session, ctx, fetched);
+    await this.fillReferences(run, fetched);
+    await this.learnUsers(run, fetched);
 
     if (importing) {
       this.setProgress({
@@ -709,33 +751,28 @@ export class LinearSync {
         total: fetched.issues.length + fetched.projects.length,
       });
     }
-    await this.applyContainers(
-      pass,
-      ctx,
-      docs,
-      touched,
-      fetched,
-      mayPull,
-      pushable
-    );
-    await this.applyIssues(
-      pass,
-      session,
-      state,
-      ctx,
-      docs,
-      touched,
-      fetched.issues,
-      mayPull,
-      pushable
-    );
+    await this.applyContainers(run, fetched);
+    await this.applyIssues(run, fetched.issues);
+    if (run.comments !== null && commentPage !== null) {
+      // An import read every comment of the team, so a twin missing from it
+      // was deleted in Linear.
+      const complete = importing
+        ? new Set(fetched.issues.map((i) => i.id))
+        : new Set<string>();
+      await run.comments.pull(fetched.comments, complete);
+      if (!commentPage.truncated) {
+        state.commentCursor = rewind(
+          newest(fetched.comments, state.commentCursor)
+        );
+      }
+    }
 
     if (issuesTruncated) {
       // The cursor must not move past issues this walk never reached.
       summary.errors.push(
         'linear returned more issues than one sync could page through; cursor held'
       );
-    } else if (issuesOk && containersOk) {
+    } else if (records && recordsOk) {
       state.cursor = rewind(
         newest(
           [
@@ -753,12 +790,8 @@ export class LinearSync {
   // A pulled record naming a container this project has never seen (a delta
   // after the link, or a project added to an initiative) brings that
   // container, and its own parents, down too.
-  private async fillReferences(
-    pass: LinearPass,
-    session: Session,
-    ctx: PassContext,
-    fetched: Fetched
-  ): Promise<void> {
+  private async fillReferences(run: Run, fetched: Fetched): Promise<void> {
+    const { pass, session, ctx } = run;
     const known = (id: string | null) =>
       id === null || ctx.taskByRemote.has(id);
     const have = new Set([
@@ -778,12 +811,14 @@ export class LinearSync {
         await session.client.projectMilestones(session.teamId, null)
       );
       const byId = new Map(fetched.projects.map((p) => [p.id, p]));
-      for (const p of projects?.nodes ?? [])
+      for (const p of projects?.nodes ?? []) {
         if (!byId.has(p.id)) byId.set(p.id, p);
+      }
       fetched.projects = [...byId.values()];
       const msById = new Map(fetched.milestones.map((m) => [m.id, m]));
-      for (const m of milestones?.nodes ?? [])
+      for (const m of milestones?.nodes ?? []) {
         if (!msById.has(m.id)) msById.set(m.id, m);
+      }
       fetched.milestones = [...msById.values()];
     }
     const initiativeIds = new Set(
@@ -807,22 +842,23 @@ export class LinearSync {
 
   // Users a record names who are not team members (a guest, someone from
   // another team) are looked up and added to the people registry, so an
-  // assignment never silently maps to nobody.
+  // assignment or a comment never silently maps to nobody.
   private async learnUsers(
-    session: Session,
-    ctx: PassContext,
-    fetched: Fetched
+    run: Pick<Run, 'session' | 'ctx'>,
+    fetched: Partial<Fetched>
   ): Promise<void> {
+    const { session, ctx } = run;
     const ids = new Set<string>();
     const want = (id: string | null) => {
       if (id !== null && !ctx.people.refByUser.has(id)) ids.add(id);
     };
-    for (const i of fetched.issues) {
+    for (const i of fetched.issues ?? []) {
       want(i.assigneeId);
       want(i.creatorId);
     }
-    for (const p of fetched.projects) want(p.leadId);
-    for (const i of fetched.initiatives) want(i.ownerId);
+    for (const p of fetched.projects ?? []) want(p.leadId);
+    for (const i of fetched.initiatives ?? []) want(i.ownerId);
+    for (const c of fetched.comments ?? []) want(c.userId);
     if (ids.size === 0) return;
     const users = await session.client.users([...ids]);
     if (!users.ok || users.data.length === 0) return;
@@ -840,15 +876,8 @@ export class LinearSync {
     }
   }
 
-  private async applyContainers(
-    pass: LinearPass,
-    ctx: PassContext,
-    docs: Map<string, TaskDoc>,
-    touched: Set<string>,
-    fetched: Fetched,
-    mayPull: boolean,
-    pushable: (id: string) => boolean
-  ): Promise<void> {
+  private async applyContainers(run: Run, fetched: Fetched): Promise<void> {
+    const { pass, ctx, docs, touched, mayPull, pushable } = run;
     const ready = ctx.model.roles.ready;
     // Created first, all of them, so every reference among them resolves.
     const pairs: [
@@ -896,17 +925,8 @@ export class LinearSync {
     }
   }
 
-  private async applyIssues(
-    pass: LinearPass,
-    session: Session,
-    state: LinearSyncState,
-    ctx: PassContext,
-    docs: Map<string, TaskDoc>,
-    touched: Set<string>,
-    issues: LinearIssue[],
-    mayPull: boolean,
-    pushable: (id: string) => boolean
-  ): Promise<void> {
+  private async applyIssues(run: Run, issues: LinearIssue[]): Promise<void> {
+    const { pass, session, state, ctx, docs, touched, mayPull, pushable } = run;
     const sorted = [...issues].sort((a, b) =>
       a.updatedAt.localeCompare(b.updatedAt)
     );
@@ -942,16 +962,8 @@ export class LinearSync {
     }
   }
 
-  private async push(
-    pass: LinearPass,
-    session: Session,
-    state: LinearSyncState,
-    ctx: PassContext,
-    docs: Map<string, TaskDoc>,
-    touched: Set<string>,
-    taskIds: string[] | undefined,
-    mayPull: boolean
-  ): Promise<void> {
+  private async push(run: Run): Promise<void> {
+    const { pass, session, state, docs, touched, taskIds, mayPull } = run;
     const explicit = taskIds !== undefined;
     const summary = pass.summary;
     // A derived task's description is the artifact's own prose (a PR body),
@@ -987,12 +999,7 @@ export class LinearSync {
         );
       } else {
         const byId = new Map(fresh.map((i) => [i.id, i]));
-        await this.learnUsers(session, ctx, {
-          issues: fresh,
-          projects: [],
-          milestones: [],
-          initiatives: [],
-        });
+        await this.learnUsers(run, { issues: fresh });
         for (const doc of linked) {
           const ref = parseLinearExternal(doc.meta.external);
           if (ref?.entity !== 'issue') continue;
@@ -1016,7 +1023,7 @@ export class LinearSync {
       return entity !== undefined && entity !== 'issue';
     });
     if (containers.length > 0) {
-      await this.pushContainers(pass, session, docs, containers, {
+      await this.pushContainers(run, containers, {
         mayPull,
         mayPush: true,
         explicit,
@@ -1035,16 +1042,32 @@ export class LinearSync {
         continue;
       }
       await pass.createRemote(current);
+      // A task that just got its issue takes its comments along.
+      const now = docs.get(current.meta.id);
+      if (
+        run.comments !== null &&
+        parseLinearExternal(now?.meta.external)?.entity === 'issue'
+      ) {
+        await run.comments.pushAll(current.meta.id);
+        delete state.pendingComments[current.meta.id];
+      }
+    }
+
+    if (run.comments !== null) {
+      for (const [taskId, ids] of Object.entries(state.pendingComments)) {
+        const retry = await run.comments.push(taskId, ids);
+        if (retry.length > 0) state.pendingComments[taskId] = retry;
+        else delete state.pendingComments[taskId];
+      }
     }
   }
 
   private async pushContainers(
-    pass: LinearPass,
-    session: Session,
-    docs: Map<string, TaskDoc>,
+    run: Run,
     containers: TaskDoc[],
     mode: ReconcileMode
   ): Promise<void> {
+    const { pass, session, docs } = run;
     const { client, teamId } = session;
     const [projects, milestones, initiatives] = [
       pass.take(await client.projects(teamId, null)),
@@ -1087,13 +1110,8 @@ export class LinearSync {
    * the team: one moved elsewhere is unlinked, one deleted is archived and
    * unlinked. The same walk refreshes every chip's identifier.
    */
-  private async audit(
-    pass: LinearPass,
-    session: Session,
-    state: LinearSyncState,
-    docs: Map<string, TaskDoc>,
-    force: boolean
-  ): Promise<void> {
+  private async audit(run: Run, force: boolean): Promise<void> {
+    const { pass, session, state, docs } = run;
     const due =
       force ||
       state.lastAuditAt === null ||

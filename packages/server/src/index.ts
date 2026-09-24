@@ -1533,9 +1533,13 @@ async function bootServer(
     events,
     client: opts.linearClient,
     localHumanRef: actorContext.humanRef,
+    comments: commentStore,
   });
   const unsubscribeLinear = events.subscribe((event) => {
     if (event.type === 'task.changed') linearSync.notifyTaskChanged();
+    if (event.type === 'comment.changed') {
+      linearSync.notifyCommentChanged(event.taskId, event.commentIds);
+    }
   });
   linearSync.start();
 
