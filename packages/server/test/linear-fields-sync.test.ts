@@ -1,8 +1,10 @@
 import {
   getSection,
+  labelRef,
   loadConfig,
   TaskStore,
   updateConfig,
+  withLabelColor,
 } from '@dispatch/core';
 import type { LinearIssue } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
@@ -308,6 +310,93 @@ describe('labels', () => {
     await sync.syncOnce();
 
     expect(store.get(id)?.meta.labels).toEqual([]);
+  });
+});
+
+describe('label registry', () => {
+  function registry() {
+    return (loadConfig(root).labels ?? []).map((l) => [
+      labelRef(l),
+      l.color,
+      l.external,
+    ]);
+  }
+
+  function recolor(ref: string, color: string): void {
+    updateConfig(root, {
+      labels: withLabelColor(loadConfig(root).labels ?? [], ref, color),
+    });
+  }
+
+  it('registers the team’s labels with their colors on the first sync', async () => {
+    fake.labelList = [
+      { id: 'l-web', name: 'web', color: '#5e6ad2', teamId: 'team-1' },
+      {
+        id: 'l-bug',
+        name: 'Bug',
+        color: '#eb5757',
+        group: 'Type',
+        teamId: null,
+      },
+    ];
+    await makeSync().syncOnce();
+    expect(registry()).toEqual([
+      ['web', '#5e6ad2', 'linear:l-web'],
+      ['Type/Bug', '#eb5757', 'linear:l-bug'],
+    ]);
+  });
+
+  it('pushes a local recolor once, and pulls a color Linear changed', async () => {
+    fake.labelList = [
+      { id: 'l-web', name: 'web', color: '#5e6ad2', teamId: 'team-1' },
+    ];
+    const sync = makeSync();
+    await sync.syncOnce();
+    recolor('web', '#0f783c');
+
+    await sync.syncOnce();
+    expect(fake.calls.filter((c) => c === 'updateLabel')).toHaveLength(1);
+    expect(fake.labelList[0]?.color).toBe('#0f783c');
+    // The next pass reads the label back as written, not as first cached.
+    await sync.syncOnce();
+    expect(fake.calls.filter((c) => c === 'updateLabel')).toHaveLength(1);
+    expect(registry()).toEqual([['web', '#0f783c', 'linear:l-web']]);
+
+    fake.labelList = [{ ...fake.labelList[0], color: '#f2c94c' }];
+    // An import refreshes the cached workspace, labels included.
+    await sync.importIssues();
+    expect(registry()).toEqual([['web', '#f2c94c', 'linear:l-web']]);
+  });
+
+  it('retries a recolor Linear refused', async () => {
+    fake.labelList = [
+      { id: 'l-web', name: 'web', color: '#5e6ad2', teamId: 'team-1' },
+    ];
+    const sync = makeSync();
+    await sync.syncOnce();
+    recolor('web', '#0f783c');
+    fake.failures.updateLabel = {
+      ok: false,
+      kind: 'graphql',
+      error: 'not allowed',
+    };
+    await sync.syncOnce();
+    expect(readLinearState(root).labelColors['l-web']).toBe('#5e6ad2');
+    delete fake.failures.updateLabel;
+    await sync.syncOnce();
+    expect(fake.labelList[0]?.color).toBe('#0f783c');
+  });
+
+  it('creates a missing label in the registry’s color', async () => {
+    const { id, sync } = await linkedPair();
+    recolor('perf', '#26b5ce');
+    edit(id, { labels: ['web', 'perf'] });
+
+    await sync.syncOnce();
+
+    expect(fake.labelList.find((l) => l.name === 'perf')?.color).toBe(
+      '#26b5ce'
+    );
   });
 });
 

@@ -3,6 +3,7 @@
 // mapping context every field projection reads.
 import {
   defaultStatusRoles,
+  labelColorIndex,
   labelKey,
   loadConfig,
   migrateStatus,
@@ -13,11 +14,13 @@ import {
   statusesFromWorkflowStates,
   statusModelOf,
   statusRenames,
+  syncLinearLabels,
   syncLinearPeople,
   updateConfig,
 } from '@dispatch/core';
 import type {
   DispatchConfig,
+  LabelColorPush,
   LinearLabel,
   LinearMapContext,
   LinearProjectStatus,
@@ -39,6 +42,8 @@ export interface PassContext extends LinearMapContext {
   taskByRemote: Map<string, string>;
   labels: Map<string, LinearLabel>;
   labelsById: Map<string, LinearLabel>;
+  /** The label registry's colors by lowercased ref, for labels a push creates. */
+  labelColors: ReadonlyMap<string, string>;
 }
 
 function sameDefinitions(
@@ -167,6 +172,34 @@ export function syncPeople(
   };
 }
 
+/**
+ * Folds the linked teams' labels into `labels:` and settles colors against
+ * the stored base: returns the config as it stands afterwards, whether it
+ * changed, and the local color edits to write to Linear. `state.labelColors`
+ * takes the next base, which assumes those writes land.
+ */
+export function syncLabels(
+  rootDir: string,
+  config: DispatchConfig,
+  labels: readonly LinearLabel[],
+  state: LinearSyncState,
+  direction: { mayPull: boolean; mayPush: boolean }
+): { config: DispatchConfig; changed: boolean; push: LabelColorPush[] } {
+  const result = syncLinearLabels({
+    configured: config.labels ?? [],
+    linear: labels,
+    base: state.labelColors,
+    ...direction,
+  });
+  state.labelColors = result.base;
+  if (!result.changed) return { config, changed: false, push: result.push };
+  return {
+    config: updateConfig(rootDir, { labels: result.configured }),
+    changed: true,
+    push: result.push,
+  };
+}
+
 /** The mapping context over the pass's task snapshot. */
 export function buildContext(
   rootDir: string,
@@ -200,6 +233,7 @@ export function buildContext(
     labelsById: new Map(labels.map((l) => [l.id, l])),
     includeAcceptanceCriteria: config.linear.includeAcceptanceCriteria,
     projectStatuses,
+    labelColors: labelColorIndex(config.labels ?? []),
   };
 }
 

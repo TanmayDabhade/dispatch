@@ -1,3 +1,4 @@
+import { labelRef } from './labels.js';
 import type {
   LinearIssue,
   LinearIssueInput,
@@ -83,9 +84,7 @@ export interface LinearMapContext {
 
 /** A label as a task spells it: `Group/Name` inside a group, else the name. */
 export function labelKey(label: LinearLabel): string {
-  return label.group == null || label.group === ''
-    ? label.name
-    : `${label.group}/${label.name}`;
+  return labelRef(label);
 }
 
 // ---------------------------------------------------------------------------

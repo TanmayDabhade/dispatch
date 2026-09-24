@@ -43,9 +43,11 @@ import type {
   CreateInput,
   DispatchConfig,
   FieldValues,
+  LabelColorPush,
   LinearEntity,
   LinearInitiative,
   LinearIssue,
+  LinearLabel,
   LinearProject,
   LinearProjectMilestone,
   TaskDoc,
@@ -244,6 +246,8 @@ export interface PassDeps {
   batch: TaskChangeBatch;
   /** Records a failure's message and arms the backoff on a throttle. */
   note: (failure: LinearFailure) => string;
+  /** Hears every label the pass creates or recolors, to keep caches current. */
+  onLabel: (label: LinearLabel) => void;
 }
 
 function later(a: string, b: string): string {
@@ -540,15 +544,46 @@ export class LinearPass {
   // ---------------------------------------------------------------------------
   // Pushes
 
+  // Creates the labels a task carries that Linear lacks, in the registry's
+  // color when it has one.
   private async ensureLabels(doc: TaskDoc): Promise<boolean> {
     const { ctx, client, teamId } = this.d;
     let ok = true;
     for (const name of missingLabels(doc, ctx)) {
-      const label = this.check(await client.createLabel({ name, teamId }));
+      const color = ctx.labelColors.get(name.toLowerCase());
+      const label = this.check(
+        await client.createLabel({
+          name,
+          teamId,
+          ...(color === undefined ? {} : { color }),
+        })
+      );
       if (label === null) ok = false;
-      else trackLabel(ctx, label);
+      else {
+        trackLabel(ctx, label);
+        this.d.onLabel(label);
+      }
     }
     return ok;
+  }
+
+  /** Writes local label colors to Linear; answers the ids whose write failed. */
+  async pushLabelColors(
+    pushes: readonly LabelColorPush[]
+  ): Promise<Set<string>> {
+    const pending = new Set(pushes.map((p) => p.id));
+    await this.guarded(async () => {
+      for (const push of pushes) {
+        const label = this.check(
+          await this.d.client.updateLabel(push.id, { color: push.color })
+        );
+        if (label === null) continue;
+        pending.delete(push.id);
+        trackLabel(this.d.ctx, label);
+        this.d.onLabel(label);
+      }
+    });
+    return pending;
   }
 
   private async pushIssue(

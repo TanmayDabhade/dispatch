@@ -92,6 +92,8 @@ export interface LinearSyncState {
   movedOut: Record<string, string>;
   /** When linked issues were last checked for team moves and deletions. */
   lastAuditAt: string | null;
+  /** Linear label id -> the color both sides held after the last sync. */
+  labelColors: Record<string, string | null>;
 }
 
 // Sync state is user-level, not project-level: `.dispatch/` is committed to the
@@ -132,6 +134,7 @@ export function emptyLinearState(): LinearSyncState {
     conflictTotal: 0,
     movedOut: {},
     lastAuditAt: null,
+    labelColors: {},
   };
 }
 

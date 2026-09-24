@@ -306,6 +306,7 @@ export type {
 } from './credentials.js';
 export * from './linearContainers.js';
 export * from './linearFields.js';
+export * from './linearLabels.js';
 export * from './linearMerge.js';
 export * from './linearPeople.js';
 export * from './linearStatuses.js';

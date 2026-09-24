@@ -150,6 +150,11 @@ export interface LinearClient {
     teamId: string;
     color?: string;
   }): Promise<LinearResult<LinearLabel>>;
+  /** Recolors a label (Linear requires every label to have a color). */
+  updateLabel(
+    id: string,
+    input: { color: string }
+  ): Promise<LinearResult<LinearLabel>>;
   linkAttachment(
     issueId: string,
     url: string,
@@ -1034,6 +1039,20 @@ export class HttpLinearClient implements LinearClient {
       'issueLabel',
       toLabel,
       'label'
+    );
+  }
+
+  updateLabel(
+    id: string,
+    input: { color: string }
+  ): Promise<LinearResult<LinearLabel>> {
+    return this.mutate(
+      Q.LABEL_UPDATE,
+      { id, input },
+      'issueLabelUpdate',
+      'issueLabel',
+      toLabel,
+      'label update'
     );
   }
 

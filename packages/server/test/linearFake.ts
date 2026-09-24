@@ -128,7 +128,7 @@ function missing(what: string, id: string): Promise<LinearFailure> {
  */
 export class FakeLinearClient implements LinearClient {
   states: LinearWorkflowState[] = STATES;
-  labelList: LinearLabel[] = [...LABELS];
+  labelList: LinearLabel[] = LABELS.map((l) => ({ ...l }));
   members: LinearUser[] = [VIEWER];
   viewerUser: LinearUser = VIEWER;
   projectStatuses: LinearProjectStatus[] = PROJECT_STATUSES;
@@ -206,7 +206,7 @@ export class FakeLinearClient implements LinearClient {
   labels(): Promise<LinearResult<LinearLabel[]>> {
     const f = this.fail('labels');
     if (f !== null) return Promise.resolve(f);
-    return ok([...this.labelList]);
+    return ok(this.labelList.map((l) => ({ ...l })));
   }
 
   cycles(): Promise<LinearResult<TaskCycle[]>> {
@@ -442,10 +442,24 @@ export class FakeLinearClient implements LinearClient {
     const label: LinearLabel = {
       id: `l-${this.next()}`,
       name: input.name,
+      ...(input.color === undefined ? {} : { color: input.color }),
       teamId: input.teamId,
       group: null,
     };
     this.labelList.push(label);
+    return ok({ ...label });
+  }
+
+  updateLabel(
+    id: string,
+    input: { color: string }
+  ): Promise<LinearResult<LinearLabel>> {
+    const f = this.fail('updateLabel');
+    if (f !== null) return Promise.resolve(f);
+    const at = this.labelList.findIndex((l) => l.id === id);
+    if (at < 0) return missing('label', id);
+    const label = { ...this.labelList[at], color: input.color };
+    this.labelList[at] = label;
     return ok({ ...label });
   }
 

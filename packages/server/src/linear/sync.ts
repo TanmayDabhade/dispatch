@@ -64,6 +64,7 @@ import {
   buildContext,
   refreshPeople,
   regenerateStatuses,
+  syncLabels,
   syncPeople,
 } from './workspace.js';
 
@@ -602,6 +603,14 @@ export class LinearSync {
     return next;
   }
 
+  // Keeps the session's label list (the workspace cache's own array) in step
+  // with a label this engine wrote, so the next pass does not read it stale.
+  private cacheLabel(session: Session, label: LinearLabel): void {
+    const at = session.labels.findIndex((l) => l.id === label.id);
+    if (at < 0) session.labels.push(label);
+    else session.labels[at] = label;
+  }
+
   // Turns a client failure into a summary message, arming the backoff clock when
   // the failure was a throttle.
   private note(failure: LinearFailure): string {
@@ -767,10 +776,19 @@ export class LinearSync {
       session.workspace.viewer.id,
       localRef
     );
-    if (regenerated.configChanged || people.changed) {
+    const direction = session.linear.direction;
+    const mayPull = direction !== 'push';
+    const mayPush = direction !== 'pull';
+    // Labels too: the registry follows Linear's labels, colors both ways.
+    const labelBase = { ...state.labelColors };
+    const labels = syncLabels(rootDir, people.config, session.labels, state, {
+      mayPull,
+      mayPush,
+    });
+    if (regenerated.configChanged || people.changed || labels.changed) {
       this.deps.events.broadcast({ type: 'config.changed' });
     }
-    const config = people.config;
+    const config = labels.config;
     const ctx = buildContext(
       rootDir,
       config,
@@ -791,11 +809,15 @@ export class LinearSync {
       docs,
       batch,
       note: (failure) => this.note(failure),
+      onLabel: (label) => this.cacheLabel(session, label),
     });
+    // A color write that did not land keeps its old base, so it retries.
+    for (const id of await pass.pushLabelColors(labels.push)) {
+      const was = labelBase[id];
+      if (was === undefined) delete state.labelColors[id];
+      else state.labelColors[id] = was;
+    }
     const changedComments = new Map<string, Set<string>>();
-    const direction = session.linear.direction;
-    const mayPull = direction !== 'push';
-    const mayPush = direction !== 'pull';
     const run: Run = {
       pass,
       session,
