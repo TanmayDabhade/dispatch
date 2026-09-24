@@ -901,6 +901,16 @@ async function reviewRun(
 // settings page is: a request-tier caller able to set verifyCommand or
 // receipts.repo could run what it liked, or copy the audit log off the
 // machine.
+//
+// Git pushes are covered whole — whether the daemon pushes at all, and to
+// which remote, repo and branch — because they run on the owner's own git
+// credentials, which nobody handed to Dispatch: the authority POST
+// /api/git/push already reserves. autoCommit pushes to origin's main branch
+// and sync defaults to origin, so switching either on picks a destination
+// nobody chose; receipts.enabled is also the audit trail, which the tier whose
+// decisions it records must not switch off. Integrations that run on a
+// credential the owner did hand over (the Linear key, the webhook) gate only
+// that credential; what flows over it stays policy.
 function operatorOnlyKeys(body: Record<string, unknown>): string[] {
   const keys: string[] = [];
   const has = (obj: unknown, field: string) =>
@@ -910,14 +920,15 @@ function operatorOnlyKeys(body: Record<string, unknown>): string[] {
   if (has(body.verify, 'command')) keys.push('verify.command');
   if ('remotes' in body) keys.push('remotes');
   if ('prWorktreeDir' in body) keys.push('prWorktreeDir');
+  if ('autoCommit' in body) keys.push('autoCommit');
   if (has(body.notifications, 'webhook')) keys.push('notifications.webhook');
   for (const field of ['command', 'installCommand']) {
     if (has(body.preview, field)) keys.push(`preview.${field}`);
   }
-  for (const field of ['remote', 'repo', 'dir']) {
+  for (const field of ['enabled', 'remote', 'repo', 'branch', 'dir']) {
     if (has(body.receipts, field)) keys.push(`receipts.${field}`);
   }
-  for (const field of ['remote', 'repo']) {
+  for (const field of ['enabled', 'remote', 'repo', 'branch']) {
     if (has(body.sync, field)) keys.push(`sync.${field}`);
   }
   if (typeof body.executors === 'object' && body.executors !== null) {
@@ -4490,8 +4501,9 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   { method: 'DELETE', segments: ['team', 'tokens', '*'], tier: 'decide' },
   // Settings are the project's policy — autonomy gates, caps, what a run may
   // do — so changing them is an adjudication, never something an agent
-  // holding the on-disk token may do to itself. Keys that run commands or
-  // send data elsewhere need the operator tier on top (patchConfig).
+  // holding the on-disk token may do to itself. Keys that run commands, send
+  // data elsewhere, or decide whether and where the daemon pushes with the
+  // owner's git credentials need the operator tier on top (operatorOnlyKeys).
   { method: 'PATCH', segments: ['config'], tier: 'decide' },
   // Installing a license key changes who may sign in to this machine's
   // daemon at all — the owner's call, like the rest of the operator tier.
@@ -4502,6 +4514,15 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // holds a run's edits to the task's declared `writes` and records them.
   // Reads stay on the request tier with the rest of the read surface.
   { method: 'POST', segments: ['files', 'write'], tier: 'operator' },
+  // The stored Linear key is the credential the daemon acts on Linear with,
+  // kept in the owner's own ~/.dispatch/credentials.json: choosing it picks
+  // whose account, and which workspace, the board is sent to — the same call
+  // as notifications.webhook or sync.repo. Disconnecting is paired so the
+  // control is not half-privileged. Using the key once set stays on the
+  // request tier: sync pushes board data the caller can already read to a
+  // destination higher tiers chose, and import only brings issues in.
+  { method: 'POST', segments: ['linear', 'connect'], tier: 'operator' },
+  { method: 'POST', segments: ['linear', 'disconnect'], tier: 'operator' },
   // `evaluate` runs arbitrary JavaScript in a browser carrying the user's own
   // session cookies, which is at least the authority a shell has. The whole
   // family stays together for that reason.
