@@ -186,6 +186,7 @@ const META_FIELDS = [
   'creator',
   'color',
   'icon',
+  'sortOrder',
 ] as const satisfies readonly (keyof TaskMeta)[];
 
 // Optional in TaskMeta: travels as null when absent, so clearing one (an

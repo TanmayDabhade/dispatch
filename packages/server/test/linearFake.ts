@@ -592,7 +592,7 @@ export class FakeLinearClient implements LinearClient {
       name: input.name,
       description: input.description ?? null,
       targetDate: input.targetDate ?? null,
-      sortOrder: this.milestoneList.length,
+      sortOrder: input.sortOrder ?? this.milestoneList.length,
       projectId: input.projectId,
       createdAt: at,
       updatedAt: at,
@@ -614,6 +614,7 @@ export class FakeLinearClient implements LinearClient {
     if (input.description !== undefined) m.description = input.description;
     if (input.targetDate !== undefined) m.targetDate = input.targetDate;
     if (input.projectId !== undefined) m.projectId = input.projectId;
+    if (input.sortOrder !== undefined) m.sortOrder = input.sortOrder;
     m.updatedAt = this.stamp();
     return ok({ ...m });
   }

@@ -84,6 +84,7 @@ interface TaskRow {
   creator: string | null;
   color: string | null;
   icon: string | null;
+  sort_order: number | null;
   slug: string;
   body: string;
 }
@@ -227,6 +228,8 @@ function metaFromRow(row: TaskRow): TaskMeta {
     creator: row.creator,
     color: row.color,
     icon: row.icon,
+    // Added in schema v4.
+    sortOrder: row.sort_order,
   };
 }
 
@@ -276,6 +279,7 @@ function rowValuesFromDoc(doc: TaskDoc, slug: string): SqlValue[] {
     meta.creator,
     meta.color,
     meta.icon,
+    meta.sortOrder ?? null,
     slug,
     doc.body,
   ];
@@ -286,9 +290,9 @@ const TASK_COLUMNS = `
   assignee, created, updated, external, self_review, fix_loop, writes, risk,
   model, archived_at, exercised, derived_from, attachments, estimate,
   due_date, start_date, cycle, related_to, duplicate_of, initiatives, creator,
-  color, icon, slug, body
+  color, icon, sort_order, slug, body
 `;
-const TASK_PLACEHOLDERS = Array.from({ length: 34 }, () => '?').join(', ');
+const TASK_PLACEHOLDERS = Array.from({ length: 35 }, () => '?').join(', ');
 
 // Claims an id or reports that someone else already holds it, in one
 // statement. A `SELECT` followed by an `INSERT` leaves a window in between —
@@ -335,6 +339,7 @@ ON CONFLICT (id) DO UPDATE SET
   creator = excluded.creator,
   color = excluded.color,
   icon = excluded.icon,
+  sort_order = excluded.sort_order,
   slug = excluded.slug,
   body = excluded.body
 `;

@@ -194,6 +194,7 @@ const CREATE_KEYS = [
   'initiatives',
   'color',
   'icon',
+  'sortOrder',
   'creator',
 ] as const;
 

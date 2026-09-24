@@ -238,7 +238,7 @@ function adaptDriver(
  * be migrated through. Stored in SQLite's own `user_version` pragma, so the
  * schema carries its version without a table of its own.
  */
-export const DISPATCH_DB_VERSION = 3;
+export const DISPATCH_DB_VERSION = 4;
 
 /**
  * Where a project's database lives by default.
@@ -312,6 +312,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   creator      TEXT,
   color        TEXT,
   icon         TEXT,
+  sort_order   REAL,
   slug         TEXT NOT NULL,
   body         TEXT NOT NULL
 );
@@ -445,6 +446,10 @@ export function openDispatchDb(dbPath: string): SqliteDatabase {
     for (const column of V3_TASK_COLUMNS) {
       db.exec(`ALTER TABLE tasks ADD COLUMN ${column}`);
     }
+  }
+  // v4: a sibling order (Linear's milestone sortOrder); NULL is unordered.
+  if (existing >= 1 && existing < 4) {
+    db.exec('ALTER TABLE tasks ADD COLUMN sort_order REAL');
   }
   db.exec(DDL);
   db.exec(`PRAGMA user_version = ${DISPATCH_DB_VERSION}`);

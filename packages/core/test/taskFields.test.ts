@@ -31,6 +31,7 @@ const FIELDS: UpdatePatch = {
   initiatives: ['e-cccccc'],
   color: '#5e6ad2',
   icon: 'rocket',
+  sortOrder: 2.5,
 };
 
 const OLD_FILE = `---
@@ -79,6 +80,7 @@ describe('Linear-parity task fields', () => {
     const file = readFileSync(store.taskFilePath(created.meta.id)!, 'utf8');
     expect(file).toContain('due-date: 2026-10-01');
     expect(file).toContain('related-to:');
+    expect(file).toContain('sort-order: 2.5');
     // Clearing a field drops its key again.
     store.update(created.meta.id, { estimate: null, relatedTo: [] });
     const cleared = readFileSync(store.taskFilePath(created.meta.id)!, 'utf8');
@@ -132,6 +134,45 @@ PRAGMA user_version = 2;
     ]);
     const next = store.update('e-abc123', FIELDS);
     expect(store.get('e-abc123')).toEqual(next);
+    db.close();
+  });
+
+  it('migrates a version-3 database, adding the sort order column', () => {
+    const root = tmp();
+    mkdirSync(join(root, '.dispatch'), { recursive: true });
+    const dbPath = join(root, '.dispatch', 'dispatch.db');
+    const v3 = new Database(dbPath);
+    v3.exec(`
+CREATE TABLE tasks (
+  id TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL,
+  kind TEXT NOT NULL, parent TEXT, milestone TEXT, blocked_by TEXT NOT NULL,
+  labels TEXT NOT NULL, priority TEXT NOT NULL, assignee TEXT NOT NULL,
+  created TEXT NOT NULL, updated TEXT NOT NULL, external TEXT,
+  self_review INTEGER NOT NULL, fix_loop INTEGER, writes TEXT NOT NULL,
+  risk TEXT NOT NULL, model TEXT, archived_at TEXT, exercised INTEGER NOT NULL,
+  derived_from TEXT, attachments TEXT, estimate REAL, due_date TEXT,
+  start_date TEXT, cycle TEXT, related_to TEXT, duplicate_of TEXT,
+  initiatives TEXT, creator TEXT, color TEXT, icon TEXT,
+  slug TEXT NOT NULL, body TEXT NOT NULL
+);
+INSERT INTO tasks (id, title, status, kind, blocked_by, labels, priority,
+  assignee, created, updated, self_review, writes, risk, exercised, color,
+  slug, body)
+VALUES ('m-abc123', 'Beta', 'ready', 'milestone', '[]', '[]', 'none', 'none',
+  '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', 1, '[]', 'routine',
+  0, '#f00', 'beta', '');
+PRAGMA user_version = 3;
+`);
+    v3.close();
+    const db = openDispatchDb(dbPath);
+    expect(dbVersion(db)).toBe(DISPATCH_DB_VERSION);
+    const store = new SqliteTaskStore(root, db);
+    expect(store.get('m-abc123')!.meta).toMatchObject({
+      color: '#f00',
+      sortOrder: null,
+    });
+    store.update('m-abc123', { sortOrder: 3 });
+    expect(store.get('m-abc123')!.meta.sortOrder).toBe(3);
     db.close();
   });
 });

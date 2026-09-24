@@ -465,7 +465,7 @@ describe('relations and hierarchy', () => {
         name: 'Beta',
         description: null,
         targetDate: '2026-09-01',
-        sortOrder: 0,
+        sortOrder: 2,
         projectId: project.id,
         createdAt: '2026-07-01T00:00:00.000Z',
         updatedAt: '2026-07-01T00:00:00.000Z',
@@ -485,7 +485,8 @@ describe('relations and hierarchy', () => {
     });
     fake.issues = [child, parent];
 
-    await makeSync().importIssues();
+    const sync = makeSync();
+    await sync.importIssues();
 
     const byTitle = new Map(store.list().map((d) => [d.meta.title, d.meta]));
     expect(byTitle.get('Grow')?.kind).toBe('initiative');
@@ -496,6 +497,14 @@ describe('relations and hierarchy', () => {
     expect(byTitle.get('Beta')?.dueDate).toBe('2026-09-01');
     expect(byTitle.get('Parent')?.parent).toBe(byTitle.get('Beta')?.id);
     expect(byTitle.get('Child')?.parent).toBe(byTitle.get('Parent')?.id);
+    expect(byTitle.get('Beta')?.sortOrder).toBe(2);
+
+    // Reordering the milestone in Linear moves it here too.
+    const beta = fake.milestoneList[0];
+    beta.sortOrder = -1;
+    beta.updatedAt = fake.stamp();
+    await sync.syncOnce();
+    expect(store.get(byTitle.get('Beta')?.id ?? '')?.meta.sortOrder).toBe(-1);
   });
 
   it('publishes a legacy epic as a parent issue with its tasks as sub-issues', async () => {

@@ -50,6 +50,7 @@ export const MILESTONE_FIELDS = [
   'targetDate',
   'project',
   'archived',
+  'sortOrder',
 ] as const;
 
 export const INITIATIVE_FIELDS = [
@@ -373,6 +374,7 @@ export function milestoneValues(
     targetDate: m.targetDate,
     project: m.projectId,
     archived: m.archivedAt !== null,
+    sortOrder: m.sortOrder,
   };
 }
 
@@ -387,6 +389,8 @@ export function taskMilestoneValues(
     targetDate: meta.dueDate,
     project: projectAbove(meta, ctx),
     archived: meta.archivedAt !== undefined,
+    // Unordered locally (a milestone made here) takes Linear's order.
+    sortOrder: meta.sortOrder ?? UNMAPPED,
   };
 }
 
@@ -415,6 +419,9 @@ export function milestonePatch(
       case 'archived':
         patch.archivedAt = m.archivedAt;
         break;
+      case 'sortOrder':
+        patch.sortOrder = m.sortOrder;
+        break;
     }
   }
   return patch;
@@ -429,7 +436,7 @@ export function milestonePush(
   const input: LinearMilestoneInput = {};
   for (const field of fields) {
     const value = v[field];
-    if (PULL_ONLY_CONTAINER_FIELDS.has(field)) continue;
+    if (value === UNMAPPED || PULL_ONLY_CONTAINER_FIELDS.has(field)) continue;
     switch (field) {
       case 'title':
         input.name = value as string;
@@ -442,6 +449,9 @@ export function milestonePush(
         break;
       case 'project':
         if (value !== null) input.projectId = value as string;
+        break;
+      case 'sortOrder':
+        input.sortOrder = value as number;
         break;
     }
   }

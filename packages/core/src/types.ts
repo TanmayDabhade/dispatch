@@ -95,6 +95,9 @@ export interface TaskMeta {
   color: string | null;
   /** Display icon name for a container, or null. */
   icon: string | null;
+  /** Manual order among siblings (a project's milestones), low first; null
+   *  when unordered. */
+  sortOrder: number | null;
 }
 
 /** A Linear-style cycle (sprint) a task is scheduled into. */
@@ -119,6 +122,7 @@ export type TaskFieldDefaults = Pick<
   | 'creator'
   | 'color'
   | 'icon'
+  | 'sortOrder'
 >;
 
 /** Fresh defaults for the Linear-parity fields (new arrays each call). */
@@ -134,6 +138,7 @@ export function defaultTaskFields(): TaskFieldDefaults {
     creator: null,
     color: null,
     icon: null,
+    sortOrder: null,
   };
 }
 

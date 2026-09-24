@@ -265,12 +265,28 @@ describe('milestones', () => {
       milestoneValues(remote, ctx),
       MILESTONE_FIELDS
     );
+    expect(pulled.meta.sortOrder).toBe(1);
     expect(milestonePush(pulled, MILESTONE_FIELDS, ctx)).toEqual({
       name: 'Beta',
       description: 'Beta cut',
       targetDate: '2026-08-15',
       projectId: 'p-1',
+      sortOrder: 1,
     });
+  });
+
+  it('never pushes an order a local milestone never had', () => {
+    const tasks = workspace();
+    const local = doc(linked('t-x', 'milestone', 'm-x'));
+    const ctx = context([...tasks, local.meta]);
+    expect(local.meta.sortOrder).toBeNull();
+    expect(milestonePush(local, ['sortOrder'], ctx)).toEqual({});
+    const moved = doc(
+      linked('t-x', 'milestone', 'm-x', 'milestone', {
+        sortOrder: -2,
+      })
+    );
+    expect(milestonePush(moved, ['sortOrder'], ctx)).toEqual({ sortOrder: -2 });
   });
 });
 

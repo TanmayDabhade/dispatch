@@ -457,13 +457,16 @@ function validateLinearFields(value: Record<string, unknown>): string | null {
     const error = validateStringArrayField(value[key], key);
     if (error) return error;
   }
-  const { estimate, creator, cycle } = value;
-  if (
-    estimate !== undefined &&
-    estimate !== null &&
-    (typeof estimate !== 'number' || !Number.isFinite(estimate))
-  ) {
-    return 'invalid estimate: expected a number or null';
+  const { creator, cycle } = value;
+  for (const key of ['estimate', 'sortOrder'] as const) {
+    const n = value[key];
+    if (
+      n !== undefined &&
+      n !== null &&
+      (typeof n !== 'number' || !Number.isFinite(n))
+    ) {
+      return `invalid ${key}: expected a number or null`;
+    }
   }
   if (
     creator !== undefined &&
