@@ -9,7 +9,7 @@ import {
   type BranchRow,
 } from '../../lib/branchLayout';
 import type { DagTask } from '../../lib/dagLayout';
-import { activeStatusModel } from '../../lib/statusModel';
+import { useActiveStatusModel } from '../../lib/statusModel';
 import { statusColor, StatusIcon } from '../tasks/StatusIcon';
 import { cn } from '@/lib/utils';
 
@@ -322,8 +322,10 @@ export function BranchGraph({
   focusedId = null,
   ariaLabel = 'Branch graph',
   className,
-  model = activeStatusModel(),
+  model: modelProp,
 }: BranchGraphProps) {
+  const activeModel = useActiveStatusModel();
+  const model = modelProp ?? activeModel;
   const layout = useMemo(() => branchLayout(tasks, model), [tasks, model]);
   const tasksById = useMemo(
     () => new Map(tasks.map((t) => [t.id, t])),

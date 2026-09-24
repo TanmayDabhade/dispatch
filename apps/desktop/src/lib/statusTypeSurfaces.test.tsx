@@ -4,7 +4,7 @@ import {
   defaultTaskFields,
   statusModelOf,
 } from '@dispatch/core/browser';
-import { render } from '@testing-library/react';
+import { act, cleanup, render } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import { BranchGraph } from '../components/graph/BranchGraph';
@@ -63,7 +63,11 @@ function dotKinds(container: HTMLElement): Record<string, string | null> {
   return out;
 }
 
-afterEach(() => setActiveStatusModel(null));
+// Unmount before resetting, so the reset does not redraw a mounted graph outside act.
+afterEach(() => {
+  cleanup();
+  setActiveStatusModel(null);
+});
 
 describe('status surfaces under a mirrored Linear workflow', () => {
   it('branchLayout keeps Done and Canceled off the critical path', () => {
@@ -95,6 +99,22 @@ describe('status surfaces under a mirrored Linear workflow', () => {
     const { container } = render(<BranchGraph tasks={chain} />);
     expect(dotKinds(container)['t-qa']).toBe('live');
     expect(dotKinds(container)['t-dropped']).toBe('done');
+  });
+
+  it('a graph drawn before the project’s statuses load redraws once they do', () => {
+    const { container } = render(<BranchGraph tasks={chain} />);
+    const glyph = () =>
+      container
+        .querySelector('[data-task-id=t-done] [data-status-shape]')
+        ?.getAttribute('data-status-shape');
+    expect(dotKinds(container)['t-done']).toBe('open');
+    const before = glyph();
+    act(() => setActiveStatusModel(LINEAR));
+    expect(dotKinds(container)['t-done']).toBe('done');
+    expect(dotKinds(container)['t-qa']).toBe('live');
+    // The status glyph beside the dot redraws too: Done becomes the completed check.
+    expect(glyph()).not.toBe(before);
+    expect(glyph()).toBe('done');
   });
 
   it('computeTaskWeights zeroes Done and Canceled and counts QA as waiting', () => {

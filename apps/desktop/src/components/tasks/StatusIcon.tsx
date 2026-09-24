@@ -1,11 +1,11 @@
-import type { StatusType } from '@dispatch/core/browser';
+import type { StatusModel, StatusType } from '@dispatch/core/browser';
 import {
   statusColor as configuredStatusColor,
   hasStatusDefinition,
   statusType,
 } from '@dispatch/core/browser';
 
-import { activeStatusModel } from '@/lib/statusModel';
+import { activeStatusModel, useActiveStatusModel } from '@/lib/statusModel';
 import { cn } from '@/lib/utils';
 import { PIE_DASH, pieDashOffset } from '@/ui/chrome';
 
@@ -127,8 +127,10 @@ const TYPE_VISUALS: Record<StatusType, StatusVisual> = {
  * needs a status's colour outside this component should use `statusColor` below rather than
  * keep a second status->colour map.
  */
-function resolveStatusVisual(status: string): StatusVisual {
-  const model = activeStatusModel();
+function resolveStatusVisual(
+  status: string,
+  model: StatusModel = activeStatusModel()
+): StatusVisual {
   const visual =
     KNOWN_STATUS_VISUALS[status] ??
     (hasStatusDefinition(status, model)
@@ -170,7 +172,7 @@ export function StatusIcon({
   blocked = false,
   className,
 }: StatusIconProps) {
-  const visual = resolveStatusVisual(status);
+  const visual = resolveStatusVisual(status, useActiveStatusModel());
   const backlog = visual.shape === 'backlog';
 
   return (
