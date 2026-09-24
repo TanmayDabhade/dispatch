@@ -7,7 +7,12 @@ import {
   loadConfig,
   schedulableBatch,
 } from '@dispatch/core';
-import type { ActorContext, TaskDoc, TaskStorePort } from '@dispatch/core';
+import type {
+  ActorContext,
+  StatusModel,
+  TaskDoc,
+  TaskStorePort,
+} from '@dispatch/core';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 import type { TaskCache } from '../cache.js';
@@ -167,6 +172,15 @@ function describeSession(session: EpicSessionRecord): string {
   }
   if (session.maxRuns !== null) parts.push(`max ${session.maxRuns} runs`);
   return `(${parts.join(', ')})`;
+}
+
+// The board as progress() reads it, shared by every epic in one request.
+interface ProgressBoard {
+  statuses: StatusModel;
+  byId: Map<string, TaskDoc>;
+  dispatchable: Set<string>;
+  runs: RunMeta[];
+  runCostEstimateUsd: number;
 }
 
 /**
@@ -438,13 +452,33 @@ export class EpicEngine {
   // any child.
   progress(epicId: string): EpicProgress {
     this.requireEpic(epicId);
+    return this.progressOf(epicId, this.progressBoard());
+  }
+
+  // What every epic's progress reads alike, read once per request: on a
+  // 2000-task board the dispatchable set alone is a pass over every task,
+  // which progressAll() used to repeat per milestone.
+  private progressBoard(): ProgressBoard {
     const statuses = statusModelFor(this.ctx.rootDir);
+    const tasks = this.ctx.cache.query({ includeArchived: true });
+    return {
+      statuses,
+      byId: new Map(tasks.map((t) => [t.meta.id, t])),
+      dispatchable: new Set(
+        dispatchableTasks(tasks, statuses).map((t) => t.meta.id)
+      ),
+      runs: this.ctx.orchestrator.list(),
+      runCostEstimateUsd: loadConfig(this.ctx.rootDir).orchestrator
+        .runCostEstimateUsd,
+    };
+  }
+
+  private progressOf(epicId: string, board: ProgressBoard): EpicProgress {
+    const { statuses, dispatchable } = board;
     const children = this.childrenOf(epicId);
     const childIds = new Set(children.map((c) => c.meta.id));
     // Newest first, so the first run seen per task is its latest.
-    const childRuns = this.ctx.orchestrator
-      .list()
-      .filter((r) => childIds.has(r.taskId));
+    const childRuns = board.runs.filter((r) => childIds.has(r.taskId));
     const liveRuns = childRuns.filter((r) => !TERMINAL_RUN_STATES.has(r.state));
     const liveByTask = new Map<string, RunMeta>();
     const latestByTask = new Map<string, RunMeta>();
@@ -454,12 +488,6 @@ export class EpicEngine {
         liveByTask.set(run.taskId, run);
       }
     }
-    const dispatchable = new Set(
-      dispatchableTasks(
-        this.ctx.cache.query({ includeArchived: true }),
-        statuses
-      ).map((t) => t.meta.id)
-    );
     const waves = deriveWaves(children);
     const session = this.sessions.get(epicId);
     const progressChildren: EpicProgressChild[] = children.map((task) => {
@@ -473,7 +501,7 @@ export class EpicEngine {
         blockedReason: this.ctx.orchestrator.blockedFindingReason(id),
         unsatisfiedBlockers: unsatisfiedBlockersOf(
           task,
-          (blockerId) => this.ctx.store.get(blockerId),
+          (blockerId) => board.byId.get(blockerId) ?? null,
           statuses
         ),
         dispatchable: dispatchable.has(id),
@@ -502,7 +530,7 @@ export class EpicEngine {
       spend: deriveSpend(
         childRuns,
         session?.startedAt ?? null,
-        loadConfig(this.ctx.rootDir).orchestrator.runCostEstimateUsd,
+        board.runCostEstimateUsd,
         {
           maxSpendUsd: session?.maxSpendUsd ?? null,
           maxRuns: session?.maxRuns ?? null,
@@ -518,11 +546,12 @@ export class EpicEngine {
   // desktop's `data.epics` set), in id order — one request for every surface
   // that shows a milestone.
   progressAll(): EpicProgress[] {
+    const board = this.progressBoard();
     return this.ctx.cache
       .query({ containers: true })
       .map((epic) => epic.meta.id)
       .sort()
-      .map((epicId) => this.progress(epicId));
+      .map((epicId) => this.progressOf(epicId, board));
   }
 
   // Re-arms every session hydrated as `active`, each after `resumeDelayMs`
