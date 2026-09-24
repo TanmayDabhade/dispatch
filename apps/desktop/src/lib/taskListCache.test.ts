@@ -1,7 +1,11 @@
 import type { TaskListItem, TaskMeta } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
-import { removeTaskListItem, upsertTaskListItem } from './taskListCache';
+import {
+  removeTaskListItem,
+  touchesFanout,
+  upsertTaskListItem,
+} from './taskListCache';
 
 function item(id: string, created: string, updated = created): TaskListItem {
   return { meta: { id, title: id, created, updated } as TaskMeta };
@@ -46,4 +50,44 @@ describe('upsertTaskListItem', () => {
 test('removeTaskListItem drops only the named task', () => {
   const list = [item('t-a', '2026-01-01'), item('t-b', '2026-01-02')];
   expect(ids(removeTaskListItem(list, 't-a'))).toEqual(['t-b']);
+});
+
+describe('touchesFanout', () => {
+  const node = (id: string, parent: string | null, kind = 'task') =>
+    ({ meta: { id, parent, kind } as TaskMeta }) as TaskListItem;
+  const list = [
+    node('e-1', null, 'milestone'),
+    node('t-child', 'e-1'),
+    node('t-parent', null),
+    node('t-sub', 't-parent'),
+    node('t-loose', null),
+  ];
+
+  test('a loose task that stays loose moves no progress', () => {
+    expect(touchesFanout(list, 't-loose', node('t-loose', null).meta)).toBe(
+      false
+    );
+    expect(touchesFanout(list, 't-new', node('t-new', null).meta)).toBe(false);
+    expect(touchesFanout(list, 't-loose', null)).toBe(false);
+  });
+
+  test('a task under a container, before or after, does', () => {
+    expect(touchesFanout(list, 't-child', node('t-child', null).meta)).toBe(
+      true
+    );
+    expect(touchesFanout(list, 't-loose', node('t-loose', 'e-1').meta)).toBe(
+      true
+    );
+  });
+
+  test('a container, by kind or by children, does', () => {
+    expect(touchesFanout(list, 'e-1', null)).toBe(true);
+    expect(touchesFanout(list, 't-parent', node('t-parent', null).meta)).toBe(
+      true
+    );
+  });
+
+  test('with no list cached, it might', () => {
+    expect(touchesFanout(undefined, 't-loose', null)).toBe(true);
+  });
 });

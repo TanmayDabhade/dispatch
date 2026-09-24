@@ -54,6 +54,10 @@ let taskListFixture: TaskListItem[] | null = null;
 let taskListFetches = 0;
 const taskDocs = new Map<string, TaskDoc>();
 
+// The project config, for the tests that need its status model; rejects until set.
+let configFixture: object | null = null;
+let configFetches = 0;
+
 // Only `createApiClient` is replaced — the rest of the module (ApiError, which
 // useOverseerSession's 404 veto instanceof-checks) has to stay real.
 // Lets a test hold the first presence fetch open, so a `hello` can land while
@@ -66,6 +70,14 @@ void mock.module('@dispatch/client', () => ({
   createApiClient: () => ({
     baseUrl: `http://127.0.0.1:${PORT}`,
     fetchRuns: () => Promise.resolve(runsFixture),
+    fetchConfig: () => {
+      configFetches += 1;
+      return configFixture === null
+        ? Promise.reject(new Error('no config in this test'))
+        : Promise.resolve(configFixture);
+    },
+    fetchReadiness: () => Promise.resolve({}),
+    fetchReadyTasks: () => Promise.resolve([]),
     fetchTaskList: () => {
       taskListFetches += 1;
       return taskListFixture === null
@@ -359,6 +371,57 @@ test('task.changed with ids patches just those tasks into the cached list', asyn
   taskListFixture = null;
 });
 
+// A single task's change used to refetch every ready task's body, the config and all
+// fan-out progress. The ready set now follows the patched list; a loose task moves no
+// fan-out, and config has its own event.
+test('a loose task changing refetches only that task', async () => {
+  configFixture = {
+    statuses: ['draft', 'ready', 'working', 'review', 'landed', 'dropped'],
+    notifications: { kinds: null },
+  };
+  taskListFixture = [
+    { meta: taskDoc('t-1', 'Before', '2026-01-01T00:00:00.000Z').meta },
+  ];
+  taskDocs.clear();
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { result } = renderHook(
+    () => useDispatchProject('/repo', { selectedRunId: null }),
+    { wrapper: wrapper(queryClient) }
+  );
+  await waitFor(() => {
+    expect(sink).not.toBeNull();
+    expect([...result.current.readyIds]).toEqual(['t-1']);
+  });
+  taskListFetches = 0;
+  configFetches = 0;
+  epicProgressFetches = 0;
+  taskDocs.set('t-1', {
+    ...taskDoc('t-1', 'Started', '2026-01-02T00:00:00.000Z'),
+    meta: {
+      ...taskDoc('t-1', 'Started', '2026-01-02T00:00:00.000Z').meta,
+      status: 'working',
+    },
+  });
+
+  act(() => {
+    sink?.onEvent({ type: 'task.changed', ids: ['t-1'] });
+  });
+  await waitFor(() => {
+    expect(result.current.readyIds.size).toBe(0);
+  });
+  await new Promise((r) => setTimeout(r, 400));
+  expect(taskListFetches).toBe(0);
+  expect(configFetches).toBe(0);
+  expect(epicProgressFetches).toBe(0);
+  expect(
+    queryClient.getQueryCache().find({ queryKey: ['dispatch-ready-tasks'] })
+  ).toBeUndefined();
+  taskListFixture = null;
+  configFixture = null;
+});
+
 test('an unscoped task.changed burst refetches the list once', async () => {
   const { titles } = await mountWithTaskList();
   taskListFixture = [
@@ -478,8 +541,6 @@ async function mountWithEpics(epics: string[]) {
   return { queryClient, result: rendered.result };
 }
 
-const epicProgressAllKey = ['dispatch-epic-progress', PORT, 'all'];
-
 // A fan-out of dozens of milestones used to be a burst of dozens of progress
 // GETs on every run change; the hook now asks once for all of them.
 test('three epics are filled from a single bulk progress fetch', async () => {
@@ -495,19 +556,21 @@ test('three epics are filled from a single bulk progress fetch', async () => {
   epicProgressFixture = [];
 });
 
-test('epic.changed invalidates the bulk progress key', async () => {
-  const { queryClient } = await mountWithEpics(['e-1']);
-  expect(queryClient.getQueryState(epicProgressAllKey)?.isInvalidated).toBe(
-    false
-  );
+test('a burst of epic and run events refetches progress once', async () => {
+  await mountWithEpics(['e-1']);
+  epicProgressFetches = 0;
 
   act(() => {
     sink?.onEvent({ type: 'epic.changed', epicId: 'e-1' });
+    sink?.onEvent({ type: 'run.changed' });
+    sink?.onEvent({ type: 'epic.changed', epicId: 'e-1' });
   });
 
-  expect(queryClient.getQueryState(epicProgressAllKey)?.isInvalidated).toBe(
-    true
-  );
+  await waitFor(() => {
+    expect(epicProgressFetches).toBe(1);
+  });
+  await new Promise((r) => setTimeout(r, 400));
+  expect(epicProgressFetches).toBe(1);
   epicProgressFixture = [];
 });
 

@@ -44,10 +44,11 @@ import type {
 import {
   isContainer,
   parentIdsOf,
+  readyTasks,
   statusModelOf,
 } from '@dispatch/core/browser';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { hideArchivedRuns } from '../lib/archiveFilter';
 import {
@@ -93,7 +94,11 @@ import { setActiveStatusModel } from '../lib/statusModel';
 import type { TaskAttention } from '../lib/taskAttention';
 import { deriveTaskAttentionById } from '../lib/taskAttention';
 import { computeBlockedIds } from '../lib/taskGraph';
-import { removeTaskListItem, upsertTaskListItem } from '../lib/taskListCache';
+import {
+  removeTaskListItem,
+  touchesFanout,
+  upsertTaskListItem,
+} from '../lib/taskListCache';
 import { ensureDispatchd, restartDispatchd } from '../lib/tauri';
 import { gitQueryRootKey } from './useGit';
 import {
@@ -105,6 +110,7 @@ import {
   useStopFixLoop,
 } from './useOrchestration';
 import { overseerKey, overseerKeyPrefix } from './useOverseerSession';
+import { readinessKey, useReadiness } from './useReadiness';
 import { runDiffKey, runReviewKey } from './useRunData';
 import { commentsRootKey, taskCommentsKey } from './useTaskComments';
 import { taskDocKey, tasksKey } from './useTaskDoc';
@@ -114,6 +120,8 @@ import { useTransitionNotifications } from './useTransitionNotifications';
 const MAX_PATCHED_TASKS = 20;
 // Coalesces a burst of `task.changed` events into one refetch per query.
 const TASK_REFRESH_DEBOUNCE_MS = 250;
+// Coalesces the run, epic and task events that move fan-out progress into one refetch.
+const EPIC_REFRESH_DEBOUNCE_MS = 250;
 
 // The approvals this window has seen live via the `approval.requested` WS
 // event. Not the whole picture on its own: the daemon also attaches a parked
@@ -131,6 +139,9 @@ type PendingScopeRequest = { requestId: string };
 // is a Tauri/browser-only app, never SSR'd, but a stray server-side render of this module
 // shouldn't throw on a missing `localStorage`).
 const SHOW_ARCHIVED_STORAGE_KEY = 'dispatch:show-archived';
+
+// task.changed is handled in the socket's onEvent, where its ids are.
+const ignoreChange = () => {};
 
 // Stable empty registry while the people query loads.
 const NO_PEOPLE: readonly Person[] = [];
@@ -781,7 +792,6 @@ export function useDispatchProject(
 
   const tasksQueryKey = useMemo(() => tasksKey(port), [port]);
   const configQueryKey = useMemo(() => dispatchConfigKey(port), [port]);
-  const readyQueryKey = useMemo(() => ['dispatch-ready-tasks', port], [port]);
   const runsQueryKey = useMemo(() => ['dispatch-runs', port], [port]);
   const presenceQueryKey = useMemo(() => ['dispatch-presence', port], [port]);
   const whoamiQueryKey = useMemo(() => ['dispatch-whoami', port], [port]);
@@ -950,14 +960,6 @@ export function useDispatchProject(
     () => void refetchTeamsQuery(),
     [refetchTeamsQuery]
   );
-  const { data: readyTasks } = useQuery({
-    queryKey: readyQueryKey,
-    queryFn: () => {
-      if (client === null) throw new Error('dispatchd client not ready');
-      return client.fetchReadyTasks();
-    },
-    enabled: client !== null,
-  });
   // Who this window is, as the daemon sees its credential. Fetched once per
   // connection — a credential does not change identity mid-session — and read
   // wherever the app has to tell "mine" from "a teammate's".
@@ -1169,16 +1171,25 @@ export function useDispatchProject(
     enabled: client !== null,
   });
 
-  // Readiness readings by task id, straight off the ready-tasks response: the
-  // daemon judges stale tasks as it serves that route, so the board's badge
-  // costs no request of its own and refreshes with the ready set.
-  const readinessById = useMemo(() => {
-    const map = new Map<string, ReadinessReading>();
-    for (const task of readyTasks ?? []) {
-      if (task.readiness !== undefined) map.set(task.meta.id, task.readiness);
+  // The ready set from the cached list under the project's status model — what
+  // `/api/tasks/ready` computes server-side, without re-sending every ready body
+  // whenever one task changes. Empty until config says which statuses are ready.
+  const readyIds = useMemo(() => {
+    if (config === undefined || allTasksIncludingArchived === undefined) {
+      return new Set<string>();
     }
-    return map;
-  }, [readyTasks]);
+    return new Set(
+      readyTasks(allTasksIncludingArchived, statusModelOf(config)).map(
+        (t) => t.meta.id
+      )
+    );
+  }, [config, allTasksIncludingArchived]);
+  const { readinessById, scheduleJudge } = useReadiness(
+    client,
+    port,
+    allTasksFetched,
+    readyIds
+  );
 
   // Every dispatch worktree/branch on disk. Each row costs several `git`
   // shell-outs on the server (ahead count, merged check, dirty check), so this
@@ -1314,55 +1325,74 @@ export function useDispatchProject(
     [allEpicProgress]
   );
 
+  // Read through a ref, so a new judge callback never reopens the socket.
+  const scheduleJudgeRef = useRef(scheduleJudge);
+  useEffect(() => {
+    scheduleJudgeRef.current = scheduleJudge;
+  }, [scheduleJudge]);
+
   useEffect(() => {
     if (client === null) return;
-    // One pending refetch each for the list and for the queries derived from
-    // the task graph, so a burst of events costs one round trip apiece.
+    // One pending refetch each for the list and for fan-out progress, so a
+    // burst of events costs one round trip apiece. Config is not refetched
+    // here: every daemon write to it broadcasts `config.changed`.
     let listTimer: ReturnType<typeof setTimeout> | null = null;
-    let derivedTimer: ReturnType<typeof setTimeout> | null = null;
+    let epicTimer: ReturnType<typeof setTimeout> | null = null;
+    const refreshEpicProgress = () => {
+      if (epicTimer !== null) return;
+      epicTimer = setTimeout(() => {
+        epicTimer = null;
+        void queryClient.invalidateQueries({ queryKey: epicProgressKeyPrefix });
+      }, EPIC_REFRESH_DEBOUNCE_MS);
+    };
     const refetchTaskList = () => {
+      refreshEpicProgress();
       if (listTimer !== null) return;
       listTimer = setTimeout(() => {
         listTimer = null;
         void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
       }, TASK_REFRESH_DEBOUNCE_MS);
     };
-    const refetchDerived = () => {
-      if (derivedTimer !== null) return;
-      derivedTimer = setTimeout(() => {
-        derivedTimer = null;
-        void queryClient.invalidateQueries({ queryKey: configQueryKey });
-        void queryClient.invalidateQueries({ queryKey: readyQueryKey });
-        void queryClient.invalidateQueries({ queryKey: epicProgressKeyPrefix });
-      }, TASK_REFRESH_DEBOUNCE_MS);
-    };
+    const cachedList = () =>
+      queryClient.getQueryData<TaskListItem[]>(tasksQueryKey);
     // Refetches just the named tasks into the cached list; an unscoped or
     // wide change, or a list fetch already in flight, refetches the list.
+    // Fan-out progress refetches only when a changed task can move it.
     const patchTasks = (ids: readonly string[] | undefined) => {
+      scheduleJudgeRef.current();
       if (
         ids === undefined ||
         ids.length === 0 ||
         ids.length > MAX_PATCHED_TASKS ||
-        queryClient.getQueryData(tasksQueryKey) === undefined ||
+        cachedList() === undefined ||
         queryClient.isFetching({ queryKey: tasksQueryKey, exact: true }) > 0
       ) {
         refetchTaskList();
         return;
       }
       for (const id of ids) {
-        client.fetchTask(id).then(applyTaskDoc, (err: unknown) => {
-          if (!(err instanceof ApiError && err.status === 404)) {
-            refetchTaskList();
-            return;
+        client.fetchTask(id).then(
+          (doc) => {
+            if (touchesFanout(cachedList(), id, doc.meta)) {
+              refreshEpicProgress();
+            }
+            applyTaskDoc(doc);
+          },
+          (err: unknown) => {
+            if (!(err instanceof ApiError && err.status === 404)) {
+              refetchTaskList();
+              return;
+            }
+            if (touchesFanout(cachedList(), id, null)) refreshEpicProgress();
+            queryClient.setQueryData<TaskListItem[]>(tasksQueryKey, (old) =>
+              old === undefined ? old : removeTaskListItem(old, id)
+            );
+            queryClient.removeQueries({ queryKey: taskDocKey(port, id) });
           }
-          queryClient.setQueryData<TaskListItem[]>(tasksQueryKey, (old) =>
-            old === undefined ? old : removeTaskListItem(old, id)
-          );
-          queryClient.removeQueries({ queryKey: taskDocKey(port, id) });
-        });
+        );
       }
     };
-    const disconnect = client.connectEvents(refetchDerived, {
+    const disconnect = client.connectEvents(ignoreChange, {
       onEvent: (event) => {
         // Checked structurally (see isDecisionsChanged): the client's
         // ServerEvent union predates this broadcast, so a literal comparison
@@ -1375,8 +1405,11 @@ export function useDispatchProject(
         } else if (event.type === 'hello') {
           // Events sent while the socket was down are lost, so a reconnect
           // refetches the list rather than trusting the patched cache.
-          if (queryClient.getQueryData(tasksQueryKey) !== undefined) {
+          if (cachedList() !== undefined) {
             refetchTaskList();
+            void queryClient.invalidateQueries({
+              queryKey: readinessKey(port),
+            });
           }
           void queryClient.invalidateQueries({
             queryKey: commentsRootKey(port),
@@ -1434,9 +1467,7 @@ export function useDispatchProject(
           void queryClient.invalidateQueries({
             queryKey: ['dispatch-run', port],
           });
-          void queryClient.invalidateQueries({
-            queryKey: epicProgressKeyPrefix,
-          });
+          refreshEpicProgress();
           // Every worktree/branch lifecycle event (dispatch, review, and the
           // branch actions themselves) broadcasts run.changed, so this is the
           // one signal the Branches surface needs.
@@ -1619,13 +1650,9 @@ export function useDispatchProject(
         } else if (event.type === 'epic.changed') {
           // A session started, paused, resumed, stopped, completed or filled
           // a batch — the bulk progress query is the one reader.
-          void queryClient.invalidateQueries({
-            queryKey: epicProgressKeyPrefix,
-          });
+          refreshEpicProgress();
         } else if (event.type === 'epic.paused') {
-          void queryClient.invalidateQueries({
-            queryKey: epicProgressKeyPrefix,
-          });
+          refreshEpicProgress();
           // A session that paused itself needs a human to resume or raise
           // the ceiling — a toast plus a durable inbox row, worded from the
           // event's own numbers so neither waits on the refetch above.
@@ -1771,7 +1798,7 @@ export function useDispatchProject(
     });
     return () => {
       if (listTimer !== null) clearTimeout(listTimer);
-      if (derivedTimer !== null) clearTimeout(derivedTimer);
+      if (epicTimer !== null) clearTimeout(epicTimer);
       disconnect();
     };
   }, [
@@ -1779,8 +1806,6 @@ export function useDispatchProject(
     queryClient,
     applyTaskDoc,
     tasksQueryKey,
-    configQueryKey,
-    readyQueryKey,
     runsQueryKey,
     presenceQueryKey,
     notesQueryKey,
@@ -1877,10 +1902,6 @@ export function useDispatchProject(
     });
   }, [runs]);
 
-  const readyIds = useMemo(
-    () => new Set((readyTasks ?? []).map((t) => t.meta.id)),
-    [readyTasks]
-  );
   const blockedIds = useMemo(() => computeBlockedIds(tasks ?? []), [tasks]);
 
   const liveRunStateByTaskId = useMemo(() => {
@@ -1957,9 +1978,8 @@ export function useDispatchProject(
         throw err;
       }
       applyTaskDoc(updated);
-      void queryClient.invalidateQueries({ queryKey: readyQueryKey });
     },
-    [client, queryClient, applyTaskDoc, readyQueryKey, tasksQueryKey, port]
+    [client, queryClient, applyTaskDoc, tasksQueryKey, port]
   );
 
   // Optimistic status change for the board's drag-and-drop: the card jumps to
@@ -1989,16 +2009,8 @@ export function useDispatchProject(
         throw err;
       }
       applyTaskDoc(updated);
-      void queryClient.invalidateQueries({ queryKey: readyQueryKey });
     },
-    [
-      client,
-      queryClient,
-      applyTaskDoc,
-      tasksQueryKey,
-      readyQueryKey,
-      archivedTaskIds,
-    ]
+    [client, queryClient, applyTaskDoc, tasksQueryKey, archivedTaskIds]
   );
 
   const handleCreate = useCallback(
@@ -2006,10 +2018,9 @@ export function useDispatchProject(
       if (client === null) return null;
       const created = await client.createTask(input);
       applyTaskDoc(created);
-      void queryClient.invalidateQueries({ queryKey: readyQueryKey });
       return created;
     },
-    [client, queryClient, applyTaskDoc, readyQueryKey]
+    [client, applyTaskDoc]
   );
 
   // The create dialog's post-create upload; the `handle` prefix puts it under
@@ -2145,9 +2156,8 @@ export function useDispatchProject(
       if (client === null) return;
       await client.promoteNote(id);
       void queryClient.invalidateQueries({ queryKey: notesQueryKey });
-      void queryClient.invalidateQueries({ queryKey: readyQueryKey });
     },
-    [client, queryClient, notesQueryKey, readyQueryKey]
+    [client, queryClient, notesQueryKey]
   );
 
   // The AI half of promoting: asks the daemon to draft the task this note should become and
@@ -2172,16 +2182,8 @@ export function useDispatchProject(
       setNotePlanId(null);
       void queryClient.invalidateQueries({ queryKey: notesQueryKey });
       void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
-      void queryClient.invalidateQueries({ queryKey: readyQueryKey });
     },
-    [
-      client,
-      notePlanId,
-      queryClient,
-      notesQueryKey,
-      tasksQueryKey,
-      readyQueryKey,
-    ]
+    [client, notePlanId, queryClient, notesQueryKey, tasksQueryKey]
   );
 
   const handleDispatch = useCallback(
@@ -2203,20 +2205,11 @@ export function useDispatchProject(
       });
       // The task's own status change arrives as a `task.changed` naming it.
       void queryClient.invalidateQueries({ queryKey: runsQueryKey });
-      void queryClient.invalidateQueries({ queryKey: readyQueryKey });
       // A batch member stays where the user is; only a lone dispatch follows its
       // run. See DispatchOptions for what firing this per task looks like.
       if (opts?.batch !== true) onRunDispatched?.(meta.id, meta.taskId);
     },
-    [
-      client,
-      config,
-      executors,
-      queryClient,
-      runsQueryKey,
-      readyQueryKey,
-      onRunDispatched,
-    ]
+    [client, config, executors, queryClient, runsQueryKey, onRunDispatched]
   );
 
   const handleApprove = useCallback(
@@ -2337,9 +2330,8 @@ export function useDispatchProject(
       await client.reviewRun(runId, action);
       // Task changes arrive over `task.changed`.
       void queryClient.invalidateQueries({ queryKey: runsQueryKey });
-      void queryClient.invalidateQueries({ queryKey: readyQueryKey });
     },
-    [client, queryClient, runsQueryKey, readyQueryKey]
+    [client, queryClient, runsQueryKey]
   );
 
   const handleRequestChanges = useCallback(
@@ -2347,12 +2339,11 @@ export function useDispatchProject(
       if (client === null) return;
       const meta = await client.sendRunMessage(runId, text, { resume: true });
       void queryClient.invalidateQueries({ queryKey: runsQueryKey });
-      void queryClient.invalidateQueries({ queryKey: readyQueryKey });
       // request-changes re-dispatches under a fresh run id — follow it so the caller keeps
       // showing the run that's now actually live.
       onRunDispatched?.(meta.id, meta.taskId);
     },
-    [client, queryClient, runsQueryKey, readyQueryKey, onRunDispatched]
+    [client, queryClient, runsQueryKey, onRunDispatched]
   );
 
   const handleOpenPr = useCallback(
@@ -2475,19 +2466,11 @@ export function useDispatchProject(
       }
       const result = await client.confirmPlan(planId, proposal);
       void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
-      void queryClient.invalidateQueries({ queryKey: readyQueryKey });
       // The new epic shows up in the bulk progress list on the next fetch.
       void queryClient.invalidateQueries({ queryKey: epicProgressKeyPrefix });
       return result;
     },
-    [
-      client,
-      planId,
-      queryClient,
-      tasksQueryKey,
-      readyQueryKey,
-      epicProgressKeyPrefix,
-    ]
+    [client, planId, queryClient, tasksQueryKey, epicProgressKeyPrefix]
   );
 
   // Task 6: enqueue a terminal, unreviewed run into the merge queue. The

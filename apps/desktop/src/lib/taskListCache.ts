@@ -1,4 +1,5 @@
 import type { TaskListItem, TaskMeta } from '@dispatch/core/browser';
+import { isContainerKind } from '@dispatch/core/browser';
 
 // The server's list order (packages/server/src/cache.ts): created, then id.
 function before(a: TaskMeta, b: TaskMeta): boolean {
@@ -31,4 +32,28 @@ export function removeTaskListItem(
   id: string
 ): TaskListItem[] {
   return list.filter((t) => t.meta.id !== id);
+}
+
+/** Whether a change to task `id` can move a fan-out's progress: it sits under a
+ * container before or after (`next`, null once deleted), is a container, or has
+ * children. With no list cached, it might. */
+export function touchesFanout(
+  list: readonly TaskListItem[] | undefined,
+  id: string,
+  next: TaskMeta | null
+): boolean {
+  if (list === undefined) return true;
+  if (next !== null && (next.parent !== null || isContainerKind(next.kind))) {
+    return true;
+  }
+  for (const task of list) {
+    if (task.meta.parent === id) return true;
+    if (
+      task.meta.id === id &&
+      (task.meta.parent !== null || isContainerKind(task.meta.kind))
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
