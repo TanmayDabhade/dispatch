@@ -25,7 +25,6 @@ import { useDeepLinkActions } from '../components/shell/DeepLinkContext';
 import { useShellActions } from '../components/shell/ShellActionsContext';
 import { AssigneeAvatar } from '../components/tasks/AssigneeAvatar';
 import { DispatchDialog } from '../components/tasks/DispatchDialog';
-import { EpicDagModal } from '../components/tasks/EpicDagModal';
 import { PriorityIcon } from '../components/tasks/PriorityIcon';
 import { StatusIcon } from '../components/tasks/StatusIcon';
 import {
@@ -152,9 +151,6 @@ export function TasksListView({
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() =>
     readCollapsedGroups(COLLAPSED_GROUPS_STORAGE_KEY)
   );
-  // Which epic's dependency graph is open, or `null`. View-local: nothing outside this list
-  // needs to know.
-  const [dagEpicId, setDagEpicId] = useState<string | null>(null);
   // Multi-select for bulk actions. Kept here rather than lifted: nothing outside this list
   // needs to know what is ticked, and it should clear when you navigate away.
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
@@ -196,17 +192,6 @@ export function TasksListView({
     for (const doc of data.tasks) for (const l of doc.meta.labels) set.add(l);
     return [...set].sort();
   }, [data.tasks]);
-
-  const dagEpic = dagEpicId !== null ? (epicById.get(dagEpicId) ?? null) : null;
-  // Memoized so the array is stable while the modal is open — a fresh array every render
-  // would bust EpicDagView's own `[tasks]` memo.
-  const dagTasks = useMemo(
-    () =>
-      dagEpicId !== null
-        ? data.tasks.filter((t) => t.meta.parent === dagEpicId)
-        : [],
-    [data.tasks, dagEpicId]
-  );
 
   const groups = useMemo<ListGroup[]>(() => {
     if (data.config === null) return [];
@@ -454,8 +439,12 @@ export function TasksListView({
                         actions={
                           knownEpic ? (
                             <IconButton
-                              label={`View dependency graph for ${group.label}`}
-                              onClick={() => setDagEpicId(group.epicId)}
+                              label={`Open the flight plan for ${group.label}`}
+                              onClick={() => {
+                                if (group.epicId !== null) {
+                                  shell.openTask(group.epicId, 'plan');
+                                }
+                              }}
                             >
                               <Waypoints aria-hidden />
                             </IconButton>
@@ -781,13 +770,6 @@ export function TasksListView({
           }}
         />
       )}
-
-      <EpicDagModal
-        epic={dagEpic}
-        tasks={dagTasks}
-        onOpenTask={onSelectTask}
-        onClose={() => setDagEpicId(null)}
-      />
     </div>
   );
 }

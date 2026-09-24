@@ -86,6 +86,10 @@ export interface CreateInput {
   icon?: string | null;
   /** Who is creating it, as an actor ref. */
   creator?: Assignee | null;
+  /** The id in an external tracker (`linear:<uuid>`), linked from the start. */
+  external?: string | null;
+  /** When it was really created, for an import; defaults to `now`. */
+  created?: string;
 }
 
 export interface UpdatePatch {
@@ -118,6 +122,8 @@ export interface UpdatePatch {
   initiatives?: string[];
   color?: string | null;
   icon?: string | null;
+  /** Who created it; a tracker sync backfills it from the remote record. */
+  creator?: Assignee | null;
 
   // null clears archivedAt (unarchive); a string sets it; undefined leaves it untouched.
   archivedAt?: string | null;
@@ -214,9 +220,9 @@ export function newTaskDoc(
     labels: input.labels ?? [],
     priority: input.priority ?? 'none',
     assignee: input.assignee ?? 'none',
-    created: now,
+    created: input.created ?? now,
     updated: now,
-    external: null,
+    external: input.external ?? null,
     selfReview: input.selfReview ?? true,
     ...(input.fixLoop === false ? { fixLoop: false } : {}),
     writes: input.writes ?? [],
@@ -452,10 +458,12 @@ export class TaskStore implements TaskStorePort {
   create(input: CreateInput, now: string = new Date().toISOString()): TaskDoc {
     const kind = canonicalKind(input.kind ?? 'task') as TaskKind;
     let id = generateTaskId(kind, input.title, now);
-    for (let i = 0; i < 5 && this.taskFilePath(id); i++) {
+    // One directory scan per attempt: an import creates thousands of tasks,
+    // and a fresh id almost never collides.
+    for (let attempt = 1; this.taskFilePath(id) !== null; attempt++) {
+      if (attempt > 5) throw new Error(`id collision persisted: ${id}`);
       id = generateTaskId(kind, input.title, now);
     }
-    if (this.taskFilePath(id)) throw new Error(`id collision persisted: ${id}`);
     const doc = newTaskDoc(id, kind, input, now);
     writeFileSync(
       join(this.tasksDir, `${id}-${slugify(input.title)}.md`),

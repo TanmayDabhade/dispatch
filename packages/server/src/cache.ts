@@ -87,27 +87,42 @@ export class TaskCache {
   rebuild(store: TaskStorePort): ListSafeError[] {
     const { docs, errors } = store.listSafe();
     this.db.run('DELETE FROM tasks');
-    const insert = this.db.prepare(
-      `INSERT INTO tasks (id, title, status, kind, parent, priority, assignee, created, updated, archived, json)
-       VALUES ($id, $title, $status, $kind, $parent, $priority, $assignee, $created, $updated, $archived, $json)`
-    );
-    for (const doc of docs) {
-      insert.run({
-        $id: doc.meta.id,
-        $title: doc.meta.title,
-        $status: doc.meta.status,
-        $kind: doc.meta.kind,
-        $parent: doc.meta.parent,
-        $priority: doc.meta.priority,
-        $assignee: doc.meta.assignee,
-        $created: doc.meta.created,
-        $updated: doc.meta.updated,
-        $archived: doc.meta.archivedAt !== undefined ? 1 : 0,
-        $json: JSON.stringify(doc),
-      });
-    }
+    this.write(docs, 'INSERT');
     this.lastErrors = errors;
     return errors;
+  }
+
+  /**
+   * Writes just these docs over their cached rows. For a writer that already
+   * holds what it wrote (a sync pass importing thousands of tasks), where a
+   * full rescan per batch would cost a parse of every task file each time.
+   */
+  upsert(docs: readonly TaskDoc[]): void {
+    this.write(docs, 'INSERT OR REPLACE');
+  }
+
+  private write(docs: readonly TaskDoc[], verb: string): void {
+    const insert = this.db.prepare(
+      `${verb} INTO tasks (id, title, status, kind, parent, priority, assignee, created, updated, archived, json)
+       VALUES ($id, $title, $status, $kind, $parent, $priority, $assignee, $created, $updated, $archived, $json)`
+    );
+    this.db.transaction(() => {
+      for (const doc of docs) {
+        insert.run({
+          $id: doc.meta.id,
+          $title: doc.meta.title,
+          $status: doc.meta.status,
+          $kind: doc.meta.kind,
+          $parent: doc.meta.parent,
+          $priority: doc.meta.priority,
+          $assignee: doc.meta.assignee,
+          $created: doc.meta.created,
+          $updated: doc.meta.updated,
+          $archived: doc.meta.archivedAt !== undefined ? 1 : 0,
+          $json: JSON.stringify(doc),
+        });
+      }
+    })();
   }
 
   // Human-readable form of the most recent rebuild's parse failures, for

@@ -13,7 +13,6 @@ import type {
   LinearSyncSummary,
   LinearTeam,
   LinearViewer,
-  LinearWorkflowState,
   MergeQueueSnapshot,
   PlanProposal,
   PlanRecord,
@@ -37,6 +36,7 @@ import type {
   Person,
   PolicyGate,
   PolicyGateMode,
+  StatusRoles,
   TaskDoc,
   TaskListItem,
   UpdatePatch,
@@ -429,7 +429,9 @@ export interface DispatchProjectData {
       statusMap?: Record<string, string>;
       intervalSec?: number;
       direction?: 'both' | 'pull' | 'push';
+      includeAcceptanceCriteria?: boolean;
     };
+    statusRoles?: StatusRoles | null;
     maxTurns?: number | null;
     maxBudgetUsd?: number | null;
     fixLoop?: { cap?: number; escalation?: EscalationStep[] };
@@ -455,13 +457,6 @@ export interface DispatchProjectData {
    *  the workspace has no teams. Null-ish when the fetch succeeded. */
   linearTeamsError: unknown;
   refetchLinearTeams: () => void;
-  /** The configured team's workflow states — the status-map editor's per-row `<select>`
-   * options. Empty until a team is chosen. */
-  linearStates: LinearWorkflowState[];
-  /** Why the state list is empty, when it is empty because the fetch failed rather than because
-   *  the team has no states. Null-ish when the fetch succeeded. */
-  linearStatesError: unknown;
-  refetchLinearStates: () => void;
   /** Issue UUID -> display identifier/URL, for resolving `TaskMeta.external` into a real chip. */
   linearLinks: Record<string, LinearIssueLink>;
   handleConnectLinear: (
@@ -916,12 +911,6 @@ export function useDispatchProject(
     },
     enabled: client !== null,
   });
-  // Scoped to the configured team, so switching teams in Settings fetches that team's own
-  // states instead of showing the previous team's list while the new one loads.
-  const linearStatesQueryKey = useMemo(
-    () => ['dispatch-linear-states', port, config?.linear.teamId ?? null],
-    [port, config?.linear.teamId]
-  );
   const { data: linearStatus } = useQuery({
     queryKey: linearStatusQueryKey,
     queryFn: () => {
@@ -955,36 +944,11 @@ export function useDispatchProject(
     },
     enabled: client !== null,
   });
-  const linearTeamId = config?.linear.teamId ?? null;
-  const {
-    data: linearStates,
-    error: linearStatesError,
-    refetch: refetchStatesQuery,
-  } = useQuery({
-    queryKey: linearStatesQueryKey,
-    queryFn: () => {
-      if (client === null || linearTeamId === null) {
-        throw new Error('no Linear team selected');
-      }
-      return client.fetchLinearStates(linearTeamId);
-    },
-    enabled:
-      client !== null &&
-      linearStatus?.connected === true &&
-      linearTeamId !== null &&
-      linearTeamId.trim() !== '',
-    // Same reasoning as linearTeams: a rejected fetch is a settled answer, not a blip.
-    retry: false,
-  });
   // TanStack's own `refetch` is stable, so wrapping it in useCallback with it as the only
   // dependency gives callers (e.g. a Settings Retry button) an identity that never churns.
   const refetchLinearTeams = useCallback(
     () => void refetchTeamsQuery(),
     [refetchTeamsQuery]
-  );
-  const refetchLinearStates = useCallback(
-    () => void refetchStatesQuery(),
-    [refetchStatesQuery]
   );
   const { data: readyTasks } = useQuery({
     queryKey: readyQueryKey,
@@ -1721,6 +1685,11 @@ export function useDispatchProject(
           void queryClient.invalidateQueries({
             queryKey: syncStatusQueryKey,
           });
+        } else if (event.type === 'linear.progress') {
+          // An import moved on: patch the status in place, no refetch.
+          queryClient.setQueryData<LinearStatus>(linearStatusQueryKey, (prev) =>
+            prev === undefined ? prev : { ...prev, progress: event.progress }
+          );
         } else if (event.type === 'linear.changed') {
           // A sync pass finished — refetch status (lastSyncAt/lastSummary/lastError) so
           // Settings reflects it immediately rather than waiting on its own poll.
@@ -2776,7 +2745,9 @@ export function useDispatchProject(
         statusMap?: Record<string, string>;
         intervalSec?: number;
         direction?: 'both' | 'pull' | 'push';
+        includeAcceptanceCriteria?: boolean;
       };
+      statusRoles?: StatusRoles | null;
       maxTurns?: number | null;
       maxBudgetUsd?: number | null;
       fixLoop?: { cap?: number; escalation?: EscalationStep[] };
@@ -3041,9 +3012,6 @@ export function useDispatchProject(
       linearTeams: linearTeams ?? [],
       linearTeamsError,
       refetchLinearTeams,
-      linearStates: linearStates ?? [],
-      linearStatesError,
-      refetchLinearStates,
       linearLinks: linearLinks ?? {},
       handleConnectLinear,
       handleDisconnectLinear,
@@ -3180,9 +3148,6 @@ export function useDispatchProject(
       linearTeams,
       linearTeamsError,
       refetchLinearTeams,
-      linearStates,
-      linearStatesError,
-      refetchLinearStates,
       linearLinks,
       handleConnectLinear,
       handleDisconnectLinear,

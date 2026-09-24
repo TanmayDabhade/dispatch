@@ -410,10 +410,14 @@ export const DEFAULT_NOTIFICATIONS: NotificationsConfig = {
 export interface LinearConfig {
   enabled: boolean;
   teamId: string | null;
-  /** dispatch status -> Linear workflow state name (a state `type` also matches). */
+  /** Pre-mirroring map (status -> state name or type). Once a team is linked
+   *  the statuses ARE its workflow states; this only guides that first move. */
   statusMap: Record<string, string>;
+  /** Seconds between polls when no webhook delivers changes. */
   intervalSec: number;
   direction: 'both' | 'pull' | 'push';
+  /** Whether a task's Acceptance Criteria travels in the Linear description. */
+  includeAcceptanceCriteria: boolean;
 }
 
 export const LINEAR_DIRECTIONS = ['both', 'pull', 'push'] as const;
@@ -422,8 +426,9 @@ export const DEFAULT_LINEAR: LinearConfig = {
   enabled: false,
   teamId: null,
   statusMap: { ...DEFAULT_STATUS_MAP },
-  intervalSec: 300,
+  intervalSec: 30,
   direction: 'both',
+  includeAcceptanceCriteria: true,
 };
 
 /** Per-role model ids. Each role is a distinct kind of agent work, so cheap

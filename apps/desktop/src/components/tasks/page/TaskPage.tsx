@@ -1,7 +1,7 @@
 import type { TaskListItem, UpdatePatch } from '@dispatch/core/browser';
 import {
   isContainer,
-  parseExternal,
+  parseLinearExternal,
   statusLabel,
   statusType,
 } from '@dispatch/core/browser';
@@ -512,7 +512,8 @@ function TaskPageLoaded({
     <TaskCrumb key="task" id={meta.id} title={meta.title} />,
   ];
 
-  const linked = parseExternal(meta.external) !== null;
+  // Any Linear record counts: an issue, or a project, milestone or initiative.
+  const linked = parseLinearExternal(meta.external) !== null;
   const archived = meta.archivedAt !== undefined;
   async function pushToLinear() {
     const failure = pushToLinearError(await project.handleSyncLinear([taskId]));

@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Plus, TriangleAlert } from 'lucide-react';
 import {
+  type ReactNode,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -10,6 +11,10 @@ import {
   useState,
 } from 'react';
 
+import {
+  type FlightPlanHost,
+  FlightPlanHostContext,
+} from './components/flightplan/ContainerFlightPlanSection';
 import { PeopleProvider } from './components/people/PeopleContext';
 import { AddProjectDialog } from './components/shell/AddProjectDialog';
 import { CommandPalette } from './components/shell/CommandPalette';
@@ -134,6 +139,26 @@ import {
 import { SidebarProvider } from '@/ui/sidebar';
 import { Spinner } from '@/ui/spinner';
 import { TooltipProvider } from '@/ui/tooltip';
+
+// The hosts a task page and a Flight Plan draw from, provided together so the shell's
+// provider stack stays one level deep.
+function SurfaceHosts({
+  taskPage,
+  flightPlan,
+  children,
+}: {
+  taskPage: TaskPageHost | null;
+  flightPlan: FlightPlanHost;
+  children: ReactNode;
+}) {
+  return (
+    <TaskPageHostContext.Provider value={taskPage}>
+      <FlightPlanHostContext.Provider value={flightPlan}>
+        {children}
+      </FlightPlanHostContext.Provider>
+    </TaskPageHostContext.Provider>
+  );
+}
 
 function App() {
   const [navState, dispatchNav] = useReducer(navReducer, initialNavState);
@@ -501,7 +526,8 @@ function App() {
   );
 
   // Opens the full task view; unspecified runId resolves to the task's latest
-  // run so Chat/Diff have something to show immediately.
+  // run so Run/Review have something to show immediately. With no mode named the
+  // page follows the task's state: a container opens on its Flight Plan.
   const openTaskView = useCallback(
     (taskId: string, tab: TaskTab = 'auto', runId?: string) => {
       const resolved =
@@ -832,6 +858,19 @@ function App() {
     []
   );
 
+  // What a `<ContainerFlightPlanSection>` draws a plan with: the project's data and the
+  // Cockpit's stay-in-place dispatch.
+  const flightPlanHost = useMemo<FlightPlanHost>(
+    () => ({
+      data,
+      dispatchTask: cockpitDispatch,
+      onDispatchFailed: onCockpitDispatchFailed,
+      onOpenTask: openTaskView,
+      onPeekTask: peekTask,
+    }),
+    [data, cockpitDispatch, onCockpitDispatchFailed, openTaskView, peekTask]
+  );
+
   const openOverseer = useCallback(
     (prompt?: string) => {
       if (prompt !== undefined) overseer.setDraft(prompt);
@@ -996,7 +1035,10 @@ function App() {
             <SavedViewsProvider value={savedViews}>
               <PageHeaderShellContext.Provider value={pageHeaderShell}>
                 <PeopleProvider people={data.people} me={data.me}>
-                  <TaskPageHostContext.Provider value={taskPageHost}>
+                  <SurfaceHosts
+                    taskPage={taskPageHost}
+                    flightPlan={flightPlanHost}
+                  >
                     {/* Linear's frame: the window is the dark frame, the rail sits directly on it, and
           the content is one rounded panel inset 8px from the top and right with the status
           strip in the 36px below. Views own their inset from here on — the panel has no
@@ -1542,7 +1584,7 @@ function App() {
                         onClose={() => dispatchNav({ type: 'closePalette' })}
                       />
                     </div>
-                  </TaskPageHostContext.Provider>
+                  </SurfaceHosts>
                 </PeopleProvider>
               </PageHeaderShellContext.Provider>
             </SavedViewsProvider>

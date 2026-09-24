@@ -1,5 +1,5 @@
 import type { TaskListItem } from '@dispatch/core/browser';
-import { parseExternal } from '@dispatch/core/browser';
+import { parseLinearExternal } from '@dispatch/core/browser';
 import {
   ArrowUpRight,
   Box,
@@ -145,7 +145,9 @@ export function TaskRail({
   const hasStack = getStackByTaskId(tasks).has(meta.id);
 
   const linearLink = resolveLinearLink(meta.external, project.linearLinks);
-  const linearLinked = parseExternal(meta.external) !== null;
+  // Any Linear record counts: an issue, or a project, milestone or initiative.
+  const linearRef = parseLinearExternal(meta.external);
+  const linearLinked = linearRef !== null;
   const canPush = isLinearConfigured(project.linearStatus);
   const [pushing, setPushing] = useState(false);
   const [pushed, setPushed] = useState(false);
@@ -320,7 +322,9 @@ export function TaskRail({
                   </Pill>
                 </a>
               ) : (
-                <Pill title="Linked to a Linear issue">
+                <Pill
+                  title={`Linked to a Linear ${linearRef?.entity ?? 'issue'}`}
+                >
                   <Link2 className="text-muted-foreground" />
                   Linear
                 </Pill>

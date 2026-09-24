@@ -997,6 +997,16 @@ function parseLinearConfig(raw: unknown): LinearConfig {
     );
   }
 
+  const { includeAcceptanceCriteria } = obj;
+  if (
+    includeAcceptanceCriteria !== undefined &&
+    typeof includeAcceptanceCriteria !== 'boolean'
+  ) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: linear.includeAcceptanceCriteria must be a boolean'
+    );
+  }
+
   const { statusMap } = obj;
   const mergedStatusMap = { ...defaults.statusMap };
   if (statusMap !== undefined) {
@@ -1025,6 +1035,8 @@ function parseLinearConfig(raw: unknown): LinearConfig {
     statusMap: mergedStatusMap,
     intervalSec: intervalSec ?? defaults.intervalSec,
     direction: (direction as LinearConfig['direction']) ?? defaults.direction,
+    includeAcceptanceCriteria:
+      includeAcceptanceCriteria ?? defaults.includeAcceptanceCriteria,
   };
 }
 
@@ -1529,6 +1541,17 @@ function applyLinearPatch(
       );
     }
     doc.setIn(['linear', 'direction'], patch.direction);
+  }
+  if (patch.includeAcceptanceCriteria !== undefined) {
+    if (typeof patch.includeAcceptanceCriteria !== 'boolean') {
+      throw new ConfigError(
+        'invalid linear.includeAcceptanceCriteria: must be a boolean'
+      );
+    }
+    doc.setIn(
+      ['linear', 'includeAcceptanceCriteria'],
+      patch.includeAcceptanceCriteria
+    );
   }
   if (patch.statusMap !== undefined) {
     if (

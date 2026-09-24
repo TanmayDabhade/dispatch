@@ -211,4 +211,33 @@ describe('CockpitView', () => {
       2
     );
   });
+
+  test('a fan-out row opens its container’s full Flight Plan', () => {
+    const data = {
+      ...dataWith([
+        task('e-1', { kind: 'milestone', status: 'working' }),
+        task('t-1', { parent: 'e-1' }),
+      ]),
+      liveEpicSessions: [
+        {
+          epicId: 'e-1',
+          active: true,
+          session: { epicId: 'e-1', concurrency: 2, state: 'active' },
+          spend: {},
+          children: [],
+          waves: [],
+          liveRuns: [],
+        },
+      ],
+    } as unknown as DispatchProjectData;
+    const { calls } = mount(data);
+    fireEvent.click(document.querySelector('[data-row-key="fanout:e-1"]'));
+    expect(calls.opened).toEqual(['e-1']);
+    // Enter on the row opens the plan too, never the split pane.
+    press('Enter');
+    expect(calls.opened).toEqual(['e-1', 'e-1']);
+    expect(
+      screen.queryByRole('button', { name: 'Ready for you, 1' })
+    ).toBeNull();
+  });
 });
