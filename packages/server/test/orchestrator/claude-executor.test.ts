@@ -64,6 +64,23 @@ describe('ClaudeExecutor Bun compatibility', () => {
 // carry an explicit `mcpServers.dispatch` stdio entry, since a real Claude
 // session (needed to prove the tools are actually callable end-to-end)
 // cannot be assumed to have credentials in this environment.
+describe('ClaudeExecutor effort', () => {
+  it('hands the run effort to query() and leaves it unset when absent', () => {
+    const seen: (Options | undefined)[] = [];
+    const executor = new ClaudeExecutor((args: { options?: Options }) => {
+      seen.push(args.options);
+      return emptyMessages() as unknown as Query;
+    });
+    const base = { cwd: '/tmp/x', prompt: 'p', permissionMode: 'default' };
+
+    executor.start({ ...base, effort: 'xhigh' }, noopEvents);
+    executor.start(base, noopEvents);
+
+    expect(seen[0]?.effort).toBe('xhigh');
+    expect(seen[1]?.effort).toBeUndefined();
+  });
+});
+
 describe('ClaudeExecutor dispatch MCP server wiring', () => {
   it('wires an mcpServers.dispatch stdio entry rooted at the worktree cwd, with DISPATCH_PROJECT_ROOT set to the project root', () => {
     let captured: Options | undefined;

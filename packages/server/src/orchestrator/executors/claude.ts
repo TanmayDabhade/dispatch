@@ -589,6 +589,7 @@ export class ClaudeExecutor implements Executor {
       maxTurns: opts.maxTurns,
       maxBudgetUsd: opts.maxBudgetUsd,
       model: opts.model,
+      effort: opts.effort,
       resume: opts.resumeSessionId,
       canUseTool,
       // Same "query() doesn't auto-load what the CLI does" class of bug as

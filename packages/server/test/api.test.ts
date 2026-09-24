@@ -85,6 +85,12 @@ describe('GET /api/health', () => {
     expect(body.watchdog).toBe('armed');
   });
 
+  // test/setup.ts pins DISPATCH_STORE_BACKEND=files for this daemon.
+  it('names the file backend its task store uses', async () => {
+    const body = await json(await fetch(`${baseUrl}/api/health`));
+    expect(body.storageBackend).toBe('files');
+  });
+
   it('serves JSON responses with an explicit utf-8 charset', async () => {
     const res = await fetch(`${baseUrl}/api/health`);
     expect(res.headers.get('content-type')).toBe(

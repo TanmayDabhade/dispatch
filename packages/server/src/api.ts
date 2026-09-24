@@ -3,7 +3,9 @@ import {
   canonicalStatus,
   ConfigError,
   describeValue,
+  EFFORT_LEVELS,
   getSection,
+  isEffortLevel,
   KINDS,
   loadConfig,
   PRIORITIES,
@@ -22,7 +24,12 @@ import type {
   UpdatePatch,
   VerifyConfig,
 } from '@dispatch/core';
-import type { ActorContext, TaskDoc, TaskStorePort } from '@dispatch/core';
+import type {
+  ActorContext,
+  EffortLevel,
+  TaskDoc,
+  TaskStorePort,
+} from '@dispatch/core';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
@@ -295,9 +302,10 @@ export interface ApiContext {
   commitMessageGenerator?: CommitMessageGenerator;
   // Who this daemon acts as, resolved once at boot from git config.
   actorContext: ActorContext;
-  // The board syncer's scheduler, or `null` when no trunk was resolvable at
-  // boot (see index.ts) — GET /api/sync synthesizes a `disabled` status in
-  // that case, since no real SyncResult ever reports it.
+  // The file backend's board syncer (it commits task files to the main
+  // branch while autoCommit is on), or `null` on the database backend or when
+  // no trunk was resolvable at boot (see index.ts) — GET /api/sync synthesizes
+  // a `disabled` status in that case, since no real SyncResult reports it.
   boardSyncScheduler: BoardSyncScheduler | null;
   // Which backend this project's state lives in. GET /api/sync needs it to
   // tell the two reasons `boardSyncScheduler` is null apart: no trunk (a
@@ -305,7 +313,7 @@ export interface ApiContext {
   // (which has no task files to sync and is not broken at all).
   storeBackend: TaskStoreBackend;
   // The receipts exporter's scheduler, or `null` on the file backend, whose
-  // task files the board syncer already commits into the user's own repo.
+  // task files the board syncer commits to the main branch instead.
   receiptsScheduler: ReceiptsScheduler | null;
   // Whether `dispatch merge-task` actually resolves on this daemon's PATH.
   // Surfaced at GET /api/sync as `mergeDriverWarning` so a broken setup is
@@ -720,6 +728,9 @@ async function createRun(
     return errorResponse(400, 'invalid model: expected a string');
   }
 
+  const effort = readOptionalEffort(parsed.value.effort);
+  if (!effort.ok) return effort.response;
+
   const freshField = parsed.value.fresh;
   if (freshField !== undefined && typeof freshField !== 'boolean') {
     return errorResponse(400, 'invalid fresh: expected a boolean');
@@ -730,6 +741,7 @@ async function createRun(
   const meta = await ctx.orchestrator.dispatchOrResume(taskId, {
     executor: typeof executorField === 'string' ? executorField : undefined,
     model: typeof modelField === 'string' ? modelField : undefined,
+    effort: effort.effort,
     fresh: freshField === true,
     // Whoever pressed dispatch, so the run — and its claims, and the
     // decisions it later parks on — is theirs rather than the operator's.
@@ -1005,6 +1017,17 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     // value before writing, and that ConfigError becomes the 400 below.
     patch.models = body.models as Partial<ModelConfig>;
   }
+  if ('effort' in body) {
+    if (
+      typeof body.effort !== 'object' ||
+      body.effort === null ||
+      Array.isArray(body.effort)
+    ) {
+      return errorResponse(400, 'effort must be an object');
+    }
+    // Same deal as models: core validates each role and level before writing.
+    patch.effort = body.effort as NonNullable<ConfigPatch['effort']>;
+  }
   if ('executor' in body) {
     if (typeof body.executor !== 'string') {
       return errorResponse(400, 'executor must be a string');
@@ -1176,12 +1199,13 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     ctx.events.broadcast({ type: 'config.changed' });
     // A changed interval or enabled flag only takes effect once the poll timer is rebuilt.
     ctx.linearSync.start();
-    // Turning auto-commit off is the natural point to tear the board's
-    // private sync worktree back down — otherwise it (and its `git
-    // worktree list` entry in the user's repo) outlives the feature it was
-    // created for. Unconditional on `patch.autoCommit === false` rather than
-    // gated on an actual true→false transition: SyncWorktree.remove() is
-    // already a safe no-op when there's nothing to remove.
+    // Turning off "Commit task files to the main branch" (autoCommit) is the
+    // natural point to tear the board's private sync worktree back down —
+    // otherwise it (and its `git worktree list` entry in the user's repo)
+    // outlives the feature it was created for. Unconditional on
+    // `patch.autoCommit === false` rather than gated on an actual true→false
+    // transition: SyncWorktree.remove() is already a safe no-op when there's
+    // nothing to remove.
     if (patch.autoCommit === false) ctx.boardSyncScheduler?.removeWorktree();
     // Echoes the config the same way GET does, masked the same way.
     return jsonResponse(redactSecretUrls(config));
@@ -1240,8 +1264,14 @@ function receiptsStatus(ctx: ApiContext): ReceiptsStatus {
   if (scheduler === null) {
     return {
       state: 'disabled',
+      // The commit path exists only while the file backend's syncer does,
+      // which needs a trunk resolved at boot.
       detail:
-        'this project keeps its state as files, which the board syncer commits',
+        ctx.boardSyncScheduler === null
+          ? 'this project keeps its tasks as files, so there is no receipt log'
+          : 'this project keeps its tasks as files, so there is no receipt ' +
+            'log — its task files are committed to the main branch instead ' +
+            'while “Commit task files to the main branch” is on',
       commit: null,
       changed: 0,
       removed: 0,
@@ -1274,21 +1304,57 @@ function receiptsStatus(ctx: ApiContext): ReceiptsStatus {
   };
 }
 
+// The file backend with no branch to commit to. The branch is resolved once
+// at boot (SyncWorktree.open), so fixing it takes a restart.
 const DISABLED_SYNC_DETAIL =
-  'no trunk resolvable for this project — board sync needs an origin ' +
-  'remote or a local main/master branch. SyncWorktree.open() only runs at ' +
-  'boot, so fixing that (adding an origin, or a main/master branch) needs a ' +
-  'daemon restart before syncing can start.';
+  "task files can't be committed: this repo has no origin default branch " +
+  'and no local main or master branch — add one, then restart Dispatch for ' +
+  'this project.';
 
 const DATABASE_SYNC_DETAIL =
-  'board sync does not apply to this project — its tasks live in the ' +
-  "daemon's database, not in task files, so there is nothing for the board " +
-  'syncer to commit. The audit trail is exported to the git receipt log ' +
-  'instead; see `receipts` below.';
+  "there are no task files to commit — this project's tasks live in the " +
+  "daemon's database. The audit trail is exported to the git receipt log " +
+  'instead (see `receipts` below), and Settings → Board sync shares the ' +
+  'board with teammates.';
 
 const OFF_SYNC_DETAIL =
-  'board sync is off for this project — turn on auto-commit in Settings ' +
-  'to start syncing.';
+  'task files are not being committed to the main branch — turn on ' +
+  '“Commit task files to the main branch” in Settings → Board sync to start.';
+
+// Why board sharing (team/boardSync) isn't running: the board is kept as files,
+// which it can't share; it is off; or it is on in config.yml but didn't start,
+// because its remote didn't resolve at boot or it was turned on since.
+type BoardSyncOffReason = 'files' | 'off' | 'not-started';
+
+function boardSyncOffReason(ctx: ApiContext): BoardSyncOffReason {
+  if (ctx.storeBackend === 'files') return 'files';
+  try {
+    return loadConfig(ctx.rootDir).sync?.enabled === true
+      ? 'not-started'
+      : 'off';
+  } catch {
+    // Boot reads the same file and turns sharing off when it can't.
+    return 'off';
+  }
+}
+
+// POST /api/board-sync/now's 409, per reason, which `dispatch sync now` prints.
+const BOARD_SYNC_OFF_MESSAGE: Record<BoardSyncOffReason, string> = {
+  files:
+    "board sync isn't available: it shares boards kept in Dispatch's " +
+    'database, and this project keeps its tasks as files. They reach ' +
+    'teammates through “Commit task files to the main branch” ' +
+    '(`autoCommit: true` in .dispatch/config.yml) instead',
+  off:
+    'board sync is off: it shares a database-backed project with teammates. ' +
+    'Turn it on in Settings → Board sync (or set `sync.enabled: true` in ' +
+    '.dispatch/config.yml), then restart Dispatch for this project',
+  'not-started':
+    "board sync is on but isn't running: its remote or repo couldn't be " +
+    'resolved when Dispatch started, or it was turned on since. Check ' +
+    '`sync.remote` or `sync.repo` in Settings → Board sync, then restart ' +
+    'Dispatch for this project',
+};
 
 const MERGE_DRIVER_WARNING =
   "the 'dispatch' command isn't resolvable on this daemon's PATH, so " +
@@ -1299,15 +1365,15 @@ const MERGE_DRIVER_WARNING =
 // GET /api/sync — `disabled` and `off` are never states a real
 // BoardSyncer.syncOnce() result carries (see boardSyncer.ts's SyncState).
 // `disabled` is synthesized because `ctx.boardSyncScheduler` is `null`,
-// which only happens when no trunk was resolvable at boot. `off` is
-// synthesized when a trunk WAS resolvable (the scheduler exists) but the
-// project's own config.yml has autoCommit: false — every existing project
-// defaults to this, so it must short-circuit before touching the scheduler's
-// pendingCounts(), which would otherwise call SyncWorktree.ensure() (a
-// synchronous `git worktree add`, often a multi-second checkout) on every
-// page load of every never-enabled project. Every other state comes
-// straight from the scheduler's retained last result, alongside a live
-// pendingCounts() read.
+// which happens on the database backend or when no trunk was resolvable at
+// boot. `off` is synthesized when a trunk WAS resolvable (the scheduler
+// exists) but the project's own config.yml has autoCommit: false — every
+// existing project defaults to this, so it must short-circuit before touching
+// the scheduler's pendingCounts(), which would otherwise call
+// SyncWorktree.ensure() (a synchronous `git worktree add`, often a
+// multi-second checkout) on every page load of every never-enabled project.
+// Every other state comes straight from the scheduler's retained last result,
+// alongside a live pendingCounts() read.
 function getSyncStatus(ctx: ApiContext): Response {
   // Asked on every request rather than read off a boot-time snapshot, so
   // fixing the setup clears the warning without a daemon restart. Cheap enough
@@ -3397,6 +3463,26 @@ function withdrawQuestion(
 // Validates an optional `model` body field the way createRun does: absent
 // means "the configured role's model"; present must be a non-empty string.
 // Returns the 400 to send, or the model (possibly undefined) to pass on.
+// An optional `effort` body field: absent is fine, anything but one of the
+// SDK's five levels is a 400.
+function readOptionalEffort(
+  value: unknown
+):
+  | { ok: true; effort: EffortLevel | undefined }
+  | { ok: false; response: Response } {
+  if (value === undefined) return { ok: true, effort: undefined };
+  if (!isEffortLevel(value)) {
+    return {
+      ok: false,
+      response: errorResponse(
+        400,
+        `invalid effort: ${describeValue(value)} (expected ${EFFORT_LEVELS.join('|')})`
+      ),
+    };
+  }
+  return { ok: true, effort: value };
+}
+
 function readOptionalModel(
   value: unknown
 ): { ok: true; model: string | undefined } | { ok: false; response: Response } {
@@ -3514,12 +3600,15 @@ async function startOverseer(req: Request, ctx: ApiContext): Promise<Response> {
     prompt?: unknown;
     backend?: unknown;
     model?: unknown;
+    effort?: unknown;
   };
   if (typeof body.prompt !== 'string' || body.prompt.trim() === '') {
     return errorResponse(400, 'invalid prompt: prompt is required');
   }
   const model = readOptionalModel(body.model);
   if (!model.ok) return model.response;
+  const effort = readOptionalEffort(body.effort);
+  if (!effort.ok) return effort.response;
   const knownBackendNames = ctx.overseerManager.registeredBackendNames();
   if (
     body.backend !== undefined &&
@@ -3536,7 +3625,8 @@ async function startOverseer(req: Request, ctx: ApiContext): Promise<Response> {
   const record = ctx.overseerManager.start(
     body.prompt,
     backendName,
-    model.model
+    model.model,
+    effort.effort
   );
   return jsonResponse(record, 202);
 }
@@ -4685,6 +4775,9 @@ export async function handleApi(
         startedAt: ctx.startedAt,
         models: loadConfig(ctx.rootDir).models,
         watchdog: ctx.watchdogStatus(),
+        // Which backend the task store uses, so a client can show only the
+        // settings that apply to it (autoCommit is file-backend-only).
+        storageBackend: ctx.storeBackend,
       });
     }
 
@@ -4751,21 +4844,26 @@ export async function handleApi(
       return jsonResponse({ ok: true });
     }
 
-    // GET /api/board-sync — board sync's state: whether it is on, when it
-    // last ran, what is waiting to go, and anything it could not resolve
-    // alone. POST /api/board-sync/now runs a pass and answers once it is
+    // GET /api/board-sync — board sync's state: whether it is on (and why
+    // not, when it is off), when it last ran, what is waiting to go, and
+    // anything it could not resolve alone. POST /api/board-sync/now runs a pass and answers once it is
     // done, for a person who does not want to wait for the interval.
     // Not /api/sync: that is the file backend's board syncer, already
     // answered below and read by the app's status strip.
     if (segments[0] === 'board-sync') {
       if (segments.length === 1 && method === 'GET') {
-        return jsonResponse(ctx.boardSync?.status() ?? { enabled: false });
+        return jsonResponse(
+          ctx.boardSync?.status() ?? {
+            enabled: false,
+            reason: boardSyncOffReason(ctx),
+          }
+        );
       }
       if (segments.length === 2 && segments[1] === 'now' && method === 'POST') {
         if (ctx.boardSync === null) {
           return errorResponse(
             409,
-            'board sync is off: set `sync.enabled: true` in .dispatch/config.yml and restart the daemon'
+            BOARD_SYNC_OFF_MESSAGE[boardSyncOffReason(ctx)]
           );
         }
         await ctx.boardSync.syncNow();

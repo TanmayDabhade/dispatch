@@ -1,5 +1,8 @@
 import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { CLAUDE_INSTALL_HINT } from '../../src/orchestrator/claudeCli.js';
 import type { PlanProposal } from '../../src/orchestrator/planner.js';
@@ -337,6 +340,39 @@ describe('ClaudePlanner Claude Code CLI resolution', () => {
       );
     } finally {
       Bun.which = originalWhich;
+    }
+  });
+});
+
+describe('ClaudePlanner effort', () => {
+  it('applies config effort.plan to planning turns but not to drafts', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-planner-effort-'));
+    mkdirSync(join(root, '.dispatch'));
+    writeFileSync(
+      join(root, '.dispatch', 'config.yml'),
+      'effort:\n  plan: high\n'
+    );
+    const seen: (Options | undefined)[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    function* fakeMessages(): Generator<any> {
+      yield {
+        type: 'result',
+        subtype: 'success',
+        structured_output: { message: 'ok', proposal: { tasks: [] } },
+      };
+    }
+    const planner = new ClaudePlanner(root, (args: { options?: Options }) => {
+      seen.push(args.options);
+      return fakeMessages() as unknown as Query;
+    });
+
+    try {
+      await planner.start('plan it');
+      await planner.start('draft it', undefined, 'draft');
+      expect(seen[0]?.effort).toBe('high');
+      expect(seen[1]?.effort).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });
