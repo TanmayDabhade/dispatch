@@ -1,0 +1,214 @@
+import type { RunMeta } from '@dispatch/client';
+import type { TaskListItem } from '@dispatch/core/browser';
+import { act, fireEvent, render, screen } from '@testing-library/react';
+import { beforeEach, describe, expect, test } from 'bun:test';
+
+import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import { CockpitView } from './CockpitView';
+
+const ME = 'human:wyat';
+
+beforeEach(() => window.localStorage.clear());
+
+function task(
+  id: string,
+  overrides: Partial<TaskListItem['meta']> = {}
+): TaskListItem {
+  return {
+    meta: {
+      id,
+      title: `Title ${id}`,
+      status: 'ready',
+      kind: 'task',
+      parent: null,
+      milestone: null,
+      blockedBy: [],
+      labels: [],
+      priority: 'medium',
+      assignee: ME,
+      created: `2026-09-0${id.slice(-1)}T00:00:00.000Z`,
+      updated: '2026-09-10T00:00:00.000Z',
+      dueDate: null,
+      cycle: null,
+      ...overrides,
+    },
+  } as TaskListItem;
+}
+
+const LIVE: RunMeta = {
+  id: 'r-live',
+  taskId: 't-9',
+  taskTitle: 'Title t-9',
+  executor: 'claude',
+  state: 'running',
+  branch: 'b',
+  baseBranch: 'main',
+  worktreePath: '/tmp',
+  createdAt: '2026-09-20T00:00:00.000Z',
+  updatedAt: '2026-09-20T00:00:00.000Z',
+  dispatchedBy: ME,
+};
+
+function dataWith(
+  tasks: TaskListItem[],
+  runs: RunMeta[] = []
+): DispatchProjectData {
+  return {
+    client: {},
+    port: 1,
+    portLoading: false,
+    portError: false,
+    config: null,
+    me: ME,
+    people: [],
+    tasks,
+    tasksIncludingArchived: tasks,
+    tasksReady: true,
+    runs,
+    latestRunByTaskId: new Map(runs.map((r) => [r.taskId, r])),
+    liveRunStateByTaskId: new Map(runs.map((r) => [r.taskId, r.state])),
+    attentionByTaskId: new Map(),
+    liveEpicSessions: [],
+    readinessById: new Map(),
+    retryEnsureDispatchd: () => {},
+  } as unknown as DispatchProjectData;
+}
+
+interface Calls {
+  opened: string[];
+  peeked: string[];
+  failed: [string, string][];
+}
+
+function mount(
+  data: DispatchProjectData,
+  dispatchTask: (taskId: string) => Promise<void> = () => Promise.resolve()
+) {
+  const calls: Calls = { opened: [], peeked: [], failed: [] };
+  const view = (d: DispatchProjectData) => (
+    <CockpitView
+      data={d}
+      projectName="demo"
+      dispatchTask={dispatchTask}
+      onDispatchFailed={(id, message) => calls.failed.push([id, message])}
+      onOpenTask={(id) => calls.opened.push(id)}
+      onPeekTask={(id) => calls.peeked.push(id)}
+    />
+  );
+  const result = render(view(data));
+  return {
+    ...result,
+    calls,
+    rerenderWith: (d: DispatchProjectData) => result.rerender(view(d)),
+  };
+}
+
+const grid = () => screen.getByRole('grid', { name: 'Home' });
+const laneKeys = (lane: string) =>
+  Array.from(
+    document.querySelectorAll(`[data-lane=${lane}] [data-row-key]`)
+  ).map((row) => row.getAttribute('data-row-key'));
+const press = (key: string) => fireEvent.keyDown(grid(), { key });
+
+describe('CockpitView', () => {
+  test('draws the three lanes from the cached lists', () => {
+    mount(
+      dataWith(
+        [task('t-1'), task('t-2'), task('t-9', { status: 'working' })],
+        [LIVE]
+      )
+    );
+    expect(
+      Array.from(
+        document.querySelectorAll('[data-lane] [data-slot=group-header-name]')
+      ).map((name) => name.textContent)
+    ).toEqual(['Ready for you', 'In flight', 'Needs you']);
+    expect(laneKeys('ready')).toEqual(['t-1', 't-2']);
+    expect(laneKeys('flight')).toEqual(['run:r-live']);
+  });
+
+  test('j/k move the cursor and h/l change lanes', () => {
+    mount(
+      dataWith(
+        [task('t-1'), task('t-2'), task('t-9', { status: 'working' })],
+        [LIVE]
+      )
+    );
+    expect(grid().getAttribute('aria-activedescendant')).toBe(
+      'cockpit-row-t-1'
+    );
+    press('j');
+    expect(grid().getAttribute('aria-activedescendant')).toBe(
+      'cockpit-row-t-2'
+    );
+    press('l');
+    expect(grid().getAttribute('aria-activedescendant')).toBe(
+      'cockpit-row-run-r-live'
+    );
+    press('h');
+    press('k');
+    expect(grid().getAttribute('aria-activedescendant')).toBe(
+      'cockpit-row-t-1'
+    );
+  });
+
+  test('d moves the task into flight at once', () => {
+    mount(dataWith([task('t-1'), task('t-2')]), () => new Promise(() => {}));
+    press('d');
+    expect(laneKeys('ready')).toEqual(['t-2']);
+    expect(laneKeys('flight')).toEqual(['starting:t-1']);
+    // The cursor stays in Ready, on the row that took the dispatched one's place.
+    expect(grid().getAttribute('aria-activedescendant')).toBe(
+      'cockpit-row-t-2'
+    );
+  });
+
+  test('a refused dispatch puts the task back in Ready and reports it', async () => {
+    let reject: (err: Error) => void = () => {};
+    const { calls } = mount(
+      dataWith([task('t-1'), task('t-2')]),
+      () =>
+        new Promise<void>((_, r) => {
+          reject = r;
+        })
+    );
+    press('d');
+    expect(laneKeys('flight')).toEqual(['starting:t-1']);
+    await act(async () => {
+      reject(new Error('blocked by t-0'));
+      await Promise.resolve();
+    });
+    expect(laneKeys('ready')).toEqual(['t-1', 't-2']);
+    expect(laneKeys('flight')).toEqual([]);
+    expect(calls.failed).toEqual([['t-1', 'blocked by t-0']]);
+  });
+
+  test('Enter opens the split: the other lanes fold to strips', () => {
+    mount(dataWith([task('t-1'), task('t-9', { status: 'working' })], [LIVE]));
+    press('Enter');
+    expect(screen.getByRole('button', { name: 'In flight, 1' })).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Needs you, 0' })).not.toBeNull();
+    press('Escape');
+    expect(screen.queryByRole('button', { name: 'In flight, 1' })).toBeNull();
+  });
+
+  test('o opens the full page, Space the peek', () => {
+    const { calls } = mount(dataWith([task('t-1')]));
+    press('o');
+    press(' ');
+    expect(calls.opened).toEqual(['t-1']);
+    expect(calls.peeked).toEqual(['t-1']);
+  });
+
+  test('t flips to the team, and g p groups by person', () => {
+    mount(dataWith([task('t-1'), task('t-2', { assignee: 'human:maya' })]));
+    expect(laneKeys('ready')).toEqual(['t-1']);
+    press('t');
+    expect(laneKeys('ready')).toEqual(['t-1', 't-2']);
+    press('g');
+    press('p');
+    expect(document.querySelectorAll('[data-slot=roster-header]')).toHaveLength(
+      2
+    );
+  });
+});

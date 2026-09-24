@@ -6,6 +6,7 @@ import {
   FileCode2,
   GitBranch,
   GitMerge,
+  House,
   Inbox,
   Layers,
   LayoutDashboard,
@@ -94,10 +95,11 @@ const RUN_GLOBAL_VIEWS: ViewRow<GlobalView>[] = [
   { id: 'all-agents', label: 'All agents', icon: Radar },
 ];
 
-/** Every project destination in rail order — Inbox first, then the sections as
+/** Every project destination in rail order — Home and Inbox first, then the sections as
  * they are rendered — which is also the ⌘N order: ⌘1 is the first row, and so
  * on. App indexes into this for `goto-N`. */
 export const PROJECT_NAV_VIEWS: PaletteView[] = [
+  { id: 'cockpit', label: 'Home' },
   { id: 'inbox', label: 'Inbox' },
   ...[...WORK_VIEWS, ...RUN_PROJECT_VIEWS, ...CODE_VIEWS].map(
     ({ id, label }) => ({ id, label })
@@ -355,6 +357,13 @@ export function Sidebar({
   const topGroup: SidebarNavSection = {
     id: 'top',
     items: [
+      {
+        // The Cockpit: what is ready for you, in flight, and waiting on you.
+        id: 'cockpit',
+        label: 'Home',
+        icon: <House strokeWidth={2} />,
+        disabled: !hasActiveProject,
+      },
       {
         id: 'inbox',
         label: 'Inbox',

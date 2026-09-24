@@ -10,6 +10,8 @@ import type { ImpactSubjectKind } from '@dispatch/client';
 /** The primary views for whichever project is active. `new-task` never renders
  * — App.tsx reads it as "open the AI composer" and hands the old view back. */
 export type ProjectView =
+  /** Home: Ready for you, In flight and Needs you — where a project opens. */
+  | 'cockpit'
   | 'overview'
   | 'board'
   /** retired — normalized to 'inbox' */
@@ -155,7 +157,7 @@ function normalizeProjectView(view: ProjectView): ProjectView {
 export const initialNavState: NavState = {
   section: 'project',
   activeProjectId: null,
-  projectView: 'overview',
+  projectView: 'cockpit',
   globalView: 'sessions',
   settingsPage: null,
   peekTaskId: null,
@@ -171,7 +173,7 @@ export const initialNavState: NavState = {
   history: [
     {
       section: 'project',
-      projectView: 'overview',
+      projectView: 'cockpit',
       globalView: 'sessions',
       activeRunId: null,
       activeDraftId: null,
@@ -250,14 +252,14 @@ export type NavAction =
 export function navReducer(state: NavState, action: NavAction): NavState {
   switch (action.type) {
     case 'selectProject':
-      // Switching projects always lands on Board (the "heart of the app") and drops any
+      // Switching projects always lands on the Cockpit home and drops any
       // peek/run selection scoped to the previous project rather than carrying over an id
       // that belongs to a different project's task/run list.
       return {
         ...state,
         section: 'project',
         activeProjectId: action.projectId,
-        projectView: 'overview',
+        projectView: 'cockpit',
         peekTaskId: null,
         activeRunId: null,
         activeDraftId: null,

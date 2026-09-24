@@ -4,7 +4,7 @@ import type { NavState } from './appNav';
 import { initialNavState, navReducer } from './appNav';
 
 describe('navReducer', () => {
-  test('selectProject switches section to project, defaults to overview, and clears peek/run', () => {
+  test('selectProject switches section to project, lands on the Cockpit home, and clears peek/run', () => {
     const state: NavState = {
       ...initialNavState,
       section: 'global',
@@ -19,7 +19,7 @@ describe('navReducer', () => {
     });
     expect(next.section).toBe('project');
     expect(next.activeProjectId).toBe('proj-a');
-    expect(next.projectView).toBe('overview');
+    expect(next.projectView).toBe('cockpit');
     expect(next.peekTaskId).toBeNull();
     expect(next.activeRunId).toBeNull();
   });
@@ -286,7 +286,7 @@ describe('history', () => {
   const view = (state: NavState) => `${state.section}:${state.projectView}`;
 
   test('back returns to where you came from, not a fixed destination', () => {
-    let state = initialNavState; // overview
+    let state = initialNavState; // cockpit
     state = navReducer(state, { type: 'setProjectView', view: 'inbox' });
     state = navReducer(state, { type: 'setProjectView', view: 'branches' });
     expect(view(state)).toBe('project:branches');
@@ -294,7 +294,7 @@ describe('history', () => {
     state = navReducer(state, { type: 'back' });
     expect(view(state)).toBe('project:inbox');
     state = navReducer(state, { type: 'back' });
-    expect(view(state)).toBe('project:overview');
+    expect(view(state)).toBe('project:cockpit');
   });
 
   test('forward works after going back', () => {
@@ -303,7 +303,7 @@ describe('history', () => {
       view: 'inbox',
     });
     state = navReducer(state, { type: 'back' });
-    expect(view(state)).toBe('project:overview');
+    expect(view(state)).toBe('project:cockpit');
     state = navReducer(state, { type: 'forward' });
     expect(view(state)).toBe('project:inbox');
   });
@@ -329,7 +329,7 @@ describe('history', () => {
   test('re-selecting the current view does not add an entry', () => {
     const state = navReducer(initialNavState, {
       type: 'setProjectView',
-      view: 'overview',
+      view: 'cockpit',
     });
     expect(state.history).toHaveLength(1);
   });
@@ -621,7 +621,7 @@ describe('task view teardown', () => {
       projectId: 'p-2',
     });
     expect(switched.activeTaskId).toBeNull();
-    expect(switched.projectView).toBe('overview');
+    expect(switched.projectView).toBe('cockpit');
   });
 
   test('escape on the task view acts as back', () => {
