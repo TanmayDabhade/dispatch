@@ -35,6 +35,7 @@ import {
   liveReviewAgentFor,
   postFailWorkLabel,
 } from '../../../lib/runState';
+import { reviewedRun } from '../../../lib/taskPageMode';
 import { diffStat } from '../../../lib/taskTimeline';
 import { DiffEmptyState } from '../../runs/DiffEmptyState';
 import { PierreReviewDiff } from '../../runs/PierreReviewDiff';
@@ -281,7 +282,7 @@ function Verdict({
  */
 export function ReviewMode({ page }: { page: TaskPageModel }) {
   const { project, item } = page;
-  const run = page.selectedRun;
+  const run = reviewedRun(page.selectedRun, page.runs);
   const runId = run?.id ?? null;
   const live = run !== undefined && !isTerminalRunState(run.state);
   const detail = useRunDetail(project.client, project.port, runId);

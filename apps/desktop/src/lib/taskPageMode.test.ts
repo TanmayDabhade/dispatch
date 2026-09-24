@@ -6,6 +6,8 @@ import {
   defaultTaskPageMode,
   executeRuns,
   lifecycleStages,
+  reviewedRun,
+  runsNewestFirst,
 } from './taskPageMode';
 
 function run(overrides: Partial<RunMeta> = {}): RunMeta {
@@ -112,6 +114,36 @@ test('executeRuns keeps the agent’s own runs, newest first', () => {
     run({ id: 'r-new', createdAt: '2026-09-05T00:00:00Z' }),
   ]);
   expect(runs.map((r) => r.id)).toEqual(['r-new', 'r-old']);
+});
+
+test('runsNewestFirst keeps every kind', () => {
+  const runs = runsNewestFirst([
+    run({ id: 'r-old', createdAt: '2026-09-01T00:00:00Z' }),
+    run({ id: 'r-verify', kind: 'verify', createdAt: '2026-09-10T00:00:00Z' }),
+  ]);
+  expect(runs.map((r) => r.id)).toEqual(['r-verify', 'r-old']);
+});
+
+describe('reviewedRun', () => {
+  const first = run({ id: 'r-a', branch: 'dispatch/t-1' });
+  const second = run({ id: 'r-b', branch: 'dispatch/t-1-b' });
+  const execute = [second, first];
+
+  test('an execute run is judged as itself', () => {
+    expect(reviewedRun(first, execute)).toBe(first);
+    expect(reviewedRun(undefined, [])).toBeUndefined();
+  });
+
+  test('a review or verify run points at the work it checked', () => {
+    const review = run({
+      id: 'r-rev',
+      kind: 'review',
+      baseBranch: 'dispatch/t-1',
+    });
+    expect(reviewedRun(review, execute)).toBe(first);
+    const orphan = run({ id: 'r-ver', kind: 'verify', baseBranch: 'gone' });
+    expect(reviewedRun(orphan, execute)).toBe(second);
+  });
 });
 
 describe('lifecycleStages', () => {

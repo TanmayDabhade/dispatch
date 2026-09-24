@@ -3,6 +3,7 @@ import { Check } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 import { modelLabel } from '../../../lib/models';
+import { runKindLabel } from '../../../lib/runKind';
 import { isTerminalRunState } from '../../../lib/runState';
 import { formatShortDate } from '../../../lib/taskDates';
 import { RunStatePill } from '../../runs/RunStatePill';
@@ -40,6 +41,20 @@ function Stat({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
+/** A run's id, with its kind after it when it only checked the work (review, verify). */
+function RunName({ run }: { run: RunMeta }) {
+  return (
+    <>
+      <span className="truncate tracking-(--id-tracking)">{run.id}</span>
+      {(run.kind ?? 'execute') !== 'execute' && (
+        <span className="text-muted-foreground shrink-0">
+          {runKindLabel(run.kind)}
+        </span>
+      )}
+    </>
+  );
+}
+
 /** Which run the Run and Review modes show, when the task has had more than one. */
 function RunPicker({
   runs,
@@ -52,8 +67,8 @@ function RunPicker({
 }) {
   if (runs.length < 2) {
     return (
-      <span className="text-muted-foreground font-book text-[12px] tracking-(--id-tracking)">
-        {selected.id}
+      <span className="text-muted-foreground font-book flex min-w-0 items-center gap-1.5 text-[12px]">
+        <RunName run={selected} />
       </span>
     );
   }
@@ -62,14 +77,16 @@ function RunPicker({
       <DropdownMenuTrigger
         render={<SelectPill aria-label="Run" className="max-w-56" />}
       >
-        <span className="tracking-(--id-tracking)">{selected.id}</span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <RunName run={selected} />
+        </span>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-72">
         {runs.map((r) => (
           <DropdownMenuItem key={r.id} onClick={() => onSelect(r.id)}>
             <RunStatePill meta={r} compact />
-            <span className="font-book min-w-0 flex-1 truncate text-[13px] tracking-(--id-tracking)">
-              {r.id}
+            <span className="font-book flex min-w-0 flex-1 items-center gap-1.5 text-[13px]">
+              <RunName run={r} />
             </span>
             <span className="text-muted-foreground font-book text-[12px]">
               {formatShortDate(r.updatedAt)}

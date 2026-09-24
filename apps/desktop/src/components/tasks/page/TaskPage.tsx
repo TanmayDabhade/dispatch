@@ -50,6 +50,7 @@ import {
   defaultTaskPageMode,
   executeRuns,
   lifecycleStages,
+  runsNewestFirst,
   type TaskPageMode,
   taskPageModes,
 } from '../../../lib/taskPageMode';
@@ -298,10 +299,11 @@ function TaskPageLoaded({
   const tasksById = index.byId;
   const container = isContainer(meta, index.parentIds);
   const children = childrenIn(index, taskId);
-  const runs = useMemo(
-    () => executeRuns(project.runs.filter((r) => r.taskId === taskId)),
+  const allRuns = useMemo(
+    () => runsNewestFirst(project.runs.filter((r) => r.taskId === taskId)),
     [project.runs, taskId]
   );
+  const runs = useMemo(() => executeRuns(allRuns), [allRuns]);
   const latestRun = runs[0];
   const model = activeStatusModel();
   const unmet = useMemo(
@@ -327,7 +329,8 @@ function TaskPageLoaded({
           ? requested
           : autoMode;
   const selectedRunId = controlledRunId ?? localRunId;
-  const selectedRun = runs.find((r) => r.id === selectedRunId) ?? latestRun;
+  // Any kind: a review or verify run opened by id (the live rail, the inbox) shows itself.
+  const selectedRun = allRuns.find((r) => r.id === selectedRunId) ?? latestRun;
 
   // A dispatch counts as landed once a run it did not already know about appears.
   useEffect(() => {
@@ -415,6 +418,7 @@ function TaskPageLoaded({
     amendments: sections?.get('Amendments') ?? '',
     activity,
     runs,
+    allRuns,
     selectedRun,
     selectRun,
     isContainer: container,

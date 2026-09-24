@@ -214,6 +214,58 @@ describe('the mode follows the task', () => {
   });
 });
 
+describe('opening a run by id', () => {
+  // An execute run that finished, and the review agent that is checking it.
+  const runs = [
+    run({ id: 'r-exec', state: 'finished' }),
+    run({
+      id: 'r-review',
+      kind: 'review',
+      branch: 'dispatch/review-t-1-review',
+      baseBranch: 'dispatch/t-1',
+      createdAt: '2026-09-23T11:00:00.000Z',
+    }),
+  ];
+  function hostFetching(fetched: string[]) {
+    return fakeHost(newLog(), {
+      tasks: [task('t-1', { status: 'review' })],
+      runs,
+      client: {
+        fetchRun: (id: string) => {
+          fetched.push(id);
+          return new Promise(() => {});
+        },
+      },
+    });
+  }
+
+  test('a review agent’s run shows its own transcript, named by kind', async () => {
+    const fetched: string[] = [];
+    mount(hostFetching(fetched), {
+      layout: 'full',
+      mode: 'run',
+      runId: 'r-review',
+    });
+    await waitFor(() => expect(fetched).toEqual(['r-review']));
+    const strip = document.querySelector('[data-slot=run-strip]');
+    expect(strip?.textContent).toContain('r-review');
+    expect(strip?.textContent).toContain('Review');
+  });
+
+  test('Review mode judges the work a picked review run checked', async () => {
+    const fetched: string[] = [];
+    mount(hostFetching(fetched), {
+      layout: 'full',
+      mode: 'review',
+      runId: 'r-review',
+    });
+    await waitFor(() => expect(fetched).toEqual(['r-exec']));
+    expect(
+      document.querySelector('[data-slot=run-strip]')?.textContent
+    ).toContain('r-exec');
+  });
+});
+
 describe('dispatching from the spec', () => {
   test('Dispatch sends the task and keeps a split pane where it is', async () => {
     const log = newLog();

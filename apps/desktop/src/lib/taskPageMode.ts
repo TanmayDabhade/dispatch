@@ -13,11 +13,30 @@ import { deriveRunDisposition, isTerminalRunState } from './runState';
  */
 export type TaskPageMode = 'spec' | 'run' | 'review' | 'summary' | 'plan';
 
+/** A task's runs of every kind, newest first: what Run mode's picker lists. */
+export function runsNewestFirst(runs: readonly RunMeta[]): RunMeta[] {
+  return [...runs].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+}
+
+function isExecuteRun(run: RunMeta): boolean {
+  return (run.kind ?? 'execute') === 'execute';
+}
+
 /** Runs an agent did the task's work in; review and verify runs ride alongside them. */
 export function executeRuns(runs: readonly RunMeta[]): RunMeta[] {
-  return runs
-    .filter((r) => (r.kind ?? 'execute') === 'execute')
-    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  return runsNewestFirst(runs.filter(isExecuteRun));
+}
+
+/**
+ * The run Review mode judges: the picked run when it did the work; for a picked review or
+ * verify run, the work it checked (the run whose branch it started from), else the newest.
+ */
+export function reviewedRun(
+  selected: RunMeta | undefined,
+  runs: readonly RunMeta[]
+): RunMeta | undefined {
+  if (selected === undefined || isExecuteRun(selected)) return selected;
+  return runs.find((r) => r.branch === selected.baseBranch) ?? runs[0];
 }
 
 export interface TaskStateInput {

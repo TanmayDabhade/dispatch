@@ -58,7 +58,7 @@ export function RunMode({ page }: { page: TaskPageModel }) {
       <div className="flex shrink-0 flex-col gap-1.5">
         <RunStrip
           run={meta}
-          runs={page.runs}
+          runs={page.allRuns}
           onSelectRun={page.selectRun}
           actions={
             stop.showButtons ? (

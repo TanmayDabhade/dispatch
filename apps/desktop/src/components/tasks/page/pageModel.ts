@@ -28,7 +28,10 @@ export interface TaskPageModel {
   activity: ActivityEntry[];
   /** Execute runs, newest first. */
   runs: RunMeta[];
-  /** The run the Run and Review modes show: the one picked, else the newest. */
+  /** Runs of every kind (review and verify too), newest first. */
+  allRuns: RunMeta[];
+  /** The run the Run and Review modes show: the one picked (any kind), else the newest
+   * execute run. */
   selectedRun: RunMeta | undefined;
   selectRun: (runId: string) => void;
   isContainer: boolean;
