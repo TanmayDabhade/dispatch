@@ -72,9 +72,24 @@ export interface GroupContext {
 const NO_EPIC_KEY = 'epic:none';
 const ARCHIVED_KEY = 'archived';
 
+// Each task's parsed time per field, so a sort parses a date once per task instead of twice
+// per comparison (~44k parses for 2000 tasks). Keyed by the item: a patched task is a new one.
+const parsedTimes = {
+  updated: new WeakMap<TaskListItem, number>(),
+  created: new WeakMap<TaskListItem, number>(),
+};
+
 function byDateDesc(field: 'updated' | 'created') {
-  return (a: TaskListItem, b: TaskListItem) =>
-    Date.parse(b.meta[field]) - Date.parse(a.meta[field]);
+  const cache = parsedTimes[field];
+  const time = (task: TaskListItem) => {
+    let at = cache.get(task);
+    if (at === undefined) {
+      at = Date.parse(task.meta[field]);
+      cache.set(task, at);
+    }
+    return at;
+  };
+  return (a: TaskListItem, b: TaskListItem) => time(b) - time(a);
 }
 
 // Each ordering's natural comparator: urgent first, newest first, A→Z. `manual` keeps the
