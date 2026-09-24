@@ -156,7 +156,8 @@ function fixFindingsRequest(selected: Finding[]): string {
 }
 
 /** The verdict controls: Land (merge) with the queue, PR and discard behind its menu, or
- * Review PR once a PR carries the work; Request changes and Re-run beside it. */
+ * Review PR once a PR carries the work; Request changes and Re-run beside it. None while
+ * the run is live: the daemon only lands, queues or discards a finished run. */
 function Verdict({
   page,
   run,
@@ -171,6 +172,13 @@ function Verdict({
   act: (action: () => Promise<void>) => void;
 }) {
   const { project } = page;
+  if (!isTerminalRunState(run.state)) {
+    return (
+      <span className="text-muted-foreground font-book text-[12px]">
+        Lands once it finishes
+      </span>
+    );
+  }
   const reviewed = run.reviewedAt !== undefined;
   const live = page.runs.some((r) => !isTerminalRunState(r.state));
   if (run.prUrl !== undefined && !reviewed) {

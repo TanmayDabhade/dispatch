@@ -145,6 +145,22 @@ describe('the mode follows the task', () => {
     expect(screen.getByRole('button', { name: /^Land/ })).not.toBeNull();
   });
 
+  test('a live run’s review offers no verdict until it finishes', () => {
+    mount(
+      fakeHost(newLog(), {
+        tasks: [task('t-1', { status: 'working' })],
+        runs: [run()],
+      })
+    );
+    fireEvent.click(screen.getByRole('tab', { name: /Review/ }));
+    expect(modeOf()).toBe('review');
+    expect(screen.queryByRole('button', { name: /^Land/ })).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: 'More ways to land' })
+    ).toBeNull();
+    expect(screen.getByText('Lands once it finishes')).not.toBeNull();
+  });
+
   test('landed work opens on its summary', () => {
     mount(
       fakeHost(newLog(), {
