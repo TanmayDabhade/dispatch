@@ -1,8 +1,10 @@
 import type { TaskListItem } from '@dispatch/core/browser';
-import { DEFAULT_STATUS_MODEL } from '@dispatch/core/browser';
+import { DEFAULT_STATUS_MODEL, fanoutScope } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
 import { buildFlightPlan } from './flightPlan';
+import { childrenByParent, flightScope } from './flightScope';
+import { queuePositions } from './flightViews';
 
 function child(
   id: string,
@@ -156,4 +158,135 @@ describe('buildFlightPlan', () => {
     });
     expect(plan.nodes.map((n) => n.wave)).toEqual([3, 3, 4, 5]);
   });
+});
+
+describe('teammates in the plan', () => {
+  const stateById = (plan: ReturnType<typeof buildFlightPlan>) =>
+    Object.fromEntries(plan.nodes.map((n) => [n.task.meta.id, n.state]));
+
+  test('another person’s node is theirs in every unfinished state', () => {
+    const plan = buildFlightPlan(
+      [
+        child('t-a', { assignee: 'human:sam' }),
+        child('t-b', { assignee: 'human:sam', status: 'draft' }),
+        child('t-c', { assignee: 'human:sam', status: 'review' }),
+        child('t-d', { assignee: 'human:sam', status: 'landed' }),
+        child('t-e', { assignee: 'human:sam' }),
+        child('t-f', { assignee: 'human:wyat' }),
+        child('t-g', { assignee: 'human' }),
+        child('t-h', { assignee: 'agent:sam/claude' }),
+        child('t-i', { assignee: 'agent' }),
+      ],
+      { ...opts(['t-e']), me: 'human:wyat' }
+    );
+    expect(stateById(plan)).toEqual({
+      't-a': 'teammate',
+      't-b': 'teammate',
+      't-c': 'teammate',
+      't-d': 'done',
+      't-e': 'running',
+      't-f': 'queued',
+      't-g': 'queued',
+      't-h': 'teammate',
+      't-i': 'queued',
+    });
+    expect(plan.nodes.find((n) => n.task.meta.id === 't-h')?.holder).toBe(
+      'human:sam'
+    );
+    expect(plan.queued).toBe(3);
+  });
+
+  test('a teammate’s node still holds its dependents until it is satisfied', () => {
+    const samTask = child('t-a', { assignee: 'human:sam' });
+    const dependent = child('t-b', { blockedBy: ['t-a'] });
+    const held = buildFlightPlan([samTask, dependent], {
+      ...opts(),
+      me: 'human:wyat',
+    });
+    expect(stateById(held)).toEqual({ 't-a': 'teammate', 't-b': 'blocked' });
+    expect(held.nodes[1]?.waitingOn).toEqual(['t-a']);
+    const landed = buildFlightPlan(
+      [
+        { meta: { ...samTask.meta, status: 'landed' } } as TaskListItem,
+        dependent,
+      ],
+      { ...opts(), me: 'human:wyat' }
+    );
+    expect(stateById(landed)).toEqual({ 't-a': 'done', 't-b': 'queued' });
+  });
+
+  test('a live fan-out works for whoever started it, not the viewer', () => {
+    const plan = buildFlightPlan(
+      [
+        child('t-a', { assignee: 'human:wyat' }),
+        child('t-b', { assignee: 'human:ada' }),
+        child('t-c', { assignee: 'human' }),
+      ],
+      {
+        ...opts(),
+        me: 'human:wyat',
+        ownerOf: () => 'p-1',
+        startedByOf: (owner) => (owner === 'p-1' ? 'human:ada' : null),
+      }
+    );
+    expect(stateById(plan)).toEqual({
+      't-a': 'teammate',
+      't-b': 'queued',
+      't-c': 'teammate',
+    });
+    expect(plan.nodes.every((n) => n.owner === 'p-1')).toBe(true);
+  });
+
+  test('before the viewer is known, only bare human is theirs', () => {
+    const plan = buildFlightPlan(
+      [
+        child('t-a', { assignee: 'human:wyat' }),
+        child('t-b', { assignee: 'human' }),
+      ],
+      opts()
+    );
+    expect(stateById(plan)).toEqual({ 't-a': 'teammate', 't-b': 'queued' });
+  });
+
+  test('queue positions skip a teammate’s node', () => {
+    const plan = buildFlightPlan(
+      [
+        child('t-a', { assignee: 'human:sam', priority: 'urgent' }),
+        child('t-b', { priority: 'high' }),
+        child('t-c', { priority: 'low' }),
+      ],
+      { ...opts(), me: 'human:wyat' }
+    );
+    const queue = queuePositions(plan.nodes, () => 1);
+    expect(queue.has('t-a')).toBe(false);
+    expect(queue.get('t-b')).toEqual({ position: 0, free: 1 });
+    expect(queue.get('t-c')).toEqual({ position: 1, free: 1 });
+  });
+});
+
+// initiative → project → { milestone → { issue, parent issue → sub-issue }, direct }
+test('the plan draws exactly the tasks the server’s fan-out covers', () => {
+  const tree = [
+    child('i-1', { kind: 'initiative', parent: null }),
+    child('p-1', { kind: 'project', parent: 'i-1' }),
+    child('m-1', { kind: 'milestone', parent: 'p-1' }),
+    child('m-2', { kind: 'milestone', parent: 'p-1' }),
+    child('t-1', { parent: 'm-1' }),
+    child('t-2', { parent: 'm-1' }),
+    child('t-3', { parent: 't-2' }),
+    child('t-4', { parent: 'm-2', blockedBy: ['t-1'] }),
+    child('t-5', { parent: 'p-1' }),
+  ];
+  const children = childrenByParent(tree);
+  for (const container of tree.slice(0, 4)) {
+    const drawn = flightScope(container, children).nodes.map((t) => t.meta.id);
+    const covered = fanoutScope(
+      container.meta.id,
+      (id) => children.get(id) ?? []
+    ).map((t) => t.meta.id);
+    expect(new Set(drawn)).toEqual(new Set(covered));
+  }
+  expect(
+    new Set(flightScope(tree[1], children).nodes.map((t) => t.meta.id))
+  ).toEqual(new Set(['t-1', 't-2', 't-4', 't-5']));
 });

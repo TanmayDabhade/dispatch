@@ -67,7 +67,7 @@ export interface SentenceInput {
   run: RunMeta | undefined;
   /** The server's reading of the node inside its fan-out, when a session exists. */
   phase: EpicProgressChild | undefined;
-  /** The owner's display name, for a teammate's node. */
+  /** The display name of the teammate a `teammate` node belongs to. */
   personName: string | null;
   model: StatusModel;
 }
@@ -114,6 +114,12 @@ function blockedSentence(input: SentenceInput): NodeSentence {
   return { text: statusLabel(status), tone: 'muted' };
 }
 
+// `Sam’s`, from a registry name's first word; a generic owner when the name is unknown.
+function possessive(name: string | null): string {
+  const first = name?.trim().split(/\s+/)[0] ?? '';
+  return first === '' ? 'A teammate’s' : `${first}’s`;
+}
+
 /** The node's one-line reason, and the hue to read it in. */
 export function nodeSentence(input: SentenceInput): NodeSentence {
   const { node, model } = input;
@@ -130,14 +136,12 @@ export function nodeSentence(input: SentenceInput): NodeSentence {
         tone: step === 'Waiting on approval' ? 'waiting' : 'working',
       };
     }
-    case 'teammate':
-      return {
-        text:
-          input.personName === null
-            ? statusLabel(status)
-            : `${statusLabel(status)} · ${input.personName}`,
-        tone: 'ready',
-      };
+    case 'teammate': {
+      const whose = possessive(input.personName);
+      return isStartedStatus(status, model)
+        ? { text: `${whose} · ${statusLabel(status)}`, tone: 'ready' }
+        : { text: `${whose} — won’t auto-start`, tone: 'muted' };
+    }
     case 'review':
       return hasStatusRole(status, 'landing', model)
         ? { text: 'Landing', tone: 'review' }

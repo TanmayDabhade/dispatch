@@ -78,12 +78,16 @@ function plan(
   }));
 }
 
-function progress(state: 'active' | 'paused', concurrency = 2): EpicProgress {
+function progress(
+  state: 'active' | 'paused',
+  concurrency = 2,
+  epicId = 'e-1'
+): EpicProgress {
   return {
-    epicId: 'e-1',
+    epicId,
     active: state === 'active',
     session: {
-      epicId: 'e-1',
+      epicId,
       concurrency,
       executor: 'fake',
       state,
@@ -277,6 +281,64 @@ describe('FlightPlan', () => {
       )
     ).toEqual(['e-1', 'e-2']);
     expect(sentenceOf('t-2')).toBe('Unblocks when t-1 finishes');
+  });
+
+  test('a project’s header fans out every band, and the bands step aside while it runs', () => {
+    const tasks = [
+      task('e-p', { kind: 'project', parent: null }),
+      task('e-1', { kind: 'milestone', parent: 'e-p', title: 'Alpha' }),
+      task('e-2', { kind: 'milestone', parent: 'e-p', title: 'Beta' }),
+      task('t-1', { parent: 'e-1' }),
+      task('t-2', { parent: 'e-2' }),
+      task('t-3', { parent: 'e-2' }),
+    ];
+    const header = () =>
+      document.querySelector('[data-slot=flight-header]')?.textContent ?? '';
+    const bandText = () =>
+      Array.from(document.querySelectorAll('[data-slot=flight-band-head]'))
+        .map((b) => b.textContent)
+        .join('|');
+    const view = mount(dataWith(tasks, []), undefined, 'e-p');
+    expect(header()).toContain('Send agents');
+    expect(bandText()).toContain('Send agents');
+
+    // The project's session owns every milestone's nodes: one queue, its slots.
+    view.rerenderWith(dataWith(tasks, [], [progress('active', 1, 'e-p')]));
+    expect(bandText()).not.toContain('Send agents');
+    expect(sentenceOf('t-1')).toBe('Next up');
+    expect(sentenceOf('t-2')).toBe('#1 in queue');
+    expect(sentenceOf('t-3')).toBe('#2 in queue');
+  });
+
+  test('a teammate’s node is theirs: never queued, and d passes it by', async () => {
+    const sent: string[] = [];
+    mount(
+      dataWith(
+        [
+          task('e-1', { kind: 'milestone', parent: null }),
+          task('t-1', { assignee: 'human:sam' }),
+          task('t-2', { blockedBy: ['t-1'] }),
+        ],
+        [],
+        [progress('active', 2)]
+      ),
+      (id) => {
+        sent.push(id);
+        return Promise.resolve();
+      }
+    );
+    expect(stateOf('t-1')).toBe('teammate');
+    expect(sentenceOf('t-1')).toBe('sam’s — won’t auto-start');
+    expect(sentenceOf('t-2')).toBe('Auto-starts when t-1 finishes');
+    fireEvent.keyDown(canvas(), { key: 'ArrowDown' });
+    expect(canvas().getAttribute('aria-activedescendant')).toBe(
+      'flight-node-t-1'
+    );
+    await act(async () => {
+      fireEvent.keyDown(canvas(), { key: 'd' });
+      await Promise.resolve();
+    });
+    expect(sent).toEqual([]);
   });
 
   test('an empty container says what will appear', () => {

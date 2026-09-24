@@ -2,8 +2,9 @@ import type { EpicProgress, EpicProgressChild } from '@dispatch/client';
 import type { TaskListItem } from '@dispatch/core/browser';
 import {
   DEFAULT_STATUS_MODEL,
+  fanoutCoverers,
+  fanoutScope,
   isCompletedStatus,
-  isContainerKind,
   isDoneStatus,
   isUnstartedStatus,
   statusModelOf,
@@ -31,6 +32,7 @@ import type { WorkEpicOptions } from '../../lib/epicSession';
 import { resolveLinearLink } from '../../lib/linearSettings';
 import { rollupMilestoneStatus } from '../../lib/milestoneRollup';
 import { pendingStarts } from '../../lib/optimisticDispatch';
+import { assigneeRef } from '../../lib/taskDisplay';
 import { FanoutControls } from '../milestones/FanoutControls';
 import { usePeople } from '../people/PeopleContext';
 import { DispatchDialog } from '../tasks/DispatchDialog';
@@ -99,8 +101,8 @@ function useNow(intervalMs: number): number {
 }
 
 // Whether `d` may send an agent at a node: unstarted, nothing in the plan ahead of it,
-// not its own plan, and not already running. A held (critical) node qualifies — by hand
-// is exactly how it starts.
+// not its own plan, not a teammate's, and not already running. A held (critical) node
+// qualifies — by hand is exactly how it starts.
 function canDispatch(
   node: FlightNode | undefined,
   model: Parameters<typeof isUnstartedStatus>[1]
@@ -108,6 +110,7 @@ function canDispatch(
   return (
     node !== undefined &&
     node.state !== 'running' &&
+    node.state !== 'teammate' &&
     !node.subPlan &&
     node.waitingOn.length === 0 &&
     isUnstartedStatus(node.task.meta.status, model)
@@ -238,17 +241,74 @@ export function FlightPlan({
     return out;
   }, [liveTaskIds, pending]);
 
-  // The fan-out sessions that own these nodes: each node's parent container.
+  // Every active or paused fan-out and who started it, as a key that only changes when
+  // one starts, stops or finishes.
+  const liveKey = useMemo(() => {
+    const out: string[] = [];
+    for (const progress of data.epicProgressById.values()) {
+      const session = progress.session;
+      if (session?.state === 'active' || session?.state === 'paused') {
+        out.push(`${progress.epicId}=${session.startedBy ?? ''}`);
+      }
+    }
+    return out.sort().join(' ');
+  }, [data.epicProgressById]);
+  const liveStarters = useMemo(() => {
+    const out = new Map<string, string | null>();
+    for (const entry of liveKey === '' ? [] : liveKey.split(' ')) {
+      const [id = '', startedBy = ''] = entry.split('=');
+      out.set(id, startedBy === '' ? null : startedBy);
+    }
+    return out;
+  }, [liveKey]);
+  // Which fan-out would start each node: the nearest covering container with a live
+  // session (the server's rule, core's `fanoutCoverers`), else its parent. Kept as the
+  // same map while no owner moves, so a task event elsewhere never rebuilds the plan.
+  const lastOwners = useRef<ReadonlyMap<string, string | null>>(new Map());
+  const owners = useMemo(() => {
+    const byId =
+      liveStarters.size === 0
+        ? null
+        : new Map(tasks.map((t) => [t.meta.id, t]));
+    const next = new Map<string, string | null>();
+    for (const task of nodes) {
+      const covering =
+        byId === null
+          ? undefined
+          : fanoutCoverers(task, (id) => byId.get(id)).find((id) =>
+              liveStarters.has(id)
+            );
+      next.set(task.meta.id, covering ?? task.meta.parent);
+    }
+    const prev = lastOwners.current;
+    const same =
+      prev.size === next.size &&
+      [...next].every(([id, owner]) => prev.get(id) === owner);
+    return same ? prev : next;
+  }, [nodes, tasks, liveStarters]);
+  useEffect(() => {
+    lastOwners.current = owners;
+  }, [owners]);
+  const ownerOf = useCallback(
+    (task: TaskListItem) => owners.get(task.meta.id) ?? task.meta.parent,
+    [owners]
+  );
+  const startedByOf = useCallback(
+    (owner: string) => liveStarters.get(owner) ?? null,
+    [liveStarters]
+  );
+
+  // The fan-out sessions that own these nodes.
   const sessions = useMemo(() => {
     const out = new Map<string, EpicProgress>();
     for (const task of nodes) {
-      const parent = task.meta.parent;
-      if (parent === null || out.has(parent)) continue;
-      const progress = data.epicProgressById.get(parent);
-      if (progress !== undefined) out.set(parent, progress);
+      const owner = owners.get(task.meta.id) ?? null;
+      if (owner === null || out.has(owner)) continue;
+      const progress = data.epicProgressById.get(owner);
+      if (progress !== undefined) out.set(owner, progress);
     }
     return out;
-  }, [nodes, data.epicProgressById]);
+  }, [nodes, owners, data.epicProgressById]);
   const concurrency = useMemo(() => {
     let total: number | null = null;
     for (const progress of sessions.values()) {
@@ -276,8 +336,21 @@ export function FlightPlan({
         concurrency,
         containerIds,
         waves: geometry.waves,
+        me: directory.me,
+        ownerOf,
+        startedByOf,
       }),
-    [nodes, flying, model, concurrency, containerIds, geometry.waves]
+    [
+      nodes,
+      flying,
+      model,
+      concurrency,
+      containerIds,
+      geometry.waves,
+      directory.me,
+      ownerOf,
+      startedByOf,
+    ]
   );
   const planNodeById = useMemo(
     () => new Map(plan.nodes.map((n) => [n.task.meta.id, n])),
@@ -321,8 +394,8 @@ export function FlightPlan({
   );
   const queue = useMemo(
     () =>
-      queuePositions(plan.nodes, (parent) => {
-        const session = sessions.get(parent)?.session;
+      queuePositions(plan.nodes, (owner) => {
+        const session = sessions.get(owner)?.session;
         return session?.state === 'active' ? session.concurrency : null;
       }),
     [plan, sessions]
@@ -336,11 +409,14 @@ export function FlightPlan({
         latestRunByTaskId: data.latestRunByTaskId,
         live: liveTaskIds,
         pending,
-        sessionActive: (parent) =>
-          sessions.get(parent)?.session?.state === 'active',
+        sessionActive: (owner) =>
+          sessions.get(owner)?.session?.state === 'active',
         phaseOf: (id) => phases.get(id),
         liveClaims,
-        personName: (assignee) => directory.personFor(assignee)?.name ?? null,
+        personName: (assignee) =>
+          directory.personFor(assignee)?.name ??
+          assigneeRef(assignee)?.handle ??
+          null,
       }),
     [
       plan,
@@ -514,6 +590,7 @@ export function FlightPlan({
     [data, model, setCeiling, onOpenTask]
   );
 
+  const containerLive = liveStarters.has(containerId);
   const bandViews = useMemo<FlightBandView[] | null>(() => {
     if (scope === null || container === null || scope.bands === null) {
       return null;
@@ -530,11 +607,23 @@ export function FlightPlan({
         status: rollupMilestoneStatus(work),
         done: work.filter((t) => isDoneStatus(t.meta.status, model)).length,
         total: work.length,
+        // The container's own live fan-out already covers every band.
         controls:
-          band.container === null ? null : fanoutFor(band.container, true),
+          band.container === null || containerLive
+            ? null
+            : fanoutFor(band.container, true),
       };
     });
-  }, [scope, container, geometry.layout, bandNodes, refFor, model, fanoutFor]);
+  }, [
+    scope,
+    container,
+    containerLive,
+    geometry.layout,
+    bandNodes,
+    refFor,
+    model,
+    fanoutFor,
+  ]);
 
   if (!data.tasksReady) {
     return (
@@ -553,10 +642,6 @@ export function FlightPlan({
     );
   }
 
-  // A banded plan's own container fans out only its direct tasks, if it has any.
-  const ownDirect = (children.get(containerId) ?? []).some(
-    (c) => !isContainerKind(c.meta.kind)
-  );
   // Only an active session starts anything on its own, so only its slots make an ETA.
   let activeSlots = 0;
   for (const progress of sessions.values()) {
@@ -583,6 +668,15 @@ export function FlightPlan({
         ? container
         : (scope.bands?.find((b) => b.key === dialog.epicId)?.container ??
           null);
+  // A teammate's task can never start in the fan-out, so the dialog never says it will.
+  const dialogReadyIds =
+    dialog === null
+      ? data.readyIds
+      : new Set(
+          [...data.readyIds].filter(
+            (id) => planNodeById.get(id)?.state !== 'teammate'
+          )
+        );
   const dialogSession =
     dialog?.mode === 'raise'
       ? (data.epicProgressById.get(dialog.epicId)?.session ?? null)
@@ -593,12 +687,8 @@ export function FlightPlan({
       data-slot="flight-plan"
       className={cn('flex h-full min-h-0 flex-col', className)}
     >
-      <FlightPlanHeader
-        stats={stats}
-        controls={
-          scope.bands === null || ownDirect ? fanoutFor(container, false) : null
-        }
-      />
+      {/* The container's fan-out covers the whole plan, every band included. */}
+      <FlightPlanHeader stats={stats} controls={fanoutFor(container, false)} />
       {nodes.length === 0 ? (
         <EmptyState
           icon={Waypoints}
@@ -629,10 +719,11 @@ export function FlightPlan({
       {dialog !== null && dialogEpic !== null && (
         <DispatchDialog
           title={`${dialog.mode === 'raise' ? 'Raise ceiling' : 'Send agents'} · ${dialogEpic.meta.title}`}
-          tasks={(children.get(dialog.epicId) ?? []).filter(
-            (t) => !containerIds.has(t.meta.id)
-          )}
-          readyIds={data.readyIds}
+          tasks={fanoutScope(
+            dialog.epicId,
+            (id) => children.get(id) ?? []
+          ).filter((t) => !containerIds.has(t.meta.id))}
+          readyIds={dialogReadyIds}
           runningNow={data.liveRunStateByTaskId.size}
           liveClaims={liveClaims}
           defaultConcurrency={data.config?.orchestrator.epicConcurrency ?? 3}

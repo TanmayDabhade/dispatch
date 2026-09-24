@@ -1,6 +1,7 @@
 import type { TaskListItem } from '@dispatch/core/browser';
 import {
   DEFAULT_STATUS_MODEL,
+  fanoutScope,
   isUnstartedStatus,
   statusModelOf,
 } from '@dispatch/core/browser';
@@ -259,9 +260,14 @@ export function CockpitView({
       else bucket.push(task);
     }
     for (const progress of data.liveEpicSessions) {
+      // What the session covers: a project's milestone issues too.
+      const scope = fanoutScope(
+        progress.epicId,
+        (id) => childrenOf.get(id) ?? []
+      );
       out.set(
         progress.epicId,
-        buildFlightPlan(childrenOf.get(progress.epicId) ?? [], {
+        buildFlightPlan(scope, {
           liveTaskIds,
           model,
           concurrency: progress.session?.concurrency ?? null,
