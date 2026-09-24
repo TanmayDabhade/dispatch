@@ -28,7 +28,10 @@ import type { RunMeta } from './orchestrator/types.js';
 // newline) so a marker in a later, unrelated command does not attach to an
 // innocent leading one. GAP is the stretch of one segment between two parts
 // of a pattern; it is lazy so a scan stops at the earliest next part.
+// SEGMENT_START is where a segment begins: the start of the command, or just
+// after a delimiter.
 const GAP = '[^|;&\\n]*?';
+const SEGMENT_START = '(?:^|[|;&\\n])';
 
 /**
  * A pattern for `first … middles … last` within one shell segment, built to
@@ -38,21 +41,19 @@ const GAP = '[^|;&\\n]*?';
  * pairing of `first` and `middle` occurrences in a segment: cubic time, and
  * this runs on the daemon's event loop for every tool call. A 20 KB one-line
  * command that merely mentioned "git" and "push" many times took about a
- * minute. Three changes keep exactly the same matches without that:
+ * minute. These changes keep exactly the same matches without that:
  *
- * - Only the first `first` in a segment is tried: a later one can only reach
- *   a subset of what the first one reaches. The negative lookbehind that
- *   rules the later ones out comes after `first`, so it runs only where
- *   `first` matched, and it stops at the nearest earlier `first`.
- * - Each middle part commits to its earliest occurrence, the one that leaves
- *   the most of the segment for what follows. A lookahead's capture replayed
- *   by a backreference is JavaScript's stand-in for an atomic group, so the
- *   engine cannot backtrack into later occurrences. A middle part must not be
- *   able to match a segment delimiter, or a later occurrence could reach a
- *   segment the earliest one cannot.
+ * - A match is only attempted from the start of a segment, and `first` and
+ *   each middle part commit to their earliest occurrence after it: a later
+ *   occurrence can only reach a subset of what the earliest reaches. A
+ *   lookahead's capture replayed by a backreference is JavaScript's stand-in
+ *   for an atomic group, so the engine cannot backtrack into later
+ *   occurrences. (Anchoring at segment starts rather than ruling out later
+ *   `first`s with a lookbehind also keeps JavaScriptCore on its regex JIT.)
+ * - A middle part must not be able to match a segment delimiter, or a later
+ *   occurrence could reach a segment the earliest one cannot.
  * - `last` is only looked for, from the end of the last middle part. Its
- *   source is the lookahead body, so it states its own gap; most callers wrap
- *   it in inSegment().
+ *   source is the lookahead body, so it states its own gap: inSegment().
  *
  * test/floor.test.ts checks these against the plain form on generated
  * commands, and times them on the inputs that stalled the plain form.
@@ -62,16 +63,17 @@ function segmentChain(
   middles: readonly string[],
   last: string
 ): RegExp {
-  let source = `${first}(?<!${first}${GAP}${first})`;
-  middles.forEach((middle, i) => {
-    source += `(?=(${GAP}${middle}))\\${String(i + 1)}`;
+  let source = SEGMENT_START;
+  [first, ...middles].forEach((part, i) => {
+    source += `(?=(${GAP}${part}))\\${String(i + 1)}`;
   });
   return new RegExp(`${source}(?=${last})`);
 }
 
-// `last` found anywhere from the current point to the end of the segment. Each
-// alternative must cost constant or run-bounded time at one starting point,
-// since the gap tries every starting point once.
+// `last` found anywhere from the current point to the end of the segment. An
+// alternative is tried at every point of the segment, so each has to cost
+// constant time there, or time bounded by the run of non-space characters
+// after a space (runs after different spaces never overlap).
 function inSegment(alternatives: string): string {
   return `${GAP}(?:${alternatives})`;
 }
@@ -114,8 +116,9 @@ const REGISTRY_PUBLISH = segmentChain(
 
 // A tag push is this repo's release trigger (release.yml builds on v*), so
 // pushing tags is publishing under a different spelling: `--tags`,
-// `--follow-tags`, an explicit `refs/tags/` refspec, or a bare `vN[.N...]`
-// ref. `gh release create/upload` publishes a release directly.
+// `--follow-tags`, an explicit `refs/tags/` refspec (pushesTagRefspec below),
+// or a bare `vN[.N...]` ref. `gh release create/upload` publishes a release
+// directly.
 const TAG_PUSH = segmentChain(
   GIT,
   [PUSH],
@@ -123,20 +126,82 @@ const TAG_PUSH = segmentChain(
     '--tags(?![\\w-])|--follow-tags(?![\\w-])|\\s(?:\\S+:)?v\\d+(?:\\.\\d+)*(?=\\s|$)'
   )
 );
-// The `refs/tags/` refspec, split out because `\S*refs/tags/` tried from every
-// point of a long word is quadratic. The run of non-space characters ending at
-// `refs/tags/` starts either where the scan starts or just after a space
-// inside the segment, so only those two starting points are tried.
-const TAG_REFSPEC_PUSH = segmentChain(
-  GIT,
-  [PUSH],
-  `(?:\\S*|${GAP}[^\\S\\n]\\S*)refs/tags/`
-);
 const GH_RELEASE = segmentChain(
   GH,
   ['\\brelease\\b'],
   inSegment('\\b(?:create|upload)\\b')
 );
+
+// The end of each segment's first `git … push`, one match per segment.
+const GIT_PUSH_ENDS = new RegExp(
+  `${SEGMENT_START}(?=(${GAP}${GIT}))\\1(?=(${GAP}${PUSH}))\\2`,
+  'g'
+);
+const DELIMITER = /[|;&\n]/g;
+const WHITESPACE = /\s/g;
+
+// Every index at which `pattern` (a global regex) matches in `text`, ascending.
+function matchIndexes(text: string, pattern: RegExp): number[] {
+  const indexes: number[] = [];
+  pattern.lastIndex = 0;
+  for (let m = pattern.exec(text); m !== null; m = pattern.exec(text)) {
+    indexes.push(m.index);
+    if (m[0] === '') pattern.lastIndex += 1;
+  }
+  return indexes;
+}
+
+// The first entry of an ascending list at or after `from`, or -1.
+function firstAtOrAfter(sorted: readonly number[], from: number): number {
+  let low = 0;
+  let high = sorted.length;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    if (sorted[mid] < from) low = mid + 1;
+    else high = mid;
+  }
+  return low < sorted.length ? sorted[low] : -1;
+}
+
+/**
+ * Whether a `git … push` pushes an explicit `refs/tags/` refspec: the plain
+ * pattern `git[^|;&\n]*push[^|;&\n]*\S*refs/tags/`, decided in linear time.
+ *
+ * That pattern matches when, after the push word, `refs/tags/` starts either
+ * inside the segment or past its end with no whitespace in between (`\S`
+ * covers `;`, `|` and `&`, so the refspec's run of non-space characters may
+ * start in this segment and cross into the next). As a regex it rescans the
+ * whole of such a run once for every segment inside it, which made a 100 KB
+ * `git.push;git.push;…` take 12 s. Precomputing where `refs/tags/` and the
+ * whitespace sit turns each segment's question into two binary searches.
+ */
+function pushesTagRefspec(command: string): boolean {
+  if (!command.includes('refs/tags/')) return false;
+  let tags: number[] | null = null;
+  let spaces: number[] | null = null;
+  GIT_PUSH_ENDS.lastIndex = 0;
+  for (
+    let m = GIT_PUSH_ENDS.exec(command);
+    m !== null;
+    m = GIT_PUSH_ENDS.exec(command)
+  ) {
+    const pushEnd = m.index + m[0].length;
+    DELIMITER.lastIndex = pushEnd;
+    const segmentEnd = DELIMITER.exec(command)?.index ?? command.length;
+    tags ??= matchIndexes(command, /refs\/tags\//g);
+    const tag = firstAtOrAfter(tags, pushEnd);
+    if (tag === -1) return false;
+    if (tag < segmentEnd) return true;
+    // Past the segment's end, the run must not break before the refspec: a
+    // newline ends it at once, other whitespace wherever it falls.
+    if (segmentEnd < command.length && command[segmentEnd] !== '\n') {
+      spaces ??= matchIndexes(command, WHITESPACE);
+      const space = firstAtOrAfter(spaces, segmentEnd);
+      if (space === -1 || space > tag) return true;
+    }
+  }
+  return false;
+}
 
 // `gh` touching a repository's settings: visibility (`gh repo edit
 // --visibility`, `gh api -f visibility=`, `-f private=`), the default branch,
@@ -155,25 +220,30 @@ const REPO_SETTINGS: readonly RegExp[] = [
   segmentChain(GH, ['-X[^\\S\\n]*\\n\\s*DELETE'], inSegment('/repos/')),
 ];
 
-// Order matters only when one command trips several patterns; the first
-// match names the hold, and any match blocks.
-const COMMAND_CHECKS: readonly { check: FloorCheck; pattern: RegExp }[] = [
-  { check: 'force-push', pattern: FORCE_PUSH },
-  { check: 'publish', pattern: REGISTRY_PUBLISH },
-  { check: 'publish', pattern: TAG_PUSH },
-  { check: 'publish', pattern: TAG_REFSPEC_PUSH },
-  { check: 'publish', pattern: GH_RELEASE },
-  ...REPO_SETTINGS.map((pattern) => ({
-    check: 'repo-settings' as const,
-    pattern,
-  })),
-  { check: 'delete-outside-writes', pattern: REMOTE_REF_DELETE },
+// Order matters only when one command trips several checks; the first match
+// names the hold, and any match blocks.
+const COMMAND_CHECKS: readonly {
+  check: FloorCheck;
+  matches: (command: string) => boolean;
+}[] = [
+  { check: 'force-push', matches: (c) => FORCE_PUSH.test(c) },
+  { check: 'publish', matches: (c) => REGISTRY_PUBLISH.test(c) },
+  {
+    check: 'publish',
+    matches: (c) => TAG_PUSH.test(c) || pushesTagRefspec(c),
+  },
+  { check: 'publish', matches: (c) => GH_RELEASE.test(c) },
+  {
+    check: 'repo-settings',
+    matches: (c) => REPO_SETTINGS.some((pattern) => pattern.test(c)),
+  },
+  { check: 'delete-outside-writes', matches: (c) => REMOTE_REF_DELETE.test(c) },
 ];
 
 /** The floor check a shell command trips, or null when it trips none. */
 export function floorCheckForCommand(command: string): FloorCheck | null {
-  for (const { check, pattern } of COMMAND_CHECKS) {
-    if (pattern.test(command)) return check;
+  for (const { check, matches } of COMMAND_CHECKS) {
+    if (matches(command)) return check;
   }
   return null;
 }

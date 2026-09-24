@@ -216,6 +216,7 @@ function* generatedCommands(count: number): Generator<string> {
     ' ',
     ' ',
     '',
+    '.',
     '\n',
     '\t',
     ';',
@@ -317,11 +318,20 @@ describe('floorCheckForCommand, rewritten for linear time', () => {
     }
   });
 
-  // Each of these took the pre-rewrite detectors from tens of milliseconds at
-  // 5 KB to seconds or minutes at this size; linear time keeps them well under
-  // the bound on any machine.
+  // Each of these took the pre-rewrite detectors (or a first rewrite) from
+  // tens of milliseconds at 5 KB to seconds or minutes at this size; they now
+  // take a few milliseconds, well under the bound on any machine. The
+  // `git.push;` runs cross segment ends with no whitespace, which defeated a
+  // regex form of the `refs/tags/` check; the plain script checks ordinary
+  // input stays fast too.
   it('stays fast on long commands that stalled the old detectors', () => {
     for (const command of [
+      'git.push;'.repeat(11_111),
+      'git-push|'.repeat(11_111),
+      'git.push&'.repeat(11_111) + 'refs/tags/x',
+      'cd src && ls -la | grep ts; git status --short\nnpm run build\n'.repeat(
+        1_700
+      ),
       'git push '.repeat(12_000),
       'echo "' + 'git status and push later '.repeat(4_000) + '"',
       'git push -' + 'f'.repeat(100_000) + '1',
@@ -331,7 +341,7 @@ describe('floorCheckForCommand, rewritten for linear time', () => {
     ]) {
       const started = performance.now();
       floorCheckForCommand(command);
-      expect(performance.now() - started).toBeLessThan(1_000);
+      expect(performance.now() - started).toBeLessThan(250);
     }
   });
 });
