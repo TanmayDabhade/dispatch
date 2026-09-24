@@ -54,15 +54,19 @@ function Elapsed({ since }: { since: number }) {
   return <MetaText>{useElapsed(since)}</MetaText>;
 }
 
-// The run's latest step. Its own component so a chatty run re-renders only this text.
-function LiveStep({ runId }: { runId: string }) {
+// The run's latest step, standing in for the agent's name (kept in the tooltip) so the
+// title keeps its room; the name until the first step arrives. Its own component so a
+// chatty run re-renders only this text.
+function AgentStep({ runId, agent }: { runId: string; agent: string }) {
   const step = useRunStep(runId);
-  if (step === null) return null;
+  if (step === null) {
+    return <MetaText className="max-w-24 truncate">{agent}</MetaText>;
+  }
   return (
     <span
       data-slot="run-step"
-      title={step}
-      className="font-book text-muted-foreground max-w-44 truncate text-[12px]"
+      title={`${agent} · ${step}`}
+      className="font-book text-muted-foreground max-w-40 truncate text-[12px]"
     >
       {step}
     </span>
@@ -84,9 +88,9 @@ interface CockpitRowProps {
 /**
  * One 36px Cockpit row, on the list row's anatomy. What fills the slots depends on the
  * item: a ready task (priority, id, status, title, cycle or due chip, assignee, age), a
- * live run (state mark, id, title, agent, step, cost, a ticking clock), a fan-out (its
- * container and the mini Flight Plan), a teammate's started task (their avatar, status,
- * age) or something waiting on you (why, and since when).
+ * live run (state mark, id, title, its latest step or else the agent, cost, a ticking
+ * clock), a fan-out (its container and the mini Flight Plan), a teammate's started task
+ * (their avatar, status, age) or something waiting on you (why, and since when).
  */
 export const CockpitRow = memo(function CockpitRow({
   item,
@@ -172,10 +176,10 @@ export const CockpitRow = memo(function CockpitRow({
           trailing={
             <>
               {landingBadge}
-              <LiveStep runId={run.id} />
-              <MetaText className="max-w-24 truncate">
-                {kind === 'agent' ? run.executor : `${kind} run`}
-              </MetaText>
+              <AgentStep
+                runId={run.id}
+                agent={kind === 'agent' ? run.executor : `${kind} run`}
+              />
               {run.subagents !== undefined && run.subagents.total > 0 && (
                 <MetaText className="flex items-center gap-0.5">
                   <Bot aria-hidden className="size-3" />

@@ -100,7 +100,7 @@ describe('CockpitRow landing badge', () => {
 });
 
 describe('CockpitRow live step', () => {
-  test('an in-flight row shows its run’s latest step once the log says it', async () => {
+  test('an in-flight row swaps the agent for its run’s latest step once the log says it', async () => {
     const run: RunMeta = {
       id: 'r-step-cockpit',
       taskId: 't-9',
@@ -124,7 +124,9 @@ describe('CockpitRow live step', () => {
     });
     const step = () =>
       container.querySelector('[data-slot=run-step]')?.textContent ?? null;
+    // The agent's name holds the slot until the first step arrives.
     expect(step()).toBeNull();
+    expect(container.textContent).toContain('claude');
     await act(async () => {
       runSteps.record(run.id, {
         ts: '2026-09-20T00:00:01.000Z',
@@ -135,5 +137,8 @@ describe('CockpitRow live step', () => {
       await new Promise((resolve) => setTimeout(resolve, 300));
     });
     expect(step()).toBe('Editing src/foo.ts');
+    expect(
+      container.querySelector('[data-slot=run-step]')?.getAttribute('title')
+    ).toBe('claude · Editing src/foo.ts');
   });
 });
