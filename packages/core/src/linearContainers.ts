@@ -410,8 +410,11 @@ export function projectPush(
         input.content = value as string;
         break;
       case 'status': {
+        const wanted = doneClass(localCategory(doc.meta.status, ctx));
         const spelled = ctx.projectStatuses.find(
-          (s) => namedValue(s.name) === value
+          (s) =>
+            namedValue(s.name) === value &&
+            doneClass(PROJECT_TYPE_CATEGORY[s.type] ?? 'backlog') === wanted
         );
         const id = spelled?.id ?? projectStatusId(value as StatusType, ctx);
         if (id !== undefined) input.statusId = id;
