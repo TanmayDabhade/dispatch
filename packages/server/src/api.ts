@@ -83,6 +83,7 @@ import {
 import {
   errorResponse,
   jsonResponse,
+  jsonTextResponse,
   readJsonBody,
   readJsonBodyOptional,
 } from './api/http.js';
@@ -5145,8 +5146,12 @@ export async function handleApi(
         };
         // `fields=meta` drops every body — the shape list views want.
         const fields = url.searchParams.get('fields');
-        if (fields === null) return jsonResponse(ctx.cache.query(filter));
-        if (fields === 'meta') return jsonResponse(ctx.cache.queryMeta(filter));
+        if (fields === null) {
+          return jsonTextResponse(ctx.cache.queryJson(filter));
+        }
+        if (fields === 'meta') {
+          return jsonTextResponse(ctx.cache.queryMetaJson(filter));
+        }
         return errorResponse(400, `unknown fields: ${fields}`);
       }
       if (segments.length === 1 && method === 'POST') {

@@ -996,6 +996,9 @@ async function bootServer(
         })
       : null;
   safeSync(store, cache);
+  // Serialized now, so the desktop's first request (every task, no bodies)
+  // is answered from memory instead of built during a cold load.
+  cache.queryMetaJson({ includeArchived: true });
 
   // The board syncer: commits and pushes outstanding task files from a
   // private worktree, gated on config.yml's `autoCommit`. No trunk to pin to

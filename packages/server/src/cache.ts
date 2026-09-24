@@ -10,7 +10,6 @@ import type {
   StatusModel,
   TaskDoc,
   TaskListItem,
-  TaskMeta,
   TaskStorePort,
 } from '@dispatch/core';
 import { Database } from 'bun:sqlite';
@@ -33,6 +32,35 @@ const CONTAINER_SQL = CONTAINER_KINDS.map((k) => `'${k}'`).join(', ');
 
 interface TaskRow {
   json: string;
+}
+
+// A row's stored JSON text: the whole doc (`json`), or the doc without its
+// body (`item`, a TaskListItem).
+type StoredColumn = 'json' | 'item';
+
+// Past this many memoized list responses, the memo starts over rather than
+// growing with every distinct `?parent=` a client asks for.
+const MAX_MEMOIZED_LISTS = 64;
+
+// Freezes a parsed JSON value all the way down, so a meta the cache shares
+// with its readers throws on a write instead of changing under the others.
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === 'object') {
+    for (const inner of Object.values(value)) deepFreeze(inner);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+// One memo key per distinct filter, whatever order its fields were set in.
+function filterKey(filter: CacheFilter): string {
+  return JSON.stringify([
+    filter.status ?? null,
+    filter.kind ?? null,
+    filter.parent ?? null,
+    filter.containers === true,
+    filter.includeArchived === true,
+  ]);
 }
 
 // A doc with its content stamp, ready to write.
@@ -78,10 +106,12 @@ function isProblemFor(problem: ListSafeError, id: string): boolean {
  * `resync()` is the full rescan for a change nobody can name. Both write only
  * the rows whose content changed and report which ones those were.
  *
- * The full TaskDoc is stashed as a `json` column and reconstructed on read;
- * the other columns exist purely so SQL can filter/sort without touching the
- * blob, per the phase-2 plan's schema. `stamp` is the doc's content hash (see
- * stampOf).
+ * The full TaskDoc is stashed as a `json` column and its body-less
+ * TaskListItem as an `item` column, both serialized once at write time, so a
+ * list response is the stored text joined rather than parsed and
+ * re-serialized. The other
+ * columns exist purely so SQL can filter/sort without touching the blob, per
+ * the phase-2 plan's schema. `stamp` is the doc's content hash (see stampOf).
  */
 export class TaskCache {
   private readonly db: Database;
@@ -90,6 +120,15 @@ export class TaskCache {
   // surface them at `GET /api/health` without the caller having to thread
   // them through separately.
   private lastErrors: ListSafeError[] = [];
+  // Every row's body-less item, parsed and frozen once when it is written, so
+  // a pass over the whole board (the ready queue, epic progress) parses
+  // nothing.
+  private readonly items = new Map<string, TaskListItem>();
+  // allItems()'s result, kept until the next write.
+  private ordered: readonly TaskListItem[] | null = null;
+  // Serialized list responses by projection and filter. Every write clears
+  // it, so a hit is always what a fresh query would return.
+  private readonly lists = new Map<string, string>();
 
   constructor() {
     this.db = new Database(':memory:');
@@ -106,9 +145,14 @@ export class TaskCache {
         updated TEXT,
         archived INTEGER NOT NULL DEFAULT 0,
         json TEXT,
+        item TEXT,
         stamp TEXT
       )
     `);
+    // A container's children and the lists' shared ORDER BY, without a scan
+    // or a sort per request.
+    this.db.run('CREATE INDEX tasks_parent ON tasks (parent)');
+    this.db.run('CREATE INDEX tasks_order ON tasks (created, id)');
   }
 
   /** resync(), returning the parse failures it met. */
@@ -199,13 +243,18 @@ export class TaskCache {
   private apply(writes: readonly StampedDoc[], removed: readonly string[]) {
     if (writes.length === 0 && removed.length === 0) return;
     const insert = this.db.query(
-      `INSERT OR REPLACE INTO tasks (id, title, status, kind, parent, priority, assignee, created, updated, archived, json, stamp)
-       VALUES ($id, $title, $status, $kind, $parent, $priority, $assignee, $created, $updated, $archived, $json, $stamp)`
+      `INSERT OR REPLACE INTO tasks (id, title, status, kind, parent, priority, assignee, created, updated, archived, json, item, stamp)
+       VALUES ($id, $title, $status, $kind, $parent, $priority, $assignee, $created, $updated, $archived, $json, $item, $stamp)`
     );
     const remove = this.db.query('DELETE FROM tasks WHERE id = $id');
+    const rows = writes.map(({ doc, stamp }) => ({
+      doc,
+      stamp,
+      item: JSON.stringify({ meta: doc.meta }),
+    }));
     this.db.transaction(() => {
       for (const id of removed) remove.run({ $id: id });
-      for (const { doc, stamp } of writes) {
+      for (const { doc, stamp, item } of rows) {
         insert.run({
           $id: doc.meta.id,
           $title: doc.meta.title,
@@ -218,10 +267,18 @@ export class TaskCache {
           $updated: doc.meta.updated,
           $archived: doc.meta.archivedAt !== undefined ? 1 : 0,
           $json: JSON.stringify(doc),
+          $item: item,
           $stamp: stamp,
         });
       }
     })();
+    // After the commit, so a transaction that throws leaves these as they were.
+    for (const id of removed) this.items.delete(id);
+    for (const { doc, item } of rows) {
+      this.items.set(doc.meta.id, deepFreeze(JSON.parse(item) as TaskListItem));
+    }
+    this.ordered = null;
+    this.lists.clear();
   }
 
   // Human-readable form of the current parse failures, for
@@ -239,16 +296,42 @@ export class TaskCache {
     );
   }
 
-  // query() without bodies: SQLite extracts `meta` from the stored blob, so a
-  // large board's list never serializes or parses its descriptions.
+  // query() without bodies, parsed from the stored items alone.
   queryMeta(filter: CacheFilter = {}): TaskListItem[] {
-    return this.select("json_extract(json, '$.meta')", filter).map((json) => ({
-      meta: JSON.parse(json) as TaskMeta,
-    }));
+    return this.select('item', filter).map(
+      (json) => JSON.parse(json) as TaskListItem
+    );
   }
 
-  // Runs one filtered, ordered SELECT of `column` (a JSON text expression).
-  private select(column: string, filter: CacheFilter): string[] {
+  // query() as the JSON text `GET /api/tasks` sends: the stored rows joined
+  // as they are, byte-for-byte what serializing query() would produce.
+  queryJson(filter: CacheFilter = {}): string {
+    return this.memoizedList(
+      `json:${filterKey(filter)}`,
+      () => `[${this.select('json', filter).join(',')}]`
+    );
+  }
+
+  // queryMeta() as JSON text, built the same way from the smaller column.
+  queryMetaJson(filter: CacheFilter = {}): string {
+    return this.memoizedList(
+      `item:${filterKey(filter)}`,
+      () => `[${this.select('item', filter).join(',')}]`
+    );
+  }
+
+  // The memoized list under `key`, built once per cache state.
+  private memoizedList(key: string, build: () => string): string {
+    const hit = this.lists.get(key);
+    if (hit !== undefined) return hit;
+    if (this.lists.size >= MAX_MEMOIZED_LISTS) this.lists.clear();
+    const text = build();
+    this.lists.set(key, text);
+    return text;
+  }
+
+  // Runs one filtered, ordered SELECT of a stored JSON column.
+  private select(column: StoredColumn, filter: CacheFilter): string[] {
     const clauses: string[] = [];
     const params: Record<string, string> = {};
     if (filter.status !== undefined) {
@@ -299,14 +382,56 @@ export class TaskCache {
     return row !== null ? (JSON.parse(row.json) as TaskDoc) : null;
   }
 
-  // Graph logic (blockers, priority ordering) stays in core's readyTasks — the
-  // cache only supplies the current doc set, never reimplements the graph
-  // rules in SQL.
+  // These tasks' stored JSON (whole doc or body-less item) by id; ids the
+  // cache no longer holds are left out.
+  storedJson(
+    ids: readonly string[],
+    column: StoredColumn
+  ): Map<string, string> {
+    const rows = this.db
+      .query(
+        `SELECT id, ${column} AS json FROM tasks WHERE id IN (SELECT value FROM json_each($ids))`
+      )
+      .all({ $ids: JSON.stringify(ids) }) as { id: string; json: string }[];
+    return new Map(rows.map((row) => [row.id, row.json]));
+  }
+
+  // These tasks' docs, in the order given; ids the cache lacks are skipped.
+  getMany(ids: readonly string[]): TaskDoc[] {
+    const stored = this.storedJson(ids, 'json');
+    return ids.flatMap((id) => {
+      const json = stored.get(id);
+      return json === undefined ? [] : [JSON.parse(json) as TaskDoc];
+    });
+  }
+
+  /**
+   * Every cached task's meta, archived included, in query()'s order. Shared
+   * and deeply frozen rather than copied, so a read-only pass over the whole
+   * board costs no parse; a caller that needs to change one takes a copy.
+   */
+  allItems(): readonly TaskListItem[] {
+    this.ordered ??= Object.freeze(
+      (
+        this.db.query('SELECT id FROM tasks ORDER BY created, id').all() as {
+          id: string;
+        }[]
+      ).flatMap((row) => this.items.get(row.id) ?? [])
+    );
+    return this.ordered;
+  }
+
+  // The ready queue's ids, in queue order. Graph logic (blockers, priority
+  // ordering) stays in core's readyTasks, run over allItems(): every task,
+  // archived included, deliberately. readyTasks excludes archived tasks from
+  // its results but resolves blockers against whatever it is given, so
+  // leaving them out made an archived blocker read as satisfied and sprang its
+  // dependents. query()'s order is what breaks readyTasks' ties.
+  readyIds(model?: StatusModel): string[] {
+    return readyTasks(this.allItems(), model).map((item) => item.meta.id);
+  }
+
   ready(model?: StatusModel): TaskDoc[] {
-    // includeArchived, deliberately: readyTasks excludes archived tasks from
-    // its results but resolves blockers against whatever it is given, so the
-    // default archived-excluding query made an archived blocker read as
-    // satisfied and sprang its dependents.
-    return readyTasks(this.query({ includeArchived: true }), model);
+    return this.getMany(this.readyIds(model));
   }
 }
