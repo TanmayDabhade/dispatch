@@ -894,11 +894,26 @@ export class LinearPass {
     if (remote === null) return;
     // Recording the link is bookkeeping, not an edit, so `updated` is kept.
     const current = this.d.store.get(doc.meta.id) ?? doc;
+    // A milestone made unordered takes the order Linear gave it, unless one
+    // was set here during the round-trip.
+    const order =
+      entity === 'milestone' &&
+      doc.meta.sortOrder === null &&
+      current.meta.sortOrder === null
+        ? (remote as LinearProjectMilestone).sortOrder
+        : undefined;
     const linked = this.write(
       doc.meta.id,
-      { external: linearExternal({ entity, id: remote.id }) },
+      {
+        external: linearExternal({ entity, id: remote.id }),
+        ...(order === undefined ? {} : { sortOrder: order }),
+      },
       current.meta.updated
     );
+    const sent =
+      order === undefined
+        ? doc
+        : { ...doc, meta: { ...doc.meta, sortOrder: order } };
     writeBase(
       this.d.state,
       linked.meta.id,
@@ -908,7 +923,7 @@ export class LinearPass {
       // during the round-trip still reads as a change next pass.
       nextBase(
         ops.fields,
-        ops.local(doc, ctx),
+        ops.local(sent, ctx),
         { ...ops.remote(remote, ctx), ...assumed },
         null,
         failed

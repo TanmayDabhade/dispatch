@@ -485,7 +485,8 @@ export function taskMilestoneValues(
     targetDate: meta.dueDate,
     project: projectAbove(meta, ctx),
     archived: meta.archivedAt !== undefined,
-    // Unordered locally (a milestone made here) takes Linear's order.
+    // Unordered locally is never sent; a milestone made here takes the order
+    // Linear gives it on creation (see createRemote).
     sortOrder: meta.sortOrder ?? UNMAPPED,
   };
 }

@@ -673,6 +673,31 @@ describe('relations and hierarchy', () => {
     );
   });
 
+  it('gives a milestone made here the order Linear assigns it', async () => {
+    const sync = makeSync();
+    await sync.syncOnce();
+    const at = (n: number) => new Date(Date.now() + n * 1000).toISOString();
+    const project = store.create({ title: 'Launch', kind: 'project' }, at(1));
+    const ids = ['M1', 'M2'].map(
+      (title, i) =>
+        store.create(
+          { title, kind: 'milestone', parent: project.meta.id },
+          at(2 + i)
+        ).meta.id
+    );
+
+    await sync.syncOnce();
+    fake.calls = [];
+    await sync.syncOnce();
+
+    const orders = ['M1', 'M2'].map(
+      (name) => fake.milestoneList.find((m) => m.name === name)?.sortOrder
+    );
+    expect(orders).toEqual([0, 1]);
+    expect(ids.map((id) => store.get(id)?.meta.sortOrder)).toEqual(orders);
+    expect(fake.calls).not.toContain('updateMilestone');
+  });
+
   it('maps assignee and creator onto people refs', async () => {
     const { id } = await linkedPair({
       assigneeId: TEAMMATE.id,
