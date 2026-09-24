@@ -318,6 +318,21 @@ describe('groupTasks by milestone follows the real hierarchy', () => {
     ]);
   });
 
+  test('a filter that hides a parent issue leaves its sub-issues under their milestone', () => {
+    // The list passes only the rows its filter keeps; the parent issues are still epics.
+    const groups = groupTasks(
+      [card, looseChild],
+      prefs({ grouping: 'milestone' }),
+      { statuses: STATUSES, epics }
+    );
+    expect(groups.map((g) => [g.key, g.label, g.preset])).toEqual([
+      ['milestone:m-1', 'Payments › Beta', { epic: 'm-1' }],
+      ['epic:none', 'No milestone', {}],
+    ]);
+    expect(groups[0]?.rows.map((r) => r.doc.meta.id)).toEqual(['t-2']);
+    expect(groups[1]?.rows.map((r) => r.doc.meta.id)).toEqual(['t-7']);
+  });
+
   test('showSubtasks off hides sub-issues even though their parent has children', () => {
     const groups = groupTasks(
       all,

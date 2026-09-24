@@ -279,15 +279,16 @@ function noParentBucket(label: string, tasks: TaskListItem[]): Bucket {
 /**
  * The hierarchy the milestone grouping reads: for any parent id, the nearest milestone,
  * project or initiative at or above it (a parent issue passes through to its own parent).
- * A missing id answers itself, so its tasks keep a group of their own; a cycle answers
- * null. Memoized, so every task's walk costs O(1) amortized.
+ * `epics` carries the parent issues a list filter hid, so their sub-issues still reach the
+ * milestone. A missing id answers itself, so its tasks keep a group of their own; a cycle
+ * answers null. Memoized, so every task's walk costs O(1) amortized.
  */
 function containerHomes(
   tasks: readonly TaskListItem[],
-  containers: readonly TaskListItem[]
+  epics: readonly TaskListItem[]
 ): (parentId: string) => string | null {
   const byId = new Map<string, TaskListItem>();
-  for (const doc of containers) byId.set(doc.meta.id, doc);
+  for (const doc of epics) byId.set(doc.meta.id, doc);
   for (const doc of tasks)
     if (!byId.has(doc.meta.id)) byId.set(doc.meta.id, doc);
   const memo = new Map<string, string | null>();
@@ -324,7 +325,7 @@ function containerHomes(
 // parent ids, then "No milestone".
 function byMilestone(tasks: TaskListItem[], ctx: GroupContext): Bucket[] {
   const containers = ctx.epics.filter((e) => isContainerKind(e.meta.kind));
-  const homeOf = containerHomes(tasks, containers);
+  const homeOf = containerHomes(tasks, ctx.epics);
   const direct = new Map<string, TaskListItem[]>();
   const noMilestone: TaskListItem[] = [];
   for (const doc of tasks) {

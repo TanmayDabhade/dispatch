@@ -156,11 +156,16 @@ export function MilestoneBranchesView({
         group.epicId === null ? undefined : childrenByEpic.get(group.epicId);
       if (all === undefined) continue;
       const rollup = rollupMilestoneStatus(all);
-      // The path runs through the container's own children; sub-issues nest in the
-      // group's rows but travel with their parent issue.
-      const children = group.rows
-        .map((r) => r.doc)
-        .filter((doc) => doc.meta.parent === group.epicId);
+      // The path runs through the container's own children; a sub-issue travels with its
+      // parent issue, and stands in for it only when the filter hid that issue.
+      const docs = group.rows.map((r) => r.doc);
+      const inGroup = new Set(docs.map((doc) => doc.meta.id));
+      const children = docs.filter(
+        (doc) =>
+          doc.meta.parent === group.epicId ||
+          doc.meta.parent === null ||
+          !inGroup.has(doc.meta.parent)
+      );
       const dagTasks = children.map(dagTaskFromDoc);
       const layout = branchLayout(dagTasks);
       const branch: MilestoneBranch = {

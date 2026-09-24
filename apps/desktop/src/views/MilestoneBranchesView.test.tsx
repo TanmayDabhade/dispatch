@@ -498,6 +498,24 @@ describe('MilestoneBranchesView', () => {
     expect(none.querySelector('[data-slot="group-header"]')).toBeNull();
   });
 
+  test('a filter that hides a parent issue draws its sub-issue on the milestone, not under the issue id', () => {
+    const schema = task('t-a', 'Schema', { parent: 'e-1' });
+    const migration = task('t-a-1', 'Migration', {
+      parent: 't-a',
+      status: 'working',
+    });
+    // The app's epics hold every task with children, the parent issue included.
+    const { container } = renderBranches(
+      dataWith([payments, schema, migration], [payments, schema]),
+      { taskFilter: (doc) => doc.meta.status === 'working' }
+    );
+    const blocks = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-slot="milestone-branch"]')
+    );
+    expect(blocks.map((b) => b.dataset['groupKey'])).toEqual(['milestone:e-1']);
+    expect(lineIds(container)).toEqual(['t-a-1']);
+  });
+
   test('a taskFilter that drops a blocker still lays out and the header + presets the milestone', () => {
     const { container, log } = renderBranches(
       dataWith([payments, ...diamond], [payments]),
