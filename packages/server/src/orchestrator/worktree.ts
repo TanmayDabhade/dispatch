@@ -362,19 +362,32 @@ export class WorktreeManager {
    * rather than a `merge-base --is-ancestor` each: it lists every commit the
    * given ones reach that `tip` does not, which is short when the commits are
    * mostly on it. Full SHAs only, since the listing names commits in full.
-   * Null when git refuses (a commit it no longer has).
+   * A commit git no longer has (gc'd, rewritten) is not on `tip`. Null when
+   * git refuses.
    */
   commitsNotOn(commits: readonly string[], tip: string): Set<string> | null {
     const listed = new Set<string>();
     // Chunked so the argument list stays far below the OS limit.
     for (let i = 0; i < commits.length; i += 2000) {
       const chunk = commits.slice(i, i + 2000);
-      const result = runGit(this.mainRepoDir, [
-        'rev-list',
-        ...chunk,
-        `^${tip}`,
-      ]);
-      if (!result.ok) return null;
+      let result = runGit(this.mainRepoDir, ['rev-list', ...chunk, `^${tip}`]);
+      if (!result.ok) {
+        // One missing commit fails the whole walk: set the missing aside
+        // (`--no-walk` lists just the given commits git has) and walk the rest.
+        const present = runGit(this.mainRepoDir, [
+          'rev-list',
+          '--no-walk',
+          '--ignore-missing',
+          ...chunk,
+        ]);
+        if (!present.ok) return null;
+        const have = new Set(present.stdout.split('\n'));
+        for (const commit of chunk) if (!have.has(commit)) listed.add(commit);
+        const walk = chunk.filter((commit) => have.has(commit));
+        if (walk.length === 0) continue;
+        result = runGit(this.mainRepoDir, ['rev-list', ...walk, `^${tip}`]);
+        if (!result.ok) return null;
+      }
       for (const line of result.stdout.split('\n')) listed.add(line);
     }
     return new Set(commits.filter((commit) => listed.has(commit)));
