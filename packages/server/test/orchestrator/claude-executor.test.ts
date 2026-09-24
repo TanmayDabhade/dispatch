@@ -528,7 +528,7 @@ describe('ClaudeExecutor CLI-parity system prompt and setting sources', () => {
     const executor = new ClaudeExecutor(
       () =>
         Object.assign(
-          (async function* (): AsyncGenerator<unknown> {
+          (function* (): Generator<unknown> {
             yield { type: 'system', subtype: 'init', session_id: 's' };
             yield {
               type: 'system',
