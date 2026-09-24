@@ -126,7 +126,7 @@ describe('lifecycleStages', () => {
     children: { total: 0, done: 0, running: 0 },
   };
 
-  test('an undispatched task is at its spec, everything after pending', () => {
+  test('a task nobody dispatched is at its spec, everything after pending', () => {
     const stages = lifecycleStages(base);
     expect(stages.map((s) => [s.mode, s.progress, s.caption])).toEqual([
       ['spec', 'current', '3 criteria · 2 writes'],

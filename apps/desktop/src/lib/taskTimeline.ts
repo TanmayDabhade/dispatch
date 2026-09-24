@@ -19,7 +19,8 @@ const RULES: [RegExp, TimelineKind][] = [
   [/\bdiscarded\b/, 'discarded'],
   [/opened (?:landing )?PR|\bPR\b.*\bopened\b/, 'pr'],
   [/requested changes|\bresumed\b|\bcontinued\b/, 'changes'],
-  [/\bdispatched\b|\bredispatched\b/, 'dispatched'],
+  // Also matches a re-dispatch.
+  [/dispatched\b/, 'dispatched'],
   [/finished: (?:failed|interrupted)|\bfailed\b/, 'failed'],
   [/\bfinished\b/, 'finished'],
   [/\bcancelled\b|stop requested/, 'stopped'],
