@@ -139,13 +139,21 @@ describe('dispatchReadiness', () => {
     ]);
   });
 
-  test('its own live run is the one hard stop', () => {
+  test('its own live run is a hard stop', () => {
     const result = dispatchReadiness(
       input(task('t-1'), [], {
         liveRun: { state: 'running' } as RunMeta,
       })
     );
     expect(result.canDispatch).toBe(false);
+  });
+
+  test('a completed or canceled task is closed to dispatch', () => {
+    for (const status of ['landed', 'dropped']) {
+      const result = dispatchReadiness(input(task('t-1', { status })));
+      expect(result).toMatchObject({ canDispatch: false, closed: true });
+    }
+    expect(dispatchReadiness(input(task('t-1'))).closed).toBe(false);
   });
 });
 

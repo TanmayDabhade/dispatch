@@ -399,8 +399,11 @@ function TaskPageLoaded({
     },
     [dispatchTask, taskId, layout, runs, fail]
   );
+  // The daemon refuses a completed or canceled task outright.
   const canDispatch =
-    !container && !runs.some((r) => !isTerminalRunState(r.state));
+    !container &&
+    !isStatusDone(meta.status) &&
+    !runs.some((r) => !isTerminalRunState(r.state));
   const openTask =
     layout === 'full'
       ? host.peekTask

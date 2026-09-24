@@ -2,6 +2,7 @@ import type { ReadinessReading, RunMeta } from '@dispatch/client';
 import type { StatusModel, TaskListItem } from '@dispatch/core/browser';
 import {
   claimConflictsWithWrites,
+  isDoneStatus,
   isSatisfiedForDispatchStatus,
 } from '@dispatch/core/browser';
 
@@ -22,8 +23,11 @@ export interface ReadinessCheck {
 
 export interface DispatchReadiness {
   checks: ReadinessCheck[];
-  /** The daemon refuses a second live run, so a live one is the only hard stop. */
+  /** The daemon refuses a second live run and a completed or canceled task; nothing else
+   * stops a dispatch. */
   canDispatch: boolean;
+  /** Completed or canceled: it has to be reopened before an agent can take it. */
+  closed: boolean;
   /** Unmet blockers: dispatching now means going ahead of them. */
   blocked: boolean;
   /** Warnings worth reading before sending an agent. */
@@ -121,8 +125,8 @@ function specCheck(input: ReadinessInput): ReadinessCheck {
 /**
  * What stands between a task and an agent: unmet blockers, a thin spec, no declared
  * writes (the fan-out then runs it alone, since an undeclared write conflicts with every
- * live claim), and live runs elsewhere already claiming the files it writes. Only a live
- * run of its own stops a dispatch outright; everything else is advice.
+ * live claim), and live runs elsewhere already claiming the files it writes. A live run of
+ * its own or a closed status stops a dispatch outright; everything else is advice.
  */
 export function dispatchReadiness(input: ReadinessInput): DispatchReadiness {
   const { task, tasksById, model, liveRun, liveClaims } = input;
@@ -163,9 +167,11 @@ export function dispatchReadiness(input: ReadinessInput): DispatchReadiness {
   }
 
   const live = liveRun !== undefined && !isTerminalRunState(liveRun.state);
+  const closed = isDoneStatus(task.meta.status, model);
   return {
     checks,
-    canDispatch: !live,
+    canDispatch: !live && !closed,
+    closed,
     blocked: unmet.length > 0,
     warnings: checks.filter((c) => c.tone === 'warn').length,
   };

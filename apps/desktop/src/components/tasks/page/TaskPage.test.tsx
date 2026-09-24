@@ -309,6 +309,29 @@ describe('dispatching from the spec', () => {
     );
   });
 
+  test('a landed task says to reopen it, and nothing dispatches it', () => {
+    const log = newLog();
+    mount(fakeHost(log, { tasks: [task('t-1', { status: 'landed' })] }), {
+      layout: 'full',
+    });
+    fireEvent.click(screen.getByRole('tab', { name: /Spec/ }));
+    expect(screen.getByText('Closed: reopen it to dispatch')).not.toBeNull();
+    expect(screen.getByRole('button', { name: /^Dispatch/ })).toHaveProperty(
+      'disabled',
+      true
+    );
+    // A dispatch reaches the host synchronously, so none by now means none at all.
+    press('d');
+    expect(log.dispatches).toEqual([]);
+  });
+
+  test('a dropped task’s menu offers no dispatch', async () => {
+    mount(fakeHost(newLog(), { tasks: [task('t-1', { status: 'dropped' })] }));
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    const item = await screen.findByRole('menuitem', { name: /Dispatch/ });
+    expect(item.getAttribute('aria-disabled')).toBe('true');
+  });
+
   test('d dispatches a ready task from anywhere on the page', async () => {
     const log = newLog();
     mount(fakeHost(log, { tasks: [task('t-1')] }), { layout: 'full' });

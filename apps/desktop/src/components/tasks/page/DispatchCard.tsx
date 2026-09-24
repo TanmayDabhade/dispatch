@@ -50,6 +50,7 @@ function headline(
 ): string {
   if (starting) return 'Starting an agent…';
   if (live) return 'An agent is on it';
+  if (readiness.closed) return 'Closed: reopen it to dispatch';
   if (readiness.blocked) return 'Waiting on its blockers';
   if (readiness.warnings > 0) {
     return `Ready, with ${readiness.warnings} thing${readiness.warnings === 1 ? '' : 's'} to check`;
@@ -142,11 +143,13 @@ export function DispatchCard({
   const runsOn = executor ?? executors?.default ?? 'claude';
   const tone = live
     ? 'live'
-    : readiness.blocked
-      ? 'blocked'
-      : readiness.warnings > 0
-        ? 'warn'
-        : 'ready';
+    : readiness.closed
+      ? 'closed'
+      : readiness.blocked
+        ? 'blocked'
+        : readiness.warnings > 0
+          ? 'warn'
+          : 'ready';
 
   function dispatch(explicit?: string) {
     const chosen = explicit ?? executor;
