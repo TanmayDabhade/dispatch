@@ -7,6 +7,7 @@ import {
   PRIORITIES,
   readProjectBackend,
   readyTasks,
+  resolveMilestoneRef,
   serializeTaskFile,
   statusModelOf,
   TaskStore,
@@ -167,6 +168,23 @@ function validate<T extends string>(
   return value as T;
 }
 
+// `--milestone` names a project or milestone to file under. Through the
+// daemon the name goes along and dispatchd resolves it; here the local
+// store answers the same way (core's resolveMilestoneRef).
+function localMilestoneParent(
+  store: TaskStore,
+  name: string,
+  childKind: string,
+  parent: string | null
+): string {
+  const resolved = resolveMilestoneRef(store.list(), name, {
+    childKind,
+    parent,
+  });
+  if (!resolved.ok) throw new CliError(resolved.error);
+  return resolved.id;
+}
+
 function taskRow(t: TaskDoc): string[] {
   return [t.meta.id, t.meta.status, t.meta.priority, t.meta.kind, t.meta.title];
 }
@@ -182,6 +200,10 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
     .option('--kind <kind>', 'task|milestone|project|initiative', 'task')
     .option('--description <text>')
     .option('--parent <id>')
+    .option(
+      '--milestone <name>',
+      'file under the project or milestone with this title (or id)'
+    )
     .option('--priority <priority>', 'urgent|high|medium|low|none', 'none')
     .option('--status <status>')
     .option('--label <label...>')
@@ -217,10 +239,27 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
           labels: (opts.label as string[] | undefined) ?? [],
           blockedBy: (opts.blockedBy as string[] | undefined) ?? [],
         };
-        const doc =
-          route.via === 'daemon'
-            ? await route.api.createTask(input)
-            : route.store.create(input);
+        const milestone = opts.milestone as string | undefined;
+        let doc: TaskDoc;
+        if (route.via === 'daemon') {
+          doc = await route.api.createTask(
+            milestone === undefined ? input : { ...input, milestone }
+          );
+        } else {
+          doc = route.store.create(
+            milestone === undefined
+              ? input
+              : {
+                  ...input,
+                  parent: localMilestoneParent(
+                    route.store,
+                    milestone,
+                    input.kind ?? 'task',
+                    input.parent ?? null
+                  ),
+                }
+          );
+        }
         ctx.log(
           opts.json === true
             ? JSON.stringify(doc, null, 2)
@@ -330,6 +369,10 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
     .option('--priority <priority>')
     .option('--assignee <assignee>', 'agent|human|none')
     .option('--parent <id>')
+    .option(
+      '--milestone <name>',
+      'move under the project or milestone with this title (or id)'
+    )
     .option('--add-label <label...>')
     .option('--add-blocked-by <id...>')
     .action(
@@ -362,7 +405,11 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
             ASSIGNEES,
             'assignee'
           ),
-          parent: (opts.parent as string | undefined) ?? doc.meta.parent,
+          // With --milestone the parent comes from it (and must agree with
+          // an explicit --parent), so the current one is not resent.
+          parent:
+            (opts.parent as string | undefined) ??
+            (opts.milestone === undefined ? doc.meta.parent : undefined),
           labels:
             opts.addLabel !== undefined
               ? [...doc.meta.labels, ...(opts.addLabel as string[])]
@@ -372,8 +419,23 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
               ? [...doc.meta.blockedBy, ...(opts.addBlockedBy as string[])]
               : undefined,
         };
-        if (route.via === 'daemon') await route.api.updateTask(id, patch);
-        else route.store.update(id, patch);
+        const milestone = opts.milestone as string | undefined;
+        if (route.via === 'daemon') {
+          await route.api.updateTask(
+            id,
+            milestone === undefined ? patch : { ...patch, milestone }
+          );
+        } else {
+          if (milestone !== undefined) {
+            patch.parent = localMilestoneParent(
+              route.store,
+              milestone,
+              doc.meta.kind,
+              patch.parent ?? null
+            );
+          }
+          route.store.update(id, patch);
+        }
         ctx.log(`updated ${id}`);
       }
     );
