@@ -133,7 +133,7 @@ function randomIssue(random: () => number): LinearIssue {
     relatedIssueId: 'i-2',
   });
   return blankIssue('i-x', {
-    title: pick(random, ['Ship it', 'Fix the thing', 'Ünïcødé title']),
+    title: pick(random, ['Ship it', 'Fix the thing', 'Ship 出荷 🚀']),
     description: pick(random, DESCRIPTIONS),
     state: pick(random, STATES),
     priority: Math.floor(random() * 5),

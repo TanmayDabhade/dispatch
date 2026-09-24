@@ -31,7 +31,7 @@ import type {
   LinearWorkspace,
 } from '../src/linear/client.js';
 
-export const TEAM_ID = 'team-1';
+const TEAM_ID = 'team-1';
 
 export const STATES: LinearWorkflowState[] = [
   {
@@ -98,7 +98,7 @@ export const TEAMMATE: LinearUser = {
   active: true,
 };
 
-export const PROJECT_STATUSES: LinearProjectStatus[] = [
+const PROJECT_STATUSES: LinearProjectStatus[] = [
   { id: 'ps-backlog', name: 'Backlog', type: 'backlog' },
   { id: 'ps-planned', name: 'Planned', type: 'planned' },
   { id: 'ps-started', name: 'In Progress', type: 'started' },

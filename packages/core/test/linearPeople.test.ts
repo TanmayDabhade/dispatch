@@ -70,11 +70,11 @@ describe('syncLinearPeople', () => {
 
   it('matches a roster member by email instead of inventing a second person', () => {
     const roster: Person[] = [
-      { ref: 'human:analima', name: 'Ana', email: 'ANA@example.com' },
+      { ref: 'human:anna', name: 'Ana', email: 'ANA@example.com' },
     ];
     const { configured } = run([ANA], [], roster);
     expect(configured.map((p) => [p.ref, p.external])).toEqual([
-      ['human:analima', 'linear:u-ana'],
+      ['human:anna', 'linear:u-ana'],
     ]);
   });
 
@@ -87,11 +87,11 @@ describe('syncLinearPeople', () => {
       },
     ];
     const { configured } = run(
-      [{ ...ANA, name: 'Ana L. Souza', displayName: 'ana.souza' }],
+      [{ ...ANA, name: 'Ana Lima-Smith', displayName: 'ana.smith' }],
       linked
     );
     expect(configured[0].ref).toBe('human:ana');
-    expect(configured[0].name).toBe('Ana L. Souza');
+    expect(configured[0].name).toBe('Ana Lima-Smith');
   });
 
   it('suffixes a handle another person already holds', () => {

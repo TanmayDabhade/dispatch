@@ -478,7 +478,7 @@ describe('team moves and deletions', () => {
     writeLinearState(root, state);
   }
 
-  it('unlinks an issue that left the team, and relinks it when it comes back', async () => {
+  it('unlinks an issue that left the team, and links it again when it comes back', async () => {
     const { issue, id, sync } = await linkedPair();
     const remote = fake.issues.find((i) => i.id === issue.id);
     if (remote === undefined) throw new Error('issue vanished');

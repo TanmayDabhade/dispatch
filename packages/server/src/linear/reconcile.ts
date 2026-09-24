@@ -105,9 +105,7 @@ interface EntityOps<R extends RemoteRecord> {
 }
 
 /** What a chip shows for a record; milestones have no page of their own. */
-export function chipFor(
-  r: RemoteRecord
-): { identifier: string; url: string } | null {
+function chipFor(r: RemoteRecord): { identifier: string; url: string } | null {
   if ('identifier' in r) return { identifier: r.identifier, url: r.url };
   if ('url' in r) return { identifier: r.name, url: r.url };
   return null;
@@ -874,8 +872,8 @@ export class LinearPass {
 
   /**
    * An issue that left the linked team: the task is unlinked (and remembered,
-   * so the issue coming back relinks it) rather than following a team whose
-   * workflow this project does not mirror.
+   * so it is linked again if the issue comes back) rather than following a
+   * team whose workflow this project does not mirror.
    */
   unlinkMoved(doc: TaskDoc, issueId: string, where: string): void {
     this.d.state.movedOut[issueId] = doc.meta.id;

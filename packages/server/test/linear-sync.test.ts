@@ -1259,13 +1259,13 @@ describe('LinearSync credential scope', () => {
     );
   });
 
-  it('disconnect clears only this project and falls back to the global key', () => {
+  it('disconnect clears only this project and falls back to the global key', async () => {
     writeCredential('linear', { apiKey: 'lin_api_global_key' });
     const sync = makeSync();
     sync.connect('lin_api_project_key');
     expect(sync.status().keySource).toBe('project');
 
-    sync.disconnect();
+    await sync.disconnect();
 
     expect(
       readCredentials().projects?.[normalizeProjectPath(root)]

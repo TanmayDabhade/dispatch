@@ -31,7 +31,7 @@ interface EncodedBase {
 }
 
 /** A local comment's Linear twin: [remote id, task id, body hash at last sync]. */
-export type CommentLink = [string, string, string];
+type CommentLink = [string, string, string];
 
 /** One field both sides changed, and which side's edit was kept. */
 export interface ConflictRecord {
@@ -42,7 +42,7 @@ export interface ConflictRecord {
 }
 
 /** A registered Linear webhook. The secret signs every delivery. */
-export interface WebhookRecord {
+interface WebhookRecord {
   id: string;
   url: string;
   secret: string;

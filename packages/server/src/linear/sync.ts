@@ -189,7 +189,7 @@ interface Run {
   comments: CommentSync | null;
   mayPull: boolean;
   /** Whether a pair may push: every task, or only those an explicit push names. */
-  pushable: (id: string) => boolean;
+  canPush: (id: string) => boolean;
   importing: boolean;
   taskIds: string[] | undefined;
 }
@@ -673,23 +673,23 @@ export class LinearSync {
 
     // The team's workflow is the project's status vocabulary, and its users
     // are the project's people; both are refreshed before anything maps.
-    const regen = regenerateStatuses(
+    const regenerated = regenerateStatuses(
       rootDir,
       store,
       docs,
       state,
       session.workspace.states
     );
-    for (const id of regen.migrated) batch.add(id);
+    for (const id of regenerated.migrated) batch.add(id);
     const localRef = this.deps.localHumanRef ?? 'human:me';
     const people = syncPeople(
       rootDir,
-      regen.config,
+      regenerated.config,
       session.workspace.members,
       session.workspace.viewer.id,
       localRef
     );
-    if (regen.configChanged || people.changed) {
+    if (regenerated.configChanged || people.changed) {
       this.deps.events.broadcast({ type: 'config.changed' });
     }
     const config = people.config;
@@ -739,7 +739,7 @@ export class LinearSync {
       mayPull,
       // An explicit push writes only the tasks it names; others a pull meets
       // take Linear's changes and keep their own for an ordinary pass.
-      pushable: (id) =>
+      canPush: (id) =>
         mayPush && (opts.taskIds === undefined || opts.taskIds.includes(id)),
       importing: opts.mode === 'import',
       taskIds: opts.taskIds,
@@ -1190,7 +1190,7 @@ export class LinearSync {
   }
 
   private async applyContainers(run: Run, fetched: Fetched): Promise<void> {
-    const { pass, ctx, docs, touched, mayPull, pushable } = run;
+    const { pass, ctx, docs, touched, mayPull, canPush } = run;
     const ready = ctx.model.roles.ready;
     // Created first, all of them, so every reference among them resolves.
     const pairs: [
@@ -1223,7 +1223,7 @@ export class LinearSync {
     for (const [doc, r, entity] of pairs) {
       const current = docs.get(doc.meta.id) ?? doc;
       touched.add(current.meta.id);
-      const mode = { mayPull, mayPush: pushable(current.meta.id) };
+      const mode = { mayPull, mayPush: canPush(current.meta.id) };
       if (entity === 'initiative') {
         await pass.reconcileInitiative(current, r as LinearInitiative, mode);
       } else if (entity === 'project') {
@@ -1239,7 +1239,7 @@ export class LinearSync {
   }
 
   private async applyIssues(run: Run, issues: LinearIssue[]): Promise<void> {
-    const { pass, session, state, ctx, docs, touched, mayPull, pushable } = run;
+    const { pass, session, state, ctx, docs, touched, mayPull, canPush } = run;
     const sorted = [...issues].sort((a, b) =>
       a.updatedAt.localeCompare(b.updatedAt)
     );
@@ -1270,7 +1270,7 @@ export class LinearSync {
       touched.add(current.meta.id);
       await pass.reconcileIssue(current, issue, {
         mayPull,
-        mayPush: pushable(current.meta.id),
+        mayPush: canPush(current.meta.id),
       });
     }
   }

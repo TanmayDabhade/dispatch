@@ -6,7 +6,6 @@ import type {
   LinearIssue,
   LinearLabel,
   LinearProjectStatus,
-  LinearUser,
   LinearWorkflowState,
 } from '../src/linearMap.js';
 import { linearExternal } from '../src/linearMap.js';
@@ -86,26 +85,7 @@ export const LABELS: LinearLabel[] = [
   { id: 'l-infra', name: 'infra', color: '#0f0', group: null, teamId: null },
 ];
 
-export const USERS: LinearUser[] = [
-  {
-    id: 'u-me',
-    name: 'Wyat Soule',
-    displayName: 'wyat',
-    email: 'wyat@example.com',
-    avatarUrl: null,
-    active: true,
-  },
-  {
-    id: 'u-ana',
-    name: 'Ana Lima',
-    displayName: 'ana',
-    email: 'ana@example.com',
-    avatarUrl: null,
-    active: true,
-  },
-];
-
-export const PEOPLE: Person[] = [
+const PEOPLE: Person[] = [
   { ref: 'human:wyat', name: 'Wyat Soule', external: 'linear:u-me' },
   { ref: 'human:ana', name: 'Ana Lima', external: 'linear:u-ana' },
 ];
@@ -119,7 +99,7 @@ export const PROJECT_STATUSES: LinearProjectStatus[] = [
   { id: 'ps-canceled', name: 'Canceled', type: 'canceled' },
 ];
 
-export function meta(overrides: Partial<TaskMeta> = {}): TaskMeta {
+function meta(overrides: Partial<TaskMeta> = {}): TaskMeta {
   return {
     id: 't-000000',
     title: 'Task',

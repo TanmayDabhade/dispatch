@@ -17,7 +17,7 @@ export const WEBHOOK_RESOURCE_TYPES = [
   'Cycle',
 ];
 
-export const WEBHOOK_PATH = '/api/linear/webhook';
+const WEBHOOK_PATH = '/api/linear/webhook';
 
 /**
  * Whether `signature` (the `Linear-Signature` header) is the hex HMAC-SHA256

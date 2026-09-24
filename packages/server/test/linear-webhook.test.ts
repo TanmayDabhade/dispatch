@@ -408,13 +408,13 @@ describe('POST /api/linear/webhook', () => {
     expect(signed.status).toBe(200);
   });
 
-  it('opens nothing else: every neighbouring route still wants a token', async () => {
+  it('opens nothing else: every neighboring route still wants a token', async () => {
     for (const [method, path] of [
       ['GET', '/api/linear/webhook'],
       ['POST', '/api/linear/webhook/extra'],
       ['POST', '/api/linear/sync'],
       ['GET', '/api/linear/status'],
-      ['POST', '/api/linear/webhookx'],
+      ['POST', '/api/linear/webhooks'],
     ] as const) {
       const res = await rawFetch(`${base}${path}`, { method });
       expect(`${method} ${path} ${res.status}`).toBe(`${method} ${path} 401`);
