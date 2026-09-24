@@ -724,6 +724,8 @@ export type ServerEvent =
   // A Linear sync pass finished, carrying its own summary. Mirrors
   // packages/server/src/events.ts exactly.
   | { type: 'linear.changed'; summary: LinearSyncSummary }
+  // A long Linear pass (an import) moved on. Mirrors the server's event.
+  | { type: 'linear.progress'; progress: LinearProgress }
   // The brain-dump inbox changed — captured, retyped, dismissed or converted.
   | { type: 'inbox.changed' }
   // A overseer conversation's record changed (turn settled, action queued or
@@ -1782,6 +1784,36 @@ export interface LinearStatus {
   lastError: string | null;
   lastSummary: LinearSyncSummary | null;
   syncing: boolean;
+  /** Field conflicts resolved since the link. Absent from older daemons. */
+  conflicts?: { total: number; recent: LinearConflict[] };
+  /** Set while an import is running. */
+  progress?: LinearProgress | null;
+  /** How changes arrive: a webhook, or polling. */
+  webhook?: LinearWebhookStatus;
+}
+
+/** One field both sides changed, and whose edit was kept. */
+export interface LinearConflict {
+  taskId: string;
+  field: string;
+  kept: 'local' | 'remote';
+  at: string;
+}
+
+/** Where a long pass has got to; `total` is null while unknown. */
+export interface LinearProgress {
+  phase: 'containers' | 'issues' | 'applying';
+  done: number;
+  total: number | null;
+}
+
+// Mirrors LinearWebhookStatus in packages/server/src/linear/sync.ts.
+export interface LinearWebhookStatus {
+  state: 'active' | 'polling' | 'error' | 'off';
+  url: string | null;
+  lastDeliveryAt: string | null;
+  error: string | null;
+  pollSec: number;
 }
 
 export interface LinearTeam {

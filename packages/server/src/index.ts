@@ -78,6 +78,7 @@ import { LedgerStore } from './ledger.js';
 import type { LedgerStorePort } from './ledger.js';
 import type { LinearClient } from './linear/client.js';
 import { LinearSync } from './linear/sync.js';
+import { webhookUrlFor } from './linear/webhook.js';
 import { NoteStore } from './notes.js';
 import { EpicEngine } from './orchestrator/epic.js';
 import { ClaudeExecutor } from './orchestrator/executors/claude.js';
@@ -1532,9 +1533,15 @@ async function bootServer(
     cache,
     events,
     client: opts.linearClient,
+    localHumanRef: actorContext.humanRef,
+    comments: commentStore,
+    webhookUrl: webhookUrlFor(opts.publicOrigins ?? []),
   });
   const unsubscribeLinear = events.subscribe((event) => {
     if (event.type === 'task.changed') linearSync.notifyTaskChanged();
+    if (event.type === 'comment.changed') {
+      linearSync.notifyCommentChanged(event.taskId, event.commentIds);
+    }
   });
   linearSync.start();
 

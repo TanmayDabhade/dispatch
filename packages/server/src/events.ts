@@ -1,4 +1,4 @@
-import type { LinearSyncSummary } from './linear/sync.js';
+import type { LinearProgress, LinearSyncSummary } from './linear/sync.js';
 import type { EpicPauseReason } from './orchestrator/epic.js';
 import type { FixLoopStop } from './orchestrator/fixLoop.js';
 import type { NormalizedEntry, RunSurvey } from './orchestrator/types.js';
@@ -87,6 +87,8 @@ export type ServerEvent =
   // A Linear sync pass finished. Carries its own summary so the settings screen
   // can show the outcome without a follow-up fetch.
   | { type: 'linear.changed'; summary: LinearSyncSummary }
+  // A long Linear pass (an import) moved on; carries where it got to.
+  | { type: 'linear.progress'; progress: LinearProgress }
   // The repo's git state changed via an `/api/git/*` mutation — same
   // "go refetch" contract as `run.changed`.
   | { type: 'git.changed' }

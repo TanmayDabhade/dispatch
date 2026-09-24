@@ -1,8 +1,6 @@
-import type {
-  LinearSyncSummary,
-  LinearViewer,
-  LinearWorkflowState,
-} from '@dispatch/client';
+import type { LinearSyncSummary, LinearViewer } from '@dispatch/client';
+import { statusModelOf } from '@dispatch/core/browser';
+import type { StatusRoles } from '@dispatch/core/browser';
 import { CheckCircle2, RefreshCw } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -10,11 +8,12 @@ import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { formatRelativeTimeFromIso } from '../../lib/format';
 import {
   describeFetchFailure,
+  describeLinearDelivery,
+  formatLinearProgress,
   formatSyncCounts,
   isLinearConfigured,
   linearKeySourceNote,
-  resolveMappedStateId,
-  statusMapCompleteness,
+  STATUS_ROLE_ROWS,
 } from '../../lib/linearSettings';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
 import { cn } from '@/lib/utils';
@@ -38,6 +37,9 @@ const LINEAR_DIRECTIONS: { value: 'both' | 'pull' | 'push'; label: string }[] =
     { value: 'push', label: 'Push only (Dispatch → Linear)' },
   ];
 
+// A select value for "no status": native select values can't be empty.
+const NO_STATUS = '__none__';
+
 // Free-typed while focused, snapped back to the saved value on blur if it isn't a valid
 // interval (mirrors AgentsSection's concurrency input).
 function LinearIntervalRow({
@@ -52,7 +54,7 @@ function LinearIntervalRow({
   return (
     <SettingsRow
       title="Poll interval"
-      subtitle="Seconds between sync passes, minimum 30."
+      subtitle="Seconds between sync passes when no webhook delivers changes, minimum 30."
       htmlFor="linear-poll-interval"
       control={
         <Input
@@ -76,38 +78,39 @@ function LinearIntervalRow({
   );
 }
 
-// One status-map row: a dispatch status and a select of the team's workflow states, falling
-// back to a "Not mapped" placeholder for a missing or stale (post-team-change) entry.
-function LinearStatusMapRow({
-  status,
+/** One lifecycle role: which of the team's statuses Dispatch writes for it. */
+function StatusRoleRow({
+  title,
+  subtitle,
   value,
-  states,
+  statuses,
+  optional,
   onChange,
 }: {
-  status: string;
-  value: string | undefined;
-  states: LinearWorkflowState[];
-  onChange: (state: LinearWorkflowState) => void;
+  title: string;
+  subtitle: string;
+  value: string | null;
+  statuses: readonly string[];
+  optional: boolean;
+  onChange: (status: string | null) => void;
 }) {
-  const selectedId = resolveMappedStateId(value, states);
   return (
     <SettingsRow
-      title={status}
+      title={title}
+      subtitle={subtitle}
       control={
         <Select
-          value={selectedId}
-          onValueChange={(id) => {
-            const state = states.find((s) => s.id === id);
-            if (state !== undefined) onChange(state);
-          }}
+          value={value ?? NO_STATUS}
+          onValueChange={(next) => onChange(next === NO_STATUS ? null : next)}
         >
-          <SelectTrigger aria-label={`${status} maps to`} className="w-[180px]">
-            <SelectValue placeholder="Not mapped" />
+          <SelectTrigger aria-label={`${title} status`} className="w-[180px]">
+            <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {states.map((state) => (
-              <SelectItem key={state.id} value={state.id}>
-                {state.name}
+            {optional && <SelectItem value={NO_STATUS}>None</SelectItem>}
+            {statuses.map((status) => (
+              <SelectItem key={status} value={status}>
+                {status}
               </SelectItem>
             ))}
           </SelectContent>
@@ -117,7 +120,7 @@ function LinearStatusMapRow({
   );
 }
 
-/** A failed teams/states fetch, rendered above the control it starved — the actionable reason
+/** A failed teams fetch, rendered above the control it starved — the actionable reason
  *  plus a retry, instead of letting the picker sit there empty with no explanation. */
 function FetchFailureRow({
   error,
@@ -136,10 +139,10 @@ function FetchFailureRow({
   );
 }
 
-/** Linear sync settings: connect a write-only API key, pick the team/direction/interval, map
- *  statuses to workflow states, and run a sync on demand. */
+/** Linear sync settings: connect a write-only API key, pick the team/direction/interval,
+ *  choose which of the team's statuses each lifecycle role writes, and run a sync on demand. */
 export function LinearPanel({ data }: { data: DispatchProjectData }) {
-  const { linearStatus, linearTeams, linearStates, config } = data;
+  const { linearStatus, linearTeams, config } = data;
   const [apiKey, setApiKey] = useState('');
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -216,11 +219,10 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
   const configured = isLinearConfigured(linearStatus);
   const teamChosen =
     config.linear.teamId !== null && config.linear.teamId.trim() !== '';
-  const completeness = statusMapCompleteness(
-    config.statuses,
-    config.linear.statusMap,
-    linearStates
-  );
+  const roles = statusModelOf(config).roles;
+  function setRole(key: keyof StatusRoles, status: string | null) {
+    void data.handleUpdateConfig({ statusRoles: { ...roles, [key]: status } });
+  }
   // Whichever summary is freshest: this session's own "Sync now" result, or the last pass the
   // daemon ran (on a timer, on a task edit, or before this window opened).
   const summary = syncResult ?? linearStatus.lastSummary;
@@ -233,12 +235,14 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
   // The input stays available while an env or shared key is resolving — that is the only way
   // to give this project a key of its own. It disappears once the project has one.
   const keyNote = linearKeySourceNote(linearStatus.keySource);
+  const progress = linearStatus.progress ?? null;
+  const conflicts = linearStatus.conflicts;
 
   return (
     <>
       <SettingsGroup
         title="Linear"
-        hint="Keeps this project’s tasks and one Linear team in step. Issues in the team become tasks here and tasks created here become issues there; a task’s status change moves the issue to the matching workflow state, and the reverse, using the status map below. Sync runs on the interval you pick and only carries what changed since the last one — Import brings the team’s existing backlog across once. The API key stays in ~/.dispatch/credentials.json, never in the repo."
+        hint="Keeps this project’s tasks and one Linear team as two faithful copies: every field both ways, the team’s projects and initiatives as containers, its workflow states as your statuses, its members as your people, and issue comments as task comments. When both sides change the same field, the newer edit wins and the task’s Activity says so. The API key stays in ~/.dispatch/credentials.json, never in the repo."
       >
         {linearStatus.keySource !== 'project' && (
           <SettingsRow
@@ -383,39 +387,40 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
               }
             />
 
-            <PanelRow>
-              <SettingsHint>
-                Labels sync in from Linear, but a label you add or remove here
-                does not push back out yet — edit labels on the Linear side for
-                now.
-              </SettingsHint>
-            </PanelRow>
+            <SettingsRow
+              title="Send Acceptance Criteria to Linear"
+              subtitle="Adds it to the issue description as its own section, so teammates see it."
+              htmlFor="linear-acceptance"
+              control={
+                <Switch
+                  id="linear-acceptance"
+                  checked={config.linear.includeAcceptanceCriteria}
+                  onCheckedChange={(checked) =>
+                    void data.handleUpdateConfig({
+                      linear: { includeAcceptanceCriteria: checked },
+                    })
+                  }
+                />
+              }
+            />
           </>
         )}
       </SettingsGroup>
 
       {linearStatus.connected && teamChosen && (
         <SettingsGroup
-          title="Status mapping"
-          hint={`${String(completeness.mapped)} of ${String(completeness.total)} mapped.`}
+          title="Status roles"
+          hint="Your statuses are the team’s workflow states, kept in step on every sync. Each role picks the one Dispatch writes as work moves; a role you change here is kept across syncs."
         >
-          {data.linearStatesError !== null && (
-            <FetchFailureRow
-              error={data.linearStatesError}
-              onRetry={() => data.refetchLinearStates()}
-            />
-          )}
-          {config.statuses.map((status) => (
-            <LinearStatusMapRow
-              key={status}
-              status={status}
-              value={config.linear.statusMap[status]}
-              states={linearStates}
-              onChange={(state) =>
-                void data.handleUpdateConfig({
-                  linear: { statusMap: { [status]: state.name } },
-                })
-              }
+          {STATUS_ROLE_ROWS.map((row) => (
+            <StatusRoleRow
+              key={row.key}
+              title={row.title}
+              subtitle={row.subtitle}
+              value={roles[row.key]}
+              statuses={config.statuses}
+              optional={row.key === 'landing'}
+              onChange={(status) => setRole(row.key, status)}
             />
           ))}
         </SettingsGroup>
@@ -424,8 +429,13 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
       {linearStatus.connected && (
         <SettingsGroup title="Sync">
           <SettingsRow
+            title="Changes"
+            subtitle={describeLinearDelivery(linearStatus)}
+          />
+
+          <SettingsRow
             title="Import from Linear"
-            subtitle="Sync only moves what changes after a task is linked — it never bulk-imports the backlog on its own. Import brings down every issue in this team that has no matching task yet."
+            subtitle="Sync only moves what changes after a task is linked — it never bulk-imports the backlog on its own. Import brings down every issue, project and comment in this team that has no matching task yet."
             control={
               <PillButton
                 disabled={importing || !configured}
@@ -435,6 +445,9 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
               </PillButton>
             }
           >
+            {progress !== null && (
+              <SettingsHint>{formatLinearProgress(progress)}</SettingsHint>
+            )}
             {importResult !== null && (
               <SettingsHint>{formatSyncCounts(importResult)}</SettingsHint>
             )}
@@ -495,6 +508,13 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
               <span className="text-state-failed text-[12px]">{syncError}</span>
             )}
           </SettingsRow>
+
+          {conflicts !== undefined && conflicts.total > 0 && (
+            <SettingsRow
+              title="Conflicts resolved"
+              subtitle={`${String(conflicts.total)} field(s) changed on both sides since the link; the newer edit won each, and the task’s Activity notes it.`}
+            />
+          )}
         </SettingsGroup>
       )}
     </>

@@ -1,0 +1,82 @@
+import { TaskStore } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch/core';
+import { afterEach, describe, expect, it, setSystemTime } from 'bun:test';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { TaskCache } from '../src/cache.js';
+import { TaskChangeBatch } from '../src/linear/batch.js';
+
+function setup() {
+  const store = TaskStore.init(mkdtempSync(join(tmpdir(), 'dispatch-batch-')));
+  const cache = new TaskCache();
+  const docs = new Map<string, TaskDoc>();
+  const published: string[][] = [];
+  const calls = { upsert: 0, rebuild: 0 };
+  const upsert = cache.upsert.bind(cache);
+  const rebuild = cache.rebuild.bind(cache);
+  cache.upsert = (d) => {
+    calls.upsert++;
+    upsert(d);
+  };
+  cache.rebuild = (s) => {
+    calls.rebuild++;
+    return rebuild(s);
+  };
+  const batch = new TaskChangeBatch(
+    store,
+    cache,
+    (id) => docs.get(id),
+    (ids) => published.push(ids)
+  );
+  return { store, cache, docs, published, calls, batch };
+}
+
+afterEach(() => setSystemTime());
+
+describe('TaskChangeBatch', () => {
+  it('holds writes until the window passes, then publishes them as one event', () => {
+    setSystemTime(new Date('2026-09-01T00:00:00.000Z'));
+    const { store, docs, published, calls, batch } = setup();
+    for (let n = 0; n < 5; n++) {
+      const doc = store.create({ title: `T${n}` });
+      docs.set(doc.meta.id, doc);
+      batch.add(doc.meta.id);
+    }
+    expect(published).toEqual([]);
+
+    setSystemTime(new Date('2026-09-01T00:00:02.000Z'));
+    const late = store.create({ title: 'late' });
+    docs.set(late.meta.id, late);
+    batch.add(late.meta.id);
+
+    expect(published).toHaveLength(1);
+    expect(published[0]).toHaveLength(6);
+    expect(calls).toEqual({ upsert: 1, rebuild: 0 });
+    expect(batch.count()).toBe(6);
+  });
+
+  it('dedupes an id written twice, and publishes the rest on the final flush', () => {
+    const { store, docs, published, cache, batch } = setup();
+    const doc = store.create({ title: 'Twice' });
+    docs.set(doc.meta.id, doc);
+    batch.add(doc.meta.id);
+    batch.add(doc.meta.id);
+    batch.flush();
+    batch.flush();
+
+    expect(published).toEqual([[doc.meta.id]]);
+    expect(cache.get(doc.meta.id)?.meta.title).toBe('Twice');
+  });
+
+  it('rescans the store when it does not hold a written doc', () => {
+    const { store, published, calls, batch } = setup();
+    const doc = store.create({ title: 'Unknown to the pass' });
+    batch.add(doc.meta.id);
+    batch.flush();
+
+    expect(calls).toEqual({ upsert: 0, rebuild: 1 });
+    expect(published).toEqual([[doc.meta.id]]);
+  });
+});

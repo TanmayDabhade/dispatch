@@ -91,6 +91,7 @@ export {
   getSection,
   removeSection,
   setSection,
+  splitSections,
 } from './taskfile.js';
 export type { Amendment } from './taskfile.js';
 export {
@@ -297,27 +298,42 @@ export type {
   CredentialsFile,
   ProjectCredentials,
 } from './credentials.js';
+export * from './linearContainers.js';
+export * from './linearFields.js';
+export * from './linearMerge.js';
+export * from './linearPeople.js';
+export * from './linearStatuses.js';
 export {
   DEFAULT_STATUS_MAP,
   externalId,
-  issueFromTask,
   LINEAR_EXTERNAL_PREFIX,
+  linearExternal,
   parseExternal,
+  parseLinearExternal,
   priorityFromLinear,
   priorityToLinear,
   resolveConflict,
   resolveWorkflowState,
-  statusFromState,
-  taskCreateFromIssue,
-  taskPatchFromIssue,
 } from './linearMap.js';
 export type {
-  IssueMapContext,
+  LinearAttachment,
+  LinearEntity,
+  LinearRef,
+  LinearComment,
+  LinearInitiative,
+  LinearInitiativeInput,
   LinearIssue,
   LinearIssueInput,
   LinearLabel,
+  LinearMilestoneInput,
+  LinearProject,
+  LinearProjectInput,
+  LinearProjectMilestone,
+  LinearProjectStatus,
+  LinearRelation,
+  LinearTruncatedField,
+  LinearUser,
   LinearWorkflowState,
-  TaskMapContext,
 } from './linearMap.js';
 export { normalizeProjectPath } from './projectPath.js';
 export {

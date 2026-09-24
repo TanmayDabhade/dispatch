@@ -22,7 +22,7 @@ interface PeopleSnapshot {
 
 // team.yml's members; an unreadable roster (conflict markers) contributes
 // nobody rather than failing the picker.
-function rosterMembers(rootDir: string): TeamMember[] {
+export function rosterMembers(rootDir: string): TeamMember[] {
   const file = join(rootDir, DISPATCH_DIR, 'team.yml');
   if (!existsSync(file)) return [];
   try {
