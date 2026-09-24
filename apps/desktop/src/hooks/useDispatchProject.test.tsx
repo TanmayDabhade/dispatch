@@ -26,6 +26,9 @@ void mock.module('../lib/tauri', () => ({
     Promise.resolve({ port: PORT, appToken: 'app-token', agentToken: null }),
   restartDispatchd: () => Promise.resolve(),
   isTauri: () => '__TAURI_INTERNALS__' in window,
+  // The boot warm-up (lib/bootWarm.ts) imports these; a file run after this one sees them.
+  currentProjectRoot: () => Promise.resolve('/repo'),
+  hasDispatch: () => Promise.resolve(true),
 }));
 
 // Captured from the hook's own `connectEvents` call, so a test can play the
@@ -53,6 +56,8 @@ const epicStarts: [string, EpicSessionOptions | undefined][] = [];
 let taskListFixture: TaskListItem[] | null = null;
 let taskListFetches = 0;
 const taskDocs = new Map<string, TaskDoc>();
+// Holds the list fetch open until the test releases it.
+let taskListGate: Promise<void> | null = null;
 
 // The project config, for the tests that need its status model; rejects until set.
 let configFixture: object | null = null;
@@ -83,11 +88,12 @@ void mock.module('@dispatch/client', () => ({
     fetchReadiness: () => Promise.resolve({}),
     createRun: () => createRunResult(),
     fetchReadyTasks: () => Promise.resolve([]),
-    fetchTaskList: () => {
+    fetchTaskList: async () => {
       taskListFetches += 1;
-      return taskListFixture === null
-        ? Promise.reject(new Error('no task list in this test'))
-        : Promise.resolve(taskListFixture);
+      if (taskListGate !== null) await taskListGate;
+      if (taskListFixture === null)
+        throw new Error('no task list in this test');
+      return taskListFixture;
     },
     fetchTask: (id: string) => {
       const doc = taskDocs.get(id);
@@ -492,6 +498,43 @@ test('a refused optimistic dispatch puts the task back and rejects', async () =>
   expect(result.current.readyIds.has('t-1')).toBe(true);
   taskListFixture = null;
   configFixture = null;
+});
+
+// The list, config, identity, runs and people start as the connection resolves; the rest
+// wait for the list, so the first paint's requests and renders go first. The prefetch and
+// the hook's own query are one fetch.
+test('first-paint reads go first; the rest wait for the list', async () => {
+  taskListFixture = [
+    { meta: taskDoc('t-1', 'Only', '2026-01-01T00:00:00.000Z').meta },
+  ];
+  let release: () => void = () => {};
+  taskListGate = new Promise((resolve) => (release = resolve));
+  taskListFetches = 0;
+  presenceFetches = 0;
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { result } = renderHook(
+    () => useDispatchProject('/repo', { selectedRunId: null }),
+    { wrapper: wrapper(queryClient) }
+  );
+  await waitFor(() => {
+    expect(taskListFetches).toBe(1);
+  });
+  await new Promise((r) => setTimeout(r, 50));
+  expect(presenceFetches).toBe(0);
+
+  await act(async () => {
+    release();
+    await Promise.resolve();
+  });
+  await waitFor(() => {
+    expect(result.current.tasks).toHaveLength(1);
+    expect(presenceFetches).toBe(1);
+  });
+  expect(taskListFetches).toBe(1);
+  taskListGate = null;
+  taskListFixture = null;
 });
 
 test('an unscoped task.changed burst refetches the list once', async () => {

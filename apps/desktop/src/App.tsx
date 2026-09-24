@@ -79,6 +79,7 @@ import type {
 } from './lib/appNav';
 import { initialNavState, navReducer } from './lib/appNav';
 import { hideArchivedRuns } from './lib/archiveFilter';
+import { hasDispatchKey, launchRootKey } from './lib/bootWarm';
 import type { InboxTarget } from './lib/inbox';
 import { projectViewForInboxTarget, unreadCount } from './lib/inbox';
 import { buildInbox } from './lib/inboxQueue';
@@ -247,7 +248,7 @@ function App() {
     isError: rootError,
     error: rootErrorDetail,
   } = useQuery({
-    queryKey: ['current-project-root'],
+    queryKey: launchRootKey(),
     queryFn: currentProjectRoot,
     staleTime: Infinity,
     retry: false,
@@ -345,7 +346,7 @@ function App() {
     isError: hasDispatchError,
     error: hasDispatchErrorDetail,
   } = useQuery({
-    queryKey: ['has-dispatch', root],
+    queryKey: hasDispatchKey(root),
     queryFn: () => {
       // `root` is only a string here — `enabled` below excludes `undefined` (still
       // resolving) and `null` (first run, no project yet, see `currentProjectRoot`).

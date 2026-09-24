@@ -48,7 +48,11 @@ import {
   readyTasks,
   statusModelOf,
 } from '@dispatch/core/browser';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  type QueryClient,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { hideArchivedRuns } from '../lib/archiveFilter';
@@ -59,7 +63,7 @@ import {
   peopleKey,
   syncStatusKey,
 } from '../lib/configEvents';
-import type { DecideAvailability } from '../lib/daemonAuth';
+import type { DaemonConnection, DecideAvailability } from '../lib/daemonAuth';
 import {
   assertCanDecide,
   daemonBaseUrl,
@@ -165,6 +169,71 @@ export function landingKey(
   port: number | undefined
 ): [string, number | undefined] {
   return ['dispatch-landing', port];
+}
+
+function runsKey(port: number | undefined): [string, number | undefined] {
+  return ['dispatch-runs', port];
+}
+
+function whoamiKey(port: number | undefined): [string, number | undefined] {
+  return ['dispatch-whoami', port];
+}
+
+/**
+ * Starts the Cockpit's first-paint reads (the list, config, identity, runs, people) the
+ * moment a connection resolves, instead of after the renders that hand React the new
+ * client. The hook's queries share these keys, so they pick the fetches up in flight.
+ */
+function prefetchFirstPaint(
+  queryClient: QueryClient,
+  connection: DaemonConnection
+): void {
+  const client = createApiClient(
+    daemonBaseUrl(connection),
+    resolveDaemonAuth(connection).token
+  );
+  const { port } = connection;
+  void queryClient.prefetchQuery({
+    queryKey: tasksKey(port),
+    queryFn: () => client.fetchTaskList({ archived: true }),
+  });
+  void queryClient.prefetchQuery({
+    queryKey: dispatchConfigKey(port),
+    queryFn: () => client.fetchConfig(),
+  });
+  void queryClient.prefetchQuery({
+    queryKey: whoamiKey(port),
+    queryFn: () => client.fetchWhoami(),
+  });
+  void queryClient.prefetchQuery({
+    queryKey: runsKey(port),
+    queryFn: () => client.fetchRuns(),
+  });
+  void queryClient.prefetchQuery({
+    queryKey: peopleKey(port),
+    queryFn: () => client.fetchPeople(),
+  });
+}
+
+/**
+ * The daemon connection for a project, which also starts the first-paint reads. Shared by
+ * the hook and the boot warm-up (`bootWarm.ts`), so both land on one cache entry.
+ */
+export function connectionQuery(
+  queryClient: QueryClient,
+  projectPath: string | null
+) {
+  return {
+    queryKey: ['dispatchd-port', projectPath] as const,
+    queryFn: async () => {
+      if (projectPath === null) throw new Error('no active project');
+      const connection = await ensureDispatchd(projectPath);
+      prefetchFirstPaint(queryClient, connection);
+      return connection;
+    },
+    staleTime: Number.POSITIVE_INFINITY,
+    retry: false,
+  };
 }
 
 function readStoredShowArchived(): boolean {
@@ -777,14 +846,8 @@ export function useDispatchProject(
     error: portErrorDetail,
     refetch: retryEnsureDispatchd,
   } = useQuery({
-    queryKey: ['dispatchd-port', projectPath],
-    queryFn: () => {
-      if (projectPath === null) throw new Error('no active project');
-      return ensureDispatchd(projectPath);
-    },
+    ...connectionQuery(queryClient, projectPath),
     enabled: projectPath !== null,
-    staleTime: Infinity,
-    retry: false,
   });
 
   const port = connection?.port;
@@ -803,9 +866,9 @@ export function useDispatchProject(
 
   const tasksQueryKey = useMemo(() => tasksKey(port), [port]);
   const configQueryKey = useMemo(() => dispatchConfigKey(port), [port]);
-  const runsQueryKey = useMemo(() => ['dispatch-runs', port], [port]);
+  const runsQueryKey = useMemo(() => runsKey(port), [port]);
   const presenceQueryKey = useMemo(() => ['dispatch-presence', port], [port]);
-  const whoamiQueryKey = useMemo(() => ['dispatch-whoami', port], [port]);
+  const whoamiQueryKey = useMemo(() => whoamiKey(port), [port]);
   const runDetailQueryKey = useMemo(
     () => ['dispatch-run', port, selectedRunId],
     [port, selectedRunId]
@@ -878,6 +941,10 @@ export function useDispatchProject(
     enabled: client !== null,
   });
 
+  // What the first paint does not draw waits for the list, so its requests and renders
+  // stay off the cold load's critical path.
+  const afterList = client !== null && allTasksFetched;
+
   // Writes one fetched doc into the caches in place of a list refetch: its list entry
   // (meta only) and, when a task page holds it, its full doc. Stale responses lose.
   const applyTaskDoc = useCallback(
@@ -906,7 +973,7 @@ export function useDispatchProject(
       if (client === null) throw new Error('dispatchd client not ready');
       return client.fetchExecutors();
     },
-    enabled: client !== null,
+    enabled: afterList,
     staleTime: Infinity,
   });
   // The OS-notification toggles live at module level in notifications.ts
@@ -925,7 +992,7 @@ export function useDispatchProject(
       if (client === null) throw new Error('dispatchd client not ready');
       return client.fetchSyncStatus();
     },
-    enabled: client !== null,
+    enabled: afterList,
   });
   const { data: linearStatus } = useQuery({
     queryKey: linearStatusQueryKey,
@@ -933,7 +1000,7 @@ export function useDispatchProject(
       if (client === null) throw new Error('dispatchd client not ready');
       return client.fetchLinearStatus();
     },
-    enabled: client !== null,
+    enabled: afterList,
   });
   const {
     data: linearTeams,
@@ -958,7 +1025,7 @@ export function useDispatchProject(
       if (client === null) throw new Error('dispatchd client not ready');
       return client.fetchLinearLinks();
     },
-    enabled: client !== null,
+    enabled: afterList,
   });
   // TanStack's own `refetch` is stable, so wrapping it in useCallback with it as the only
   // dependency gives callers (e.g. a Settings Retry button) an identity that never churns.
@@ -1001,7 +1068,7 @@ export function useDispatchProject(
       if (client === null) throw new Error('dispatchd client not ready');
       return client.fetchPresence();
     },
-    enabled: client !== null,
+    enabled: afterList,
   });
   const { data: runs } = useQuery({
     queryKey: runsQueryKey,
@@ -1147,7 +1214,7 @@ export function useDispatchProject(
       if (client === null) throw new Error('dispatchd client not ready');
       return fetchDecisions(client.baseUrl, auth.token);
     },
-    enabled: client !== null,
+    enabled: afterList,
     refetchInterval: 60_000,
   });
 
@@ -1157,7 +1224,7 @@ export function useDispatchProject(
       if (client === null) throw new Error('dispatchd client not ready');
       return client.fetchNotes();
     },
-    enabled: client !== null,
+    enabled: afterList,
   });
 
   // Feeds the app-wide drafts tray; refetched on `draft.changed` regardless of whether the
@@ -1168,7 +1235,7 @@ export function useDispatchProject(
       if (client === null) throw new Error('dispatchd client not ready');
       return client.fetchDrafts();
     },
-    enabled: client !== null,
+    enabled: afterList,
   });
 
   // Feeds the All agents page's conversation-agent rows (planners, enrich
@@ -1179,7 +1246,7 @@ export function useDispatchProject(
       if (client === null) throw new Error('dispatchd client not ready');
       return client.fetchAgentSessions();
     },
-    enabled: client !== null,
+    enabled: afterList,
   });
 
   const { data: reviewComments } = useQuery({
@@ -1199,7 +1266,7 @@ export function useDispatchProject(
       if (client === null) throw new Error('dispatchd client not ready');
       return client.fetchInbox();
     },
-    enabled: client !== null,
+    enabled: afterList,
   });
 
   // Every plan's summary — the Plans page's server-backed history.
@@ -1209,7 +1276,7 @@ export function useDispatchProject(
       if (client === null) throw new Error('dispatchd client not ready');
       return client.fetchPlans();
     },
-    enabled: client !== null,
+    enabled: afterList,
   });
 
   // The persisted last clustering pass — what BrainDumpView renders on load
@@ -1220,7 +1287,7 @@ export function useDispatchProject(
       if (client === null) throw new Error('dispatchd client not ready');
       return client.fetchInboxClusters();
     },
-    enabled: client !== null,
+    enabled: afterList,
   });
 
   // The last triage pass (kind, epic, duplicates per capture) — written by
@@ -1231,7 +1298,7 @@ export function useDispatchProject(
       if (client === null) throw new Error('dispatchd client not ready');
       return client.fetchInboxTriage();
     },
-    enabled: client !== null,
+    enabled: afterList,
   });
 
   // The ready set from the cached list under the project's status model — what
@@ -1263,7 +1330,7 @@ export function useDispatchProject(
       if (client === null) throw new Error('dispatchd client not ready');
       return client.fetchBranches();
     },
-    enabled: client !== null,
+    enabled: afterList,
   });
 
   const { data: health } = useQuery({
@@ -1272,7 +1339,7 @@ export function useDispatchProject(
       if (client === null) throw new Error('dispatchd client not ready');
       return client.fetchHealth();
     },
-    enabled: client !== null,
+    enabled: afterList,
   });
 
   const planRecord = usePlanRecord(client, port, planId);
@@ -1325,7 +1392,7 @@ export function useDispatchProject(
       if (client === null) throw new Error('dispatchd client not ready');
       return client.getLanding();
     },
-    enabled: client !== null,
+    enabled: afterList,
     staleTime: 15_000,
   });
 
