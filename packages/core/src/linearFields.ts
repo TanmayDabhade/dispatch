@@ -530,6 +530,10 @@ function parentFor(
   return null;
 }
 
+// A Linear user the people registry cannot name yet: still somebody, so a
+// fan-out never takes the issue for unassigned. Never pushed (linearUserOf).
+const UNRESOLVED_ASSIGNEE = 'human:linear-user';
+
 /** Linear's value of `field`, as the UpdatePatch that writes it locally. */
 export function issuePatch(
   issue: LinearIssue,
@@ -570,7 +574,8 @@ export function issuePatch(
         patch.assignee =
           issue.assigneeId === null
             ? 'none'
-            : (ctx.people.refByUser.get(issue.assigneeId) ?? 'none');
+            : (ctx.people.refByUser.get(issue.assigneeId) ??
+              UNRESOLVED_ASSIGNEE);
         break;
       case 'labels':
         patch.labels = [
