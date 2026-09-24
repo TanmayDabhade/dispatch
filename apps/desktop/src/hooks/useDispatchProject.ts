@@ -80,6 +80,12 @@ import {
 } from '../lib/inbox';
 import { resolveExecuteModel } from '../lib/models';
 import { notify, setNotificationKinds } from '../lib/notifications';
+import {
+  patchedBody,
+  patchedMeta,
+  touchesBody,
+  touchesMeta,
+} from '../lib/optimisticPatch';
 import type { PendingApproval } from '../lib/pendingApprovals';
 import { mergePendingApprovals } from '../lib/pendingApprovals';
 import { isTerminalRunState, runSurveyNotice } from '../lib/runState';
@@ -1945,13 +1951,46 @@ export function useDispatchProject(
     [latestRunByTaskId, openQuestions, mergeQueue]
   );
 
+  // Optimistic like the board's status drag: the list row and the open task's body show
+  // the edit at once; a refused PATCH restores just this task, not a whole-list snapshot
+  // that could clobber events that landed meanwhile.
   const handleUpdate = useCallback(
     async (id: string, patch: UpdatePatch): Promise<void> => {
       if (client === null) return;
-      applyTaskDoc(await client.updateTask(id, patch));
+      const docKey = taskDocKey(port, id);
+      const prevItem = queryClient
+        .getQueryData<TaskListItem[]>(tasksQueryKey)
+        ?.find((t) => t.meta.id === id);
+      const prevDoc = queryClient.getQueryData<TaskDoc>(docKey);
+      if (prevItem !== undefined && touchesMeta(patch)) {
+        queryClient.setQueryData<TaskListItem[]>(tasksQueryKey, (old) =>
+          old?.map((t) =>
+            t.meta.id === id ? { ...t, meta: patchedMeta(t.meta, patch) } : t
+          )
+        );
+      }
+      if (prevDoc !== undefined && touchesBody(patch)) {
+        queryClient.setQueryData<TaskDoc>(docKey, {
+          ...prevDoc,
+          body: patchedBody(prevDoc.body, patch),
+        });
+      }
+      let updated: TaskDoc;
+      try {
+        updated = await client.updateTask(id, patch);
+      } catch (err) {
+        if (prevItem !== undefined) {
+          queryClient.setQueryData<TaskListItem[]>(tasksQueryKey, (old) =>
+            old?.map((t) => (t.meta.id === id ? prevItem : t))
+          );
+        }
+        if (prevDoc !== undefined) queryClient.setQueryData(docKey, prevDoc);
+        throw err;
+      }
+      applyTaskDoc(updated);
       void queryClient.invalidateQueries({ queryKey: readyQueryKey });
     },
-    [client, queryClient, applyTaskDoc, readyQueryKey]
+    [client, queryClient, applyTaskDoc, readyQueryKey, tasksQueryKey, port]
   );
 
   // Optimistic status change for the board's drag-and-drop: the card jumps to
