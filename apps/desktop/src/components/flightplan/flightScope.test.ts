@@ -79,6 +79,40 @@ describe('flightScope', () => {
     expect(scope.bandOf.get('t-4')).toBe('e-soon');
   });
 
+  test('a project’s own milestone order wins over target dates', () => {
+    const tasks = [
+      task('e-p', { kind: 'project' }),
+      task('e-first', {
+        kind: 'milestone',
+        parent: 'e-p',
+        dueDate: '2026-12-01',
+        sortOrder: -1,
+      }),
+      task('e-second', {
+        kind: 'milestone',
+        parent: 'e-p',
+        dueDate: '2026-10-01',
+        sortOrder: 0.5,
+      }),
+      // A milestone made here before Linear ordered it sits after the ordered ones.
+      task('e-local', {
+        kind: 'milestone',
+        parent: 'e-p',
+        dueDate: '2026-09-01',
+      }),
+      task('t-1', { parent: 'e-first' }),
+      task('t-2', { parent: 'e-second' }),
+      task('t-3', { parent: 'e-local' }),
+    ];
+    const scope = flightScope(tasks[0], childrenByParent(tasks));
+    expect(scope.bands?.map((b) => b.key)).toEqual([
+      'e-first',
+      'e-second',
+      'e-local',
+    ]);
+    expect(scope.nodes.map((t) => t.meta.id)).toEqual(['t-1', 't-2', 't-3']);
+  });
+
   test('an initiative rolls a project’s milestones up into the project’s band', () => {
     const tasks = [
       task('e-i', { kind: 'initiative' }),
