@@ -105,4 +105,40 @@ describe('migrateLegacyMilestones', () => {
       expect(second.parity).toBe(true);
     });
   });
+
+  it('orders by milestone name when creation times tie', () => {
+    // Every task shares one timestamp, and the ids put the v2 tasks first, so
+    // the store's own order (created, then id) is the reverse of name order.
+    const ids = ['t-000001', 't-000002', 't-000003', 't-000004'];
+    const db = openDispatchDb(':memory:');
+    const store = new SqliteTaskStore(
+      mkdtempSync(join(tmpdir(), 'dispatch-ms-tie-')),
+      db,
+      () => ids.shift() ?? 't-ffffff'
+    );
+    const now = '2026-09-23T12:00:00.000Z';
+    const v2 = store.create({ title: 'Billing', milestone: 'v2' }, now);
+    const v2Project = store.create(
+      { title: 'Elsewhere', kind: 'project', milestone: 'v2' },
+      now
+    );
+    const v1 = store.create({ title: 'Docs', milestone: 'v1' }, now);
+    const v1Child = store.create(
+      { title: 'Login', parent: v2.meta.id, milestone: 'v1' },
+      now
+    );
+
+    const report = migrateLegacyMilestones(store, { dryRun: true });
+
+    expect(report.projects.map((p) => p.name)).toEqual(['v1', 'v2']);
+    expect(report.reparented.map((r) => r.id)).toEqual([
+      v1.meta.id,
+      v2.meta.id,
+    ]);
+    expect(report.skipped.map((s) => s.id)).toEqual([
+      v1Child.meta.id,
+      v2Project.meta.id,
+    ]);
+    db.close();
+  });
 });

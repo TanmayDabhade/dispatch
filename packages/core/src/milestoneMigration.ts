@@ -46,6 +46,11 @@ function milestoneOf(doc: TaskDoc): string | null {
   return name === '' ? null : name;
 }
 
+// Code-unit order: stable across runs and locales.
+function byName(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 /** Runs (or rehearses) the milestone migration against `store`. */
 export function migrateLegacyMilestones(
   store: TaskStorePort,
@@ -61,9 +66,12 @@ export function migrateLegacyMilestones(
     }
   }
 
+  // Projects are created, and the report is ordered, by milestone name. The
+  // store's order would do only while creation times differ: tasks created in
+  // the same millisecond fall back to their random ids.
   const names = [
     ...new Set(docs.map(milestoneOf).filter((n): n is string => n !== null)),
-  ];
+  ].sort(byName);
   const projects: MilestoneProject[] = [];
   const projectIds = new Map<string, string | null>();
   for (const name of names) {
@@ -91,9 +99,15 @@ export function migrateLegacyMilestones(
 
   const reparented: MilestoneMigrationReport['reparented'] = [];
   const skipped: MilestoneMigrationReport['skipped'] = [];
-  for (const doc of docs) {
-    const milestone = milestoneOf(doc);
-    if (milestone === null) continue;
+  // Grouped by milestone in name order (the sort is stable, so store order
+  // holds inside a group), for the same reason as `names`.
+  const withMilestone = docs
+    .flatMap((doc) => {
+      const milestone = milestoneOf(doc);
+      return milestone === null ? [] : [{ doc, milestone }];
+    })
+    .sort((a, b) => byName(a.milestone, b.milestone));
+  for (const { doc, milestone } of withMilestone) {
     const parent = projectIds.get(milestone) ?? null;
     const { id } = doc.meta;
     if (parent !== null && id === parent) continue;
