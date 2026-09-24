@@ -1,5 +1,10 @@
 import { TaskStore } from '@dispatch/core';
-import type { LinearIssue } from '@dispatch/core';
+import type {
+  CreateInput,
+  LinearIssue,
+  TaskDoc,
+  UpdatePatch,
+} from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -176,6 +181,53 @@ describe(`importing ${ISSUES} issues through the GraphQL client`, () => {
     // No wall-clock bound: it flakes on a loaded machine. The page count and
     // the missing per-issue refetch above are what guard the cost.
   }, 300_000);
+
+  it("keeps a user's edit that lands while the import applies", async () => {
+    // Names the task the pass wrote last, so an edit can land on one whose
+    // task.changed has not gone out yet.
+    class LastWriteStore extends TaskStore {
+      last: string | null = null;
+      override create(input: CreateInput, now?: string): TaskDoc {
+        const doc = super.create(input, now);
+        this.last = doc.meta.id;
+        return doc;
+      }
+      override update(id: string, patch: UpdatePatch, now?: string): TaskDoc {
+        const doc = super.update(id, patch, now);
+        this.last = id;
+        return doc;
+      }
+    }
+    const passStore = new LastWriteStore(root);
+    const userStore = new TaskStore(root);
+    const { fetch } = graphqlFetch(world(400));
+    const sync = new LinearSync({
+      rootDir: root,
+      store: passStore,
+      cache,
+      events,
+      client: new HttpLinearClient('lin_api_test', { fetchImpl: fetch }),
+      localHumanRef: 'human:wyat',
+    });
+
+    const edited = new Set<string>();
+    const tick = setInterval(() => {
+      const id = passStore.last;
+      if (sync.status().progress?.phase !== 'applying') return;
+      if (id === null || edited.has(id) || edited.size >= 10) return;
+      // What PATCH /api/tasks/:id does: the store, then the cache.
+      userStore.update(id, { title: `edited by the user ${id}` });
+      cache.refresh(userStore, [id]);
+      edited.add(id);
+    }, 1);
+    await sync.importIssues();
+    clearInterval(tick);
+
+    expect(edited.size).toBeGreaterThan(0);
+    for (const id of edited) {
+      expect(cache.get(id)?.meta.title).toBe(store.get(id)?.meta.title);
+    }
+  }, 120_000);
 
   it('follows an import with one cheap probe when nothing moved', async () => {
     const { fetch, requests } = graphqlFetch(world(300));
