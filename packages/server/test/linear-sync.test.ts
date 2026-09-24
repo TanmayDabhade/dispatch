@@ -6,12 +6,7 @@ import {
   writeCredential,
   writeProjectCredential,
 } from '@dispatch/core';
-import type {
-  LinearIssue,
-  LinearIssueInput,
-  LinearLabel,
-  LinearWorkflowState,
-} from '@dispatch/core';
+import type { LinearWorkflowState } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   mkdtempSync,
@@ -26,15 +21,6 @@ import { join } from 'node:path';
 import { TaskCache } from '../src/cache.js';
 import { EventBus } from '../src/events.js';
 import type { ServerEvent } from '../src/events.js';
-import type {
-  LinearClient,
-  LinearFailure,
-  LinearIssuePage,
-  LinearIssueRef,
-  LinearResult,
-  LinearTeam,
-  LinearViewer,
-} from '../src/linear/client.js';
 import type { LinearSyncState } from '../src/linear/state.js';
 import {
   emptyLinearState,
@@ -42,17 +28,7 @@ import {
   writeLinearState,
 } from '../src/linear/state.js';
 import { LinearSync } from '../src/linear/sync.js';
-
-const STATES: LinearWorkflowState[] = [
-  { id: 's-backlog', name: 'Backlog', type: 'draft' },
-  { id: 's-todo', name: 'Todo', type: 'unstarted' },
-  { id: 's-progress', name: 'In Progress', type: 'started' },
-  { id: 's-review', name: 'In Review', type: 'started' },
-  { id: 's-done', name: 'Done', type: 'completed' },
-  { id: 's-cancelled', name: 'Canceled', type: 'canceled' },
-];
-
-const LABELS: LinearLabel[] = [{ id: 'l-web', name: 'web' }];
+import { FakeLinearClient } from './linearFake.js';
 
 // A custom state with no entry in the status map. It maps down to in-progress via
 // its `type`, and would map back up to "In Progress" — losing the real state.
@@ -61,168 +37,6 @@ const BLOCKED_STATE: LinearWorkflowState = {
   name: 'Blocked',
   type: 'started',
 };
-
-// Stands in for the real GraphQL client: it records every call and serves issues
-// from an in-memory list, so no test here opens a socket.
-class FakeLinearClient implements LinearClient {
-  issues: LinearIssue[] = [];
-  created: LinearIssueInput[] = [];
-  updated: { id: string; input: LinearIssueInput }[] = [];
-  issuesFailure: LinearFailure | null = null;
-  createFailure: LinearFailure | null = null;
-  linkFailure: LinearFailure | null = null;
-  /** Runs inside createIssue, standing in for a local edit landing mid-round-trip. */
-  onCreate: (() => void) | null = null;
-  truncated = false;
-  sinceSeen: (string | null)[] = [];
-  linkQueries = 0;
-  private seq = 0;
-  private tick = 0;
-
-  // A written issue comes back stamped ahead of the local clock, which is what makes echo
-  // suppression load-bearing: on the next pull our own write looks newer than the local file.
-  private stamp(): string {
-    return new Date(Date.now() + 5_000 + ++this.tick).toISOString();
-  }
-
-  viewer(): Promise<LinearResult<LinearViewer>> {
-    return Promise.resolve({
-      ok: true,
-      data: { id: 'u-1', name: 'Test', email: 'test@example.com' },
-    });
-  }
-
-  teams(): Promise<LinearResult<LinearTeam[]>> {
-    return Promise.resolve({
-      ok: true,
-      data: [{ id: 'team-1', key: 'HYD', name: 'Hydrogen' }],
-    });
-  }
-
-  workflowStates(): Promise<LinearResult<LinearWorkflowState[]>> {
-    return Promise.resolve({ ok: true, data: STATES });
-  }
-
-  labels(): Promise<LinearResult<LinearLabel[]>> {
-    return Promise.resolve({ ok: true, data: LABELS });
-  }
-
-  issuesUpdatedSince(
-    _teamId: string,
-    since: string | null
-  ): Promise<LinearResult<LinearIssuePage>> {
-    if (this.issuesFailure !== null) return Promise.resolve(this.issuesFailure);
-    this.sinceSeen.push(since);
-    const nodes =
-      since === null
-        ? this.issues
-        : this.issues.filter((i) => i.updatedAt > since);
-    return Promise.resolve({
-      ok: true,
-      data: {
-        issues: nodes.map((i) => ({ ...i })),
-        truncated: this.truncated,
-      },
-    });
-  }
-
-  issueLinks(): Promise<LinearResult<LinearIssueRef[]>> {
-    if (this.linkFailure !== null) return Promise.resolve(this.linkFailure);
-    this.linkQueries++;
-    return Promise.resolve({
-      ok: true,
-      data: this.issues.map((i) => ({
-        id: i.id,
-        identifier: i.identifier,
-        url: i.url,
-        updatedAt: i.updatedAt,
-      })),
-    });
-  }
-
-  createIssue(input: LinearIssueInput): Promise<LinearResult<LinearIssue>> {
-    if (this.createFailure !== null) return Promise.resolve(this.createFailure);
-    this.onCreate?.();
-    this.created.push(input);
-    const issue = this.materialize(
-      `issue-${++this.seq}`,
-      `HYD-${this.seq}`,
-      input
-    );
-    this.issues.push(issue);
-    return Promise.resolve({ ok: true, data: { ...issue } });
-  }
-
-  updateIssue(
-    id: string,
-    input: LinearIssueInput
-  ): Promise<LinearResult<LinearIssue>> {
-    this.updated.push({ id, input });
-    const index = this.issues.findIndex((i) => i.id === id);
-    if (index < 0) {
-      return Promise.resolve({
-        ok: false,
-        kind: 'graphql',
-        error: `unknown issue: ${id}`,
-      });
-    }
-    const issue = this.materialize(
-      id,
-      this.issues[index].identifier,
-      input,
-      this.issues[index]
-    );
-    this.issues[index] = issue;
-    return Promise.resolve({ ok: true, data: { ...issue } });
-  }
-
-  // Applies a mutation input to an issue the way Linear would, so a pull after a
-  // push sees the values (and the new updatedAt) the push actually produced.
-  private materialize(
-    id: string,
-    identifier: string,
-    input: LinearIssueInput,
-    base?: LinearIssue
-  ): LinearIssue {
-    const stateId = input.stateId ?? base?.state?.id;
-    return {
-      id,
-      identifier,
-      title: input.title ?? base?.title ?? '',
-      description: input.description ?? base?.description ?? null,
-      priority: input.priority ?? base?.priority ?? 0,
-      url: `https://linear.app/acme/issue/${identifier}`,
-      createdAt: base?.createdAt ?? this.stamp(),
-      updatedAt: this.stamp(),
-      archivedAt: base?.archivedAt ?? null,
-      state: STATES.find((s) => s.id === stateId) ?? base?.state ?? null,
-      labels:
-        input.labelIds === undefined
-          ? (base?.labels ?? [])
-          : LABELS.filter((l) => (input.labelIds ?? []).includes(l.id)),
-      team: { id: 'team-1', key: 'HYD' },
-    };
-  }
-
-  issue(overrides: Partial<LinearIssue> = {}): LinearIssue {
-    const n = ++this.seq;
-    return {
-      id: `issue-${n}`,
-      identifier: `HYD-${n}`,
-      title: `Issue ${n}`,
-      description: 'from linear',
-      priority: 2,
-      url: `https://linear.app/acme/issue/HYD-${n}`,
-      createdAt: '2026-07-01T00:00:00.000Z',
-      updatedAt: '2026-07-05T00:00:00.000Z',
-      archivedAt: null,
-      state: STATES[2],
-      labels: [LABELS[0]],
-      team: { id: 'team-1', key: 'HYD' },
-      ...overrides,
-    };
-  }
-}
 
 let root: string;
 let fakeHome: string;

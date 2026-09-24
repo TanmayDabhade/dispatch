@@ -313,9 +313,21 @@ export {
 } from './linearMap.js';
 export type {
   IssueMapContext,
+  LinearAttachment,
+  LinearComment,
+  LinearInitiative,
+  LinearInitiativeInput,
   LinearIssue,
   LinearIssueInput,
   LinearLabel,
+  LinearMilestoneInput,
+  LinearProject,
+  LinearProjectInput,
+  LinearProjectMilestone,
+  LinearProjectStatus,
+  LinearRelation,
+  LinearTruncatedField,
+  LinearUser,
   LinearWorkflowState,
   TaskMapContext,
 } from './linearMap.js';

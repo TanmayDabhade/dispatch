@@ -50,6 +50,18 @@ function issue(overrides: Partial<LinearIssue> = {}): LinearIssue {
     state: STATES[2],
     labels: [LABELS[1]],
     team: { id: 'team-1', key: 'HYD' },
+    estimate: null,
+    dueDate: null,
+    assigneeId: null,
+    creatorId: null,
+    cycle: null,
+    projectId: null,
+    projectMilestoneId: null,
+    parentId: null,
+    childIds: [],
+    relations: [],
+    attachments: [],
+    truncated: [],
     ...overrides,
   };
 }
