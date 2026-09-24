@@ -968,7 +968,6 @@ async function bootServer(
         );
   const store: TaskStorePort = syncedStore ?? stores.tasks;
   const cache = new TaskCache();
-  safeSync(store, cache);
   const events = new EventBus();
 
   // Refresh + broadcast on any on-disk change, regardless of who made it:
@@ -976,7 +975,9 @@ async function bootServer(
   // those, and the broadcast names the ones whose content really differs. An
   // API write refreshes the cache itself before the watcher sees the file, so
   // its echo compares equal and costs no second `task.changed`. A change the
-  // watcher cannot tie to a task falls back to a full resync.
+  // watcher cannot tie to a task falls back to a full resync. The cache's
+  // first load comes after the watcher's first listing, so nothing between
+  // them is missed.
   //
   // Only the file backend has a directory to watch, and only it needs one:
   // watching exists because a task file can change under a running daemon
@@ -994,6 +995,7 @@ async function bootServer(
           }
         })
       : null;
+  safeSync(store, cache);
 
   // The board syncer: commits and pushes outstanding task files from a
   // private worktree, gated on config.yml's `autoCommit`. No trunk to pin to

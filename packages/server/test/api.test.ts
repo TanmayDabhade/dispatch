@@ -798,3 +798,36 @@ describe('WebSocket task.changed broadcast', () => {
     ws.close();
   }, 30_000);
 });
+
+describe('the task watcher', () => {
+  // A git pull or checkout lands many task files at once; the fs events for
+  // it can name only a few (Bun 1.3 on macOS), and the rest must still show.
+  it('serves every task another writer adds and edits in one burst', async () => {
+    const outside = new TaskStore(root);
+    const added = Array.from(
+      { length: 12 },
+      (_, n) => outside.create({ title: `from a teammate ${n}` }).meta.id
+    );
+    const served = async (): Promise<Map<string, string>> => {
+      const res = await fetch(`${baseUrl}/api/tasks`);
+      const docs = (await res.json()) as {
+        meta: { id: string; title: string };
+      }[];
+      return new Map(docs.map((d) => [d.meta.id, d.meta.title]));
+    };
+    let seen = await served();
+    for (let i = 0; i < 300 && seen.size < added.length; i++) {
+      await Bun.sleep(50);
+      seen = await served();
+    }
+    expect([...seen.keys()].sort()).toEqual([...added].sort());
+
+    for (const id of added) outside.update(id, { title: `edited ${id}` });
+    const edited = () => [...seen].filter(([id, t]) => t === `edited ${id}`);
+    for (let i = 0; i < 300 && edited().length < added.length; i++) {
+      await Bun.sleep(50);
+      seen = await served();
+    }
+    expect(edited()).toHaveLength(added.length);
+  }, 60_000);
+});

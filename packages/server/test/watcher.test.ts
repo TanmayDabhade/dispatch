@@ -97,6 +97,34 @@ describe('watchTasks', () => {
   }, 30_000);
 });
 
+describe('watchTasks on a real burst', () => {
+  // A git checkout or pull rewrites many task files at once. Bun 1.3 on macOS
+  // reports a few of them; every one has to reach the caller.
+  it('reports every task file a burst rewrote', async () => {
+    const ids = Array.from(
+      { length: 30 },
+      (_, n) => store.create({ title: `Task ${n}` }).meta.id
+    );
+    const seen = new Set<string>();
+    const complete = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error(`watcher reported ${seen.size} of 30`)),
+        15_000
+      );
+      watcher = watchTasks(store.tasksDir, (changed) => {
+        for (const id of changed ?? ids) seen.add(id);
+        if (seen.size === ids.length) {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+    });
+    for (const id of ids) store.update(id, { status: 'working' });
+    await complete;
+    expect([...seen].sort()).toEqual([...ids].sort());
+  }, 30_000);
+});
+
 describe('watchTasks ids', () => {
   // Drives the listener directly, so the assertion is about which names map
   // to which ids, not about when macOS delivers the events.
@@ -146,6 +174,27 @@ describe('watchTasks ids', () => {
     fake.emit('t-00000a-first.md.swp');
     fake.emit('t-00000c-real.md');
     expect(await fake.next()).toEqual(['t-00000c']);
+  });
+
+  it('finds the changes a burst made that its events did not name', async () => {
+    const kept = store.create({ title: 'Kept' });
+    const gone = store.create({ title: 'Gone' });
+    const fake = watchWithFake();
+    store.update(kept.meta.id, { title: 'Kept, retitled' });
+    store.remove(gone.meta.id);
+    const added = store.create({ title: 'Added' });
+    // Bun 1.3 on macOS can name one file for a burst that touched several.
+    fake.emit(`${added.meta.id}-added.md`);
+    expect((await fake.next())?.sort()).toEqual(
+      [kept.meta.id, gone.meta.id, added.meta.id].sort()
+    );
+  });
+
+  it('asks for a full rescan when an unnamed change is to a file naming no task', async () => {
+    const fake = watchWithFake();
+    writeFileSync(join(store.tasksDir, 'notes.md'), 'scratch\n');
+    fake.emit('t-00000a-first.md');
+    expect(await fake.next()).toBeNull();
   });
 
   it('asks for a full rescan when an event names no task', async () => {
