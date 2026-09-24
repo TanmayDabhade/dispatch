@@ -14,7 +14,8 @@ import { Input } from '@/ui/input';
 
 interface Props {
   config: DispatchConfig;
-  onSave: (patch: ConfigPatch) => Promise<void>;
+  /** Resolves `false` when the save was refused; a form keeps its draft then. */
+  onSave: (patch: ConfigPatch) => Promise<unknown>;
   canOperate: boolean;
 }
 
@@ -56,7 +57,9 @@ export function StatusesGroup({ config, onSave }: Omit<Props, 'canOperate'>) {
     // New ones go before the last, which is where work ends.
     void onSave({
       statuses: [...statuses.slice(0, -1), name, ...statuses.slice(-1)],
-    }).then(() => setDraft(''));
+    }).then((saved) => {
+      if (saved !== false) setDraft('');
+    });
   };
   return (
     <SettingsGroup
@@ -191,7 +194,8 @@ export function VerifyStepsList({ config, onSave, canOperate }: Props) {
               void save([
                 ...steps,
                 { name: name.trim(), command: command.trim() },
-              ]).then(() => {
+              ]).then((saved) => {
+                if (saved === false) return;
                 setName('');
                 setCommand('');
               });

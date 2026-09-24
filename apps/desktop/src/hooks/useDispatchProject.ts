@@ -7,6 +7,7 @@ import type {
   EpicProgress,
   ExecutorsResponse,
   FixLoopState,
+  HealthPayload,
   LandingSnapshot,
   LinearIssueLink,
   LinearStatus,
@@ -53,6 +54,7 @@ import {
 import type { DecideAvailability } from '../lib/daemonAuth';
 import {
   assertCanDecide,
+  credentialTier,
   daemonBaseUrl,
   decideAvailability,
   resolveDaemonAuth,
@@ -225,11 +227,14 @@ export interface DispatchProjectData {
   /** This window's own ActorRef (`human:<handle>`), or `null` until the daemon
    *  has said. While null, nothing is treated as a teammate's. */
   me: string | null;
-  /** The tier the daemon says this window's credential carries, or `null`
-   *  until it has said. Read from `/api/whoami` rather than inferred from which
-   *  token is held, because in team-local mode a decide-tier teammate holds an
-   *  "app token" too. */
+  /** The tier this window's credential carries. The daemon's own answer from
+   *  `/api/whoami` wins once it arrives; until then (or if it never does, on a
+   *  daemon without that route) it is read off the credential itself — see
+   *  `credentialTier`. `null` only while there is no connection at all. */
   myTier: AuthTier | null;
+  /** Whether this window attached to a daemon it did not start, and so holds
+   *  only the request-tier agent token even for the machine's owner. */
+  attachedWithoutAppToken: boolean;
   portLoading: boolean;
   portError: boolean;
   portErrorDetail: unknown;
@@ -270,7 +275,9 @@ export interface DispatchProjectData {
   // consumer of run data (countMergeReady, liveRunStateByTaskId, latestRunByTaskId, the merge
   // queue) reads the unfiltered `runs` above on purpose.
   visibleRuns: RunMeta[];
-  health: { pr: boolean } | undefined;
+  /** GET /api/health, undefined until it loads. `storageBackend` is absent
+   *  on daemons older than it. */
+  health: Pick<HealthPayload, 'pr' | 'storageBackend'> | undefined;
   readyIds: Set<string>;
   blockedIds: Set<string>;
   epics: TaskDoc[];
@@ -2772,7 +2779,11 @@ export function useDispatchProject(
     daemonBaseUrl: connection === undefined ? null : daemonBaseUrl(connection),
     presence: presence ?? [],
     me: whoami?.ref ?? null,
-    myTier: whoami?.tier ?? null,
+    myTier: whoami?.tier ?? credentialTier(connection),
+    attachedWithoutAppToken:
+      connection !== undefined &&
+      connection.session === undefined &&
+      (connection.appToken === null || connection.appToken === ''),
     portLoading,
     portError,
     portErrorDetail,

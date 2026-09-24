@@ -12,7 +12,8 @@ import { Input } from '@/ui/input';
 
 interface Props {
   config: DispatchConfig;
-  onSave: (patch: ConfigPatch) => Promise<void>;
+  /** Resolves `false` when the save was refused; a form keeps its draft then. */
+  onSave: (patch: ConfigPatch) => Promise<unknown>;
   canOperate: boolean;
 }
 
@@ -114,9 +115,9 @@ export function RemotesSection({ config, onSave, canOperate }: Props) {
               onSubmit={(e) => {
                 e.preventDefault();
                 if (name === '' || next === null) return;
-                void onSave({ remotes: { [name]: next } }).then(() =>
-                  setForm(EMPTY)
-                );
+                void onSave({ remotes: { [name]: next } }).then((saved) => {
+                  if (saved !== false) setForm(EMPTY);
+                });
               }}
             >
               <Input

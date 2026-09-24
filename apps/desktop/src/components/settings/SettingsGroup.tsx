@@ -1,6 +1,8 @@
 import { LockIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { createContext, useContext } from 'react';
 
+import { OPERATOR_ONLY, useSettingsAccess } from './access';
 import {
   nodeText,
   SearchScopeProvider,
@@ -12,9 +14,17 @@ import { cn } from '@/lib/utils';
 import { Panel, PanelRow } from '@/ui/chrome';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
-/** Why an operator-only setting is read-only for everyone else. */
-export const OPERATOR_ONLY =
-  'Only the person running Dispatch for this project can change this, because it runs commands on their machine or sends data elsewhere.';
+export { OPERATOR_ONLY };
+
+// The enclosing group's lock reason, or null while it is unlocked. A row lock
+// that would say the same thing is left off.
+const GroupLockContext = createContext<string | null>(null);
+
+/** Whether the enclosing group is locked. A disabled fieldset does not reach
+ *  Base UI's Switch (a span), so every switch in a group reads this too. */
+export function useGroupLocked(): boolean {
+  return useContext(GroupLockContext) !== null;
+}
 
 interface SettingsGroupProps {
   /** The section heading above the card. */
@@ -23,6 +33,13 @@ interface SettingsGroupProps {
   hint?: ReactNode;
   /** Extra words search should match this whole group on. */
   keywords?: string;
+  /**
+   * What changing anything in this group needs. Every config save needs the
+   * decide tier, so that is the default and a group only opts out (`none`)
+   * when its controls hit routes of their own: Linear's connect and sync,
+   * Sync now, team invites, the license, or nothing at all.
+   */
+  requires?: 'decide' | 'none';
   children: ReactNode;
   className?: string;
 }
@@ -34,10 +51,13 @@ export function SettingsGroup({
   title,
   hint,
   keywords,
+  requires = 'decide',
   children,
   className,
 }: SettingsGroupProps) {
   const searching = useSearching();
+  const access = useSettingsAccess();
+  const locked = requires === 'decide' && !access.canDecide;
   return (
     <SearchScopeProvider text={`${title} ${keywords ?? ''}`}>
       <section
@@ -49,10 +69,24 @@ export function SettingsGroup({
         )}
       >
         <div className="flex flex-col gap-0.5 px-0.5">
-          <h2 className="text-foreground text-[13px] font-semibold">{title}</h2>
+          <div className="flex items-center gap-1.5">
+            <h2 className="text-foreground text-[13px] font-semibold">
+              {title}
+            </h2>
+            {locked && <LockedMark reason={access.decideReason} />}
+          </div>
           {hint !== undefined && <SettingsHint>{hint}</SettingsHint>}
         </div>
-        <Panel>{children}</Panel>
+        {/* A disabled fieldset disables the native controls inside it
+            (inputs, buttons, the Select trigger). Switches render a span it
+            cannot reach, so they read useGroupLocked() instead. */}
+        <fieldset disabled={locked} className="m-0 min-w-0 border-0 p-0">
+          <GroupLockContext.Provider
+            value={locked ? access.decideReason : null}
+          >
+            <Panel>{children}</Panel>
+          </GroupLockContext.Provider>
+        </fieldset>
         <GroupMatchMarker />
       </section>
     </SearchScopeProvider>
@@ -86,7 +120,7 @@ export function SettingsHint({
 }
 
 /** A lock beside a setting the viewer may read but not change. */
-function LockedMark({ reason = OPERATOR_ONLY }: { reason?: string }) {
+function LockedMark({ reason }: { reason: string }) {
   return (
     <Tooltip>
       <TooltipTrigger
@@ -117,8 +151,9 @@ interface SettingsRowProps {
   /** Puts the control under the text instead of beside it, for a field that
    *  needs the whole width (a command, a URL, a textarea). */
   stacked?: boolean;
-  /** Read-only for this viewer: shows a lock beside the title. */
-  locked?: boolean;
+  /** Read-only for this viewer: shows a lock beside the title. `true` means
+   *  operator-only; a string is the lock's own reason. */
+  locked?: boolean | string;
   /** Free content after the title/control line: an error, a status line. */
   children?: ReactNode;
   className?: string;
@@ -140,7 +175,11 @@ export function SettingsRow({
   const visible = useSearchVisible(
     `${nodeText(title)} ${nodeText(subtitle)} ${keywords ?? ''}`
   );
+  const access = useSettingsAccess();
+  const groupReason = useContext(GroupLockContext);
   if (!visible) return null;
+  const reason =
+    typeof locked === 'string' ? locked : locked ? access.operateReason : null;
   const titleClass = 'text-foreground text-[13px] font-medium';
   const text = (
     <div className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -152,7 +191,9 @@ export function SettingsRow({
         ) : (
           <span className={titleClass}>{title}</span>
         )}
-        {locked && <LockedMark />}
+        {reason !== null && reason !== groupReason && (
+          <LockedMark reason={reason} />
+        )}
       </div>
       {subtitle !== undefined && <SettingsHint>{subtitle}</SettingsHint>}
     </div>

@@ -6,7 +6,7 @@ import { SettingsGroup, SettingsRow } from './SettingsGroup';
 
 interface Props {
   config: DispatchConfig;
-  onSave: (patch: ConfigPatch) => Promise<void>;
+  onSave: (patch: ConfigPatch) => Promise<unknown>;
 }
 
 /**
@@ -18,8 +18,14 @@ export function QueueWeightsGroup({ config, onSave }: Props) {
   const hint =
     'How much each factor counts when choosing which ready task runs next. Only the proportions matter; 0 ignores a factor.';
   if ('error' in result) {
+    // Nothing here to change, only a config.yml to fix by hand.
     return (
-      <SettingsGroup title="Task ranking" hint={hint} keywords="queue weights">
+      <SettingsGroup
+        title="Task ranking"
+        hint={hint}
+        keywords="queue weights"
+        requires="none"
+      >
         <SettingsRow
           title="The ranking in config.yml couldn't be read"
           subtitle={result.error}

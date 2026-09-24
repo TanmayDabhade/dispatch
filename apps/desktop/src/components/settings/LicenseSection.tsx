@@ -69,6 +69,7 @@ export function LicenseSection({ data }: LicenseSectionProps) {
     <>
       <SettingsGroup
         title="Plan"
+        requires="none"
         hint="Free for up to three people, with every feature. More people need a license key."
         keywords="seats billing"
       >
@@ -91,7 +92,7 @@ export function LicenseSection({ data }: LicenseSectionProps) {
         </SettingsRow>
       </SettingsGroup>
 
-      <SettingsGroup title="License key" keywords="install">
+      <SettingsGroup title="License key" keywords="install" requires="none">
         {canInstall ? (
           <SettingsRow title="Paste a key" htmlFor="license-key" stacked>
             <form

@@ -9,7 +9,8 @@ import { Textarea } from '@/ui/textarea';
 
 interface Props {
   config: DispatchConfig;
-  onSave: (patch: ConfigPatch) => Promise<void>;
+  /** Resolves `false` when the save was refused; a form keeps its draft then. */
+  onSave: (patch: ConfigPatch) => Promise<unknown>;
   canOperate: boolean;
 }
 
@@ -38,11 +39,12 @@ export function CliAgents({ config, onSave, canOperate }: Props) {
     const run = argvFromLines(argv);
     const id = name.trim();
     if (id === '' || run.length === 0 || model.trim() === '') return;
-    await onSave({
+    const saved = await onSave({
       executors: {
         [id]: { command: { run }, models: { execute: model.trim() } },
       },
     });
+    if (saved === false) return;
     setName('');
     setArgv('');
     setModel('');

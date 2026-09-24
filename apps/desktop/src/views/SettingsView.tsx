@@ -7,6 +7,7 @@ import {
   FolderSearch,
   Gauge,
   KeyRound,
+  LockIcon,
   MonitorPlay,
   Plug,
   RefreshCw,
@@ -26,11 +27,17 @@ import {
   useState,
 } from 'react';
 
+import {
+  accessFor,
+  SettingsAccessProvider,
+} from '../components/settings/access';
 import { AgentsSection } from '../components/settings/AgentsSection';
 import { BoardSyncGroup } from '../components/settings/BoardSyncGroup';
 import { ChecksSection } from '../components/settings/ChecksSection';
 import {
+  boardStorage,
   BoardSyncSettings,
+  CommitTaskFilesGroup,
   DaemonConfigGroups,
 } from '../components/settings/DaemonConfigGroups';
 import { DaemonSection } from '../components/settings/DaemonSection';
@@ -50,6 +57,7 @@ import {
 import { TeamSection } from '../components/settings/TeamSection';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { SettingsPage } from '../lib/appNav';
+import { isInsufficientTier } from '../lib/daemonAuth';
 import { cn } from '@/lib/utils';
 import { PageHeader } from '@/ui/ai/page-header';
 import {
@@ -86,9 +94,10 @@ type Config = NonNullable<DispatchProjectData['config']>;
 interface PageContext {
   data: DispatchProjectData;
   config: Config | null;
+  /** Resolves false when the save was refused, so a form can keep its draft. */
   save: (
     patch: Parameters<DispatchProjectData['handleUpdateConfig']>[0]
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   canOperate: boolean;
   activeProject: { path: string; name: string };
   onOpenTask?: (taskId: string) => void;
@@ -228,18 +237,31 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
         label: 'Board sync',
         icon: RefreshCw,
         intro:
-          "Share one board with teammates' copies of Dispatch through git.",
+          "Keep one board in step with teammates' copies of Dispatch through git.",
         savesConfig: true,
-        render: withConfig((ctx) => (
-          <>
-            <BoardSyncGroup data={ctx.data} />
-            <BoardSyncSettings
+        // Sharing works only on a database-backed board; a board kept as
+        // files reaches teammates by committing them instead. Until the
+        // daemon says which, neither set of controls is offered.
+        render: withConfig((ctx) => {
+          const storage = boardStorage(ctx.data.health, ctx.data.syncStatus);
+          if (storage === null) return null;
+          return storage === 'files' ? (
+            <CommitTaskFilesGroup
               config={ctx.config}
               onSave={ctx.save}
-              canOperate={ctx.canOperate}
+              syncStatus={ctx.data.syncStatus}
             />
-          </>
-        )),
+          ) : (
+            <>
+              <BoardSyncGroup data={ctx.data} />
+              <BoardSyncSettings
+                config={ctx.config}
+                onSave={ctx.save}
+                canOperate={ctx.canOperate}
+              />
+            </>
+          );
+        }),
       },
       {
         id: 'integrations',
@@ -251,7 +273,12 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
           // LinearPanel saves through `data.handleUpdateConfig`; route it
           // through the shared save so the one save line covers it.
           <IntegrationsSection
-            data={{ ...ctx.data, handleUpdateConfig: ctx.save }}
+            data={{
+              ...ctx.data,
+              handleUpdateConfig: async (patch) => {
+                await ctx.save(patch);
+              },
+            }}
           />
         ),
       },
@@ -289,16 +316,19 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
         intro:
           "Dispatch's own process for this project, and the work it does in the background.",
         savesConfig: true,
-        render: withConfig((ctx) => (
+        // Status renders without config, so a daemon that is down still says so.
+        render: (ctx) => (
           <>
             <DaemonSection activeProject={ctx.activeProject} data={ctx.data} />
-            <DaemonConfigGroups
-              config={ctx.config}
-              onSave={ctx.save}
-              canOperate={ctx.canOperate}
-            />
+            {ctx.config !== null && (
+              <DaemonConfigGroups
+                config={ctx.config}
+                onSave={ctx.save}
+                canOperate={ctx.canOperate}
+              />
+            )}
           </>
-        )),
+        ),
       },
       {
         id: 'diffs',
@@ -351,22 +381,37 @@ export function SettingsView({
     );
   });
 
+  // What this viewer may change, handed to every group and row below.
+  const access = accessFor(data.myTier, data.attachedWithoutAppToken);
+
   // The one save path every config-backed section's onSave goes through, so
-  // one indicator covers those pages instead of each section reporting on its own.
+  // one indicator covers those pages instead of each section reporting on its
+  // own. A tier refusal is reworded: the daemon's own text is written for the
+  // CLI (`--token`, `dispatch team invite`) and says nothing useful here.
   const save = useCallback(
-    async (patch: Parameters<DispatchProjectData['handleUpdateConfig']>[0]) => {
+    async (
+      patch: Parameters<DispatchProjectData['handleUpdateConfig']>[0]
+    ): Promise<boolean> => {
       setSaveState({ kind: 'saving' });
       try {
         await data.handleUpdateConfig(patch);
         setSaveState({ kind: 'saved' });
+        return true;
       } catch (err) {
         setSaveState({
           kind: 'error',
-          message: err instanceof Error ? err.message : String(err),
+          message: isInsufficientTier(err)
+            ? access.canDecide
+              ? access.operateReason
+              : access.decideReason
+            : err instanceof Error
+              ? err.message
+              : String(err),
         });
+        return false;
       }
     },
-    [data]
+    [data, access.canDecide, access.decideReason, access.operateReason]
   );
 
   if (activeProject === null) {
@@ -390,8 +435,9 @@ export function SettingsView({
     save,
     // The settings that run a command or send data elsewhere are the owner's
     // alone (the server's patchConfig); below that tier they show read-only
-    // behind a lock.
-    canOperate: data.myTier === 'operator',
+    // behind a lock. Everything else needs decide, which SettingsGroup reads
+    // from the access context below.
+    canOperate: access.canOperate,
     activeProject,
     onOpenTask,
   };
@@ -413,140 +459,157 @@ export function SettingsView({
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <PageHeader crumb={['Settings']} />
-      <div className="grid min-h-0 flex-1 grid-cols-[208px_minmax(0,1fr)]">
-        <nav
-          aria-label="Settings"
-          className="shadow-hairline-right flex min-h-0 flex-col gap-4 overflow-y-auto px-2 py-3"
-        >
-          <div className="relative">
-            <SearchIcon
-              aria-hidden
-              className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2"
-            />
-            <Input
-              type="search"
-              aria-label="Search settings"
-              placeholder="Search settings"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') setQuery('');
-              }}
-              className="pr-7 pl-7 [&::-webkit-search-cancel-button]:hidden"
-            />
-            {searching && (
-              <button
-                type="button"
-                aria-label="Clear search"
-                onClick={() => setQuery('')}
-                className="text-muted-foreground hover:text-foreground absolute top-1/2 right-2 -translate-y-1/2"
-              >
-                <XIcon aria-hidden className="size-3.5" />
-              </button>
-            )}
-          </div>
-          {SETTINGS_GROUPS.map((group) => (
-            <div key={group.label}>
-              <div className="text-muted-foreground flex h-7 items-center px-2 text-[12px] font-medium">
-                {group.label}
-              </div>
-              <div className="flex flex-col gap-px">
-                {group.pages.map((entry) => {
-                  const active = !searching && entry.id === page;
-                  const Icon = entry.icon;
-                  return (
-                    <button
-                      key={entry.id}
-                      type="button"
-                      aria-current={active ? 'page' : undefined}
-                      onClick={() => {
-                        setQuery('');
-                        setPage(entry.id);
-                      }}
-                      className={cn(
-                        SIDEBAR_ROW_CLASS,
-                        'gap-2',
-                        active
-                          ? SIDEBAR_ROW_ACTIVE_CLASS
-                          : SIDEBAR_ROW_INACTIVE_CLASS
-                      )}
-                    >
-                      <Icon aria-hidden className="size-3.5 shrink-0" />
-                      <span className="min-w-0 flex-1 truncate">
-                        {entry.label}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
+    <SettingsAccessProvider access={access}>
+      <div className="flex h-full min-h-0 flex-col">
+        <PageHeader crumb={['Settings']} />
+        <div className="grid min-h-0 flex-1 grid-cols-[208px_minmax(0,1fr)]">
+          <nav
+            aria-label="Settings"
+            className="shadow-hairline-right flex min-h-0 flex-col gap-4 overflow-y-auto px-2 py-3"
+          >
+            <div className="relative">
+              <SearchIcon
+                aria-hidden
+                className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2"
+              />
+              <Input
+                type="search"
+                aria-label="Search settings"
+                placeholder="Search settings"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') setQuery('');
+                }}
+                className="pr-7 pl-7 [&::-webkit-search-cancel-button]:hidden"
+              />
+              {searching && (
+                <button
+                  type="button"
+                  aria-label="Clear search"
+                  onClick={() => setQuery('')}
+                  className="text-muted-foreground hover:text-foreground absolute top-1/2 right-2 -translate-y-1/2"
+                >
+                  <XIcon aria-hidden className="size-3.5" />
+                </button>
+              )}
             </div>
-          ))}
-        </nav>
+            {SETTINGS_GROUPS.map((group) => (
+              <div key={group.label}>
+                <div className="text-muted-foreground flex h-7 items-center px-2 text-[12px] font-medium">
+                  {group.label}
+                </div>
+                <div className="flex flex-col gap-px">
+                  {group.pages.map((entry) => {
+                    const active = !searching && entry.id === page;
+                    const Icon = entry.icon;
+                    return (
+                      <button
+                        key={entry.id}
+                        type="button"
+                        aria-current={active ? 'page' : undefined}
+                        onClick={() => {
+                          setQuery('');
+                          setPage(entry.id);
+                        }}
+                        className={cn(
+                          SIDEBAR_ROW_CLASS,
+                          'gap-2',
+                          active
+                            ? SIDEBAR_ROW_ACTIVE_CLASS
+                            : SIDEBAR_ROW_INACTIVE_CLASS
+                        )}
+                      >
+                        <Icon aria-hidden className="size-3.5 shrink-0" />
+                        <span className="min-w-0 flex-1 truncate">
+                          {entry.label}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </nav>
 
-        <div className="min-h-0 overflow-y-auto px-6 py-5">
-          <div className="mx-auto flex w-full max-w-[600px] flex-col gap-6 pb-10">
-            {searching ? (
-              <>
-                <div className="flex items-baseline justify-between gap-3">
-                  <h1 className="text-foreground text-[20px] leading-7 font-semibold tracking-[-0.12px]">
-                    Results for &ldquo;{query.trim()}&rdquo;
-                  </h1>
-                  {saveLine}
-                </div>
-                <SettingsSearchProvider query={query}>
-                  <div ref={resultsRef} className="flex flex-col gap-8">
-                    {ALL_PAGES.map((entry) => (
-                      <SearchScopeProvider key={entry.id} text={entry.label}>
-                        <section
-                          aria-label={entry.label}
-                          className="flex flex-col gap-4 [&:not(:has([data-settings-row]))]:hidden"
-                        >
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setQuery('');
-                              setPage(entry.id);
-                            }}
-                            className="text-muted-foreground hover:text-foreground flex items-center gap-1.5 self-start text-[12px] font-medium"
-                          >
-                            <entry.icon aria-hidden className="size-3.5" />
-                            {entry.label}
-                          </button>
-                          {entry.render(ctx)}
-                        </section>
-                      </SearchScopeProvider>
-                    ))}
-                  </div>
-                </SettingsSearchProvider>
-                {noMatches && (
-                  <EmptyState
-                    icon={SearchIcon}
-                    heading="No settings match"
-                    description="Try a different word, like “budget”, “model” or “webhook”."
-                  />
-                )}
-              </>
-            ) : (
-              <>
-                <div className="flex flex-col gap-1">
+          <div className="min-h-0 overflow-y-auto px-6 py-5">
+            <div className="mx-auto flex w-full max-w-[600px] flex-col gap-6 pb-10">
+              {searching ? (
+                <>
                   <div className="flex items-baseline justify-between gap-3">
-                    <h1 className="text-foreground text-[24px] leading-8 font-semibold tracking-[-0.16px]">
-                      {spec.label}
+                    <h1 className="text-foreground text-[20px] leading-7 font-semibold tracking-[-0.12px]">
+                      Results for &ldquo;{query.trim()}&rdquo;
                     </h1>
-                    {spec.savesConfig && saveLine}
+                    {saveLine}
                   </div>
-                  <p className="font-book text-muted-foreground text-[13px]">
-                    {spec.intro}
-                  </p>
-                </div>
-                {spec.render(ctx)}
-              </>
-            )}
+                  <SettingsSearchProvider query={query}>
+                    <div ref={resultsRef} className="flex flex-col gap-8">
+                      {ALL_PAGES.map((entry) => (
+                        <SearchScopeProvider key={entry.id} text={entry.label}>
+                          <section
+                            aria-label={entry.label}
+                            className="flex flex-col gap-4 [&:not(:has([data-settings-row]))]:hidden"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setQuery('');
+                                setPage(entry.id);
+                              }}
+                              className="text-muted-foreground hover:text-foreground flex items-center gap-1.5 self-start text-[12px] font-medium"
+                            >
+                              <entry.icon aria-hidden className="size-3.5" />
+                              {entry.label}
+                            </button>
+                            {entry.render(ctx)}
+                          </section>
+                        </SearchScopeProvider>
+                      ))}
+                    </div>
+                  </SettingsSearchProvider>
+                  {noMatches && (
+                    <EmptyState
+                      icon={SearchIcon}
+                      heading="No settings match"
+                      description="Try a different word, like “budget”, “model” or “webhook”."
+                    />
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <h1 className="text-foreground text-[24px] leading-8 font-semibold tracking-[-0.16px]">
+                        {spec.label}
+                      </h1>
+                      {spec.savesConfig && saveLine}
+                    </div>
+                    <p className="font-book text-muted-foreground text-[13px]">
+                      {spec.intro}
+                    </p>
+                  </div>
+                  {/* No tier yet means no connection yet, not a refusal. */}
+                  {spec.savesConfig &&
+                    data.myTier !== null &&
+                    !access.canDecide && (
+                      <p
+                        role="note"
+                        className="bg-surface-secondary text-muted-foreground rounded-control font-book flex items-start gap-2 px-3 py-2 text-[12px]"
+                      >
+                        <LockIcon
+                          aria-hidden
+                          className="mt-px size-3.5 shrink-0"
+                        />
+                        {access.decideReason}
+                      </p>
+                    )}
+                  {spec.render(ctx)}
+                </>
+              )}
+            </div>
           </div>
         </div>
       </div>
-    </div>
+    </SettingsAccessProvider>
   );
 }

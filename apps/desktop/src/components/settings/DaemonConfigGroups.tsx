@@ -1,3 +1,4 @@
+import type { HealthPayload, SyncStatus } from '@dispatch/client';
 import type {
   CartoMode,
   ConfigPatch,
@@ -13,11 +14,11 @@ import {
   SwitchSetting,
   TextSetting,
 } from './fields';
-import { SettingsGroup } from './SettingsGroup';
+import { SettingsGroup, SettingsRow } from './SettingsGroup';
 
 interface Props {
   config: DispatchConfig;
-  onSave: (patch: ConfigPatch) => Promise<void>;
+  onSave: (patch: ConfigPatch) => Promise<unknown>;
   canOperate: boolean;
 }
 
@@ -70,8 +71,22 @@ export function ownRepoPatch(repo: string | null): {
 }
 
 /**
- * Settings → Board sync: sharing this board with teammates' copies of
- * Dispatch over git, and committing task changes, which sync depends on.
+ * How this project's board is kept, or null until known. GET /api/health says
+ * so; an older daemon doesn't, but its receipt log is off exactly when its
+ * board is kept as files (GET /api/sync).
+ */
+export function boardStorage(
+  health: Pick<HealthPayload, 'storageBackend'> | undefined,
+  syncStatus: Pick<SyncStatus, 'receipts'> | null
+): 'files' | 'sqlite' | null {
+  if (health?.storageBackend !== undefined) return health.storageBackend;
+  if (syncStatus === null) return null;
+  return syncStatus.receipts.state === 'disabled' ? 'files' : 'sqlite';
+}
+
+/**
+ * Settings → Board sync, for a board kept in Dispatch's database: sharing it
+ * with teammates' copies of Dispatch through a branch of its own in git.
  * Where the board is pushed is the owner's call alone.
  */
 export function BoardSyncSettings({ config, onSave, canOperate }: Props) {
@@ -104,14 +119,6 @@ export function BoardSyncSettings({ config, onSave, canOperate }: Props) {
           keywords="sync enabled"
           checked={sync.enabled}
           onSave={(enabled) => void onSave({ sync: { enabled } })}
-        />
-        <SwitchSetting
-          id="auto-commit"
-          title="Commit task changes automatically"
-          subtitle="Task edits are committed to git as they happen. Sharing needs this on."
-          keywords="autoCommit git"
-          checked={config.autoCommit}
-          onSave={(autoCommit) => void onSave({ autoCommit })}
         />
         <ChoiceSetting
           id="sync-place"
@@ -171,6 +178,48 @@ export function BoardSyncSettings({ config, onSave, canOperate }: Props) {
         />
       </SettingsGroup>
     </>
+  );
+}
+
+/**
+ * Settings → Board sync, for a board kept as task files in the repo, which
+ * sharing cannot carry: committing those files to the main branch instead.
+ */
+export function CommitTaskFilesGroup({
+  config,
+  onSave,
+  syncStatus,
+}: Omit<Props, 'canOperate'> & {
+  /** GET /api/sync; `disabled` on this backend means no branch resolved at boot. */
+  syncStatus: SyncStatus | null;
+}) {
+  return (
+    <SettingsGroup
+      title="Task files"
+      hint="This board is kept as files in the repo, not in Dispatch's database."
+      keywords="board sync files git"
+    >
+      <SwitchSetting
+        id="auto-commit"
+        title="Commit task files to the main branch"
+        subtitle="Commits your task edits from a private checkout, pushes them to the repo's main branch, and brings teammates' edits back in."
+        keywords="autoCommit auto-commit git commit push"
+        checked={config.autoCommit}
+        onSave={(autoCommit) => void onSave({ autoCommit })}
+      />
+      {syncStatus?.state === 'disabled' && (
+        <SettingsRow
+          title="No main branch to commit to"
+          subtitle="This repo has no origin default branch and no local main or master branch. Add one, then restart Dispatch for this project."
+          keywords="trunk"
+        />
+      )}
+      <SettingsRow
+        title="Sharing isn't available"
+        subtitle="Sharing a board through a branch of its own works only for boards kept in Dispatch's database."
+        keywords="sync share teammates"
+      />
+    </SettingsGroup>
   );
 }
 

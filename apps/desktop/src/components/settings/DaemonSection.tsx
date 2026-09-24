@@ -31,7 +31,11 @@ export function DaemonSection({ activeProject, data }: DaemonSectionProps) {
   const errorDetail = describeDaemonError(data.portErrorDetail);
   return (
     <>
-      <SettingsGroup title="Status" keywords="daemon dispatchd running">
+      <SettingsGroup
+        title="Status"
+        keywords="daemon dispatchd running"
+        requires="none"
+      >
         <SettingsRow
           title="Dispatch for this project"
           subtitle={

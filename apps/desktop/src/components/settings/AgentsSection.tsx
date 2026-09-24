@@ -28,7 +28,7 @@ import {
 interface AgentsSectionProps {
   config: DispatchConfig;
   executors: ExecutorsResponse | null;
-  onSave: (patch: ConfigPatch) => Promise<void>;
+  onSave: (patch: ConfigPatch) => Promise<unknown>;
   canOperate: boolean;
 }
 

@@ -2,8 +2,15 @@ import { ApiError } from '@dispatch/client';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
+import { accessFor, SettingsAccessProvider } from './access';
 import { dataWith } from './fixtures.test-helper';
 import { LinearPanel } from './LinearPanel';
+
+// Whether a locked settings group has disabled this control. happy-dom does
+// not carry a disabled fieldset down to its controls, so read the fieldset.
+function lockedByGroup(element: HTMLElement): boolean {
+  return element.closest('fieldset')?.disabled === true;
+}
 
 // An env key can't be disconnected from here, so the row that offers to isn't shown at all —
 // only the note explaining where the key came from, next to a still-open connect input. The
@@ -93,4 +100,32 @@ test('sync is a switch and the key and interval inputs are sans', () => {
   const interval = screen.getByLabelText('Poll interval');
   expect(interval.className).toContain('tabular-nums');
   expect(interval.className).not.toContain('font-mono');
+});
+
+// Connecting, importing and syncing are Linear's own routes, open to any
+// teammate; the sync settings are config, which needs Can approve.
+test('below the decide tier, connect and sync stay usable and the sync settings lock', () => {
+  render(
+    <SettingsAccessProvider access={accessFor('request', false)}>
+      <LinearPanel data={dataWith({ keySource: 'env', connected: true })} />
+    </SettingsAccessProvider>
+  );
+  expect(lockedByGroup(screen.getByPlaceholderText('Linear API key'))).toBe(
+    false
+  );
+  expect(
+    lockedByGroup(screen.getByRole('button', { name: 'Import from Linear' }))
+  ).toBe(false);
+  expect(lockedByGroup(screen.getByRole('button', { name: /Sync now/ }))).toBe(
+    false
+  );
+  expect(
+    lockedByGroup(
+      screen.getByRole('switch', { name: 'Sync this project with Linear' })
+    )
+  ).toBe(true);
+  expect(lockedByGroup(screen.getByRole('combobox', { name: 'Team' }))).toBe(
+    true
+  );
+  expect(lockedByGroup(screen.getByLabelText('Poll interval'))).toBe(true);
 });

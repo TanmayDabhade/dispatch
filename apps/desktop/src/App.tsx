@@ -10,6 +10,7 @@ import {
   useState,
 } from 'react';
 
+import { accessFor } from './components/settings/access';
 import { AddProjectDialog } from './components/shell/AddProjectDialog';
 import { CommandPalette } from './components/shell/CommandPalette';
 import {
@@ -465,6 +466,12 @@ function App() {
           })
       ),
     [rawData, toasts]
+  );
+  // Settings reports its own save failures (its save line, a refusal's reason,
+  // a kept draft), which the toast wrapper above would swallow first.
+  const settingsData = useMemo(
+    () => ({ ...data, handleUpdateConfig: rawData.handleUpdateConfig }),
+    [data, rawData.handleUpdateConfig]
   );
 
   // The overseer chat's session — mounted here, not inside OverseerView, so the
@@ -1197,7 +1204,7 @@ function App() {
                               {navState.globalView === 'settings' && (
                                 <SettingsView
                                   activeProject={activeProject}
-                                  data={data}
+                                  data={settingsData}
                                   initialPage={
                                     navState.settingsPage ?? 'general'
                                   }
@@ -1447,8 +1454,13 @@ function App() {
                   <FrameStatusStrip
                     className="absolute inset-x-0 bottom-0"
                     syncStatus={activeProject !== null ? data.syncStatus : null}
-                    onDisableAutoCommit={() =>
-                      void data.handleUpdateConfig({ autoCommit: false })
+                    // A config save, so only offered to a viewer who may make one.
+                    onDisableAutoCommit={
+                      accessFor(data.myTier, data.attachedWithoutAppToken)
+                        .canDecide
+                        ? () =>
+                            void data.handleUpdateConfig({ autoCommit: false })
+                        : undefined
                     }
                     spendToday={todaySpend}
                     ceilings={liveCeilings}

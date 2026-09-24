@@ -1,7 +1,9 @@
 import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 
-import { OPERATOR_ONLY, SettingsRow } from './SettingsGroup';
+import { OPERATOR_ONLY, SettingsRow, useGroupLocked } from './SettingsGroup';
+import { cn } from '@/lib/utils';
+import type { SwitchProps } from '@/ui/ai/switch';
 import { Switch } from '@/ui/ai/switch';
 import { Input } from '@/ui/input';
 import {
@@ -153,6 +155,22 @@ export function NumberSetting({
   );
 }
 
+/** The Switch every Settings page uses: disabled inside a locked group, which
+ *  its span escapes, and dimmed when disabled (it never matches `:disabled`). */
+export function SettingsSwitch({ disabled, className, ...props }: SwitchProps) {
+  const groupLocked = useGroupLocked();
+  return (
+    <Switch
+      {...props}
+      disabled={groupLocked || disabled === true}
+      className={cn(
+        'data-disabled:cursor-not-allowed data-disabled:opacity-50',
+        className
+      )}
+    />
+  );
+}
+
 export function SwitchSetting({
   id,
   title,
@@ -170,7 +188,7 @@ export function SwitchSetting({
       locked={locked !== undefined}
       htmlFor={id}
       control={
-        <Switch
+        <SettingsSwitch
           id={id}
           checked={checked}
           disabled={locked !== undefined}

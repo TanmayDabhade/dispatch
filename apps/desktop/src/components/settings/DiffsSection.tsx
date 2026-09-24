@@ -84,6 +84,7 @@ export function DiffsSection() {
         title="Appearance"
         hint="Saved in this browser only. Nothing here changes the project."
         keywords="diff display"
+        requires="none"
       >
         <SettingsRow
           title="Layout"
@@ -209,6 +210,7 @@ export function DiffsSection() {
         title="Preview"
         hint="Every diff in the app looks like this: runs, pull requests and the Git page."
         keywords="diff sample"
+        requires="none"
       >
         <SettingsSearchable text="diff preview sample">
           <PanelRow className="p-3">

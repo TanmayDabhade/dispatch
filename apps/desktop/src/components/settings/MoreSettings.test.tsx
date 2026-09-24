@@ -1,10 +1,13 @@
+import type { ReceiptsStatus } from '@dispatch/client';
 import type { ConfigPatch } from '@dispatch/core/browser';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
 import { argvFromLines, CliAgents } from './AgentsMoreGroups';
 import {
+  boardStorage,
   BoardSyncSettings,
+  CommitTaskFilesGroup,
   DaemonConfigGroups,
   ownRepoPatch,
   receiptsPlacePatch,
@@ -216,8 +219,9 @@ test('board sync: the interval saves; where the board is kept is the owner’s',
   expect(screen.getAllByLabelText(OPERATOR_ONLY).length).toBeGreaterThan(0);
 });
 
-// Auto-commit is a row whose title labels an indigo `Switch`, not a checkbox.
-test('board sync: auto-commit renders as a switch named by its row title', () => {
+// Sharing never depended on autoCommit, which only drives a board kept as
+// files; a database-backed board's sharing settings don't offer it.
+test('board sync: sharing does not ask to commit task files', () => {
   render(
     <BoardSyncSettings
       config={config}
@@ -225,19 +229,96 @@ test('board sync: auto-commit renders as a switch named by its row title', () =>
       canOperate
     />
   );
+  expect(
+    screen.getByRole('switch', { name: 'Share this board with teammates' })
+  ).toBeDefined();
+  expect(screen.queryByRole('switch', { name: /Commit task/ })).toBeNull();
+});
+
+// GET /api/sync's receipt log, which is off exactly on a board kept as files.
+function receipts(state: ReceiptsStatus['state']): {
+  receipts: ReceiptsStatus;
+} {
+  return {
+    receipts: {
+      state,
+      detail: null,
+      commit: null,
+      changed: 0,
+      removed: 0,
+      problems: 0,
+      lastExportedAt: null,
+    },
+  };
+}
+
+test('board sync: how the board is kept comes from health, else the receipt log', () => {
+  expect(boardStorage({ storageBackend: 'files' }, null)).toBe('files');
+  // Health wins when it says.
+  expect(boardStorage({ storageBackend: 'sqlite' }, receipts('disabled'))).toBe(
+    'sqlite'
+  );
+  // An older daemon doesn't say, or health hasn't loaded: the receipt log does.
+  expect(boardStorage({}, receipts('disabled'))).toBe('files');
+  expect(boardStorage({}, receipts('idle'))).toBe('sqlite');
+  expect(boardStorage(undefined, receipts('disabled'))).toBe('files');
+});
+
+test('board sync: until either says, how the board is kept is unknown', () => {
+  expect(boardStorage(undefined, null)).toBeNull();
+  expect(boardStorage({}, null)).toBeNull();
+});
+
+// Auto-commit is a row whose title labels an indigo `Switch`, not a checkbox.
+test('task files: auto-commit renders as a switch named by its row title', () => {
+  render(
+    <CommitTaskFilesGroup
+      config={config}
+      onSave={() => Promise.resolve()}
+      syncStatus={null}
+    />
+  );
   const toggle = screen.getByRole('switch', {
-    name: 'Commit task changes automatically',
+    name: 'Commit task files to the main branch',
   });
   expect(toggle.getAttribute('aria-checked')).toBe('false');
   expect(screen.queryByRole('checkbox')).toBeNull();
+  expect(screen.getByText("Sharing isn't available")).toBeDefined();
+  expect(screen.queryByText('No main branch to commit to')).toBeNull();
+});
+
+// The committer needs a branch resolved at boot; without one the switch alone
+// would promise commits that never happen.
+test('task files: with no main branch, it says so and what to do', () => {
+  render(
+    <CommitTaskFilesGroup
+      config={{ ...config, autoCommit: true }}
+      onSave={() => Promise.resolve()}
+      syncStatus={{
+        state: 'disabled',
+        detail: null,
+        pushed: 0,
+        pulled: 0,
+        pendingOutgoing: 0,
+        pendingIncoming: 0,
+        lastSyncedAt: null,
+        mergeDriverWarning: null,
+        ...receipts('disabled'),
+      }}
+    />
+  );
+  expect(screen.getByText('No main branch to commit to')).toBeDefined();
+  expect(screen.getByText(/Add one, then restart Dispatch/)).toBeDefined();
 });
 
 // Clicking the title, not just the switch, is the hit target people actually
 // use — that only works if the title stays a real <label> for the switch.
-test('board sync: clicking the auto-commit title toggles and saves', () => {
+test('task files: clicking the auto-commit title toggles and saves', () => {
   const r = recorder();
-  render(<BoardSyncSettings config={config} onSave={r.onSave} canOperate />);
-  fireEvent.click(screen.getByText('Commit task changes automatically'));
+  render(
+    <CommitTaskFilesGroup config={config} onSave={r.onSave} syncStatus={null} />
+  );
+  fireEvent.click(screen.getByText('Commit task files to the main branch'));
   expect(r.saved).toEqual([{ autoCommit: true }]);
 });
 

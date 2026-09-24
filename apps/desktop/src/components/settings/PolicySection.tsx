@@ -262,7 +262,7 @@ function HardStops() {
 
 interface PolicySectionProps {
   config: DispatchConfig;
-  onSave: (patch: PolicyPatch) => Promise<void>;
+  onSave: (patch: PolicyPatch) => Promise<unknown>;
   client: ApiClient | null;
   /** Opens a task's full view, where its ledger holds the complete receipt.
    *  Absent (a shell without navigation), receipts render unlinked. */
@@ -338,6 +338,7 @@ export function PolicySection({
 
       <SettingsGroup
         title="Hard stops"
+        requires="none"
         hint="These always wait for you, at every level. They can't be overridden."
         keywords="irreversibility floor"
       >
@@ -346,6 +347,7 @@ export function PolicySection({
 
       <SettingsGroup
         title="Recent automatic decisions"
+        requires="none"
         keywords="receipts ledger"
       >
         {receiptsError && (

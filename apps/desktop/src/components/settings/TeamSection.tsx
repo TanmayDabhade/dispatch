@@ -8,6 +8,7 @@ import { Check, Copy, UserMinus, UserPlus } from 'lucide-react';
 import { useState } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
+import { useSettingsAccess } from './access';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
 import { cn } from '@/lib/utils';
 import { Pill } from '@/ui/ai/pill';
@@ -116,6 +117,8 @@ export function TeamSection({ data }: TeamSectionProps) {
   const { client, myTier, presence } = data;
   const queryClient = useQueryClient();
   const canManage = myTier === 'decide' || myTier === 'operator';
+  // Invites need decide, not operator, so the lock says so.
+  const { decideReason } = useSettingsAccess();
   const holdersKey = ['dispatch-team-tokens', client?.baseUrl];
 
   const holders = useQuery({
@@ -144,11 +147,11 @@ export function TeamSection({ data }: TeamSectionProps) {
 
   if (!canManage) {
     return (
-      <SettingsGroup title="Members" keywords="invite team">
+      <SettingsGroup title="Members" keywords="invite team" requires="none">
         <SettingsRow
           title="Inviting people"
           subtitle="Needs Can approve access. Ask the person running Dispatch for this project to invite them, or to raise your access."
-          locked
+          locked={decideReason}
         />
       </SettingsGroup>
     );
@@ -196,6 +199,7 @@ export function TeamSection({ data }: TeamSectionProps) {
     <>
       <SettingsGroup
         title="Invite someone"
+        requires="none"
         hint="They get their own sign-in token, so everything they do is credited to them."
         keywords="add member token access"
       >
@@ -293,7 +297,7 @@ export function TeamSection({ data }: TeamSectionProps) {
         )}
       </SettingsGroup>
 
-      <SettingsGroup title="People" keywords="members team">
+      <SettingsGroup title="People" keywords="members team" requires="none">
         {people.length === 0 && (
           <SettingsRow
             title="Nobody else yet"

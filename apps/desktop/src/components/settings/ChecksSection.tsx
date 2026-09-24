@@ -14,7 +14,7 @@ import { Textarea } from '@/ui/textarea';
 
 interface ChecksSectionProps {
   config: DispatchConfig;
-  onSave: (patch: ConfigPatch) => Promise<void>;
+  onSave: (patch: ConfigPatch) => Promise<unknown>;
   canOperate: boolean;
 }
 

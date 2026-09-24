@@ -4,7 +4,7 @@ import { PullRequestsGroup, StatusesGroup } from './ProjectGroups';
 
 interface GeneralSectionProps {
   config: DispatchConfig;
-  onSave: (patch: ConfigPatch) => Promise<void>;
+  onSave: (patch: ConfigPatch) => Promise<unknown>;
   canOperate: boolean;
 }
 

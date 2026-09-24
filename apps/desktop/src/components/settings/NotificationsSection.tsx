@@ -2,9 +2,9 @@ import type { DispatchConfig, NotificationKind } from '@dispatch/core/browser';
 import { isMaskedSecretUrl, NOTIFICATION_KINDS } from '@dispatch/core/browser';
 import { useEffect, useState } from 'react';
 
+import { SettingsSwitch } from './fields';
 import { SettingsGroup, SettingsRow } from './SettingsGroup';
 import { PillButton } from '@/ui/ai/pill';
-import { Switch } from '@/ui/ai/switch';
 import { Input } from '@/ui/input';
 
 interface NotificationsSectionProps {
@@ -16,7 +16,7 @@ interface NotificationsSectionProps {
       kinds?: Partial<Record<NotificationKind, boolean>>;
       webhook?: string | null;
     };
-  }) => Promise<void>;
+  }) => Promise<unknown>;
 }
 
 // One row per feed kind, worded as the thing that happened rather than the
@@ -108,7 +108,7 @@ export function NotificationsSection({
             subtitle={KIND_INFO[kind].hint}
             htmlFor={`notify-${kind}`}
             control={
-              <Switch
+              <SettingsSwitch
                 id={`notify-${kind}`}
                 checked={config.notifications.kinds[kind]}
                 onCheckedChange={(checked) =>

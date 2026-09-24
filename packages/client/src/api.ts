@@ -59,6 +59,9 @@ export interface HealthPayload {
   // The daemon's event-loop watchdog. 'failed' means it never came up — for
   // a compiled daemon, that its worker module was left out of the build.
   watchdog?: 'idle' | 'starting' | 'armed' | 'failed' | 'stopped';
+  // Which backend this daemon's task store uses. Absent on older daemons;
+  // treat that as 'sqlite', the default.
+  storageBackend?: 'files' | 'sqlite';
   // Records the daemon's last cache rebuild could not read, plus the
   // identity problem above when there is one — visibility only, `ok` stays
   // true.
@@ -1557,10 +1560,16 @@ export interface IssuedTeamToken {
   expiresAt: string | null;
 }
 
+/** Why board sync isn't running — mirrors BoardSyncOffReason in
+ *  packages/server/src/api.ts: the board is kept as files, which it can't
+ *  share; it is off; or it is on in config.yml but didn't start. */
+export type BoardSyncOffReason = 'files' | 'off' | 'not-started';
+
 /** Board sync's state — mirrors SyncStatus in
- *  packages/server/src/team/boardSync/service.ts. */
+ *  packages/server/src/team/boardSync/service.ts. `reason` is absent on
+ *  daemons older than it. */
 export type BoardSyncStatus =
-  | { enabled: false }
+  | { enabled: false; reason?: BoardSyncOffReason }
   | {
       enabled: true;
       replica: string;
@@ -1665,8 +1674,9 @@ export interface LandingSnapshot {
 
 // Mirrors SyncState in packages/server/src/sync/boardSyncer.ts. No real
 // SyncResult a `syncOnce()` produces ever carries `'disabled'` or `'off'` —
-// GET /api/sync synthesizes `'disabled'` when no scheduler exists (no trunk
-// resolvable at boot) and `'off'` when the project's autoCommit is false.
+// GET /api/sync synthesizes `'disabled'` when no scheduler exists (database
+// backend, or no trunk resolvable at boot) and `'off'` when "Commit task
+// files to the main branch" (config `autoCommit`) is off.
 export type SyncState = 'idle' | 'local-only' | 'blocked' | 'disabled' | 'off';
 
 // Mirrors SyncResult in packages/server/src/sync/boardSyncer.ts — the
