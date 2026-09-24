@@ -1454,10 +1454,10 @@ function App() {
                   <FrameStatusStrip
                     className="absolute inset-x-0 bottom-0"
                     syncStatus={activeProject !== null ? data.syncStatus : null}
-                    // A config save, so only offered to a viewer who may make one.
+                    // autoCommit is an operator-only key, so only the owner is offered it.
                     onDisableAutoCommit={
                       accessFor(data.myTier, data.attachedWithoutAppToken)
-                        .canDecide
+                        .canOperate
                         ? () =>
                             void data.handleUpdateConfig({ autoCommit: false })
                         : undefined
