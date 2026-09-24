@@ -91,6 +91,7 @@ export {
   getSection,
   removeSection,
   setSection,
+  splitSections,
 } from './taskfile.js';
 export type { Amendment } from './taskfile.js';
 export {

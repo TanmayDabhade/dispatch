@@ -2,7 +2,9 @@
 // field, new records created on either side, and every write recorded (merge
 // base, echo, chip link) so the next pass sees exactly what changed since.
 import {
+  canonicalKind,
   containerCreate,
+  getSection,
   INITIATIVE_FIELDS,
   initiativePatch,
   initiativePush,
@@ -21,6 +23,7 @@ import {
   milestonePush,
   milestoneValues,
   missingLabels,
+  newTaskDoc,
   nextBase,
   parseLinearExternal,
   PROJECT_FIELDS,
@@ -29,6 +32,7 @@ import {
   projectValues,
   PULL_ONLY_CONTAINER_FIELDS,
   PULL_ONLY_ISSUE_FIELDS,
+  splitSections,
   taskInitiativeValues,
   taskIssueValues,
   taskMilestoneValues,
@@ -36,6 +40,7 @@ import {
   untrustedIssueFields,
 } from '@dispatch/core';
 import type {
+  CreateInput,
   DispatchConfig,
   FieldValues,
   LinearEntity,
@@ -44,6 +49,7 @@ import type {
   LinearProject,
   LinearProjectMilestone,
   TaskDoc,
+  TaskKind,
   TaskStorePort,
   UpdatePatch,
 } from '@dispatch/core';
@@ -165,6 +171,60 @@ export interface ReconcileMode {
   explicit?: boolean;
 }
 
+const OPS_BY_ENTITY: Record<LinearEntity, EntityOps<RemoteRecord>> = {
+  issue: ISSUE_OPS as unknown as EntityOps<RemoteRecord>,
+  project: PROJECT_OPS as unknown as EntityOps<RemoteRecord>,
+  milestone: MILESTONE_OPS as unknown as EntityOps<RemoteRecord>,
+  initiative: INITIATIVE_OPS as unknown as EntityOps<RemoteRecord>,
+};
+
+const CREATE_KEYS = [
+  'title',
+  'status',
+  'priority',
+  'labels',
+  'assignee',
+  'estimate',
+  'dueDate',
+  'startDate',
+  'cycle',
+  'blockedBy',
+  'relatedTo',
+  'duplicateOf',
+  'initiatives',
+  'color',
+  'icon',
+  'creator',
+] as const;
+
+const TEMPLATE_SECTIONS = new Set([
+  'Description',
+  'Acceptance Criteria',
+  'Activity',
+]);
+
+// The part of a pull patch a create can carry: every plain field, a resolved
+// parent, and the description when the body is just the template around it.
+function createFields(patch: UpdatePatch): Partial<CreateInput> {
+  const out: Record<string, unknown> = {};
+  for (const key of CREATE_KEYS) {
+    if (patch[key] !== undefined) out[key] = patch[key];
+  }
+  if (patch.parent !== undefined && patch.parent !== null) {
+    out.parent = patch.parent;
+  }
+  const body = patch.body;
+  if (body !== undefined) {
+    const plain = splitSections(body).sections.every(
+      (s) =>
+        TEMPLATE_SECTIONS.has(s.heading) &&
+        (s.heading === 'Description' || s.content.trim() === '')
+    );
+    if (plain) out.description = getSection(body, 'Description');
+  }
+  return out as Partial<CreateInput>;
+}
+
 const RELATION_FIELD: Record<string, string> = {
   blocks: 'blockedBy',
   related: 'relatedTo',
@@ -236,6 +296,8 @@ export class LinearPass {
   private halted = false;
   /** Pairs whose push waited on a newer Linear copy the pass could not take. */
   withheld = 0;
+  // Tasks this pass created from Linear, already counted as pulled.
+  private readonly createdHere = new Set<string>();
 
   constructor(private readonly d: PassDeps) {}
 
@@ -430,7 +492,7 @@ export class LinearPass {
         patch,
         later(doc.meta.updated, remote.updatedAt)
       );
-      summary.pulled++;
+      if (!this.createdHere.has(id)) summary.pulled++;
     } else if (note !== undefined) {
       // Bookkeeping only: the note must not make the task look edited.
       current = this.write(
@@ -663,7 +725,7 @@ export class LinearPass {
     status: string
   ): TaskDoc {
     const { store, ctx, state, summary } = this.d;
-    const input =
+    const base =
       entity === 'issue'
         ? issueTaskCreate(remote as LinearIssue, ctx)
         : containerCreate(
@@ -671,13 +733,31 @@ export class LinearPass {
             remote as { id: string; name: string },
             status
           );
-    const doc = store.create(input, remote.createdAt);
+    // Everything the record already settles goes into the one create, so an
+    // import writes most tasks once; references to records created later in
+    // the pass, and bodies with sections of their own, follow in `reconcile*`.
+    const ops = OPS_BY_ENTITY[entity];
+    const blank = newTaskDoc(
+      't-new',
+      canonicalKind(base.kind ?? 'task') as TaskKind,
+      base,
+      remote.createdAt
+    );
+    const patch = ops.patch(remote, [...ops.fields], blank, ctx);
+    const input: CreateInput = {
+      ...base,
+      ...createFields(patch),
+      created: remote.createdAt,
+    };
+    const doc = store.create(input, remote.updatedAt);
     this.d.docs.set(doc.meta.id, doc);
     track(ctx, doc);
     this.d.batch.add(doc.meta.id);
     // Accounted for at once: nothing local is waiting to go the other way.
     state.pushed[doc.meta.id] = doc.meta.updated;
     summary.created++;
+    summary.pulled++;
+    this.createdHere.add(doc.meta.id);
     return doc;
   }
 

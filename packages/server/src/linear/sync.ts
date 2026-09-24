@@ -438,16 +438,21 @@ export class LinearSync {
     const state = readLinearState(rootDir);
     const docs = new Map(store.listSafe().docs.map((d) => [d.meta.id, d]));
     this.foldLegacyWatermark(state, docs);
-    const batch = new TaskChangeBatch(store, cache, (ids) => {
-      this.broadcastTasks(ids);
-      if (this.progress !== null) {
-        this.setProgress({
-          ...this.progress,
-          phase: 'applying',
-          done: batch.count(),
-        });
+    const batch = new TaskChangeBatch(
+      store,
+      cache,
+      (id) => docs.get(id),
+      (ids) => {
+        this.broadcastTasks(ids);
+        if (this.progress !== null) {
+          this.setProgress({
+            ...this.progress,
+            phase: 'applying',
+            done: batch.count(),
+          });
+        }
       }
-    });
+    );
 
     // The team's workflow is the project's status vocabulary, and its users
     // are the project's people; both are refreshed before anything maps.
