@@ -51,8 +51,9 @@ export interface ListGroup {
   tint: string | null;
   icon: GroupIcon;
   rows: ListGroupRow[];
-  /** What a `+` on this header pre-fills into the task creator. */
-  preset: { status?: string; epic?: string; milestone?: string };
+  /** What a `+` on this header pre-fills into the task creator: a status, or the
+   * container (`epic`) the new task goes under as its parent. */
+  preset: { status?: string; epic?: string };
   /** The epic this group stands for, when it stands for one — the dependency-graph button
    * and the milestone's "open" affordance key off it. */
   epicId: string | null;
@@ -235,9 +236,8 @@ function byEpic(
         icon: asMilestone
           ? { kind: 'milestone', status: 'draft' }
           : { kind: 'epic', epicId: epic.meta.id },
-        preset: asMilestone
-          ? { milestone: epic.meta.id }
-          : { epic: epic.meta.id },
+        // A milestone's `+` files the new task under it, like an epic's.
+        preset: { epic: epic.meta.id },
         epicId: epic.meta.id,
       })
     );
@@ -258,7 +258,7 @@ function byEpic(
         icon: asMilestone
           ? { kind: 'milestone', status: 'draft' }
           : { kind: 'epic', epicId: parent },
-        preset: asMilestone ? { milestone: parent } : { epic: parent },
+        preset: { epic: parent },
         epicId: parent,
       });
       buckets.set(parent, target);

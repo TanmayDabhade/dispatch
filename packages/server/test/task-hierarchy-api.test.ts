@@ -7,12 +7,13 @@ import { join } from 'node:path';
 
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
+import { FakePlanner } from '../src/orchestrator/planners/fake.js';
 import { runGitSync } from './orchestrator/helpers.js';
 import { useTestAuth } from './testAuth.js';
 
 // Tasks are filed under containers through `parent`; the legacy free-form
 // `milestone` string is only read. These cover what a caller that still sends
-// one gets.
+// one gets, and the draft path's parent.
 
 let fakeHome: string;
 let root: string;
@@ -35,6 +36,12 @@ beforeEach(async () => {
     rootDir: root,
     port: 0,
     writeDaemonFile: false,
+    registerPlanners: (planManager) => {
+      planManager.registerPlanner(
+        'claude',
+        new FakePlanner({ ok: true, proposal: { tasks: [] } })
+      );
+    },
   });
   useTestAuth(handle);
   baseUrl = `http://127.0.0.1:${handle.port}`;
@@ -200,5 +207,36 @@ describe('a legacy milestone on create and update', () => {
     expect(await errorOf(res)).toBe(
       'invalid parent: expected a string or null'
     );
+  });
+});
+
+describe('a draft started inside a container', () => {
+  it('carries the parent on its record', async () => {
+    const beta = await create({ title: 'Beta', kind: 'milestone' });
+    const res = await send('/api/tasks/draft', 'POST', {
+      prompt: 'add refunds',
+      parent: beta.meta.id,
+    });
+    expect(res.status).toBe(202);
+    const record = (await res.json()) as { id: string; parent?: string };
+    expect(record.parent).toBe(beta.meta.id);
+    const listed = (await (
+      await fetch(`${baseUrl}/api/tasks/drafts/${record.id}`)
+    ).json()) as { parent?: string };
+    expect(listed.parent).toBe(beta.meta.id);
+  });
+
+  it('leaves the parent off without one, and 400s one that does not exist', async () => {
+    const plain = (await (
+      await send('/api/tasks/draft', 'POST', { prompt: 'add refunds' })
+    ).json()) as Record<string, unknown>;
+    expect('parent' in plain).toBe(false);
+
+    const missing = await send('/api/tasks/draft', 'POST', {
+      prompt: 'add refunds',
+      parent: 'e-000000',
+    });
+    expect(missing.status).toBe(400);
+    expect(await errorOf(missing)).toBe('invalid parent: no task e-000000');
   });
 });

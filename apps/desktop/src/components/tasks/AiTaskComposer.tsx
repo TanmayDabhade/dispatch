@@ -1,9 +1,10 @@
 import type { DraftRecord } from '@dispatch/client';
-import { PanelTopOpen, Sparkles } from 'lucide-react';
+import { Layers, PanelTopOpen, Sparkles, X } from 'lucide-react';
 import { useState } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { DaemonUnavailable } from '../shell/DaemonUnavailable';
+import { useShellActions } from '../shell/ShellActionsContext';
 import { Pill } from '@/ui/ai/pill';
 import { Button } from '@/ui/button';
 import {
@@ -22,8 +23,12 @@ interface AiTaskComposerProps {
   /** The crumb's project chip (`[project] › New task`); the app name until a project is open. */
   projectName?: string;
   /** The unwrapped start call — rejects on failure (unlike `data.handleStartDraft`) so the
-   * composer can keep the typed prompt on screen with an inline error instead of losing it. */
-  onStartDraft: (prompt: string) => Promise<DraftRecord>;
+   * composer can keep the typed prompt on screen with an inline error instead of losing it.
+   * `parent` is the container a group's "+" opened the composer in. */
+  onStartDraft: (
+    prompt: string,
+    options?: { parent?: string | null }
+  ) => Promise<DraftRecord>;
   /** Opens `CreateTaskModal` instead — the structured quick-add fallback for when you already
    * know the exact fields and don't want to spend an agent round-trip describing them. */
   onQuickAdd: () => void;
@@ -41,16 +46,28 @@ export function AiTaskComposer({
   onQuickAdd,
   onClose,
 }: AiTaskComposerProps) {
+  const { createPreset } = useShellActions();
   const [prompt, setPrompt] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A milestone's (or any container's) "+" drafts the task inside it.
+  const [parent, setParent] = useState<string | null>(
+    createPreset?.epic ?? null
+  );
+  const parentTitle =
+    parent === null
+      ? null
+      : (data.epics.find((e) => e.meta.id === parent)?.meta.title ?? parent);
 
   async function submit() {
     if (prompt.trim() === '' || submitting) return;
     setSubmitting(true);
     setError(null);
     try {
-      await onStartDraft(prompt.trim());
+      await onStartDraft(
+        prompt.trim(),
+        parent === null ? undefined : { parent }
+      );
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -107,6 +124,24 @@ export function AiTaskComposer({
                 }}
                 className="min-h-[120px] text-[15px] leading-6"
               />
+              {parentTitle !== null && (
+                <div className="flex items-center gap-1.5">
+                  <Pill data-slot="draft-parent">
+                    <Layers />
+                    <span className="max-w-[320px] truncate">
+                      In {parentTitle}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label={`Not in ${parentTitle}`}
+                      onClick={() => setParent(null)}
+                      className="text-muted-foreground hover:text-foreground -mr-1 flex size-3.5 items-center justify-center"
+                    >
+                      <X className="size-2.5" />
+                    </button>
+                  </Pill>
+                </div>
+              )}
               {error !== null && (
                 <p role="alert" className="text-red text-[12px]">
                   {error}

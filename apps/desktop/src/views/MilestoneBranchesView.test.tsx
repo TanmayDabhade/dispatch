@@ -515,7 +515,7 @@ describe('MilestoneBranchesView', () => {
     fireEvent.click(
       screen.getByRole('button', { name: 'New task in Payments' })
     );
-    expect(log.presets).toEqual([{ milestone: 'e-1' }]);
+    expect(log.presets).toEqual([{ epic: 'e-1' }]);
   });
 
   test('the trailing slot is the live run mark, else the assignee avatar when shown', () => {

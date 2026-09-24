@@ -223,6 +223,18 @@ describe('groupTasks by epic and milestone', () => {
     expect(groups[0]?.tint).toBe('var(--status-progress)');
     expect(groups[1]?.icon).toEqual({ kind: 'milestone', status: 'landed' });
   });
+
+  test("a milestone group's + files the new task under it as its parent", () => {
+    const groups = groupTasks(tasks, prefs({ grouping: 'milestone' }), {
+      statuses: STATUSES,
+      epics: [epic],
+    });
+    expect(groups[0]?.key).toBe('milestone:e-1');
+    expect(groups[0]?.preset).toEqual({ epic: 'e-1' });
+    expect(groups.find((g) => g.key === 'milestone:ghost')?.preset).toEqual({
+      epic: 'ghost',
+    });
+  });
 });
 
 describe('groupTasks by assignee, priority and none', () => {

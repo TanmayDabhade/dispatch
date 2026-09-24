@@ -991,6 +991,8 @@ export interface DraftRecord {
   error: string | null;
   createdAt: string;
   updatedAt: string;
+  /** The container the draft was started in; the saved task's parent. */
+  parent?: string;
 }
 
 // Mirrors OverseerState in packages/server/src/orchestrator/overseer.ts:
@@ -2339,7 +2341,11 @@ export interface ApiClient {
   aiFilterTasks(sentence: string): Promise<AiTaskFilterResult>;
   // Starts a background planner turn and returns immediately with a `running`
   // `DraftRecord`; watch it settle via `fetchDrafts` or `draft.changed`.
-  draftTask(prompt: string): Promise<DraftRecord>;
+  // `parent` is the container the saved task goes under.
+  draftTask(
+    prompt: string,
+    options?: { parent?: string | null }
+  ): Promise<DraftRecord>;
   // Every draft currently held in memory (running, ready, or failed — until
   // dismissed), newest first.
   fetchDrafts(): Promise<DraftRecord[]>;
@@ -3044,10 +3050,10 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
         ...jsonBody({ sentence }),
       }),
-    draftTask: (prompt) =>
+    draftTask: (prompt, { parent = null } = {}) =>
       request(target, '/api/tasks/draft', {
         method: 'POST',
-        ...jsonBody({ prompt }),
+        ...jsonBody(parent === null ? { prompt } : { prompt, parent }),
       }),
     fetchDrafts: () => request(target, '/api/tasks/drafts'),
     fetchDraft: (id) => request(target, `/api/tasks/drafts/${id}`),

@@ -11,8 +11,8 @@ import type {
  * task creator. Every field is optional; the creator defaults the rest. */
 export interface CreateTaskPreset {
   status?: string;
+  /** The container (milestone, project, parent issue…) the new task goes under. */
   epic?: string;
-  milestone?: string;
 }
 
 /**

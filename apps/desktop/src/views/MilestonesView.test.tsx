@@ -384,7 +384,7 @@ test('a finished milestone sinks to the bottom, starts collapsed, and reopens on
   ).toBeNull();
 });
 
-test('j/k and Enter walk and open the rows; + presets the milestone', () => {
+test('j/k and Enter walk and open the rows; + files the new task under the milestone', () => {
   const opened: string[] = [];
   const { log } = renderMilestones(
     dataWith(
@@ -419,7 +419,8 @@ test('j/k and Enter walk and open the rows; + presets the milestone', () => {
   ).toBe('true');
 
   fireEvent.click(screen.getByRole('button', { name: 'New task in Payments' }));
-  expect(log.presets).toEqual([{ milestone: 'e-1' }]);
+  // The container is the new task's parent, not a free-text milestone.
+  expect(log.presets).toEqual([{ epic: 'e-1' }]);
 });
 
 test('with no milestones the empty state offers Plan work…', () => {

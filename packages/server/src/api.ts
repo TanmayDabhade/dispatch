@@ -626,9 +626,22 @@ async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
 async function draftTask(req: Request, ctx: ApiContext): Promise<Response> {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
-  const body = parsed.value as { prompt?: unknown; planner?: unknown };
+  const body = parsed.value as {
+    prompt?: unknown;
+    planner?: unknown;
+    parent?: unknown;
+  };
   if (typeof body.prompt !== 'string' || body.prompt.trim() === '') {
     return errorResponse(400, 'invalid prompt: prompt is required');
+  }
+  // The container a "+" started this draft in, checked now so a stale id
+  // fails here rather than at save.
+  const parent = body.parent ?? null;
+  if (parent !== null && typeof parent !== 'string') {
+    return errorResponse(400, 'invalid parent: expected a task id or null');
+  }
+  if (parent !== null && ctx.cache.get(parent) === null) {
+    return errorResponse(400, `invalid parent: no task ${parent}`);
   }
   const knownPlannerNames = ctx.planManager.registeredPlannerNames();
   if (
@@ -643,7 +656,7 @@ async function draftTask(req: Request, ctx: ApiContext): Promise<Response> {
   }
   const plannerName =
     typeof body.planner === 'string' ? body.planner : 'claude';
-  const draft = ctx.planManager.startDraft(body.prompt, plannerName);
+  const draft = ctx.planManager.startDraft(body.prompt, plannerName, parent);
   return jsonResponse(draft, 202);
 }
 
