@@ -229,6 +229,40 @@ test('d dispatches the focused ready row in place', async () => {
   ]);
 });
 
+// Dispatching regroups the row under its new status; the cursor stays where it was, on the
+// row that took its place, so `d` `d` walks down the Ready group.
+test('after d moves the row to another group, the cursor stays in place', () => {
+  const calls: DispatchCall[] = [];
+  const tasks = [
+    task('t-1', 'First task', { status: 'todo' }),
+    task('t-2', 'Second task', { status: 'todo' }),
+    task('t-3', 'Third task', { status: 'todo' }),
+  ];
+  const view = (list: typeof tasks) => (
+    <TasksListView
+      data={{ ...dataWith(list, calls), readyIds: new Set(['t-1', 't-2']) }}
+      onSelectTask={() => {}}
+    />
+  );
+  const Shell = shellWith(shellLog());
+  const { rerender } = render(<Shell>{view(tasks)}</Shell>);
+  const grid = screen.getByRole('grid', { name: 'Tasks' });
+  expect(rowOf('First task').getAttribute('data-focused')).toBe('true');
+
+  fireEvent.keyDown(grid, { key: 'd' });
+  // The optimistic status lands: t-1 now sorts into In progress, below the Todo rows.
+  rerender(
+    <Shell>
+      {view([
+        task('t-1', 'First task', { status: 'in-progress' }),
+        tasks[1],
+        tasks[2],
+      ])}
+    </Shell>
+  );
+  expect(rowOf('Second task').getAttribute('data-focused')).toBe('true');
+});
+
 // §4: rows are 36px ListRows straight on the panel — no table, no header row, no divider,
 // no filter input; the id is sans, the date absolute, labels are pills.
 test('renders each task as a 36px ListRow with pickers, label pills, a sans id and an absolute date', () => {

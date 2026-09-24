@@ -11,6 +11,7 @@ import { DisplayPopover } from '../components/tasks/DisplayPopover';
 import { FilterMenu } from '../components/tasks/FilterMenu';
 import { SaveViewDialog } from '../components/tasks/SaveViewDialog';
 import { TaskBoard } from '../components/tasks/TaskBoard';
+import { useCursorHandoff } from '../hooks/useCursorHandoff';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { isTypingTarget } from '../hooks/useGlobalKeyboard';
 import type { TaskTab } from '../lib/appNav';
@@ -505,6 +506,8 @@ export function BoardView({
       handleDispatch(taskId, undefined, undefined, { optimistic: true }),
     [handleDispatch]
   );
+  // The dispatched card moves to another column; the cursor stays where it was.
+  const handOffCursor = useCursorHandoff(orderedTaskIds, setFocusedTaskId);
 
   function handleBoardKeyDown(e: React.KeyboardEvent) {
     // A keydown that lands on (or inside) one of the track's own interactive controls — an
@@ -543,6 +546,7 @@ export function BoardView({
     if (command === 'list-dispatch') {
       if (focusedTaskId === null || !readyIds.has(focusedTaskId)) return;
       e.preventDefault();
+      handOffCursor(focusedTaskId);
       void dispatchInPlace(focusedTaskId);
       return;
     }

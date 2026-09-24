@@ -31,6 +31,7 @@ import {
   VirtualRows,
   type VirtualRowsHandle,
 } from '../components/virtual/VirtualRows';
+import { useCursorHandoff } from '../hooks/useCursorHandoff';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import {
   COLLAPSED_GROUPS_STORAGE_KEY,
@@ -312,9 +313,12 @@ export function TasksListView({
     }
   }, [orderedIds, focusedTaskId]);
 
-  // In place and optimistic, like the Cockpit's `d`: the row shows as started at once.
+  // In place and optimistic, like the Cockpit's `d`: the row shows as started at once, and
+  // when that regroups it the cursor stays where it was.
+  const handOffCursor = useCursorHandoff(orderedIds, setFocusedTaskId);
   function dispatchOne(taskId: string) {
     if (!data.readyIds.has(taskId)) return;
+    if (taskId === focusedTaskId) handOffCursor(taskId);
     void data.handleDispatch(taskId, undefined, undefined, {
       optimistic: true,
     });
