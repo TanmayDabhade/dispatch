@@ -161,6 +161,22 @@ export function defaultStatusRoles(
 }
 
 /**
+ * The default roles for several linked teams: the primary team's statuses
+ * alone decide them, so linking another team never moves a lifecycle role
+ * onto a status only that team has (its states can sort first in a type).
+ */
+export function primaryStatusRoles(
+  generated: GeneratedStatuses,
+  primary: readonly LinearWorkflowState[]
+): StatusRoles {
+  const own = new Set(primary.map((s) => generated.names[s.id]));
+  const definitions = generated.definitions.filter((d) => own.has(d.name));
+  return defaultStatusRoles(
+    definitions.length > 0 ? definitions : generated.definitions
+  );
+}
+
+/**
  * The roles to write after regenerating statuses. A role the user changed away
  * from what the last generation wrote is an override and survives, following a
  * rename, as long as it still names a status; everything else takes the fresh

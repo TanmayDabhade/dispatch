@@ -2,13 +2,13 @@
 // the project's statuses, their users folded into the people registry, and the
 // mapping context every field projection reads.
 import {
-  defaultStatusRoles,
   labelColorIndex,
   labelKey,
   loadConfig,
   migrateStatus,
   parseLinearExternal,
   peopleIndex,
+  primaryStatusRoles,
   reconcileStatusRoles,
   renamesForTeam,
   resolvePeople,
@@ -127,7 +127,7 @@ export function regenerateStatuses(
     teams.flatMap((t) => t.states.map((s) => [s.id, t.id] as const))
   );
   const renames = statusRenames(state.stateNames, generated.names, teamOf);
-  const fresh = defaultStatusRoles(generated.definitions);
+  const fresh = primaryStatusRoles(generated, teams[0]?.states ?? []);
   const roles = reconcileStatusRoles(
     config.statusRoles,
     state.generatedRoles,

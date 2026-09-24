@@ -253,6 +253,30 @@ describe('several linked teams', () => {
     expect(fake.updated).toEqual([]);
   });
 
+  it('keeps the primary’s lifecycle roles when a team whose board leads with its own states is linked', async () => {
+    // Ops lists Design and Shipped first among its started and completed.
+    fake.teamStates['team-2'] = [
+      { id: 'o-todo', name: 'Todo', type: 'unstarted', position: 0 },
+      { id: 'o-design', name: 'Design', type: 'started', position: 0 },
+      { id: 'o-progress', name: 'In Progress', type: 'started', position: 1 },
+      { id: 'o-shipped', name: 'Shipped', type: 'completed', position: 0 },
+      { id: 'o-done', name: 'Done', type: 'completed', position: 1 },
+    ];
+    writeConfig('[team-1]');
+    const sync = makeSync();
+    await sync.syncOnce();
+    const alone = loadConfig(root).statusRoles;
+    expect(alone?.dispatched).toBe('In Progress');
+
+    writeConfig();
+    await sync.syncOnce();
+
+    const linked = loadConfig(root);
+    expect(linked.statuses).toContain('Design');
+    expect(linked.statuses).toContain('Shipped');
+    expect(linked.statusRoles).toEqual(alone);
+  });
+
   it('creates a sub-issue in its parent’s team, other work in the primary', async () => {
     const parent = fake.issue({ team: OPS, identifier: 'OPS-1' });
     fake.issues = [parent];

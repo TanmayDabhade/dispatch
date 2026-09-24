@@ -5,6 +5,7 @@ import type { LinearWorkflowState } from '../src/linearMap.js';
 import {
   defaultStatusRoles,
   migrateStatus,
+  primaryStatusRoles,
   reconcileStatusRoles,
   renamesForTeam,
   statusesFromTeams,
@@ -142,6 +143,18 @@ describe('defaultStatusRoles', () => {
       STATES.filter((s) => s.id !== 's-review')
     );
     expect(defaultStatusRoles(definitions).review).toBe('In Progress');
+  });
+
+  it('takes several teams’ roles from the primary team’s statuses alone', () => {
+    const ops: LinearWorkflowState[] = [
+      { id: 'o-design', name: 'Design', type: 'started', position: 0 },
+      { id: 'o-shipped', name: 'Shipped', type: 'completed', position: 0 },
+    ];
+    const generated = statusesFromTeams([STATES, ops]);
+    expect(generated.definitions.map((d) => d.name)).toContain('Design');
+    expect(primaryStatusRoles(generated, STATES)).toEqual(
+      defaultStatusRoles(statusesFromWorkflowStates(STATES).definitions)
+    );
   });
 
   it('makes do with a team that has no unstarted or canceled states', () => {
