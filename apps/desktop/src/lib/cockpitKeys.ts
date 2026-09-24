@@ -4,7 +4,7 @@ import { stepKey } from './virtualRows';
 // The Cockpit's keyboard model, pure so every key is testable without a DOM: which command
 // a keystroke is, and where the cursor lands after a move.
 
-export type CockpitCommand =
+type CockpitCommand =
   | 'down'
   | 'up'
   | 'left'

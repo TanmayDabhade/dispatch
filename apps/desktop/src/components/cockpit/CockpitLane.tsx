@@ -15,7 +15,7 @@ import { GroupHeader } from '@/ui/ai/group-header';
 
 export type CockpitRowModel = FlatRow<RosterHeader, CockpitItem>;
 
-export const LANE_TITLE: Record<CockpitLaneId, string> = {
+const LANE_TITLE: Record<CockpitLaneId, string> = {
   ready: 'Ready for you',
   flight: 'In flight',
   needs: 'Needs you',
@@ -51,7 +51,7 @@ const rowHeight = (row: CockpitRowModel) =>
       : ROW_HEIGHT;
 const rowKey = (row: CockpitRowModel) => row.key;
 
-export function LaneIcon({ lane }: { lane: CockpitLaneId }) {
+function LaneIcon({ lane }: { lane: CockpitLaneId }) {
   const Icon = LANE_ICON[lane];
   return (
     <Icon aria-hidden className="size-3.5" style={{ color: LANE_TINT[lane] }} />

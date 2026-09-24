@@ -21,14 +21,9 @@ import { assigneeRef } from '../../lib/taskDisplay';
  * - `queued`: unstarted and unblocked — next when a slot frees.
  * - `blocked`: waiting on something in the container that has not landed.
  */
-export type FlightNodeState =
-  | 'done'
-  | 'running'
-  | 'teammate'
-  | 'queued'
-  | 'blocked';
+type FlightNodeState = 'done' | 'running' | 'teammate' | 'queued' | 'blocked';
 
-export interface FlightNode {
+interface FlightNode {
   task: TaskListItem;
   state: FlightNodeState;
   /** 0-based wave (`dagWaves`). */
@@ -38,7 +33,7 @@ export interface FlightNode {
 }
 
 /** One wave's tally, for the bar. */
-export interface FlightWave {
+interface FlightWave {
   /** 0-based. */
   index: number;
   total: number;

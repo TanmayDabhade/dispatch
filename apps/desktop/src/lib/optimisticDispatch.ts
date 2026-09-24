@@ -3,7 +3,7 @@
 // run shows up in the run list (or the task leaves the ready queue), and a failed request
 // takes it back out so the task reappears in Ready.
 
-export interface PendingDispatch {
+interface PendingDispatch {
   /** When `d` was pressed, ms — the starting row's clock. */
   startedAt: number;
   /** `sending` while the request is out; `sent` once it resolved, until the run lands. */

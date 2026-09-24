@@ -801,7 +801,7 @@ test('a focusEpic request without dispatch scrolls the milestone into view and n
       typeof arg === 'object' ? arg : undefined,
     ]);
   } as typeof Element.prototype.scrollTo;
-  // happy-dom has no layout; give scrollers a browser's extent so offsets are not clamped.
+  // happy-dom has no layout; give each scroller a browser's extent so offsets are not clamped.
   const extent = Object.getOwnPropertyDescriptors(HTMLElement.prototype);
   Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
     configurable: true,

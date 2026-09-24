@@ -66,7 +66,7 @@ describe('AssigneeAvatar with the people registry', () => {
     { ref: 'human:maya', name: 'Maya Chen' },
     {
       ref: 'human:lena',
-      name: 'Lena Varga',
+      name: 'Lena Park',
       avatarUrl: 'https://example.com/lena.png',
     },
   ];
@@ -97,7 +97,7 @@ describe('AssigneeAvatar with the people registry', () => {
         <AssigneeAvatar assignee="human:lena" />
       </PeopleProvider>
     );
-    const photo = screen.getByRole('img', { name: 'Lena Varga' });
+    const photo = screen.getByRole('img', { name: 'Lena Park' });
     expect(photo.tagName).toBe('IMG');
     expect(photo.getAttribute('src')).toBe('https://example.com/lena.png');
   });

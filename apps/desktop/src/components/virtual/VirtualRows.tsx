@@ -21,7 +21,7 @@ import {
 } from '../../lib/virtualRows';
 import { cn } from '@/lib/utils';
 
-export type ScrollAlign = 'start' | 'center' | 'end' | 'auto';
+type ScrollAlign = 'start' | 'center' | 'end' | 'auto';
 
 /** What a list reaches for from outside: bring a row into view (a j/k move). */
 export interface VirtualRowsHandle {
