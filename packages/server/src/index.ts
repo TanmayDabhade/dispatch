@@ -1044,17 +1044,18 @@ async function bootServer(
           rootDir,
           stores,
           actor: actorContext,
-          run: defaultGitRunner,
+          run: defaultAsyncGitRunner,
           events,
           debounceMs: opts.receiptsDebounceMs,
           sweepMs: opts.receiptsSweepMs,
         });
-  // One export before the server serves anything: it creates the log on a
-  // project turning receipts on for the first time, and reconciles one left
-  // dirty by a daemon that died mid-burst. Never fatal — a project that cannot
-  // write its receipt log still has a working board, and exportNow reports
-  // rather than throws.
-  receiptsScheduler?.exportNow();
+  // One full export as the daemon comes up: it creates the log on a project
+  // turning receipts on for the first time, and reconciles one left dirty by a
+  // daemon that died mid-burst. In the background, in slices, so the server
+  // answers while it runs. Never fatal — a project that cannot write its
+  // receipt log still has a working board, and exportNow reports rather than
+  // rejects.
+  void receiptsScheduler?.exportNow();
 
   // Board sync, when on: publish the board as it stands (once, the first
   // time), then exchange changes with the other replicas on the remote. A
@@ -1121,7 +1122,7 @@ async function bootServer(
     // ledger entries too, and those announce themselves on their own events.
     // Keyed on `task.changed` alone, a review raising twenty findings would put
     // nothing in the audit trail until an unrelated task edit came along.
-    if (isReceiptEvent(event)) receiptsScheduler?.notifyChanged();
+    if (isReceiptEvent(event)) receiptsScheduler?.notifyChanged(event);
   });
   // The orchestrator's own executor registry: the real 'claude' backend, plus
   // 'codex' when its CLI is installed. A call that omits `executor` runs on
@@ -2061,7 +2062,7 @@ async function bootServer(
       browsers.shutdown();
       boardSyncScheduler?.stop();
       // Before stores.close() below, since the exporter reads the database.
-      receiptsScheduler?.stop();
+      await receiptsScheduler?.stop();
       // `server.stop(true)` force-closes every open connection, WebSockets
       // included — that fires our `websocket.close` handler for each client,
       // which removes it from `events` on the way out. See the note on
