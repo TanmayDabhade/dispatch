@@ -42,6 +42,7 @@ import type { ApiContext, DaemonTokenPair, DaemonTokens } from './api.js';
 import { spawnGitSync } from './blockingGit.js';
 import { BrowserRegistry } from './browser/registry.js';
 import { TaskCache } from './cache.js';
+import { compressForNetwork } from './compression.js';
 import { ConversationStore } from './conversations.js';
 import {
   assertRootNotServed,
@@ -1923,7 +1924,15 @@ async function bootServer(
             idle === null
               ? await handleApi(req, apiCtx)
               : await idle.track(() => handleApi(req, apiCtx));
-          return withCors(response, origin, ownOriginSet);
+          return withCors(
+            await compressForNetwork(
+              req,
+              response,
+              srv.requestIP(req)?.address ?? null
+            ),
+            origin,
+            ownOriginSet
+          );
         }
 
         if (webDistDir !== null) {
