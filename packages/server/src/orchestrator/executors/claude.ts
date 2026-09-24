@@ -198,8 +198,12 @@ const WIND_DOWN_STOP_MS = 5_000;
 const WIND_DOWN_FLUSH_MS = 250;
 
 // The tools denied once a run has ended: everything that can run a command,
-// change files, or start more work. MCP tools are named by server, for the
-// servers this executor adds.
+// change files, or start more work (SendMessage resumes a sub-agent).
+// `mcp__*` covers every MCP server, the ones a user's or a project's settings
+// add included: a user-scope server's shell tool ran a force-push after the
+// result until it was here. The CLI treats the server name `*` as all servers
+// (verified on the bundled 2.1.207); the servers this executor adds are also
+// named in the documented per-server form.
 export const RUN_ENDED_DENY_RULES = [
   'Bash',
   'PowerShell',
@@ -209,8 +213,10 @@ export const RUN_ENDED_DENY_RULES = [
   'NotebookEdit',
   'Agent',
   'Task',
+  'SendMessage',
   'Skill',
   'Workflow',
+  'mcp__*',
   'mcp__dispatch',
   'mcp__carto',
 ] as const;
@@ -839,27 +845,53 @@ export class ClaudeExecutor implements Executor {
     // - the CLI gets a moment to take those answers in.
     //
     // Each step's wait is bounded, so an unresponsive CLI cannot keep the run
-    // from finishing.
-    const windDown = async (liveTasks: readonly string[]): Promise<void> => {
+    // from finishing. A step the CLI refuses is logged with the CLI's version:
+    // the run still finishes, but without what that step guarantees, and an
+    // older Claude Code (a packaged app runs the `claude` on PATH) that lacks
+    // the control request is the likely cause.
+    const windDown = async (
+      liveTasks: readonly string[],
+      cliVersion: string | undefined
+    ): Promise<void> => {
       ending = true;
       const answeredHolds = pendingApprovals.size > 0;
       for (const resolve of pendingApprovals.values()) {
         resolve({ allow: false, reason: RUN_ENDED_DENIAL });
       }
       pendingApprovals.clear();
+      const cli = `Claude Code ${cliVersion ?? '(version unknown)'}`;
+      const warn =
+        (consequence: string) =>
+        (err: unknown): void => {
+          console.error(
+            `dispatchd: run ${opts.runId ?? '(no id)'}: ${cli} refused a step of ending the run, so ${consequence}: ${(err as Error).message}`
+          );
+        };
       // Each SDK call is started inside a promise, so one that throws at
       // once still leaves the others running and the run still finishes.
       await withinMs(
         WIND_DOWN_STOP_MS,
         Promise.allSettled([
           ...liveTasks.map((taskId) =>
-            Promise.resolve().then(() => sdkQuery.stopTask(taskId))
+            Promise.resolve()
+              .then(() => sdkQuery.stopTask(taskId))
+              .catch(
+                warn(
+                  `background task ${taskId} kept running until the CLI exited`
+                )
+              )
           ),
-          Promise.resolve().then(() =>
-            sdkQuery.applyFlagSettings({
-              permissions: { deny: [...RUN_ENDED_DENY_RULES] },
-            })
-          ),
+          Promise.resolve()
+            .then(() =>
+              sdkQuery.applyFlagSettings({
+                permissions: { deny: [...RUN_ENDED_DENY_RULES] },
+              })
+            )
+            .catch(
+              warn(
+                'tool calls it starts after the result are not refused by a deny rule'
+              )
+            ),
         ])
       );
       // Awaiting applyFlagSettings confirms the rules; the answers to holds
@@ -906,6 +938,8 @@ export class ClaudeExecutor implements Executor {
       // The session's live background tasks (background_tasks_changed
       // carries the whole set each time), so windDown can stop them.
       let backgroundTasks: string[] = [];
+      // The CLI's version, from the init message, for windDown's warnings.
+      let cliVersion: string | undefined;
       // Token usage by billing type — see ClaudeUsageMeter for why it reads
       // both the streamed messages and the terminal result.
       const usageMeter = new ClaudeUsageMeter();
@@ -938,6 +972,8 @@ export class ClaudeExecutor implements Executor {
           } else if (message.type === 'system') {
             if (message.subtype === 'background_tasks_changed') {
               backgroundTasks = message.tasks.map((task) => task.task_id);
+            } else if (message.subtype === 'init') {
+              cliVersion = message.claude_code_version;
             }
             const lifecycle = subagents.onSystem(
               message,
@@ -972,7 +1008,7 @@ export class ClaudeExecutor implements Executor {
             }
           } else if (message.type === 'result') {
             gotResult = true;
-            await windDown(backgroundTasks);
+            await windDown(backgroundTasks, cliVersion);
             if (!interrupted) {
               events.onFinish({
                 ...guardZeroTurnFinish(

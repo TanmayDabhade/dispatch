@@ -1,4 +1,4 @@
-import type { Options } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
 import { mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -192,4 +192,15 @@ export async function preToolUse(
       };
     }
   ).hookSpecificOutput;
+}
+
+// A scripted message stream as the Claude executor's Query, with the two
+// control calls the executor makes when a run's result arrives (windDown)
+// answered as a current CLI answers them. Without them each call fails, and
+// the executor logs every step of ending a run that fails.
+export function withRunEndControls(messages: object): Query {
+  return Object.assign(messages, {
+    stopTask: () => Promise.resolve(),
+    applyFlagSettings: () => Promise.resolve(),
+  }) as unknown as Query;
 }

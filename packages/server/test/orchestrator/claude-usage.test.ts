@@ -1,4 +1,3 @@
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it } from 'bun:test';
 import { rmSync } from 'node:fs';
 
@@ -6,7 +5,7 @@ import { ClaudeExecutor } from '../../src/orchestrator/executors/claude.js';
 import { ClaudeUsageMeter } from '../../src/orchestrator/executors/claudeUsage.js';
 import type { RunUsage } from '../../src/orchestrator/usage.js';
 import { cacheHitRate } from '../../src/orchestrator/usage.js';
-import { initGitRepo } from './helpers.js';
+import { initGitRepo, withRunEndControls } from './helpers.js';
 
 // One streamed assistant message as the SDK emits it: one per content block,
 // every block of an API response sharing its message id and usage snapshot.
@@ -158,9 +157,8 @@ async function usageForStream(
       yield { type: 'system', subtype: 'init', session_id: 'sess-usage' };
       yield* messages;
     }
-    const executor = new ClaudeExecutor(
-      (() => fakeMessages() as unknown as Query) as never
-    );
+    const executor = new ClaudeExecutor((() =>
+      withRunEndControls(fakeMessages())) as never);
     return await new Promise((resolve) => {
       executor.start(
         { cwd: repo, prompt: 'do the thing', permissionMode: 'acceptEdits' },

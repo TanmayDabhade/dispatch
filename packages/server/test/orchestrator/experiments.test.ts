@@ -8,6 +8,7 @@ import {
 } from '../../src/orchestrator/executors/claude.js';
 import type { ExperimentName } from '../../src/orchestrator/experiments.js';
 import { activeExperiments } from '../../src/orchestrator/experiments.js';
+import { withRunEndControls } from './helpers.js';
 
 describe('activeExperiments', () => {
   it('is empty when DISPATCH_EXPERIMENTS is unset or blank', () => {
@@ -73,25 +74,27 @@ describe('ClaudeExecutor experiments', () => {
   it('reports the experiments a run ran under on its finish', async () => {
     const executor = new ClaudeExecutor(
       (() =>
-        (function* (): Generator<unknown> {
-          yield { type: 'system', subtype: 'init', session_id: 's' };
-          yield {
-            type: 'assistant',
-            message: { content: [{ type: 'text', text: 'done' }] },
-          };
-          yield {
-            type: 'result',
-            subtype: 'success',
-            is_error: false,
-            num_turns: 1,
-            total_cost_usd: 0.01,
-            session_id: 's',
-            result: 'done',
-            terminal_reason: 'completed',
-            modelUsage: {},
-            errors: [],
-          };
-        })() as unknown as Query) as never,
+        withRunEndControls(
+          (function* (): Generator<unknown> {
+            yield { type: 'system', subtype: 'init', session_id: 's' };
+            yield {
+              type: 'assistant',
+              message: { content: [{ type: 'text', text: 'done' }] },
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              is_error: false,
+              num_turns: 1,
+              total_cost_usd: 0.01,
+              session_id: 's',
+              result: 'done',
+              terminal_reason: 'completed',
+              modelUsage: {},
+              errors: [],
+            };
+          })()
+        )) as never,
       () => ['lean-tools']
     );
     const experiments = await new Promise<string[] | undefined>((resolve) => {

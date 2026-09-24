@@ -3,7 +3,7 @@ import type {
   Options,
   Query,
 } from '@anthropic-ai/claude-agent-sdk';
-import { describe, expect, it, test } from 'bun:test';
+import { describe, expect, it, spyOn, test } from 'bun:test';
 import {
   chmodSync,
   mkdirSync,
@@ -25,7 +25,12 @@ import type {
   ExecutorEvents,
   NormalizedEntry,
 } from '../../src/orchestrator/types.js';
-import { floorDecision, initGitRepo, preToolUse } from './helpers.js';
+import {
+  floorDecision,
+  initGitRepo,
+  preToolUse,
+  withRunEndControls,
+} from './helpers.js';
 
 // A no-op ExecutorEvents sink for tests below that only care about what
 // gets *sent* to the SDK's query() (the mcpServers wiring), not about any
@@ -583,9 +588,12 @@ describe('ClaudeExecutor CLI-parity system prompt and setting sources', () => {
     expect(applied).toHaveLength(1);
     const deny = (applied[0] as { permissions: { deny: string[] } }).permissions
       .deny;
-    for (const tool of ['Bash', 'Write', 'Edit', 'Agent']) {
+    for (const tool of ['Bash', 'Write', 'Edit', 'Agent', 'SendMessage']) {
       expect(deny).toContain(tool);
     }
+    // Every MCP server's tools, not only the servers this executor adds: a
+    // user-scope server's shell tool ran a force-push after the result.
+    expect(deny).toContain('mcp__*');
     // Floor or not, nothing more runs once the result is in.
     for (const [toolName, toolInput] of [
       ['Bash', { command: 'bun test' }],
@@ -628,6 +636,7 @@ describe('ClaudeExecutor CLI-parity system prompt and setting sources', () => {
           })(),
           {
             stopTask: () => new Promise<void>(() => {}),
+            applyFlagSettings: () => Promise.resolve(),
             interrupt: () => Promise.resolve(),
             close: () => {},
           }
@@ -645,6 +654,94 @@ describe('ClaudeExecutor CLI-parity system prompt and setting sources', () => {
     });
     expect(finish.state).toBe('finished');
   }, 15_000);
+
+  // An older Claude Code (a packaged app runs the `claude` on PATH) answers
+  // apply_flag_settings and stop_task with "Unsupported control request
+  // subtype". The run still finishes, and the missing guarantee is logged
+  // with the CLI's version rather than lost.
+  it('logs each wind-down step the CLI refuses, naming its version, and still finishes', async () => {
+    const logged: string[] = [];
+    const errorSpy = spyOn(console, 'error').mockImplementation(
+      (...args: unknown[]) => {
+        logged.push(args.map(String).join(' '));
+      }
+    );
+    try {
+      const executor = new ClaudeExecutor(
+        () =>
+          Object.assign(
+            (function* (): Generator<unknown> {
+              yield {
+                type: 'system',
+                subtype: 'init',
+                session_id: 's',
+                claude_code_version: '2.1.42',
+              };
+              yield {
+                type: 'system',
+                subtype: 'background_tasks_changed',
+                session_id: 's',
+                tasks: [{ task_id: 't', task_type: 'shell', description: 'x' }],
+              };
+              yield {
+                type: 'assistant',
+                message: { content: [{ type: 'text', text: 'done' }] },
+              };
+              yield {
+                type: 'result',
+                subtype: 'success',
+                is_error: false,
+                num_turns: 1,
+                total_cost_usd: 0.01,
+                session_id: 's',
+                result: 'done',
+                terminal_reason: 'completed',
+                modelUsage: {},
+                errors: [],
+              };
+            })(),
+            {
+              stopTask: () =>
+                Promise.reject(
+                  new Error('Unsupported control request subtype: stop_task')
+                ),
+              applyFlagSettings: () =>
+                Promise.reject(
+                  new Error(
+                    'Unsupported control request subtype: apply_flag_settings'
+                  )
+                ),
+              interrupt: () => Promise.resolve(),
+              close: () => {},
+            }
+          ) as unknown as Query
+      );
+      const finish = await new Promise<{ state: string }>((resolve) => {
+        executor.start(
+          {
+            cwd: '/tmp/dispatch-worktree-x',
+            prompt: 'x',
+            permissionMode: 'bypassPermissions',
+            runId: 'r-1',
+          },
+          { ...noopEvents, onFinish: resolve }
+        );
+      });
+      expect(finish.state).toBe('finished');
+      expect(logged).toHaveLength(2);
+      const denyWarning = logged.find((line) =>
+        line.includes('apply_flag_settings')
+      );
+      expect(denyWarning).toContain('run r-1');
+      expect(denyWarning).toContain('Claude Code 2.1.42');
+      expect(denyWarning).toContain('not refused by a deny rule');
+      const stopWarning = logged.find((line) => line.includes('stop_task'));
+      expect(stopWarning).toContain('Claude Code 2.1.42');
+      expect(stopWarning).toContain('background task t kept running');
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
 
   // Each of these was exercised through this executor against the real CLI:
   // AskUserQuestion's answers never arrive, cron jobs and wakeups die with
@@ -1054,8 +1151,8 @@ describe('ClaudeExecutor session-id reporting during a run', () => {
           result: '',
         };
       }
-      const executor = new ClaudeExecutor(
-        () => fakeMessages() as unknown as Query
+      const executor = new ClaudeExecutor(() =>
+        withRunEndControls(fakeMessages())
       );
 
       // Order, not just presence: a session reported only alongside the
@@ -1126,8 +1223,8 @@ describe('ClaudeExecutor resume session reattachment', () => {
   }> {
     const repo = initGitRepo('dispatch-claude-resume-');
     try {
-      const executor = new ClaudeExecutor(
-        () => sessionMessages(actualSessionId) as unknown as Query
+      const executor = new ClaudeExecutor(() =>
+        withRunEndControls(sessionMessages(actualSessionId))
       );
       const sessions: string[] = [];
       let entries = 0;
@@ -1287,9 +1384,8 @@ async function finishForResult(
       yield* opts.preceding ?? [];
       yield { type: 'result', ...result };
     }
-    const executor = new ClaudeExecutor(
-      (() => fakeMessages() as unknown as Query) as never
-    );
+    const executor = new ClaudeExecutor((() =>
+      withRunEndControls(fakeMessages())) as never);
     return await new Promise((resolve) => {
       executor.start(
         {
