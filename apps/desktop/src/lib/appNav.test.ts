@@ -1,7 +1,8 @@
+import type { TaskListItem } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
 import type { NavState } from './appNav';
-import { initialNavState, navReducer } from './appNav';
+import { defaultTaskTab, initialNavState, navReducer } from './appNav';
 
 describe('navReducer', () => {
   test('selectProject switches section to project, lands on the Cockpit home, and clears peek/run', () => {
@@ -659,5 +660,25 @@ describe('task view teardown', () => {
     });
     const escaped = navReducer(inSettings, { type: 'escape' });
     expect(escaped).toEqual(inSettings);
+  });
+});
+
+describe('defaultTaskTab', () => {
+  const item = (id: string, kind: string, parent: string | null = null) =>
+    ({ meta: { id, kind, parent } }) as TaskListItem;
+  const tasks = [
+    item('e-1', 'milestone'),
+    item('t-1', 'task', 'e-1'),
+    item('t-2', 'task', 't-3'),
+    item('t-3', 'task'),
+    item('t-4', 'task'),
+  ];
+
+  test('a container opens on its Flight Plan, anything else on Details', () => {
+    expect(defaultTaskTab('e-1', tasks)).toBe('plan');
+    // A plain task with children is a container too.
+    expect(defaultTaskTab('t-3', tasks)).toBe('plan');
+    expect(defaultTaskTab('t-4', tasks)).toBe('details');
+    expect(defaultTaskTab('t-unknown', tasks)).toBe('details');
   });
 });

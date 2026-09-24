@@ -133,11 +133,16 @@ function display(subGrouping: TasksSubGrouping) {
   return { ...DEFAULT_TASKS_DISPLAY, subGrouping };
 }
 
-/** The shell seam the board needs: `+` presets. Records what it was asked. */
-function shellWith(presets: CreateTaskPreset[]) {
+/** The shell seam the board needs: `+` presets and task opens. Records what it was asked. */
+function shellWith(
+  presets: CreateTaskPreset[],
+  opened: [string, string | undefined][] = []
+) {
   const noop = () => {};
   const actions = {
-    openTask: noop,
+    openTask: (taskId: string, tab?: string) => {
+      opened.push([taskId, tab]);
+    },
     peekTask: noop,
     openCreateTask: (preset?: CreateTaskPreset) => {
       presets.push(preset ?? {});
@@ -164,12 +169,14 @@ function shellWith(presets: CreateTaskPreset[]) {
  * actually folds the lane in the test rather than being swallowed by a static prop. */
 function Harness({
   presets = [],
+  opened = [],
   ...props
 }: Partial<Parameters<typeof TaskBoard>[0]> & {
   presets?: CreateTaskPreset[];
+  opened?: [string, string | undefined][];
 }) {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
-  const Shell = shellWith(presets);
+  const Shell = shellWith(presets, opened);
   return (
     <Shell>
       <TooltipProvider>
@@ -305,16 +312,19 @@ test('an archived card is not draggable', () => {
   expect(titles.some((t) => t.includes('Card two'))).toBe(true);
 });
 
-test('the epic header carries the epic dispatch and graph controls as pills', () => {
-  render(<Harness />);
+test('the epic header carries the epic dispatch and flight plan controls as pills', () => {
+  const opened: [string, string | undefined][] = [];
+  render(<Harness opened={opened} />);
   // The id chip is the one open affordance; the shared controls' Open button stays off.
   expect(screen.queryByRole('button', { name: 'Open e-1' })).not.toBeNull();
   expect(
     screen.queryByRole('button', { name: 'Open Payments epic' })
   ).toBeNull();
-  expect(
-    screen.queryByRole('button', { name: 'View dependency graph for e-1' })
-  ).not.toBeNull();
+  // The graph button opens the epic's full Flight Plan.
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Open the flight plan for e-1' })
+  );
+  expect(opened).toEqual([['e-1', 'plan']]);
   const concurrency = screen.getByLabelText(
     'Epic dispatch concurrency for e-1'
   );

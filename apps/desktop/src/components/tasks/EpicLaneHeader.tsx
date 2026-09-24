@@ -12,7 +12,7 @@ import type { WorkEpicOptions } from '../../lib/epicSession';
 import { rollupMilestoneStatus } from '../../lib/milestoneRollup';
 import { isStatusCompleted, isStatusDone } from '../../lib/statusModel';
 import { FanoutControls, sessionIdle } from '../milestones/FanoutControls';
-import { EpicDagModal } from './EpicDagModal';
+import { useShellActions } from '../shell/ShellActionsContext';
 import { statusColor, StatusIcon } from './StatusIcon';
 import { GroupHeader } from '@/ui/ai/group-header';
 import { IconButton } from '@/ui/ai/icon-button';
@@ -42,10 +42,9 @@ interface EpicLaneHeaderProps {
   progress: EpicProgress | undefined;
   /** `orchestrator.epicConcurrency` from the project config, the picker's starting value. */
   concurrencyDefault: number;
-  /** This epic's children — the dependency-graph modal's input and the rolled-up status. */
+  /** This epic's children — the rolled-up status. */
   childTasks: TaskListItem[];
-  /** Opens a task in the peek/detail dialog: the epic itself (its id chip) or one of its
-   * children (from the graph modal). */
+  /** Opens the epic itself (its id chip) in the peek/detail dialog. */
   onOpenTask: (taskId: string) => void;
   /** The direct path: starts a session at the picker's concurrency with no ceilings. */
   onWork: (epicId: string, opts: WorkEpicOptions) => Promise<void>;
@@ -69,7 +68,7 @@ interface EpicLaneHeaderProps {
  * One epic's lane header on the board: a 36px `GroupHeader` tinted by the epic's rolled-up
  * status (the same glyph vocabulary its cards use), the title as the collapse target, the
  * card count, then `FanoutControls` — the same `◔ done/total`, phase chips, spend pill and
- * verbs the milestones page shows — with the id chip, the dependency-graph button and the
+ * verbs the milestones page shows — with the id chip, the flight-plan button and the
  * concurrency picker slotted in.
  *
  * Epics are containers here, not objects on the board: they are never dragged and never
@@ -95,8 +94,8 @@ export function EpicLaneHeader({
   onLand,
   onAdd,
 }: EpicLaneHeaderProps) {
+  const shell = useShellActions();
   const [concurrency, setConcurrency] = useState(concurrencyDefault);
-  const [showGraph, setShowGraph] = useState(false);
   const session = progress?.session ?? null;
   const active = progress?.active ?? false;
   const paused = session?.state === 'paused';
@@ -226,28 +225,19 @@ export function EpicLaneHeader({
                 <TooltipTrigger
                   render={
                     <IconButton
-                      label={`View dependency graph for ${epic.meta.id}`}
-                      onClick={() => setShowGraph(true)}
+                      label={`Open the flight plan for ${epic.meta.id}`}
+                      onClick={() => shell.openTask(epic.meta.id, 'plan')}
                     />
                   }
                 >
                   <Waypoints aria-hidden />
                 </TooltipTrigger>
-                <TooltipContent>View dependency graph</TooltipContent>
+                <TooltipContent>Open flight plan</TooltipContent>
               </Tooltip>
             </FanoutControls>
           )
         }
       />
-
-      {epic !== null && (
-        <EpicDagModal
-          epic={showGraph ? epic : null}
-          tasks={childTasks}
-          onOpenTask={onOpenTask}
-          onClose={() => setShowGraph(false)}
-        />
-      )}
     </>
   );
 }

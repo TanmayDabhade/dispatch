@@ -1,4 +1,6 @@
 import type { ImpactSubjectKind } from '@dispatch/client';
+import type { TaskListItem } from '@dispatch/core/browser';
+import { isContainerKind } from '@dispatch/core/browser';
 
 // The whole app's navigation state, modeled as one pure reducer so routing decisions (what
 // the sidebar highlights, what the main pane renders, whether the task peek/run
@@ -46,7 +48,22 @@ export type ProjectView =
   | 'task'
   | 'new-task';
 
-export type TaskTab = 'details' | 'chat' | 'diff' | 'preview';
+/** A task page's tabs. `plan` is a container's Flight Plan — its default. */
+export type TaskTab = 'plan' | 'details' | 'chat' | 'diff' | 'preview';
+
+/** The tab a task page opens on when none is named: a container (a container kind, or
+ * anything with children) opens on its Flight Plan, everything else on Details. */
+export function defaultTaskTab(
+  taskId: string,
+  tasks: readonly TaskListItem[]
+): TaskTab {
+  const container = tasks.some(
+    (t) =>
+      t.meta.parent === taskId ||
+      (t.meta.id === taskId && isContainerKind(t.meta.kind))
+  );
+  return container ? 'plan' : 'details';
+}
 
 /** One file/run/task to show the blast radius of — what `ImpactView` fetches
  * and what the two "open in Impact" entry points (Review case panel, Git
