@@ -87,6 +87,10 @@ import {
   readJsonBodyOptional,
 } from './api/http.js';
 import { getImpact } from './api/impact.js';
+import {
+  legacyMilestoneParent,
+  withoutLegacyMilestone,
+} from './api/legacyMilestone.js';
 import { isLinearWebhook, linearWebhook } from './api/linearWebhook.js';
 import { migrateMilestones } from './api/migrations.js';
 import { listPeople } from './api/people.js';
@@ -538,6 +542,8 @@ function validateTaskFields(
     'assignee'
   );
   if (assigneeError) return assigneeError;
+  const parentError = validateStringOrNullField(value.parent, 'parent');
+  if (parentError) return parentError;
   const labelsError = validateStringArrayField(value.labels, 'labels');
   if (labelsError) return labelsError;
   const blockedByError = validateStringArrayField(value.blockedBy, 'blockedBy');
@@ -593,11 +599,18 @@ async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
     { includeKind: true, includeBody: false }
   );
   if (fieldsError) return errorResponse(400, fieldsError);
+  const legacy = legacyMilestoneParent(
+    ctx,
+    parsed.value as Record<string, unknown>,
+    input.kind ?? 'task'
+  );
+  if (!legacy.ok) return errorResponse(400, legacy.error);
 
   // Credit whoever made the request unless the caller names a creator (a
   // sync importing someone else's issue).
   const doc = ctx.store.create({
-    ...input,
+    ...withoutLegacyMilestone(input),
+    ...(legacy.parent === undefined ? {} : { parent: legacy.parent }),
     // Omitted, a task starts in the project's ready role.
     status: input.status ?? statusModelFor(ctx.rootDir).roles.ready,
     creator: input.creator ?? humanActor(ctx),
@@ -674,13 +687,14 @@ async function updateTask(
   ctx: ApiContext,
   id: string
 ): Promise<Response> {
-  if (ctx.store.get(id) === null) {
+  const existing = ctx.store.get(id);
+  if (existing === null) {
     return errorResponse(404, `task not found: ${id}`);
   }
 
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
-  const patch = parsed.value as UpdatePatch;
+  const requested = parsed.value as UpdatePatch;
   const config = loadConfig(ctx.rootDir);
   const fieldsError = validateTaskFields(
     parsed.value as Record<string, unknown>,
@@ -688,6 +702,16 @@ async function updateTask(
     { includeKind: false, includeBody: true }
   );
   if (fieldsError) return errorResponse(400, fieldsError);
+  const legacy = legacyMilestoneParent(
+    ctx,
+    parsed.value as Record<string, unknown>,
+    requested.kind ?? existing.meta.kind
+  );
+  if (!legacy.ok) return errorResponse(400, legacy.error);
+  const patch: UpdatePatch = {
+    ...withoutLegacyMilestone(requested),
+    ...(legacy.parent === undefined ? {} : { parent: legacy.parent }),
+  };
 
   // PATCH /api/tasks/:id is only ever reached by a human — the web/desktop
   // task drawer, or a direct API call — so any Activity line it appends is

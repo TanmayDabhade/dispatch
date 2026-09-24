@@ -2304,6 +2304,9 @@ export interface ApiClient {
    * happens here; `fetchReadyTasks` is what refreshes stale ones. */
   fetchReadiness(): Promise<Record<string, ReadinessReading>>;
   fetchTask(id: string): Promise<TaskDoc>;
+  /** File a task under a container with `parent`. A legacy `milestone` still
+   * works — the daemon resolves the project/milestone it names to `parent`
+   * (400 when none matches) — but is never stored. */
   createTask(input: CreateInput): Promise<TaskDoc>;
   updateTask(id: string, patch: UpdatePatch): Promise<TaskDoc>;
   amendTask(id: string, input: AmendTaskInput): Promise<TaskDoc>;
