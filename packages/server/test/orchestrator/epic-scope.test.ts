@@ -231,6 +231,24 @@ describe('a fan-out never picks up a teammate’s task', () => {
     expect(h.dispatched()).toEqual(new Set([dependent]));
   });
 
+  it('picks up a teammate’s task handed back while nothing runs', async () => {
+    const h = makeHarness();
+    const m = h.store.create({ title: 'Milestone', kind: 'milestone' }).meta.id;
+    const samTask = h.task('samTask', { parent: m, assignee: 'human:sam' });
+    const dependent = h.task('dependent', { parent: m, blockedBy: [samTask] });
+
+    await h.epics.start(m, { executor: 'fake', concurrency: 4 });
+    await sleep(50);
+    expect(h.orchestrator.list()).toHaveLength(0);
+
+    // Sam hands his issue back in Linear; the pull writes it.
+    h.store.update(samTask, { assignee: 'human:test' });
+    h.events.broadcast({ type: 'task.changed', ids: [samTask] });
+    await waitFor(() => h.dispatched().has(samTask));
+    expect(h.dispatched()).toEqual(new Set([samTask]));
+    expect(h.dispatched().has(dependent)).toBe(false);
+  });
+
   it('skips a task reassigned to a teammate while the batch is mid-dispatch', async () => {
     const h = makeHarness();
     const m = h.store.create({ title: 'Milestone', kind: 'milestone' }).meta.id;

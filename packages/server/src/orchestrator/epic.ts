@@ -221,6 +221,14 @@ function blockerView(
   });
 }
 
+// What a session's last fill left waiting (see EpicEngine.onTasksChanged).
+interface Watched {
+  /** Blockers its own unstarted work waits on. */
+  waiting: Set<string>;
+  /** Its unstarted tasks a teammate holds. */
+  held: Set<string>;
+}
+
 // Active or paused: a session that still claims its scope.
 function isLive(session: EpicSessionRecord): boolean {
   return session.state === 'active' || session.state === 'paused';
@@ -289,9 +297,10 @@ export class EpicEngine {
     ReturnType<typeof setTimeout>
   >();
   private fixLoop: EpicFixLoopPort | null = null;
-  // Per active session, the unsatisfied blockers its unstarted work waited on
-  // at the last fill (see onTasksChanged). Memory only; the next fill rebuilds it.
-  private readonly waitingOn = new Map<string, Set<string>>();
+  // Per active session, what its unstarted work waited on at the last fill:
+  // blockers, and its own tasks a teammate held (see onTasksChanged). Memory
+  // only; the next fill rebuilds it.
+  private readonly watching = new Map<string, Watched>();
 
   constructor(private readonly ctx: EpicEngineContext) {
     this.fillRetryDelayMs = ctx.fillRetryDelayMs ?? DEFAULT_FILL_RETRY_DELAY_MS;
@@ -513,7 +522,7 @@ export class EpicEngine {
     delete session.pausedDetail;
     session.updatedAt = new Date().toISOString();
     this.armed.delete(epicId);
-    this.waitingOn.delete(epicId);
+    this.watching.delete(epicId);
     this.clearFillRetry(epicId);
     this.appendEpicActivity(
       epicId,
@@ -900,12 +909,7 @@ export class EpicEngine {
     const blocker = blockerView(holder, tasksWithRunBranch(runs));
     const waitingOn = (t: TaskDoc) =>
       fanoutWaitingOn(t, (id) => byId.get(id), statuses, blocker);
-    this.noteWaiting(
-      epicId,
-      work.filter((t) => mine.has(t.meta.id)),
-      statuses,
-      waitingOn
-    );
+    this.noteWatched(epicId, work, mine, statuses, waitingOn);
     // The scope includes archived children (see scopeOf); dispatchability
     // must exclude them explicitly. dispatchableTasks releases a dependent at
     // a blocker's review role; a fan-out also wants a branch to stack on.
@@ -1076,7 +1080,7 @@ export class EpicEngine {
     session.completedAt = now;
     session.updatedAt = now;
     this.armed.delete(epicId);
-    this.waitingOn.delete(epicId);
+    this.watching.delete(epicId);
     this.clearFillRetry(epicId);
     this.appendEpicActivity(
       epicId,
@@ -1164,48 +1168,65 @@ export class EpicEngine {
     };
   }
 
-  // Records the blockers `work` (the session's own unstarted tasks) still
-  // waits on, for onTasksChanged.
-  private noteWaiting(
+  // Records, for onTasksChanged, the blockers the session's own unstarted
+  // work (`mine`) still waits on and the unstarted tasks a teammate holds.
+  private noteWatched(
     epicId: string,
     work: readonly TaskDoc[],
+    mine: ReadonlySet<string>,
     statuses: StatusModel,
     waitingOn: (task: TaskDoc) => string[]
   ): void {
-    const waiting = new Set<string>();
+    const watched: Watched = { waiting: new Set(), held: new Set() };
     for (const task of work) {
       if (task.meta.archivedAt !== undefined) continue;
       if (!isUnstartedStatus(task.meta.status, statuses)) continue;
-      for (const id of waitingOn(task)) waiting.add(id);
+      if (!mine.has(task.meta.id)) {
+        watched.held.add(task.meta.id);
+        continue;
+      }
+      for (const id of waitingOn(task)) watched.waiting.add(id);
     }
-    this.waitingOn.set(epicId, waiting);
+    this.watching.set(epicId, watched);
   }
 
-  // A blocker can be satisfied outside any run: a teammate's issue landing
-  // through Linear, a hand edit. Runs fire onRunTerminal; this catches the
-  // rest, refilling a session only when a blocker it waited on now lets go.
+  // Work can free up outside any run: a teammate's issue landing through
+  // Linear, a hand edit, or a teammate handing their task back. Runs fire
+  // onRunTerminal; this catches the rest, refilling a session only when a
+  // blocker it waited on now lets go or a task it held back is now its own.
   private onTasksChanged(ids: readonly string[] | undefined): void {
     let statuses: StatusModel | null = null;
     let withRunBranch: Set<string> | null = null;
-    for (const [epicId, waiting] of this.waitingOn) {
-      if (waiting.size === 0 || !this.armed.has(epicId)) continue;
+    for (const [epicId, { waiting, held }] of this.watching) {
+      if (!this.armed.has(epicId)) continue;
       const session = this.sessions.get(epicId);
       if (session?.state !== 'active') continue;
-      const touched =
-        ids === undefined ? [...waiting] : ids.filter((id) => waiting.has(id));
-      if (touched.length === 0) continue;
+      const touched = (set: ReadonlySet<string>) =>
+        ids === undefined ? [...set] : ids.filter((id) => set.has(id));
+      const blockers = touched(waiting);
+      const holding = touched(held);
+      if (blockers.length === 0 && holding.length === 0) continue;
       statuses ??= statusModelFor(this.ctx.rootDir);
       withRunBranch ??= tasksWithRunBranch(this.ctx.orchestrator.list());
       const model = statuses;
-      const view = blockerView(this.holderFor(session).holder, withRunBranch);
-      const released = touched.some((id) => {
+      const { holder } = this.holderFor(session);
+      const view = blockerView(holder, withRunBranch);
+      const released = blockers.some((id) => {
         const blocker = this.ctx.cache.get(id);
         return (
           blocker === null ||
           releasesFanoutDependents(blocker.meta.status, model, view(blocker))
         );
       });
-      if (released) this.scheduleFill(epicId);
+      const handedBack = holding.some((id) => {
+        const task = this.ctx.cache.get(id);
+        return (
+          task !== null &&
+          holder(task) === null &&
+          isUnstartedStatus(task.meta.status, model)
+        );
+      });
+      if (released || handedBack) this.scheduleFill(epicId);
     }
   }
 
