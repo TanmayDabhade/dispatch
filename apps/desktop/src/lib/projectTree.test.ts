@@ -124,6 +124,16 @@ describe('buildProjectTree', () => {
     expect(tree.rollups.get('i-2')).toEqual(tree.rollups.get('p-1'));
   });
 
+  test('attention counts open issues only: a landed or dropped one is no risk', () => {
+    // Every task whose last run failed or waits in review, whatever its status now.
+    const tree = buildProjectTree(all, new Set(['t-2', 't-3', 't-4']));
+    expect(tree.rollups.get('m-1')?.attention).toBe(0);
+    expect(tree.rollups.get('p-1')?.attention).toBe(0);
+    const m1 = tree.rollups.get('m-1');
+    if (m1 === undefined) throw new Error('no rollup');
+    expect(containerHealth(ga, m1, '2026-09-24')).toBe('on-track');
+  });
+
   test("reads the project's own status types", () => {
     setActiveStatusModel(
       statusModelOf({

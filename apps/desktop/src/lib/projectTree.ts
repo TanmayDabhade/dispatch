@@ -32,7 +32,7 @@ export interface TreeRollup {
   done: number;
   total: number;
   started: number;
-  /** Issues whose latest run is waiting on a human or failed. */
+  /** Open issues whose latest run is waiting on a human or failed. */
   attention: number;
 }
 
@@ -170,11 +170,15 @@ function countIssue(
   attention: ReadonlySet<string>
 ): void {
   const { status } = doc.meta;
-  if (attention.has(doc.meta.id)) sum.attention += 1;
   if (isStatusCanceled(status)) return;
   sum.total += 1;
-  if (isStatusCompleted(status)) sum.done += 1;
-  else if (isStartedStatus(status, activeStatusModel())) sum.started += 1;
+  if (isStatusCompleted(status)) {
+    sum.done += 1;
+    return;
+  }
+  // A closed issue's failed or unreviewed run is history, not a risk.
+  if (attention.has(doc.meta.id)) sum.attention += 1;
+  if (isStartedStatus(status, activeStatusModel())) sum.started += 1;
 }
 
 /**
