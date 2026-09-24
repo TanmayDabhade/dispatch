@@ -61,7 +61,7 @@ import type { LinearClient, LinearFailure, LinearResult } from './client.js';
 import type { ConflictRecord, LinearSyncState } from './state.js';
 import { readBase, recordConflicts, writeBase } from './state.js';
 import type { PassContext } from './workspace.js';
-import { track, trackLabel } from './workspace.js';
+import { linkedIssueTeam, track, trackLabel } from './workspace.js';
 
 /** One sync's outcome. `created` counts new local tasks; `createdIssues` counts new Linear records. */
 export interface LinearSyncSummary {
@@ -928,9 +928,10 @@ export class LinearPass {
       this.d.ctx.tasks.get(doc.meta.parent ?? '')?.external
     );
     if (parent?.entity !== 'issue') return this.d.teamId;
-    const identifier = this.d.state.links[parent.id]?.identifier ?? '';
-    const key = identifier.slice(0, identifier.lastIndexOf('-'));
-    return this.d.teamByKey.get(key) ?? this.d.teamId;
+    return (
+      linkedIssueTeam(this.d.state, this.d.teamByKey, parent.id) ??
+      this.d.teamId
+    );
   }
 
   /**

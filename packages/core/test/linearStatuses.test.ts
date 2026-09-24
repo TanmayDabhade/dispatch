@@ -6,6 +6,7 @@ import {
   defaultStatusRoles,
   migrateStatus,
   reconcileStatusRoles,
+  renamesForTeam,
   statusesFromTeams,
   statusesFromWorkflowStates,
   statusRenames,
@@ -253,8 +254,34 @@ describe('statusRenames and migrateStatus', () => {
 
   it('renames a status when its state was renamed in Linear', () => {
     const renames = statusRenames({ 's-qa': 'QA' }, { 's-qa': 'Verify' });
-    expect([...renames]).toEqual([['QA', 'Verify']]);
-    expect(migrateStatus('QA', { ...migration, renames })).toBe('Verify');
+    expect([...renames.shared]).toEqual([['QA', 'Verify']]);
+    expect(migrateStatus('QA', { ...migration, renames: renames.shared })).toBe(
+      'Verify'
+    );
+  });
+
+  it('moves a shared status only for the team that renamed its state', () => {
+    // Both teams' Todo merged into one status; only Ops renamed its own.
+    const renames = statusRenames(
+      { 's-todo': 'Todo', 'o-todo': 'Todo' },
+      { 's-todo': 'Todo', 'o-todo': 'Ready' },
+      new Map([
+        ['s-todo', 'team-1'],
+        ['o-todo', 'team-2'],
+      ])
+    );
+    expect([...renames.shared]).toEqual([]);
+    expect([...renamesForTeam(renames, 'team-2')]).toEqual([['Todo', 'Ready']]);
+    expect([...renamesForTeam(renames, 'team-1')]).toEqual([]);
+    expect([...renamesForTeam(renames, null)]).toEqual([]);
+  });
+
+  it('moves a shared status for everyone when every team renamed it alike', () => {
+    const renames = statusRenames(
+      { 's-todo': 'Todo', 'o-todo': 'Todo' },
+      { 's-todo': 'Ready', 'o-todo': 'Ready' }
+    );
+    expect([...renames.shared]).toEqual([['Todo', 'Ready']]);
   });
 
   it('leaves a status that is still defined alone', () => {

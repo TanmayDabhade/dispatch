@@ -10,6 +10,7 @@ import {
   parseLinearExternal,
   peopleIndex,
   reconcileStatusRoles,
+  renamesForTeam,
   resolvePeople,
   statusesFromTeams,
   statusModelOf,
@@ -82,35 +83,57 @@ export interface StatusRegeneration {
   migrated: string[];
 }
 
+/** A linked team as status generation sees it, primary first. */
+export interface WorkflowTeam {
+  id: string;
+  key: string;
+  states: readonly LinearWorkflowState[];
+}
+
+/** The linked team a linked issue was last seen in, by its identifier's key. */
+export function linkedIssueTeam(
+  state: LinearSyncState,
+  teamByKey: ReadonlyMap<string, string>,
+  issueId: string
+): string | null {
+  const identifier = state.links[issueId]?.identifier ?? '';
+  const key = identifier.slice(0, identifier.lastIndexOf('-'));
+  return teamByKey.get(key) ?? null;
+}
+
 /**
  * Makes the project's statuses the linked teams' workflow states (names,
  * types, colors, order; merged across teams by name and type, see
  * statusesFromTeams) and its roles the generated defaults plus any user
  * override, then moves every task whose status left the vocabulary onto its
- * successor. A migration is bookkeeping, so it keeps each task's `updated`.
+ * successor, following its own issue's team's renames. A migration is
+ * bookkeeping, so it keeps each task's `updated`.
  */
 export function regenerateStatuses(
   rootDir: string,
   store: TaskStorePort,
   docs: Map<string, TaskDoc>,
   state: LinearSyncState,
-  teams: readonly (readonly LinearWorkflowState[])[]
+  teams: readonly WorkflowTeam[]
 ): StatusRegeneration {
   const config = loadConfig(rootDir);
-  const states = teams.flat();
-  const generated = statusesFromTeams(teams);
+  const states = teams.flatMap((t) => t.states);
+  const generated = statusesFromTeams(teams.map((t) => t.states));
   if (generated.definitions.length === 0) {
     return { config, configChanged: false, migrated: [] };
   }
   const names = generated.definitions.map((d) => d.name);
-  const renames = statusRenames(state.stateNames, generated.names);
+  const teamOf = new Map(
+    teams.flatMap((t) => t.states.map((s) => [s.id, t.id] as const))
+  );
+  const renames = statusRenames(state.stateNames, generated.names, teamOf);
   const fresh = defaultStatusRoles(generated.definitions);
   const roles = reconcileStatusRoles(
     config.statusRoles,
     state.generatedRoles,
     fresh,
     names,
-    renames
+    renames.shared
   );
   state.stateNames = generated.names;
   state.generatedRoles = fresh;
@@ -130,10 +153,25 @@ export function regenerateStatuses(
     })),
     statusRoles: roles,
   });
+  const teamByKey = new Map(teams.map((t) => [t.key, t.id]));
+  const perTeam = new Map<string | null, ReadonlyMap<string, string>>();
+  const renamesOf = (doc: TaskDoc) => {
+    const ref = parseLinearExternal(doc.meta.external);
+    const team =
+      ref?.entity === 'issue'
+        ? linkedIssueTeam(state, teamByKey, ref.id)
+        : null;
+    let own = perTeam.get(team);
+    if (own === undefined) {
+      own = renamesForTeam(renames, team);
+      perTeam.set(team, own);
+    }
+    return own;
+  };
   const migrated: string[] = [];
   for (const doc of docs.values()) {
     const status = migrateStatus(doc.meta.status, {
-      renames,
+      renames: renamesOf(doc),
       before,
       after,
       legacyMap: config.linear.statusMap,

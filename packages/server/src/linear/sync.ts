@@ -886,7 +886,11 @@ export class LinearSync {
       store,
       docs,
       state,
-      session.teams.map((t) => t.states)
+      session.teams.map((t) => ({
+        id: t.team.id,
+        key: t.team.key,
+        states: t.states,
+      }))
     );
     for (const id of regenerated.migrated) batch.add(id);
     upgradeBases(state, state.stateNames);

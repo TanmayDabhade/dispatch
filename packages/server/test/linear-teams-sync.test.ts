@@ -206,6 +206,53 @@ describe('several linked teams', () => {
     expect(store.get(id)?.meta.status).toBe('Design');
   });
 
+  // A Hydrogen and an Ops issue, both on the Todo status the teams share.
+  async function sharedTodo(): Promise<[LinearIssue, LinearIssue]> {
+    const hyd = fake.issue({ title: 'hyd', state: stateOf('s-todo') });
+    const ops = fake.issue({
+      title: 'ops',
+      identifier: 'OPS-1',
+      team: OPS,
+      state: stateOf('o-todo'),
+    });
+    fake.issues = [hyd, ops];
+    await makeSync().importIssues();
+    expect(taskFor(hyd)?.meta.status).toBe('Todo');
+    expect(taskFor(ops)?.meta.status).toBe('Todo');
+    return [hyd, ops];
+  }
+
+  it('moves only the renaming team’s tasks off a status two teams share', async () => {
+    const [hyd, ops] = await sharedTodo();
+
+    // Ops renames its Todo; a fresh engine re-reads the teams' workflows.
+    const ready = { ...stateOf('o-todo'), name: 'Ready' };
+    fake.teamStates['team-2'] = OPS_STATES.map((s) =>
+      s.id === ready.id ? ready : s
+    );
+    remote(ops).state = ready;
+    fake.updated = [];
+    await makeSync().syncOnce();
+
+    expect(taskFor(hyd)?.meta.status).toBe('Todo');
+    expect(taskFor(ops)?.meta.status).toBe('Ready');
+    expect(fake.updated).toEqual([]);
+  });
+
+  it('keeps the other team’s tasks when the primary renames a shared status', async () => {
+    const [hyd, ops] = await sharedTodo();
+
+    const queued = { ...stateOf('s-todo'), name: 'Queued' };
+    fake.states = STATES.map((s) => (s.id === queued.id ? queued : s));
+    remote(hyd).state = queued;
+    fake.updated = [];
+    await makeSync().syncOnce();
+
+    expect(taskFor(hyd)?.meta.status).toBe('Queued');
+    expect(taskFor(ops)?.meta.status).toBe('Todo');
+    expect(fake.updated).toEqual([]);
+  });
+
   it('creates a sub-issue in its parent’s team, other work in the primary', async () => {
     const parent = fake.issue({ team: OPS, identifier: 'OPS-1' });
     fake.issues = [parent];

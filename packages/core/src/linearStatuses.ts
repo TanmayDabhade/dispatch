@@ -191,17 +191,57 @@ export function reconcileStatusRoles(
   return out;
 }
 
-/** Old status name -> new, for every state whose generated name changed. */
+/**
+ * How generated status names moved between two generations. Teams merged
+ * onto one status can rename it apart, so a name moves for everyone only when
+ * every state that carried it agrees; each team's own renames are kept too.
+ */
+export interface StatusRenames {
+  /** Old name -> new, where every state that carried the old name agrees. */
+  shared: Map<string, string>;
+  /** Team id -> old name -> new, for that team's renamed states. */
+  byTeam: Map<string, Map<string, string>>;
+}
+
+/** The renames between two generations; `teamOf` maps state id -> team id. */
 export function statusRenames(
   previous: Readonly<Record<string, string>>,
-  next: Readonly<Record<string, string>>
-): Map<string, string> {
-  const renames = new Map<string, string>();
+  next: Readonly<Record<string, string>>,
+  teamOf: ReadonlyMap<string, string> = new Map()
+): StatusRenames {
+  const votes = new Map<string, Set<string>>();
+  const byTeam = new Map<string, Map<string, string>>();
   for (const [stateId, before] of Object.entries(previous)) {
     const after = next[stateId];
-    if (after !== undefined && after !== before) renames.set(before, after);
+    if (after === undefined) continue;
+    const vote = votes.get(before) ?? new Set<string>();
+    vote.add(after);
+    votes.set(before, vote);
+    const team = teamOf.get(stateId);
+    if (after === before || team === undefined) continue;
+    const own = byTeam.get(team) ?? new Map<string, string>();
+    own.set(before, after);
+    byTeam.set(team, own);
   }
-  return renames;
+  const shared = new Map<string, string>();
+  for (const [before, afters] of votes) {
+    const [after] = afters;
+    if (afters.size === 1 && after !== before) shared.set(before, after);
+  }
+  return { shared, byTeam };
+}
+
+/**
+ * The renames a task follows: its issue's team's own over the shared ones.
+ * A task with no known team (unlinked, or never seen) follows only the shared.
+ */
+export function renamesForTeam(
+  renames: StatusRenames,
+  teamId: string | null
+): ReadonlyMap<string, string> {
+  const own = teamId === null ? undefined : renames.byTeam.get(teamId);
+  if (own === undefined) return renames.shared;
+  return new Map([...renames.shared, ...own]);
 }
 
 /** Everything `migrateStatus` needs about the old and new vocabularies. */
