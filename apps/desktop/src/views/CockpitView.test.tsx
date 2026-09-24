@@ -1,10 +1,18 @@
 import type { RunMeta } from '@dispatch/client';
 import type { TaskListItem } from '@dispatch/core/browser';
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import type { ReactNode } from 'react';
 
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
-import { CockpitView } from './CockpitView';
+
+// The split pane mounts the task page, whose Review mode pulls in the Pierre diff; its
+// worker import only Vite resolves.
+void mock.module('@/components/runs/PierreWorkerPool', () => ({
+  PierreWorkerPool: ({ children }: { children: ReactNode }) => children,
+}));
+
+const { CockpitView } = await import('./CockpitView');
 
 const ME = 'human:wyat';
 
