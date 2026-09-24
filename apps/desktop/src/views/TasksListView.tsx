@@ -27,6 +27,10 @@ import { DispatchDialog } from '../components/tasks/DispatchDialog';
 import { EpicDagModal } from '../components/tasks/EpicDagModal';
 import { PriorityIcon } from '../components/tasks/PriorityIcon';
 import { StatusIcon } from '../components/tasks/StatusIcon';
+import {
+  VirtualRows,
+  type VirtualRowsHandle,
+} from '../components/virtual/VirtualRows';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import {
   COLLAPSED_GROUPS_STORAGE_KEY,
@@ -38,6 +42,7 @@ import {
   type GroupIcon,
   groupTasks,
   type ListGroup,
+  type ListGroupRow,
   visibleRowIds,
 } from '../lib/listGrouping';
 import { colorForEpic } from '../lib/projectColor';
@@ -47,6 +52,7 @@ import {
   DEFAULT_TASKS_DISPLAY,
   type TasksDisplayPrefs,
 } from '../lib/tasksPrefs';
+import { type FlatRow, flattenGroups } from '../lib/virtualRows';
 import {
   handleTaskListKeyDown,
   type OpenPicker,
@@ -90,6 +96,15 @@ const ASSIGNEES: Assignee[] = ['agent', 'human', 'none'];
 
 // Stable fallback while the config loads, so rows' `statuses` prop never churns.
 const NO_STATUSES: string[] = [];
+
+/** One virtual row: a group's 36px header or one of its 36px task rows. */
+type ListRowModel = FlatRow<ListGroup, ListGroupRow>;
+
+// Headers and rows are both 36px (`GroupHeader`, `ListRow`).
+const ROW_HEIGHT = 36;
+const rowHeight = () => ROW_HEIGHT;
+const listRowKey = (row: ListRowModel) => row.key;
+const taskRowKey = (row: ListGroupRow) => row.doc.meta.id;
 
 /** The DOM id `aria-activedescendant` points at for one row; the view prefix keeps ids
  * unique across view switches. */
@@ -140,6 +155,13 @@ export function TasksListView({
   // the (single, list-wide) menu trigger handles the same event.
   const [menuTaskId, setMenuTaskId] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  // The scroller as state too: the virtual track needs it once it exists (see VirtualRows).
+  const [listEl, setListEl] = useState<HTMLDivElement | null>(null);
+  const attachList = useCallback((node: HTMLDivElement | null) => {
+    listRef.current = node;
+    setListEl(node);
+  }, []);
+  const virtualRef = useRef<VirtualRowsHandle>(null);
 
   const epicById = useMemo(() => {
     const map = new Map<string, TaskListItem>();
@@ -217,6 +239,31 @@ export function TasksListView({
     [groups, collapsed]
   );
 
+  // Headers and rows as one flat, virtualized array. `none` grouping draws no header.
+  const flatRows = useMemo<ListRowModel[]>(
+    () =>
+      flattenGroups(
+        groups.map((g) => ({
+          key: g.key,
+          header: g.kind === 'none' ? null : g,
+          items: g.rows,
+        })),
+        collapsed,
+        taskRowKey
+      ),
+    [groups, collapsed]
+  );
+  const groupByKey = useMemo(
+    () => new Map(groups.map((g) => [g.key, g])),
+    [groups]
+  );
+  // The cursor's row stays mounted wherever the list scrolls: the grid's
+  // `aria-activedescendant` points at it.
+  const pinnedKeys = useMemo(
+    () => (focusedTaskId === null ? [] : [focusedTaskId]),
+    [focusedTaskId]
+  );
+
   const selectedTasks = useMemo(
     () => data.tasks.filter((t) => selectedIds.has(t.meta.id)),
     [data.tasks, selectedIds]
@@ -278,10 +325,7 @@ export function TasksListView({
   // the pointer (which would hand the cursor to the next row and scroll again).
   function moveCursor(id: string | null) {
     setFocusedTaskId(id);
-    if (id === null) return;
-    listRef.current
-      ?.querySelector(`[data-row-id="${id}"]`)
-      ?.scrollIntoView({ block: 'nearest' });
+    if (id !== null) virtualRef.current?.scrollToKey(id);
   }
 
   function handleListKeyDown(e: KeyboardEvent<HTMLDivElement>) {
@@ -357,7 +401,7 @@ export function TasksListView({
           <ContextMenuTrigger
             render={
               <div
-                ref={listRef}
+                ref={attachList}
                 tabIndex={0}
                 role="grid"
                 aria-label="Tasks"
@@ -369,80 +413,87 @@ export function TasksListView({
               />
             }
           >
-            {groups.map((group) => {
-              const isCollapsed = collapsed.has(group.key);
-              const knownEpic =
-                group.epicId !== null && epicById.has(group.epicId);
-              return (
-                <div key={group.key} data-group-key={group.key}>
-                  {group.kind !== 'none' && (
-                    <GroupHeader
-                      tint={group.tint ?? undefined}
-                      icon={groupIcon(group.icon)}
-                      name={group.label}
-                      count={group.rows.length}
-                      collapsed={isCollapsed}
-                      onToggle={() => toggleGroup(group.key)}
-                      onAdd={
-                        group.archived
-                          ? undefined
-                          : () => shell.openCreateTask(group.preset)
-                      }
-                      addLabel={`New task in ${group.label}`}
-                      actions={
-                        knownEpic ? (
-                          <IconButton
-                            label={`View dependency graph for ${group.label}`}
-                            onClick={() => setDagEpicId(group.epicId)}
-                          >
-                            <Waypoints aria-hidden />
-                          </IconButton>
-                        ) : undefined
-                      }
-                    />
-                  )}
-                  {!isCollapsed &&
-                    group.rows.map((row) => {
-                      const id = row.doc.meta.id;
-                      return (
-                        <TaskListRow
-                          key={id}
-                          doc={row.doc}
-                          prefs={prefs}
-                          run={data.latestRunByTaskId.get(id)}
-                          live={data.liveRunStateByTaskId.has(id)}
-                          needsYou={data.attentionByTaskId.has(id)}
-                          statuses={statuses}
-                          epics={data.epics}
-                          labelCandidates={
-                            picker?.taskId === id ? labelCandidates : undefined
-                          }
-                          onUpdate={data.handleUpdate}
-                          onMoveStatus={data.moveTaskStatus}
-                          indent={row.indent}
-                          archived={group.archived}
-                          epic={
-                            row.doc.meta.parent !== null
-                              ? epicById.get(row.doc.meta.parent)
-                              : undefined
-                          }
-                          childCount={childCountByParent.get(id) ?? 0}
-                          showEpicChip={showEpicChip}
-                          picker={picker?.taskId === id ? picker : null}
-                          onPickerChange={setPicker}
-                          selected={selectedIds.has(id)}
-                          focused={focusedTaskId === id}
-                          onOpen={onSelectTask}
-                          onFocus={setFocusedTaskId}
-                          onContextMenu={openRowMenu}
-                          onSelectToggle={toggleSelected}
-                          rowProps={{ domId: rowDomId(id) }}
-                        />
-                      );
-                    })}
-                </div>
-              );
-            })}
+            <VirtualRows
+              rows={flatRows}
+              rowKey={listRowKey}
+              estimateSize={rowHeight}
+              scrollElement={listEl}
+              pinnedKeys={pinnedKeys}
+              handleRef={virtualRef}
+              renderRow={(row) => {
+                if (row.kind === 'header') {
+                  const group = row.header;
+                  const knownEpic =
+                    group.epicId !== null && epicById.has(group.epicId);
+                  return (
+                    <div data-group-key={group.key}>
+                      <GroupHeader
+                        tint={group.tint ?? undefined}
+                        icon={groupIcon(group.icon)}
+                        name={group.label}
+                        count={group.rows.length}
+                        collapsed={row.collapsed}
+                        onToggle={() => toggleGroup(group.key)}
+                        onAdd={
+                          group.archived
+                            ? undefined
+                            : () => shell.openCreateTask(group.preset)
+                        }
+                        addLabel={`New task in ${group.label}`}
+                        actions={
+                          knownEpic ? (
+                            <IconButton
+                              label={`View dependency graph for ${group.label}`}
+                              onClick={() => setDagEpicId(group.epicId)}
+                            >
+                              <Waypoints aria-hidden />
+                            </IconButton>
+                          ) : undefined
+                        }
+                      />
+                    </div>
+                  );
+                }
+                const id = row.key;
+                const listRow = row.item;
+                const archived =
+                  groupByKey.get(row.groupKey)?.archived ?? false;
+                return (
+                  <TaskListRow
+                    doc={listRow.doc}
+                    prefs={prefs}
+                    run={data.latestRunByTaskId.get(id)}
+                    live={data.liveRunStateByTaskId.has(id)}
+                    needsYou={data.attentionByTaskId.has(id)}
+                    statuses={statuses}
+                    epics={data.epics}
+                    labelCandidates={
+                      picker?.taskId === id ? labelCandidates : undefined
+                    }
+                    onUpdate={data.handleUpdate}
+                    onMoveStatus={data.moveTaskStatus}
+                    indent={listRow.indent}
+                    archived={archived}
+                    epic={
+                      listRow.doc.meta.parent !== null
+                        ? epicById.get(listRow.doc.meta.parent)
+                        : undefined
+                    }
+                    childCount={childCountByParent.get(id) ?? 0}
+                    showEpicChip={showEpicChip}
+                    picker={picker?.taskId === id ? picker : null}
+                    onPickerChange={setPicker}
+                    selected={selectedIds.has(id)}
+                    focused={focusedTaskId === id}
+                    onOpen={onSelectTask}
+                    onFocus={setFocusedTaskId}
+                    onContextMenu={openRowMenu}
+                    onSelectToggle={toggleSelected}
+                    rowProps={{ domId: rowDomId(id) }}
+                  />
+                );
+              }}
+            />
           </ContextMenuTrigger>
           {menuDoc !== undefined && (
             <ContextMenuContent className="min-w-[180px]">

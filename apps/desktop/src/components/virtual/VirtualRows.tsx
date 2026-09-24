@@ -1,4 +1,5 @@
 import {
+  measureElement,
   observeElementRect,
   useVirtualizer,
   type Virtualizer,
@@ -14,6 +15,7 @@ import {
 import {
   indexByKey,
   pinnedRangeExtractor,
+  trackNearViewport,
   UNMEASURED_VIEWPORT,
   viewportOrFallback,
 } from '../../lib/virtualRows';
@@ -59,6 +61,15 @@ export interface VirtualRowsProps<R> {
 // The stock observer, with an unmeasured (0×0) viewport windowed as a typical screen.
 const observeRect: typeof observeElementRect = (instance, cb) =>
   observeElementRect(instance, (rect) => cb(viewportOrFallback(rect)));
+
+// The stock row measurement, except a row that measures 0 (not laid out) keeps its
+// estimate rather than collapsing every row onto the same offset.
+const measureRow: typeof measureElement = (element, entry, instance) => {
+  const size = measureElement(element, entry, instance);
+  return size > 0
+    ? size
+    : instance.options.estimateSize(instance.indexFromElement(element));
+};
 
 /**
  * The shared virtual-list primitive over `@tanstack/react-virtual`: a relatively
@@ -121,6 +132,7 @@ export function VirtualRows<R>({
     scrollPaddingStart,
     rangeExtractor,
     observeElementRect: observeRect,
+    measureElement: measureRow,
     initialRect: UNMEASURED_VIEWPORT,
   });
 
@@ -137,12 +149,24 @@ export function VirtualRows<R>({
     [virtualizer, indexOf]
   );
 
-  const items = virtualizer.getVirtualItems();
+  const totalSize = virtualizer.getTotalSize();
+  const near = trackNearViewport(
+    scrollMargin,
+    totalSize,
+    virtualizer.scrollOffset ?? 0,
+    (virtualizer.scrollRect ?? UNMEASURED_VIEWPORT).height
+  );
+  const pinned = new Set(pinnedKeys);
+  const items = near
+    ? virtualizer.getVirtualItems()
+    : virtualizer
+        .getVirtualItems()
+        .filter((item) => pinned.has(String(item.key)));
   return (
     <div
       data-slot="virtual-rows"
       className={cn('relative w-full shrink-0', className)}
-      style={{ height: virtualizer.getTotalSize() }}
+      style={{ height: totalSize }}
     >
       {items.map((item) => (
         <div

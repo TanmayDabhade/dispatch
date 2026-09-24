@@ -852,23 +852,28 @@ test('lane headers are sticky to the left with no inline width before a measure'
   }
 });
 
-// A `ResizeObserver` stand-in that hands the test the board's callback and the element it
-// watches, so a test can play a measurement without a layout engine.
+// A `ResizeObserver` stand-in that records each observer's callback and the elements it
+// watches, so a test can play the board's measurement without a layout engine. (The lane
+// stack has an observer of its own, for the virtual columns' offsets.)
 test('a measured board sizes every lane header to its visible width', () => {
   const Original = globalThis.ResizeObserver;
-  let callback: ResizeObserverCallback | null = null;
-  const observed: Element[] = [];
-  let disconnected = false;
+  const observers: { callback: ResizeObserverCallback; targets: Element[] }[] =
+    [];
+  let boardDisconnected = false;
   class FakeResizeObserver {
+    private entry: { callback: ResizeObserverCallback; targets: Element[] };
     constructor(cb: ResizeObserverCallback) {
-      callback = cb;
+      this.entry = { callback: cb, targets: [] };
+      observers.push(this.entry);
     }
     observe(target: Element) {
-      observed.push(target);
+      this.entry.targets.push(target);
     }
     unobserve() {}
     disconnect() {
-      disconnected = true;
+      if (this.entry.targets.some((t) => t.matches('[data-slot=task-board]'))) {
+        boardDisconnected = true;
+      }
     }
   }
   globalThis.ResizeObserver =
@@ -877,14 +882,22 @@ test('a measured board sizes every lane header to its visible width', () => {
     const { unmount } = render(<Harness />);
     const board = document.querySelector<HTMLElement>('[data-slot=task-board]');
     if (board === null) throw new Error('no board');
-    expect(observed).toEqual([board]);
+    // Compared by identity: a deep `toEqual` on DOM nodes walks the whole document. The
+    // virtual columns watch the board as their viewport too, so every watcher replays.
+    const boardCallbacks = observers
+      .filter((o) => o.targets.some((t) => t === board))
+      .map((o) => o.callback);
+    expect(boardCallbacks.length).toBeGreaterThan(0);
+    const measureBoard = () => {
+      for (const callback of boardCallbacks) {
+        callback([], {} as ResizeObserver);
+      }
+    };
     Object.defineProperty(board, 'clientWidth', {
       configurable: true,
       get: () => 1200,
     });
-    act(() => {
-      callback?.([], {} as ResizeObserver);
-    });
+    act(measureBoard);
     const wrappers = laneHeaderWrappers();
     expect(wrappers).toHaveLength(3);
     for (const wrapper of wrappers) {
@@ -895,16 +908,14 @@ test('a measured board sizes every lane header to its visible width', () => {
       configurable: true,
       get: () => 900,
     });
-    act(() => {
-      callback?.([], {} as ResizeObserver);
-    });
+    act(measureBoard);
     expect(laneHeaderWrappers()[0]?.style.width).toBe('900px');
     expect(
       document.querySelector<HTMLElement>('[data-lane-key] .flex.items-start')
         ?.style.width
     ).toBe('');
     unmount();
-    expect(disconnected).toBe(true);
+    expect(boardDisconnected).toBe(true);
   } finally {
     globalThis.ResizeObserver = Original;
   }
@@ -921,4 +932,64 @@ test('the label catalogue reaches every card', async () => {
     'docs',
     'ui',
   ]);
+});
+
+// A 300-card column: the board mounts a screenful, not the column.
+const LONG_COLUMN = Array.from({ length: 300 }, (_, i) =>
+  task(`t-${String(i).padStart(3, '0')}`, `Card ${i}`, 'todo')
+);
+
+// The cards inside the columns — not the drag overlay's lifted copy.
+function cardIds(): string[] {
+  return Array.from(
+    document.querySelectorAll(
+      '[data-slot=board-column] [data-slot=task-card] [data-slot=task-card-meta]'
+    )
+  ).map((meta) => meta.textContent ?? '');
+}
+
+test('a long column mounts only the cards near the viewport', () => {
+  render(<Harness tasks={LONG_COLUMN} epics={[]} display={display('none')} />);
+  const mounted = cardIds();
+  expect(mounted.length).toBeGreaterThan(0);
+  expect(mounted.length).toBeLessThan(40);
+  expect(mounted[0]).toContain('t-000');
+});
+
+test('the keyboard cursor keeps its card mounted far down a column', () => {
+  render(
+    <Harness
+      tasks={LONG_COLUMN}
+      epics={[]}
+      display={display('none')}
+      focusedTaskId="t-250"
+    />
+  );
+  const mounted = cardIds();
+  expect(mounted.some((id) => id.includes('t-250'))).toBe(true);
+  expect(mounted.some((id) => id.includes('t-150'))).toBe(false);
+});
+
+test('a dragged card stays mounted when the board scrolls it out of view', async () => {
+  render(<Harness tasks={LONG_COLUMN} epics={[]} display={display('none')} />);
+  const card = document.querySelector<HTMLElement>('[data-slot=task-card]');
+  if (card === null) throw new Error('no card');
+  expect(card.textContent).toContain('t-000');
+  // Pick it up with the keyboard sensor, as someone dragging with Space would.
+  await settle(() => {
+    card.focus();
+    fireEvent.keyDown(card, { key: ' ', code: 'Space' });
+  });
+  const board = document.querySelector<HTMLElement>('[data-slot=task-board]');
+  if (board === null) throw new Error('no board');
+  await settle(() => {
+    board.scrollTop = 200 * 112;
+    fireEvent.scroll(board);
+  });
+  const mounted = cardIds();
+  // The window moved down the column…
+  expect(mounted.some((id) => id.includes('t-200'))).toBe(true);
+  expect(mounted.some((id) => id.includes('t-001'))).toBe(false);
+  // …but the card in hand never unmounted.
+  expect(mounted.some((id) => id.includes('t-000'))).toBe(true);
 });

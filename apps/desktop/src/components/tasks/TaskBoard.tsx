@@ -6,7 +6,6 @@ import type {
 } from '@dispatch/client';
 import type { TaskListItem, UpdatePatch } from '@dispatch/core/browser';
 import {
-  closestCenter,
   DndContext,
   type DragEndEvent,
   DragOverlay,
@@ -27,8 +26,17 @@ import {
   Play,
   Plus,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
+import { boardCollision } from '../../lib/boardCollision';
 import {
   type BoardLane,
   countLaneStatuses,
@@ -44,6 +52,7 @@ import {
   type TasksDisplayPrefs,
 } from '../../lib/tasksPrefs';
 import { useShellActions } from '../shell/ShellActionsContext';
+import { VirtualRows, type VirtualRowsHandle } from '../virtual/VirtualRows';
 import { EpicLaneHeader } from './EpicLaneHeader';
 import { LaneHeader } from './LaneHeader';
 import { StatusIcon } from './StatusIcon';
@@ -154,18 +163,133 @@ const LANE_HEADER_CLASS = 'sticky left-0 px-3';
 // scrollbar — kept current by one `ResizeObserver`. `null` until the observer's first
 // callback (browsers fire one on `observe`), so a render that never measures (tests, SSR)
 // sets no inline width and the header simply spans its lane.
-function useBoardViewportWidth(ref: React.RefObject<HTMLDivElement | null>) {
+function useBoardViewportWidth(board: HTMLDivElement | null) {
   const [viewportWidth, setViewportWidth] = useState<number | null>(null);
   useEffect(() => {
-    const board = ref.current;
     if (board === null) return;
     const observer = new ResizeObserver(() => {
       setViewportWidth(board.clientWidth);
     });
     observer.observe(board);
     return () => observer.disconnect();
-  }, [ref]);
+  }, [board]);
   return viewportWidth;
+}
+
+// The sticky column-header row's height (`h-11`): what a scrolled-to card must clear.
+const COLUMN_HEADER_HEIGHT = 44;
+// A card before it is measured — the skeleton's 104px tile.
+const CARD_ESTIMATE = 104;
+// `gap-2` between stacked cards.
+const CARD_GAP = 8;
+// Cards past the viewport kept mounted per side — a card is three list rows tall, so a
+// few cover a flick without mounting a second screenful per column.
+const CARD_OVERSCAN = 3;
+
+const cardHeight = () => CARD_ESTIMATE;
+const cardKey = (doc: TaskListItem) => doc.meta.id;
+
+/**
+ * Where each lane's columns start inside the board's scrolled content, by lane key — the
+ * `scrollMargin` its virtual columns window against, since every column shares the board's
+ * one vertical scroller. Re-measured whenever the lanes' stack changes height (a lane
+ * folding, a card measuring taller than its estimate), which is the only thing that moves
+ * a lane below it.
+ */
+function useLaneOffsets(
+  board: HTMLDivElement | null,
+  stack: HTMLDivElement | null,
+  laneSignature: string
+): ReadonlyMap<string, number> {
+  const [offsets, setOffsets] = useState<ReadonlyMap<string, number>>(
+    () => new Map()
+  );
+  useLayoutEffect(() => {
+    if (board === null || stack === null) return;
+    const measure = () => {
+      const contentTop = board.getBoundingClientRect().top - board.scrollTop;
+      const next = new Map<string, number>();
+      for (const row of Array.from(
+        stack.querySelectorAll<HTMLElement>('[data-lane-columns]')
+      )) {
+        next.set(
+          row.dataset.laneColumns ?? '',
+          Math.round(row.getBoundingClientRect().top - contentTop)
+        );
+      }
+      setOffsets((prev) => (sameOffsets(prev, next) ? prev : next));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(stack);
+    return () => observer.disconnect();
+  }, [board, stack, laneSignature]);
+  return offsets;
+}
+
+function sameOffsets(
+  a: ReadonlyMap<string, number>,
+  b: ReadonlyMap<string, number>
+): boolean {
+  if (a.size !== b.size) return false;
+  for (const [key, value] of a) if (b.get(key) !== value) return false;
+  return true;
+}
+
+/**
+ * One lane+status cell's cards, virtualized against the board's shared scroller: only the
+ * cards near the viewport mount, each measured for its real height. The dragged card and
+ * the j/k cursor's card are pinned so they never unmount — dnd-kit drops a drag whose
+ * source node goes away — and a keyboard move scrolls the focused card into view here,
+ * where its index is known, so it mounts and takes DOM focus.
+ */
+function VirtualColumn({
+  id,
+  tasks,
+  scrollElement,
+  scrollMargin,
+  activeTaskId,
+  focusedTaskId,
+  renderCard,
+}: {
+  id: string;
+  tasks: readonly TaskListItem[];
+  scrollElement: HTMLDivElement | null;
+  scrollMargin: number;
+  activeTaskId: string | null;
+  focusedTaskId: string | null;
+  renderCard: (doc: TaskListItem) => ReactNode;
+}) {
+  const handle = useRef<VirtualRowsHandle>(null);
+  const pinnedKeys = useMemo(
+    () =>
+      [activeTaskId, focusedTaskId].filter(
+        (key): key is string => key !== null
+      ),
+    [activeTaskId, focusedTaskId]
+  );
+  // A key this column does not hold is a no-op in `scrollToKey`.
+  useEffect(() => {
+    if (focusedTaskId !== null) handle.current?.scrollToKey(focusedTaskId);
+  }, [focusedTaskId]);
+  return (
+    <DroppableColumn id={id}>
+      <VirtualRows
+        rows={tasks}
+        rowKey={cardKey}
+        estimateSize={cardHeight}
+        measure
+        gap={CARD_GAP}
+        overscan={CARD_OVERSCAN}
+        scrollElement={scrollElement}
+        scrollMargin={scrollMargin}
+        scrollPaddingStart={COLUMN_HEADER_HEIGHT}
+        pinnedKeys={pinnedKeys}
+        handleRef={handle}
+        renderRow={renderCard}
+      />
+    </DroppableColumn>
+  );
 }
 
 // A card's draggable id doubles as its task id — plain `useDraggable`, not `useSortable`,
@@ -373,8 +497,11 @@ export function TaskBoard({
 }: TaskBoardProps) {
   const shell = useShellActions();
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
-  const boardRef = useRef<HTMLDivElement>(null);
-  const viewportWidth = useBoardViewportWidth(boardRef);
+  // The scroller and the lanes' stack as state: the virtual columns need the scroller
+  // once it exists, and the lane offsets are measured off both.
+  const [board, setBoard] = useState<HTMLDivElement | null>(null);
+  const [laneStack, setLaneStack] = useState<HTMLDivElement | null>(null);
+  const viewportWidth = useBoardViewportWidth(board);
 
   // The same lanes `BoardView` derives for its j/k order, from the same pure function and the
   // same (pre-sorted) input — deliberately recomputed here rather than passed down, so the two
@@ -386,6 +513,11 @@ export function TaskBoard({
   const statusCounts = useMemo(
     () => countLaneStatuses(lanes, statuses),
     [lanes, statuses]
+  );
+  const laneOffsets = useLaneOffsets(
+    board,
+    laneStack,
+    lanes.map((lane) => lane.key).join('\0')
   );
   // Ready task ids per status, for `Dispatch all ready` and its count.
   const readyByStatus = useMemo(() => {
@@ -486,13 +618,13 @@ export function TaskBoard({
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCenter}
+      collisionDetection={boardCollision}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
       onDragCancel={() => setActiveTaskId(null)}
     >
       <div
-        ref={boardRef}
+        ref={setBoard}
         data-slot="task-board"
         className="flex h-full min-h-0 flex-col overflow-auto pb-2"
       >
@@ -534,7 +666,7 @@ export function TaskBoard({
           )}
         </div>
 
-        <div className="flex w-max flex-col gap-4">
+        <div ref={setLaneStack} className="flex w-max flex-col gap-4">
           {lanes.map((lane, laneIndex) => {
             const key = lane.key;
             // The flat board's single lane has no header to collapse from — always open.
@@ -597,7 +729,7 @@ export function TaskBoard({
                   </div>
                 )}
                 {expanded && (
-                  <div className="flex items-start">
+                  <div data-lane-columns={key} className="flex items-start">
                     {lane.columns.map(({ status, tasks: laneTasks }) => (
                       <div
                         key={status}
@@ -606,10 +738,15 @@ export function TaskBoard({
                         {collapsedColumns.has(status) ? (
                           <div className="min-h-16" />
                         ) : (
-                          <DroppableColumn id={dropZoneId(laneIndex, status)}>
-                            {laneTasks.map((doc) => (
+                          <VirtualColumn
+                            id={dropZoneId(laneIndex, status)}
+                            tasks={laneTasks}
+                            scrollElement={board}
+                            scrollMargin={laneOffsets.get(key) ?? 0}
+                            activeTaskId={activeTaskId}
+                            focusedTaskId={focusedTaskId}
+                            renderCard={(doc) => (
                               <DraggableCard
-                                key={doc.meta.id}
                                 id={doc.meta.id}
                                 disabled={archivedTaskIds.has(doc.meta.id)}
                               >
@@ -655,8 +792,8 @@ export function TaskBoard({
                                   />
                                 )}
                               </DraggableCard>
-                            ))}
-                          </DroppableColumn>
+                            )}
+                          />
                         )}
                       </div>
                     ))}

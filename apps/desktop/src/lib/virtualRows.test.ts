@@ -7,6 +7,7 @@ import {
   indexByKey,
   pinnedRangeExtractor,
   stepKey,
+  trackNearViewport,
   UNMEASURED_VIEWPORT,
   viewportOrFallback,
 } from './virtualRows';
@@ -100,6 +101,21 @@ test('an unmeasured viewport windows as a typical screen', () => {
   expect(viewportOrFallback({ width: 400, height: 300 })).toEqual({
     width: 400,
     height: 300,
+  });
+});
+
+describe('trackNearViewport', () => {
+  // A 900px viewport scrolled to 5000.
+  test('a track overlapping the window is near', () => {
+    expect(trackNearViewport(4800, 1000, 5000, 900)).toBe(true);
+  });
+  test('a track within a viewport above or below is near', () => {
+    expect(trackNearViewport(3500, 700, 5000, 900)).toBe(true);
+    expect(trackNearViewport(6600, 500, 5000, 900)).toBe(true);
+  });
+  test('a track far above or below is not', () => {
+    expect(trackNearViewport(0, 1000, 5000, 900)).toBe(false);
+    expect(trackNearViewport(9000, 1000, 5000, 900)).toBe(false);
   });
 });
 

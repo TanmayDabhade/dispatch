@@ -1,5 +1,6 @@
 import type { TaskDoc } from '@dispatch/core/browser';
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -523,4 +524,69 @@ test('an empty filter result shows the no-match empty state', () => {
   );
 
   expect(screen.getByText('No tasks match')).not.toBeNull();
+});
+
+// 2000 tasks under status headers: the grid mounts a screenful, and j/k walk it by
+// scrolling the focused row in rather than rendering everything.
+const MANY = Array.from({ length: 2000 }, (_, i) =>
+  task(`t-${String(i).padStart(4, '0')}`, `Task ${i}`)
+);
+
+function mountedRowIds(): string[] {
+  return Array.from(document.querySelectorAll('[data-row-id]')).map(
+    (row) => row.getAttribute('data-row-id') ?? ''
+  );
+}
+
+test('2000 tasks mount a screenful of rows, headers included', () => {
+  renderList(dataWith(MANY));
+  const ids = mountedRowIds();
+  expect(ids.length).toBeGreaterThan(10);
+  expect(ids.length).toBeLessThan(60);
+  expect(
+    document.querySelectorAll('[data-slot="group-header"]').length
+  ).toBeGreaterThan(0);
+});
+
+test('j moves the cursor onto a mounted row', () => {
+  renderList(dataWith(MANY));
+  const grid = screen.getByRole('grid', { name: 'Tasks' });
+  fireEvent.keyDown(grid, { key: 'j' });
+  expect(grid.getAttribute('aria-activedescendant')).toBe('task-row-t-0001');
+  // The cursor's row is always mounted — `aria-activedescendant` points at a real node.
+  expect(document.getElementById('task-row-t-0001')).not.toBeNull();
+});
+
+test('the focused row stays mounted after the list scrolls away from it', () => {
+  renderList(dataWith(MANY));
+  const grid = screen.getByRole('grid', { name: 'Tasks' });
+  fireEvent.keyDown(grid, { key: 'j' });
+  act(() => {
+    grid.scrollTop = 36 * 1500;
+    fireEvent.scroll(grid);
+  });
+  const ids = mountedRowIds();
+  expect(ids).toContain('t-1499');
+  expect(ids).toContain('t-0001');
+  expect(ids).not.toContain('t-0100');
+});
+
+test('collapsing a group drops its rows but keeps its header row', () => {
+  renderList(
+    dataWith([
+      task('t-1', 'Ready one'),
+      task('t-2', 'Done one', { status: 'done' }),
+    ])
+  );
+  const readyHeader = document.querySelector('[data-group-key="status:ready"]');
+  const toggle = readyHeader?.querySelector<HTMLElement>(
+    'button[aria-label="Collapse group"]'
+  );
+  if (toggle === null || toggle === undefined) throw new Error('no toggle');
+  fireEvent.click(toggle);
+  expect(screen.queryByText('Ready one') === null).toBe(true);
+  expect(screen.queryByText('Done one') === null).toBe(false);
+  expect(document.querySelectorAll('[data-slot="group-header"]').length).toBe(
+    2
+  );
 });

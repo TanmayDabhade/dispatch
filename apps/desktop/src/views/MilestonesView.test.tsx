@@ -790,30 +790,60 @@ test('a focusEpic request unfolds a finished milestone and opens the dialog when
 });
 
 test('a focusEpic request without dispatch scrolls the milestone into view and nothing more', () => {
-  const scrolled: [string | null, ScrollIntoViewOptions | undefined][] = [];
-  const original = Element.prototype.scrollIntoView;
-  Element.prototype.scrollIntoView = function (
+  const scrolled: [string | null, ScrollToOptions | undefined][] = [];
+  const original = Element.prototype.scrollTo;
+  Element.prototype.scrollTo = function (
     this: Element,
-    arg?: boolean | ScrollIntoViewOptions
+    arg?: number | ScrollToOptions
   ) {
     scrolled.push([
-      this.getAttribute('data-group-key'),
+      this.getAttribute('aria-label'),
       typeof arg === 'object' ? arg : undefined,
     ]);
-  };
+  } as typeof Element.prototype.scrollTo;
+  // happy-dom has no layout; give scrollers a browser's extent so offsets are not clamped.
+  const extent = Object.getOwnPropertyDescriptors(HTMLElement.prototype);
+  Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+    configurable: true,
+    get: () => 10_000,
+  });
+  Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+    configurable: true,
+    get: () => 500,
+  });
   try {
     renderMilestones(
       dataWith(
-        [payments, task('t-1', 'Charge card', { parent: 'e-1' })],
-        [payments]
+        [
+          task('e-0', 'Onboarding', { kind: 'milestone' }),
+          task('t-0', 'Welcome mail', { parent: 'e-0' }),
+          payments,
+          task('t-1', 'Charge card', { parent: 'e-1' }),
+        ],
+        [task('e-0', 'Onboarding', { kind: 'milestone' }), payments]
       ),
       () => {},
       { epicId: 'e-1', dispatch: false, nonce: 1 }
     );
   } finally {
-    Element.prototype.scrollIntoView = original;
+    Element.prototype.scrollTo = original;
+    for (const key of ['scrollHeight', 'clientHeight'] as const) {
+      const descriptor = extent[key];
+      if (descriptor === undefined)
+        delete (HTMLElement.prototype as never)[key];
+      else Object.defineProperty(HTMLElement.prototype, key, descriptor);
+    }
   }
-  expect(scrolled).toEqual([['milestone:e-1', { block: 'start' }]]);
+  // The virtual grid scrolls itself until Payments' header (row 2, under Onboarding's
+  // header and task) starts the viewport.
+  const headerIndex = Number(
+    document
+      .querySelector('[data-group-key="milestone:e-1"]')
+      ?.parentElement?.getAttribute('data-index')
+  );
+  expect(headerIndex).toBe(2);
+  expect(scrolled.every(([label]) => label === 'Milestones')).toBe(true);
+  expect(scrolled.at(-1)?.[1]?.top).toBe(2 * 36);
   expect(screen.getByText('Charge card')).not.toBeNull();
   expect(dialogTitle()).toBeNull();
 });

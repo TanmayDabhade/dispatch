@@ -112,6 +112,25 @@ export function viewportOrFallback(rect: ViewportRect): ViewportRect {
   return rect.width === 0 && rect.height === 0 ? UNMEASURED_VIEWPORT : rect;
 }
 
+/**
+ * Whether a track spanning `[trackStart, trackStart + trackSize)` of the scroller's content
+ * is within one viewport of the visible window. The windowing engine keeps a track's edge
+ * rows mounted even when the whole track is far off screen — harmless for one list, but a
+ * board has a track per lane and status, so the ones nowhere near the viewport render only
+ * their pinned rows instead.
+ */
+export function trackNearViewport(
+  trackStart: number,
+  trackSize: number,
+  scrollOffset: number,
+  viewportSize: number
+): boolean {
+  return (
+    trackStart + trackSize >= scrollOffset - viewportSize &&
+    trackStart <= scrollOffset + 2 * viewportSize
+  );
+}
+
 /** The key `delta` steps from `current` along `keys`, clamped to the ends; the first key
  * when nothing is focused yet, `null` for an empty list. */
 export function stepKey(
