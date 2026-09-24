@@ -1,6 +1,6 @@
 import { Check } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import {
   Command,
@@ -63,6 +63,16 @@ export function PickerPopover({
   const [localOpen, setLocalOpen] = useState(false);
   const [query, setQuery] = useState('');
   const isOpen = open ?? localOpen;
+  // A Base UI popover costs more to mount than the card or row it sits in, so the picker
+  // starts as a plain trigger and swaps the popover in on hover, focus, click or `open`.
+  const [live, setLive] = useState(false);
+  const refocus = useRef(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!live || !refocus.current) return;
+    refocus.current = false;
+    triggerRef.current?.focus();
+  }, [live]);
   function setOpen(next: boolean) {
     if (!next) setQuery('');
     setLocalOpen(next);
@@ -79,11 +89,38 @@ export function PickerPopover({
     trimmed !== '' &&
     !items.some((item) => item.label.toLowerCase() === trimmed.toLowerCase());
 
+  if (!live && !isOpen) {
+    return (
+      <button
+        type="button"
+        aria-label={triggerLabel}
+        aria-haspopup="dialog"
+        aria-expanded={false}
+        data-slot="picker-trigger"
+        className={triggerClassName}
+        onPointerEnter={() => setLive(true)}
+        onFocus={() => {
+          refocus.current = true;
+          setLive(true);
+        }}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          setLive(true);
+          setOpen(true);
+        }}
+      >
+        {children}
+      </button>
+    );
+  }
+
   return (
     <Popover open={isOpen} onOpenChange={setOpen}>
       <PopoverTrigger
         render={
           <button
+            ref={triggerRef}
             type="button"
             aria-label={triggerLabel}
             data-slot="picker-trigger"

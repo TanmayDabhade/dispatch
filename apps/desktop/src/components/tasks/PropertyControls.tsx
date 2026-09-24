@@ -1,6 +1,6 @@
 import type { Assignee, Priority, TaskListItem } from '@dispatch/core/browser';
 import { Check, Milestone, Plus, Tag } from 'lucide-react';
-import { type ReactNode, useId } from 'react';
+import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
 
 import { colorForLabel } from '../../lib/labelColor';
 import {
@@ -91,36 +91,80 @@ function PropertyDropdown({
   const rowLabel =
     unset && unsetLabel !== undefined ? unsetLabel : selected?.label;
   const valueId = useId();
+  // A Base UI menu costs more to mount than the whole row around it, and a scrolling list
+  // mounts rows every frame. So the picker starts as a look-alike button and swaps the real
+  // menu in on the first sign of intent: hover, focus, a click, or an `open` request.
+  const [live, setLive] = useState(false);
+  const [openOnMount, setOpenOnMount] = useState(false);
+  const refocus = useRef(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!live || !refocus.current) return;
+    refocus.current = false;
+    triggerRef.current?.focus();
+  }, [live]);
+  const triggerProps = {
+    'aria-label': ariaLabel,
+    'aria-describedby': valueId,
+    'data-slot': 'property-control',
+    'data-variant': variant,
+    'data-unset': unset || undefined,
+    className: cn(
+      'shrink-0 items-center rounded-control transition-colors duration-100 outline-none hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-ring data-popup-open:bg-surface-hover',
+      variant === 'inline'
+        ? 'inline-flex size-5 justify-center'
+        : 'flex h-8 w-full min-w-0 gap-2 px-2 text-[13px] font-medium text-(--text-secondary)',
+      variant === 'row' && unset && 'text-muted-foreground'
+    ),
+  };
+  const face = (
+    <>
+      {selected?.glyph}
+      <span id={valueId} className={variant === 'row' ? 'truncate' : 'sr-only'}>
+        {rowLabel}
+      </span>
+    </>
+  );
+  if (!live && open !== true) {
+    return (
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={false}
+        {...triggerProps}
+        onPointerEnter={() => setLive(true)}
+        onFocus={() => {
+          refocus.current = true;
+          setLive(true);
+        }}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          // Controlled pickers open through their owner; the rest open as they mount.
+          if (onOpenChange !== undefined) onOpenChange(true);
+          else setOpenOnMount(true);
+          setLive(true);
+        }}
+      >
+        {face}
+      </button>
+    );
+  }
   return (
     <DropdownMenu
       open={open}
+      defaultOpen={openOnMount}
       onOpenChange={
         onOpenChange === undefined ? undefined : (next) => onOpenChange(next)
       }
     >
       <DropdownMenuTrigger
-        aria-label={ariaLabel}
-        aria-describedby={valueId}
-        data-slot="property-control"
-        data-variant={variant}
-        data-unset={unset || undefined}
+        ref={triggerRef}
+        {...triggerProps}
         onClick={(e) => e.stopPropagation()}
         onPointerDown={(e) => e.stopPropagation()}
-        className={cn(
-          'shrink-0 items-center rounded-control transition-colors duration-100 outline-none hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-ring data-popup-open:bg-surface-hover',
-          variant === 'inline'
-            ? 'inline-flex size-5 justify-center'
-            : 'flex h-8 w-full min-w-0 gap-2 px-2 text-[13px] font-medium text-(--text-secondary)',
-          variant === 'row' && unset && 'text-muted-foreground'
-        )}
       >
-        {selected?.glyph}
-        <span
-          id={valueId}
-          className={variant === 'row' ? 'truncate' : 'sr-only'}
-        >
-          {rowLabel}
-        </span>
+        {face}
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"

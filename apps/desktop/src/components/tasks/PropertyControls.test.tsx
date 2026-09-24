@@ -367,3 +367,72 @@ describe('PropertyControls', () => {
     expect(labelOptions().map((o) => o.label)).toEqual(['ui']);
   });
 });
+
+// A long list mounts rows every scroll frame, so a picker at rest is a plain button and the
+// Base UI menu only mounts on intent. These pin that the swap never costs an interaction.
+describe('pickers mount their menu on first intent', () => {
+  test('an idle control mounts no menu machinery', () => {
+    render(
+      <StatusControl value="ready" statuses={STATUSES} onChange={() => {}} />
+    );
+    const trigger = screen.getByRole('button', { name: 'Change status' });
+    // Base UI's trigger carries its own slot; the resting face does not.
+    expect(
+      document.querySelector('[data-slot=dropdown-menu-trigger]')
+    ).toBeNull();
+    expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  test('a click on a cold control opens its menu in one go', async () => {
+    render(<PriorityControl value="none" onChange={() => {}} variant="row" />);
+    await settle(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Change priority' }));
+    });
+    expect(screen.getByRole('menuitem', { name: /Urgent/ })).not.toBeNull();
+  });
+
+  test('a cold controlled picker asks its owner to open', () => {
+    const asked: boolean[] = [];
+    render(
+      <AssigneeControl
+        value="none"
+        onChange={() => {}}
+        open={false}
+        onOpenChange={(next) => asked.push(next)}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Change assignee' }));
+    expect(asked).toEqual([true]);
+  });
+
+  test('keyboard focus survives the swap to the real trigger', async () => {
+    render(
+      <StatusControl value="ready" statuses={STATUSES} onChange={() => {}} />
+    );
+    const cold = screen.getByRole('button', { name: 'Change status' });
+    await settle(() => {
+      cold.focus();
+    });
+    const live = screen.getByRole('button', { name: 'Change status' });
+    expect(live).not.toBe(cold);
+    expect(document.activeElement).toBe(live);
+  });
+
+  test('a cold labels picker opens on click too', async () => {
+    render(
+      <LabelsControl
+        value={[]}
+        candidates={['ui']}
+        onChange={() => {}}
+        variant="inline"
+      />
+    );
+    await settle(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Change labels' }));
+    });
+    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual([
+      'ui',
+    ]);
+  });
+});
