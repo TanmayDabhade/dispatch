@@ -1,7 +1,13 @@
 import { Check } from 'lucide-react';
-import { memo, type ReactNode } from 'react';
+import { memo, type ReactNode, useMemo } from 'react';
 
 import { StatusIcon } from '../tasks/StatusIcon';
+import {
+  type CullWindow,
+  edgeBounds,
+  edgeInWindow,
+  nodeInWindow,
+} from './flightCull';
 import { BAND_HEADER_HEIGHT, type FlightLayout } from './flightLayout';
 import { FlightNodeCard, type FlightNodeView } from './FlightNodeCard';
 import { cn } from '@/lib/utils';
@@ -43,8 +49,8 @@ export interface FlightBandView {
   controls: ReactNode;
 }
 
-/** The sticky wave-header row's height. */
-const WAVE_HEADER_HEIGHT = 32;
+/** The sticky wave-header row's height — where the canvas starts in its scroller. */
+export const WAVE_HEADER_HEIGHT = 32;
 
 const EDGE_STYLE: Record<
   EdgeTone,
@@ -228,13 +234,16 @@ interface FlightCanvasProps {
   bands: readonly FlightBandView[] | null;
   focusedId: string | null;
   onActivate: (id: string) => void;
+  /** The part of the canvas near the viewport; null draws every node and edge. */
+  cull?: CullWindow | null;
 }
 
 /**
  * The plan itself: a sticky row of wave heads over an absolutely positioned canvas —
  * band title rows, one SVG of edges (the critical path drawn first as a soft accent
  * highlighter under its edges), then the node cards. Positions come from the layout
- * alone, so a state change touches colours and text, never geometry.
+ * alone, so a state change touches colours and text, never geometry. With a `cull`
+ * window only the cards and edges reaching into it are drawn (the focused card always).
  */
 export function FlightCanvas({
   layout,
@@ -244,7 +253,26 @@ export function FlightCanvas({
   bands,
   focusedId,
   onActivate,
+  cull = null,
 }: FlightCanvasProps) {
+  const bounds = useMemo(() => edgeBounds(layout), [layout]);
+  const shownNodes = useMemo(
+    () =>
+      cull === null
+        ? nodes
+        : nodes.filter(
+            (node) =>
+              node.id === focusedId || nodeInWindow(node.x, node.y, cull)
+          ),
+    [nodes, cull, focusedId]
+  );
+  const shownEdges = useMemo(
+    () =>
+      cull === null
+        ? edges
+        : edges.filter((edge) => edgeInWindow(bounds.get(edge.key), cull)),
+    [edges, cull, bounds]
+  );
   return (
     <div className="relative" style={{ width: Math.max(layout.width, 1) }}>
       <div
@@ -264,8 +292,12 @@ export function FlightCanvas({
         {bands?.map((band) => (
           <BandHead key={band.key} band={band} width={layout.width} />
         ))}
-        <EdgeLayer edges={edges} width={layout.width} height={layout.height} />
-        {nodes.map((node) => (
+        <EdgeLayer
+          edges={shownEdges}
+          width={layout.width}
+          height={layout.height}
+        />
+        {shownNodes.map((node) => (
           <FlightNodeCard
             key={node.id}
             {...node}
