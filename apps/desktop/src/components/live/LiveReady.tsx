@@ -56,6 +56,7 @@ export function LiveReady({
                   kind={container.meta.kind}
                   icon={container.meta.icon}
                   color={container.meta.color}
+                  className="size-3.5 shrink-0"
                 />
                 <span className="text-foreground min-w-0 truncate text-[13px] font-medium">
                   {container.meta.title}

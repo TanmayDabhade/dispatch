@@ -169,6 +169,7 @@ function BandHead({
             kind={container.meta.kind}
             icon={container.meta.icon}
             color={container.meta.color}
+            className="size-3.5 shrink-0"
           />
         )}
         <span
@@ -390,7 +391,7 @@ export const LiveBand = memo(function LiveBand({
   return (
     <section
       data-slot="live-band"
-      data-band={spec.key}
+      data-live-band={spec.key}
       data-kind={spec.kind}
       aria-label={container?.meta.title ?? 'Loose work'}
       className="flex flex-col"

@@ -136,7 +136,7 @@ function mount(
 
 const bands = () =>
   Array.from(document.querySelectorAll('[data-slot=live-band]')).map((b) =>
-    b.getAttribute('data-band')
+    b.getAttribute('data-live-band')
   );
 const node = (id: string) =>
   document.querySelector<HTMLElement>(
@@ -243,7 +243,7 @@ describe('LiveView', () => {
   test('a band links to its full Flight Plan', () => {
     const view = mount(dataWith());
     const open = document.querySelector<HTMLElement>(
-      '[data-band=m-1] [data-slot=live-band-open-plan]'
+      '[data-live-band=m-1] [data-slot=live-band-open-plan]'
     );
     act(() => open?.click());
     expect(view.calls.opened).toEqual(['m-1:plan']);
@@ -305,11 +305,40 @@ describe('LiveView', () => {
     expect(node('t-a')).toBeNull();
     expect(node('t-c')?.getAttribute('data-state')).toBe('running');
     const fold = document.querySelector<HTMLElement>(
-      '[data-band=m-1] [data-slot=live-band-fold]'
+      '[data-live-band=m-1] [data-slot=live-band-fold]'
     );
     expect(fold?.textContent).toBe('1 landed wave · 4');
     act(() => fold?.click());
     expect(node('t-a')?.getAttribute('data-state')).toBe('done');
+  });
+
+  test('a project’s fan-out draws one sub-band per milestone', () => {
+    const tasks = [
+      task('p-1', { kind: 'project', title: 'Storefront' }),
+      task('m-a', { kind: 'milestone', parent: 'p-1', title: 'Cart' }),
+      task('m-b', { kind: 'milestone', parent: 'p-1', title: 'Search' }),
+      task('a-1', { parent: 'm-a', status: 'working' }),
+      task('a-2', { parent: 'm-a', blockedBy: ['a-1'] }),
+      task('b-1', { parent: 'm-b' }),
+    ];
+    mount(
+      dataWith({
+        tasks,
+        runs: [run('a-1')],
+        sessions: [progress('p-1', 'active')],
+        attention: [],
+      })
+    );
+    expect(bands()).toEqual(['p-1']);
+    expect(
+      Array.from(
+        document.querySelectorAll(
+          '[data-live-band=p-1] [data-slot=flight-band-head]'
+        ),
+        (h) => h.getAttribute('data-band')
+      )
+    ).toEqual(['m-a', 'm-b']);
+    expect(node('b-1')?.getAttribute('data-state')).toBe('queued');
   });
 
   test('only the bands near the viewport mount', () => {
