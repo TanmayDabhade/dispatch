@@ -1463,7 +1463,8 @@ export function useDispatchProject(
     if (client === null) return;
     // One pending refetch each for the list and for fan-out progress, so a
     // burst of events costs one round trip apiece. Config is not refetched
-    // here: every daemon write to it broadcasts `config.changed`.
+    // here: a daemon write to it broadcasts `config.changed`, and a pull or a
+    // reconnect refetches it below.
     let listTimer: ReturnType<typeof setTimeout> | null = null;
     let epicTimer: ReturnType<typeof setTimeout> | null = null;
     const refreshEpicProgress = () => {
@@ -1483,6 +1484,11 @@ export function useDispatchProject(
     };
     const cachedList = () =>
       queryClient.getQueryData<TaskListItem[]>(tasksQueryKey);
+    const refetchConfig = () => {
+      for (const key of configChangedQueryKeys(port)) {
+        void queryClient.invalidateQueries({ queryKey: key });
+      }
+    };
     // Refetches just the named tasks into the cached list; an unscoped or
     // wide change, or a list fetch already in flight, refetches the list.
     // Fan-out progress refetches only when a changed task can move it.
@@ -1538,6 +1544,10 @@ export function useDispatchProject(
             void queryClient.invalidateQueries({
               queryKey: readinessKey(port),
             });
+          }
+          // A restarted daemon may have read a config.yml changed while it was down.
+          if (queryClient.getQueryData(configQueryKey) !== undefined) {
+            refetchConfig();
           }
           void queryClient.invalidateQueries({
             queryKey: commentsRootKey(port),
@@ -1725,6 +1735,8 @@ export function useDispatchProject(
           // A git-level mutation can change dispatch's own worktree bookkeeping too, so
           // the Branches panel's GitSummary chips don't go stale until a manual refresh.
           void queryClient.invalidateQueries({ queryKey: branchesQueryKey });
+          // A pull can rewrite config.yml, which broadcasts no `config.changed`.
+          refetchConfig();
         } else if (event.type === 'merge-queue.changed') {
           void queryClient.invalidateQueries({
             queryKey: mergeQueueQueryKey,
@@ -1802,9 +1814,7 @@ export function useDispatchProject(
         } else if (event.type === 'config.changed') {
           // Settings in another window, the CLI, and Linear connect/disconnect
           // all write config; without this branch they sit stale here.
-          for (const key of configChangedQueryKeys(port)) {
-            void queryClient.invalidateQueries({ queryKey: key });
-          }
+          refetchConfig();
         } else if (event.type === 'run.survey') {
           // Same cache-read reason as approval.requested above. This is the
           // only signal that a terminal run left uncommitted work behind.
@@ -1934,6 +1944,7 @@ export function useDispatchProject(
     queryClient,
     applyTaskDoc,
     tasksQueryKey,
+    configQueryKey,
     runsQueryKey,
     presenceQueryKey,
     notesQueryKey,
