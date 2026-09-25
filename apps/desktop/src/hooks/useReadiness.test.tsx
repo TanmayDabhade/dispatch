@@ -41,11 +41,11 @@ function doc(
 }
 
 describe('applyJudged', () => {
-  test('reads full docs and meta-only items alike, and drops what came back unjudged', () => {
+  test('takes each named task’s reading, and drops what came back unjudged', () => {
     expect(
       applyJudged({ 't-1': reading(0), 't-2': reading(1), 't-3': reading(2) }, [
-        { meta: { id: 't-1' }, readiness: reading(3) },
-        { meta: { id: 't-2' } },
+        { id: 't-1', readiness: reading(3) },
+        { id: 't-2' },
       ])
     ).toEqual({ 't-1': reading(3), 't-3': reading(2) });
   });
@@ -88,7 +88,7 @@ describe('readinessFor', () => {
 // A client whose judging route answers from `answers` in turn (the last one repeats),
 // counting judges.
 function fakeClient(
-  answers: { meta: { id: string }; readiness?: ReadinessReading }[][],
+  answers: { id: string; readiness?: ReadinessReading }[][],
   cached: Record<string, ReadinessReading> = { 't-1': reading(1) }
 ) {
   const calls = { judge: 0, cached: 0 };
@@ -97,7 +97,7 @@ function fakeClient(
       calls.cached += 1;
       return Promise.resolve(cached);
     },
-    fetchReadyTasks: () => {
+    fetchReadyTaskIds: () => {
       const answer = answers[Math.min(calls.judge, answers.length - 1)];
       calls.judge += 1;
       return Promise.resolve(answer);
@@ -129,7 +129,7 @@ const settle = () => new Promise((r) => setTimeout(r, 60));
 describe('useReadiness', () => {
   test('paints the cached reading, then the judged one', async () => {
     const { client, calls } = fakeClient([
-      [{ meta: { id: 't-1' }, readiness: reading(3) }],
+      [{ id: 't-1', readiness: reading(3) }],
     ]);
     const { result } = mount(client, new Set(['t-1']));
     await waitFor(() => {
@@ -140,7 +140,7 @@ describe('useReadiness', () => {
 
   test('a burst of changes costs one judge', async () => {
     const { client, calls } = fakeClient([
-      [{ meta: { id: 't-1' }, readiness: reading(3) }],
+      [{ id: 't-1', readiness: reading(3) }],
     ]);
     const { result } = mount(client, new Set(['t-1']));
     await waitFor(() => {
@@ -160,10 +160,7 @@ describe('useReadiness', () => {
   // failed, so one such answer must not end judging for the connection.
   test('an unjudged answer does not stop judging', async () => {
     const { client, calls } = fakeClient(
-      [
-        [{ meta: { id: 't-1' } }],
-        [{ meta: { id: 't-1' }, readiness: reading(0) }],
-      ],
+      [[{ id: 't-1' }], [{ id: 't-1', readiness: reading(0) }]],
       {}
     );
     const { result } = mount(client, new Set(['t-1']));
@@ -182,10 +179,7 @@ describe('useReadiness', () => {
   // A reconnect is likely a restarted daemon, which may have a judgment client now.
   test('a reconnect drops the back-off and judges again soon', async () => {
     const { client, calls } = fakeClient(
-      [
-        [{ meta: { id: 't-1' } }],
-        [{ meta: { id: 't-1' }, readiness: reading(2) }],
-      ],
+      [[{ id: 't-1' }], [{ id: 't-1', readiness: reading(2) }]],
       {}
     );
     const { result } = mount(client, new Set(['t-1']), 60_000);
@@ -207,7 +201,7 @@ describe('useReadiness', () => {
   });
 
   test('answers that judge nothing space the next judge out, doubling', async () => {
-    const { client, calls } = fakeClient([[{ meta: { id: 't-1' } }]], {});
+    const { client, calls } = fakeClient([[{ id: 't-1' }]], {});
     const { result } = mount(client, new Set(['t-1']), 200);
     await waitFor(() => {
       expect(calls.judge).toBe(1);
@@ -233,8 +227,8 @@ describe('useReadiness', () => {
 
   test('an answer drops the reading of a task it names unjudged', async () => {
     const { client, calls } = fakeClient([
-      [{ meta: { id: 't-1' }, readiness: reading(0) }],
-      [{ meta: { id: 't-1' } }],
+      [{ id: 't-1', readiness: reading(0) }],
+      [{ id: 't-1' }],
     ]);
     const { result } = mount(client, new Set(['t-1']));
     await waitFor(() => {
@@ -255,7 +249,7 @@ describe('useReadiness', () => {
   // (a fresh Set on every list change) is what `land` hands the hook.
   test("only an edit to a ready task's spec judges again", async () => {
     const { client, calls } = fakeClient([
-      [{ meta: { id: 't-1' }, readiness: reading(3) }],
+      [{ id: 't-1', readiness: reading(3) }],
     ]);
     const { result, rerender } = mount(client, new Set(['t-1']));
     const land = (ready: string[]) => rerender({ ready: new Set(ready) });
@@ -295,7 +289,7 @@ describe('useReadiness', () => {
 
   test('a ready task that is dispatched costs no judge', async () => {
     const { client, calls } = fakeClient([
-      [{ meta: { id: 't-1' }, readiness: reading(3) }],
+      [{ id: 't-1', readiness: reading(3) }],
     ]);
     const { result, rerender } = mount(client, new Set(['t-1']));
     await waitFor(() => {
@@ -316,10 +310,10 @@ describe('useReadiness', () => {
   test('a task edited while not ready loses its reading and is judged once ready', async () => {
     const { client, calls } = fakeClient(
       [
-        [{ meta: { id: 't-1' }, readiness: reading(3) }],
+        [{ id: 't-1', readiness: reading(3) }],
         [
-          { meta: { id: 't-1' }, readiness: reading(3) },
-          { meta: { id: 't-2' }, readiness: reading(2) },
+          { id: 't-1', readiness: reading(3) },
+          { id: 't-2', readiness: reading(2) },
         ],
       ],
       { 't-1': reading(3), 't-2': reading(0) }
@@ -348,7 +342,7 @@ describe('useReadiness', () => {
 
   test('a task that turns ready without a reading is judged; one with a reading is not', async () => {
     const { client, calls } = fakeClient(
-      [[{ meta: { id: 't-1' }, readiness: reading(3) }]],
+      [[{ id: 't-1', readiness: reading(3) }]],
       { 't-1': reading(3), 't-2': reading(2) }
     );
     const { rerender } = mount(client, new Set(['t-1']));

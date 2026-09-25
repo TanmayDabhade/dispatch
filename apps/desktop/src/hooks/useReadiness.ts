@@ -1,4 +1,8 @@
-import type { ApiClient, ReadinessReading } from '@dispatch/client';
+import type {
+  ApiClient,
+  ReadinessReading,
+  ReadyTaskRef,
+} from '@dispatch/client';
 import type { TaskDoc, TaskMeta } from '@dispatch/core/browser';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
@@ -23,13 +27,6 @@ const JUDGE_DELAYS: JudgeDelays = {
 };
 const MAX_RETRY_DOUBLINGS = 4;
 
-/** One task in the judging route's answer: full docs or meta-only items alike, since
- * only the id and the reading are read. */
-interface JudgedTask {
-  meta: { id: string };
-  readiness?: ReadinessReading;
-}
-
 export function readinessKey(port: number | undefined) {
   return ['dispatch-readiness', port] as const;
 }
@@ -39,12 +36,12 @@ export function readinessKey(port: number | undefined) {
  * judge failed). */
 export function applyJudged(
   readings: Readings | undefined,
-  judged: readonly JudgedTask[]
+  judged: readonly ReadyTaskRef[]
 ): Readings {
   const next = { ...readings };
   for (const task of judged) {
-    if (task.readiness === undefined) delete next[task.meta.id];
-    else next[task.meta.id] = task.readiness;
+    if (task.readiness === undefined) delete next[task.id];
+    else next[task.id] = task.readiness;
   }
   return next;
 }
@@ -130,11 +127,11 @@ interface Readiness {
 /**
  * The readiness readings without re-sending ready bodies on every event. The cached
  * readings (`/api/tasks/readiness`, the daemon's readings still matching their tasks'
- * text) paint first. The judging route (`/api/tasks/ready`, which judges stale specs)
- * runs once per connection after the list is in, then only when a ready task's spec
- * changes, a task turns ready without a reading, or tasks changed unseen. An edited
- * ready task keeps its old reading until the answer replaces it, so it does not jump
- * lanes and back.
+ * text) paint first. The judging route (`/api/tasks/ready?fields=id`, which judges stale
+ * specs and answers ids and readings only) runs once per connection after the list is
+ * in, then only when a ready task's spec changes, a task turns ready without a reading,
+ * or tasks changed unseen. An edited ready task keeps its old reading until the answer
+ * replaces it, so it does not jump lanes and back.
  */
 export function useReadiness(
   client: ApiClient | null,
@@ -161,11 +158,11 @@ export function useReadiness(
     if (client === null) return;
     const s = state.current;
     const sent = ++s.sent;
-    const judged = await client.fetchReadyTasks();
+    const judged = await client.fetchReadyTaskIds();
     // A newer answer already landed, or the connection changed meanwhile.
     if (state.current !== s || sent < s.applied) return;
     s.applied = sent;
-    s.answered = new Set(judged.map((task) => task.meta.id));
+    s.answered = new Set(judged.map((task) => task.id));
     // Backs off rather than stopping: a failed judge answers like no client at all.
     if (judged.some((task) => task.readiness !== undefined)) {
       s.misses = 0;

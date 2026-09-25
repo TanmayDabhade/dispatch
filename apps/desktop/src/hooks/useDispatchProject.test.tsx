@@ -65,11 +65,9 @@ let configFetches = 0;
 
 // The daemon's cached readiness readings (`/api/tasks/readiness`).
 let readinessFixture: Record<string, dispatchClient.ReadinessReading> = {};
-// What the judging route (`/api/tasks/ready`) answers, and how often it was asked.
-let judgedFixture: {
-  meta: { id: string };
-  readiness?: dispatchClient.ReadinessReading;
-}[] = [];
+// What the judging route (`/api/tasks/ready?fields=id`) answers, and how often it was
+// asked.
+let judgedFixture: dispatchClient.ReadyTaskRef[] = [];
 let judgeCalls = 0;
 
 // Every `updateTask` the hook sent, by task id and patch.
@@ -106,7 +104,7 @@ void mock.module('@dispatch/client', () => ({
         ? Promise.reject(new Error(`no doc for ${id}`))
         : Promise.resolve({ ...doc, meta: { ...doc.meta, ...patch } });
     },
-    fetchReadyTasks: () => {
+    fetchReadyTaskIds: () => {
       judgeCalls += 1;
       return Promise.resolve(judgedFixture);
     },
@@ -636,7 +634,7 @@ test('a refused optimistic dispatch puts the task back and rejects', async () =>
 // A reconnect is likely a restarted daemon, which may have a judgment client now, so the
 // back-off an unjudged answer set must not hold the next judge for minutes.
 test('a reconnect judges readiness again after an unjudged answer', async () => {
-  judgedFixture = [{ meta: { id: 't-1' } }];
+  judgedFixture = [{ id: 't-1' }];
   judgeCalls = 0;
   const result = await mountReadyTask();
   await waitFor(
@@ -647,7 +645,7 @@ test('a reconnect judges readiness again after an unjudged answer', async () => 
   );
   judgedFixture = [
     {
-      meta: { id: 't-1' },
+      id: 't-1',
       readiness: { level: 2, label: 'ok', confidence: 1, splitProbability: 0 },
     },
   ];
