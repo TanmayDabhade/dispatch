@@ -1,6 +1,6 @@
 import type { RunMeta } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, test } from 'bun:test';
 import type { ReactNode } from 'react';
 
@@ -594,6 +594,45 @@ describe('MilestoneBranchesView', () => {
     );
     expect(container.textContent).toContain('No tasks match');
     expect(container.textContent).not.toContain('No milestones with tasks yet');
+  });
+
+  // A tabbed-to line's band unmounts once j walks the cursor a few bands away; focus
+  // left on its button would fall to the body and take j/k with it.
+  test('j away from a tabbed-to line keeps focus in the grid', () => {
+    const long = Array.from({ length: 300 }, (_, i) =>
+      task(`t-${String(i).padStart(3, '0')}`, `Step ${i}`, {
+        parent: 'e-1',
+        blockedBy: i === 0 ? [] : [`t-${String(i - 1).padStart(3, '0')}`],
+      })
+    );
+    const { container } = renderBranches(
+      dataWith([payments, ...long], [payments])
+    );
+    const focusedId = () =>
+      container.querySelector<HTMLElement>(
+        '[data-slot="branch-line"][data-focused]'
+      )?.dataset['taskId'];
+    const line = container.querySelector<HTMLElement>(
+      '[data-slot="branch-line"][data-task-id="t-001"]'
+    );
+    if (line === null) throw new Error('no line');
+    act(() => {
+      line.focus();
+    });
+    expect(focusedId()).toBe('t-001');
+    const pressJ = () =>
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: 'j' });
+    for (let i = 0; i < 60; i++) pressJ();
+    expect(focusedId()).toBe('t-061');
+    // Scrolled to the cursor, as the browser's scroll-into-view does: t-001's band goes.
+    act(() => {
+      grid().scrollTop = 1500;
+      fireEvent.scroll(grid());
+    });
+    expect(lineIds(container)).not.toContain('t-001');
+    expect(grid().contains(document.activeElement)).toBe(true);
+    pressJ();
+    expect(focusedId()).toBe('t-062');
   });
 
   test('a long milestone mounts only the bands of lines on screen', () => {

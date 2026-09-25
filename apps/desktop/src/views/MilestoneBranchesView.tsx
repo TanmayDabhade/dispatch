@@ -298,8 +298,15 @@ export function MilestoneBranchesView({
   }
 
   // Only a keyboard move scrolls — the cursor never follows the pointer here. A line whose
-  // band is not mounted has the band brought in first, then the line once it draws.
+  // band is not mounted has the band brought in first, then the line once it draws. Focus
+  // on a control (a tabbed-to line, a header's button) returns to the grid: that control's
+  // band unmounts once the cursor is a few bands away, and focus would drop to the body.
   function moveCursor(id: string | null) {
+    const list = listRef.current;
+    const active = document.activeElement;
+    if (list !== null && active !== list && list.contains(active)) {
+      list.focus({ preventScroll: true });
+    }
     setFocusedTaskId(id);
     if (id === null) return;
     const lineOf = () =>
