@@ -235,6 +235,33 @@ describe('team-local mode', () => {
   );
 
   it.skipIf(LAN_ADDRESS === undefined)(
+    'keeps both Vary keys on a gzipped reply to a trusted origin',
+    async () => {
+      const store = new TaskStore(root);
+      for (let i = 0; i < 120; i++) store.create({ title: `Task ${i}` });
+      await boot('0.0.0.0');
+      const own = `http://${LAN_ADDRESS ?? ''}:${handle.port}`;
+      const res = await rawFetch(`${own}/api/tasks?fields=meta`, {
+        headers: {
+          origin: own,
+          'accept-encoding': 'gzip',
+          authorization: `Bearer ${handle.tokens.agentToken}`,
+        },
+        decompress: false,
+      });
+      await res.arrayBuffer();
+
+      expect(res.headers.get('content-encoding')).toBe('gzip');
+      expect(res.headers.get('access-control-allow-origin')).toBe(own);
+      const vary = (res.headers.get('vary') ?? '')
+        .split(',')
+        .map((key) => key.trim().toLowerCase());
+      expect(vary).toContain('accept-encoding');
+      expect(vary).toContain('origin');
+    }
+  );
+
+  it.skipIf(LAN_ADDRESS === undefined)(
     'a teammate’s session cookie opens the event socket from the daemon’s own page',
     async () => {
       await boot('0.0.0.0');

@@ -503,7 +503,8 @@ function withCors(
       'content-type, authorization'
     );
     // The allowed origin is request-dependent, so caches must key on it.
-    res.headers.set('vary', 'origin');
+    // Appended: a gzipped reply already varies by accept-encoding.
+    res.headers.append('vary', 'origin');
   }
   return res;
 }
