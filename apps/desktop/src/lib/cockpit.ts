@@ -133,6 +133,9 @@ export interface CockpitInput {
   readinessById: ReadonlyMap<string, ReadinessReading>;
   /** This window's own ref; null until the daemon says. */
   me: string | null;
+  /** The daemon's own human (`localHuman`); null until the daemon says, or on an older
+   * one. Whom a run nobody signed, or a fan-out nobody named, belongs to. */
+  local: string | null;
   scope: CockpitScope;
   /** Tasks dispatched from the Cockpit whose run has not shown up yet, with when. */
   pending: ReadonlyMap<string, number>;
@@ -279,10 +282,27 @@ export function buildCockpit(input: CockpitInput): CockpitLanes {
     }
     return owner;
   };
-  // A run belongs to whoever dispatched it; one nobody signed (a single-user daemon) is
-  // this window's.
-  const runOwner = (run: RunMeta) =>
-    run.dispatchedBy === undefined ? me : ownerOf(run.dispatchedBy);
+  // Each live fan-out, by the tasks it covers: a run it started carries no signature.
+  const sessionOf = new Map<string, EpicProgress>();
+  for (const progress of input.liveEpicSessions) {
+    for (const child of progress.children) {
+      if (!sessionOf.has(child.id)) sessionOf.set(child.id, progress);
+    }
+  }
+  // What nobody signed is this window's only where it is the daemon's own human (a
+  // single-user daemon, or an older one that names none); elsewhere it is nobody's.
+  const unsigned = input.local === null || input.local === me ? me : null;
+  // A fan-out belongs to whoever started it; one that names nobody, to the daemon's human.
+  const starterOf = (progress: EpicProgress): string | null => {
+    const starter = progress.session?.startedBy ?? input.local;
+    return starter === null ? unsigned : ownerOf(starter);
+  };
+  // A run belongs to whoever dispatched it, else to whoever started its fan-out.
+  const runOwner = (run: RunMeta): string | null => {
+    if (run.dispatchedBy !== undefined) return ownerOf(run.dispatchedBy);
+    const progress = sessionOf.get(run.taskId);
+    return progress === undefined ? unsigned : starterOf(progress);
+  };
 
   // Needs you first: whatever lands here leaves the other two lanes.
   const needs: NeedsItem[] = [];
@@ -372,12 +392,6 @@ export function buildCockpit(input: CockpitInput): CockpitLanes {
       startedAt,
     });
   }
-  const sessionOf = new Map<string, EpicProgress>();
-  for (const progress of input.liveEpicSessions) {
-    for (const child of progress.children) {
-      if (!sessionOf.has(child.id)) sessionOf.set(child.id, progress);
-    }
-  }
   for (const progress of input.liveEpicSessions) {
     const nestedRuns = liveRuns.filter(
       (run) =>
@@ -385,7 +399,7 @@ export function buildCockpit(input: CockpitInput): CockpitLanes {
         inScope(runOwner(run), scope, me)
     );
     const container = taskById.get(progress.epicId);
-    const owner = ownerOf(container?.meta.assignee) ?? me;
+    const owner = ownerOf(container?.meta.assignee) ?? starterOf(progress);
     if (nestedRuns.length === 0 && !inScope(owner, scope, me)) continue;
     flight.push({
       kind: 'fanout',

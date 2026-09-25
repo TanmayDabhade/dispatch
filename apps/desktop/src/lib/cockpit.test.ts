@@ -98,6 +98,7 @@ function input(
     liveEpicSessions: [],
     readinessById: new Map(),
     me: ME,
+    local: ME,
     scope: { kind: 'me' },
     pending: new Map(),
     landing: new Map(),
@@ -316,6 +317,120 @@ describe('buildCockpit: In flight', () => {
         ).flight
       )
     ).toEqual(['run:r-1']);
+  });
+});
+
+describe('buildCockpit: whose run it is', () => {
+  const unsigned = (id: string, taskId: string) =>
+    run(id, taskId, { dispatchedBy: undefined });
+  function fanout(startedBy: string | null, childIds: string[]): EpicProgress {
+    return {
+      epicId: 'e-1',
+      active: true,
+      session: {
+        epicId: 'e-1',
+        concurrency: 3,
+        executor: 'claude',
+        state: 'active',
+        maxSpendUsd: null,
+        maxRuns: null,
+        startedAt: '2026-09-20T00:00:00.000Z',
+        startedBy,
+        scope: 'plan',
+        updatedAt: '2026-09-20T00:00:00.000Z',
+        active: true,
+      },
+      spend: {
+        settledUsd: 0,
+        liveCount: childIds.length,
+        estimatedLiveUsd: 0,
+        runsStarted: childIds.length,
+        maxSpendUsd: null,
+        maxRuns: null,
+      },
+      children: childIds.map((id) => ({
+        id,
+        title: id,
+        status: 'working',
+        phase: 'working',
+        wave: 1,
+        openFindings: 0,
+      })),
+      waves: [],
+      liveRuns: [],
+    };
+  }
+  const epic = task('e-1', { kind: 'milestone', status: 'working' });
+  const tasks = [
+    epic,
+    task('t-a', { parent: 'e-1', status: 'working' }),
+    task('t-loose', { status: 'working' }),
+  ];
+
+  test('on a single-user daemon a run nobody signed is mine', () => {
+    const lanes = buildCockpit(
+      input({ tasks, runs: [unsigned('r-1', 't-loose')] })
+    );
+    expect(lanes.flight).toEqual([
+      expect.objectContaining({ key: 'run:r-1', owner: ME }),
+    ]);
+  });
+
+  test('an older daemon that names no human keeps a run nobody signed as mine', () => {
+    const lanes = buildCockpit(
+      input({ tasks, local: null, runs: [unsigned('r-1', 't-loose')] })
+    );
+    expect(keys(lanes.flight)).toEqual(['run:r-1']);
+  });
+
+  test('on a daemon someone else runs, a run nobody signed is nobody’s', () => {
+    const base = {
+      tasks,
+      me: 'human:maya',
+      runs: [unsigned('r-1', 't-loose')],
+    };
+    expect(buildCockpit(input(base)).flight).toEqual([]);
+    expect(
+      buildCockpit(input({ ...base, scope: { kind: 'team' } })).flight
+    ).toEqual([expect.objectContaining({ key: 'run:r-1', owner: null })]);
+  });
+
+  test('a teammate’s fan-out, runs and all, stays out of my scope', () => {
+    const base = {
+      tasks,
+      runs: [unsigned('r-a', 't-a')],
+      liveEpicSessions: [fanout('human:maya', ['t-a'])],
+    };
+    expect(buildCockpit(input(base)).flight).toEqual([]);
+    expect(
+      buildCockpit(
+        input({ ...base, scope: { kind: 'person', ref: 'human:maya' } })
+      ).flight
+    ).toEqual([
+      expect.objectContaining({ key: 'fanout:e-1', owner: 'human:maya' }),
+      expect.objectContaining({ key: 'run:r-a', owner: 'human:maya' }),
+    ]);
+  });
+
+  test('my fan-out’s runs are mine; one that names nobody is the daemon human’s', () => {
+    const mine = buildCockpit(
+      input({
+        tasks,
+        runs: [unsigned('r-a', 't-a')],
+        liveEpicSessions: [fanout(ME, ['t-a'])],
+      })
+    );
+    expect(keys(mine.flight)).toEqual(['fanout:e-1', 'run:r-a']);
+    // Seen from a teammate's window, an unnamed session is the daemon's human's, not theirs.
+    const teammate = buildCockpit(
+      input({
+        tasks,
+        me: 'human:maya',
+        runs: [unsigned('r-a', 't-a')],
+        liveEpicSessions: [fanout(null, ['t-a'])],
+      })
+    );
+    expect(teammate.flight).toEqual([]);
   });
 });
 

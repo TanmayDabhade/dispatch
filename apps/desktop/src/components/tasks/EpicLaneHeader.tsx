@@ -1,5 +1,6 @@
 import type { EpicProgress } from '@dispatch/client';
-import type { TaskListItem } from '@dispatch/core/browser';
+import type { StatusModel, TaskListItem } from '@dispatch/core/browser';
+import { isCompletedStatus, isDoneStatus } from '@dispatch/core/browser';
 import { Milestone, Waypoints } from 'lucide-react';
 import { useState } from 'react';
 
@@ -10,7 +11,6 @@ import {
 } from '../../lib/epicConcurrency';
 import type { WorkEpicOptions } from '../../lib/epicSession';
 import { rollupMilestoneStatus } from '../../lib/milestoneRollup';
-import { isStatusCompleted, isStatusDone } from '../../lib/statusModel';
 import { FanoutControls, sessionIdle } from '../milestones/FanoutControls';
 import { useShellActions } from '../shell/ShellActionsContext';
 import { statusColor, StatusIcon } from './StatusIcon';
@@ -44,6 +44,8 @@ interface EpicLaneHeaderProps {
   concurrencyDefault: number;
   /** This epic's children — the rolled-up status. */
   childTasks: TaskListItem[];
+  /** The project's statuses, which roll the children up and say the epic is landable. */
+  model: StatusModel;
   /** Opens the epic itself (its id chip) in the peek/detail dialog. */
   onOpenTask: (taskId: string) => void;
   /** The direct path: starts a session at the picker's concurrency with no ceilings. */
@@ -84,6 +86,7 @@ export function EpicLaneHeader({
   progress,
   concurrencyDefault,
   childTasks,
+  model,
   onOpenTask,
   onWork,
   onRequestWork,
@@ -101,7 +104,7 @@ export function EpicLaneHeader({
   const paused = session?.state === 'paused';
 
   const doneCount =
-    progress?.children.filter((c) => isStatusDone(c.status)).length ?? 0;
+    progress?.children.filter((c) => isDoneStatus(c.status, model)).length ?? 0;
   const totalCount = progress?.children.length ?? 0;
   const liveCount = progress?.liveRuns.length ?? 0;
   // Same "finished" rule the server's land validation applies (every child done or
@@ -114,13 +117,14 @@ export function EpicLaneHeader({
     !paused &&
     totalCount > 0 &&
     doneCount === totalCount &&
-    !isStatusCompleted(epic.meta.status);
-  const rollup = epic !== null ? rollupMilestoneStatus(childTasks) : null;
+    !isCompletedStatus(epic.meta.status, model);
+  const rollup =
+    epic !== null ? rollupMilestoneStatus(childTasks, model) : null;
 
   return (
     <>
       <GroupHeader
-        tint={rollup !== null ? statusColor(rollup) : undefined}
+        tint={rollup !== null ? statusColor(rollup, model) : undefined}
         icon={
           rollup !== null ? (
             <StatusIcon status={rollup} />
@@ -148,6 +152,7 @@ export function EpicLaneHeader({
           epic !== null && (
             <FanoutControls
               epic={epic}
+              model={model}
               progress={progress}
               count={
                 progress === undefined

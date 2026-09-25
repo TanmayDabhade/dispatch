@@ -634,6 +634,7 @@ export function FlightPlan({
           )}
           <FanoutControls
             epic={epic}
+            model={model}
             progress={progress}
             landable={landable}
             phases={false}

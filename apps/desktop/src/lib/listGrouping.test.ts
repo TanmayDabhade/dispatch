@@ -468,6 +468,47 @@ describe('sortTasks', () => {
     ).toEqual(['o', 'd', 'c']);
   });
 
+  test('a passed model beats the open project’s, which may not be set yet', () => {
+    const linear = statusModelOf({
+      statuses: ['Todo', 'Done'],
+      statusDefinitions: [
+        { name: 'Todo', type: 'unstarted', color: null },
+        { name: 'Done', type: 'completed', color: null },
+      ],
+      statusRoles: {
+        ready: 'Todo',
+        dispatched: 'Todo',
+        review: 'Todo',
+        landing: null,
+        landed: 'Done',
+        dropped: 'Done',
+      },
+    });
+    const done = task('d', { status: 'Done', priority: 'urgent' });
+    const todo = task('o', { status: 'Todo', priority: 'low' });
+    expect(
+      sortTasks([done, todo], prefs(), linear).map((t) => t.meta.id)
+    ).toEqual(['o', 'd']);
+    const milestone = task('m', { kind: 'milestone' });
+    const groups = groupTasks(
+      [
+        milestone,
+        task('a', { parent: 'm', status: 'Done' }),
+        task('b', { status: 'Todo', parent: 'n' }),
+      ],
+      prefs({ grouping: 'milestone' }),
+      {
+        statuses: ['Todo', 'Done'],
+        epics: [milestone, task('n', { kind: 'milestone' })],
+        model: linear,
+      }
+    );
+    // Finished under the passed model: it sinks below the open one and wears Done.
+    expect(groups.map((g) => g.key)).toEqual(['milestone:n', 'milestone:m']);
+    expect(groups[1]?.icon).toEqual({ kind: 'milestone', status: 'Done' });
+    expect(groups[1]?.tint).toBe('var(--status-done)');
+  });
+
   test('completedByRecency sinks landed/dropped below open rows, newest first', () => {
     const doneOld = task('d1', {
       status: 'landed',

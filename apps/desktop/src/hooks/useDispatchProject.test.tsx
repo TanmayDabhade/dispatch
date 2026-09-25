@@ -888,6 +888,39 @@ test("a live run's open scope request is surfaced from the listing, without a sc
   openScopeRequests = new Map();
 });
 
+test('a run live on open shows the step its record carries, until run.log says more', async () => {
+  const { runSteps } = await import('../lib/runStep');
+  runsFixture = [
+    {
+      ...runFixture('r-step-live', 'running'),
+      lastStep: { text: 'Running tests', at: '2026-09-25T13:00:00.000Z' },
+    },
+    {
+      ...runFixture('r-step-done', 'finished'),
+      lastStep: { text: 'Committing', at: '2026-09-25T13:00:00.000Z' },
+    },
+    runFixture('r-step-old-daemon', 'running'),
+  ] as RunMeta[];
+  await mountConnected();
+  await waitFor(() => {
+    expect(runSteps.get('r-step-live')).toBe('Running tests');
+  });
+  expect(runSteps.get('r-step-done')).toBeNull();
+  expect(runSteps.get('r-step-old-daemon')).toBeNull();
+
+  act(() => {
+    sink?.onEvent({
+      type: 'run.log',
+      runId: 'r-step-live',
+      entry: { ts: '', kind: 'thinking' },
+    } as ServerEvent);
+  });
+  await waitFor(() => {
+    expect(runSteps.get('r-step-live')).toBe('Thinking');
+  });
+  runsFixture = [];
+});
+
 function epicProgressFixtureFor(epicId: string): EpicProgress {
   return {
     epicId,

@@ -1,8 +1,9 @@
-import type { NormalizedEntry } from '@dispatch/client';
+import type { NormalizedEntry, RunMeta } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
 import {
   runStepFromEntry,
+  runStepFromRecord,
   RunStepStore,
   shellStep,
   shortPath,
@@ -121,6 +122,47 @@ test('withLiveStep replaces "Working", extends the named phases, keeps the rest'
   expect(withLiveStep('Working', null)).toBe('Working');
 });
 
+describe('runStepFromRecord', () => {
+  const record = (lastStep?: unknown) =>
+    ({ id: RUN, lastStep }) as RunMeta & { lastStep?: unknown };
+
+  // What dispatchd sends: core's RunStep, the label and when the run announced it.
+  test('reads the daemon’s { text, at } step as its label', () => {
+    const at = '2026-09-25T13:00:00.000Z';
+    expect(runStepFromRecord(record({ text: 'Editing src/a.ts', at }))).toBe(
+      'Editing src/a.ts'
+    );
+    expect(
+      runStepFromRecord(record({ text: `Using ${'x'.repeat(60)}`, at }))
+    ).toHaveLength(48);
+  });
+
+  test('reads a label as it is, clipped like a logged one', () => {
+    expect(runStepFromRecord(record('Running tests'))).toBe('Running tests');
+    expect(runStepFromRecord(record(`Using ${'x'.repeat(60)}`))).toHaveLength(
+      48
+    );
+  });
+
+  test('reads a log entry the way run.log reads it', () => {
+    expect(
+      runStepFromRecord(
+        record(tool('Edit', { file_path: `${WORKTREE}/src/foo.ts` }))
+      )
+    ).toBe('Editing src/foo.ts');
+  });
+
+  test('an older daemon’s record, or one that says nothing, gives no step', () => {
+    expect(runStepFromRecord(record())).toBeNull();
+    expect(runStepFromRecord(record('  '))).toBeNull();
+    expect(runStepFromRecord(record({ text: ' ', at: '' }))).toBeNull();
+    expect(runStepFromRecord(record({ at: '' }))).toBeNull();
+    expect(
+      runStepFromRecord(record({ ts: '', kind: 'assistant', text: 'ok' }))
+    ).toBeNull();
+  });
+});
+
 // A hand-cranked clock: `advance` runs whatever the store scheduled once its time comes.
 function fakeScheduler() {
   let now = 0;
@@ -186,6 +228,21 @@ describe('RunStepStore', () => {
     clock.advance(1000);
     expect(publishes).toBe(0);
     expect(store.get(RUN)).toBeNull();
+  });
+
+  test('a seed from the run record shows until a logged step replaces it, never after', () => {
+    const clock = fakeScheduler();
+    const store = new RunStepStore(clock);
+    store.seed(RUN, 'Running tests');
+    clock.advance(0);
+    expect(store.get(RUN)).toBe('Running tests');
+    store.record(RUN, tool('Edit', { file_path: 'a.ts' }));
+    clock.advance(250);
+    expect(store.get(RUN)).toBe('Editing a.ts');
+    // A refetched record carries what the log already said, or older: it never wins.
+    store.seed(RUN, 'Running tests');
+    clock.advance(250);
+    expect(store.get(RUN)).toBe('Editing a.ts');
   });
 
   test('an unsubscribed listener hears nothing', () => {

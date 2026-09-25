@@ -1,10 +1,10 @@
+import { isDoneStatus } from '@dispatch/core/browser';
 import { Waypoints } from 'lucide-react';
 import { useRef, useState } from 'react';
 
 import { filesFromDataTransfer } from '../../../lib/attachments';
 import { resolveExecuteModel } from '../../../lib/models';
 import { isTerminalRunState } from '../../../lib/runState';
-import { activeStatusModel, isStatusDone } from '../../../lib/statusModel';
 import {
   enrichDraftFromPlan,
   enrichPatch,
@@ -24,7 +24,9 @@ import { Button } from '@/ui/button';
  * never as one run of its own. */
 function FanoutCard({ page }: { page: TaskPageModel }) {
   const total = page.children.length;
-  const done = page.children.filter((c) => isStatusDone(c.meta.status)).length;
+  const done = page.children.filter((c) =>
+    isDoneStatus(c.meta.status, page.statusModel)
+  ).length;
   return (
     <section
       data-slot="fanout-card"
@@ -210,7 +212,7 @@ export function SpecMode({ page }: { page: TaskPageModel }) {
                 item={item}
                 tasks={project.tasksIncludingArchived}
                 tasksById={page.tasksById}
-                model={activeStatusModel()}
+                model={page.statusModel}
                 onPatch={(patch) => void page.patch(patch)}
                 onOpenTask={page.openTask}
               />
@@ -246,6 +248,7 @@ export function SpecMode({ page }: { page: TaskPageModel }) {
             latestRunByTaskId={project.latestRunByTaskId}
             onOpenTask={page.openTask}
             createPreset={{ epic: meta.id }}
+            model={page.statusModel}
           />
         </div>
       )}

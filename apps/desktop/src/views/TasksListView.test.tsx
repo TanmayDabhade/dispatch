@@ -1,17 +1,22 @@
 import type { TaskDoc } from '@dispatch/core/browser';
+import { statusModelOf } from '@dispatch/core/browser';
 import {
   act,
+  cleanup,
   fireEvent,
   render,
   screen,
   waitFor,
   within,
 } from '@testing-library/react';
-import { beforeEach, expect, test } from 'bun:test';
-import type { ReactNode } from 'react';
+import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { type ReactNode, useEffect } from 'react';
 
 import { PeopleProvider } from '../components/people/PeopleContext';
-import { testConfig } from '../components/settings/fixtures.test-helper';
+import {
+  linearWorkflowConfig,
+  testConfig,
+} from '../components/settings/fixtures.test-helper';
 import {
   type DeepLinkActions,
   DeepLinkProvider,
@@ -22,11 +27,17 @@ import {
   ShellActionsProvider,
 } from '../components/shell/ShellActionsContext';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import { setActiveStatusModel } from '../lib/statusModel';
 import { DEFAULT_TASKS_DISPLAY } from '../lib/tasksPrefs';
 import { TasksListView } from './TasksListView';
 
 // Collapse state is session-scoped; start every test with nothing folded.
 beforeEach(() => window.sessionStorage.clear());
+// Unmount before resetting, so the reset does not redraw a mounted list outside act.
+afterEach(() => {
+  cleanup();
+  setActiveStatusModel(null);
+});
 
 /** Every dispatch the bulk bar made, in order. */
 interface DispatchCall {
@@ -612,6 +623,64 @@ test('display prefs drive grouping and which properties a row shows', () => {
   expect(row.querySelector('[data-slot="list-row-leading"]')).toBeNull();
   expect(screen.getByRole('button', { name: 'Change status' })).not.toBeNull();
   expect(screen.queryByRole('button', { name: 'Change priority' })).toBeNull();
+});
+
+test('grouped by milestone, a mirrored workflow sinks and tints finished work on its first load', () => {
+  const shipped = task('e-2', 'Shipped', { kind: 'milestone' });
+  const payments = task('e-1', 'Payments', { kind: 'milestone' });
+  const tasks = [
+    shipped,
+    task('t-9', 'Old work', { parent: 'e-2', status: 'Done' }),
+    task('t-8', 'Dropped work', { parent: 'e-2', status: 'Canceled' }),
+    payments,
+    task('t-3', 'Receipts', { parent: 'e-1', status: 'Done' }),
+    task('t-1', 'Charge card', { parent: 'e-1', status: 'QA' }),
+    task('t-2', 'Refund flow', { parent: 'e-1', status: 'Todo' }),
+  ];
+  const Shell = shellWith(shellLog());
+  // As in useDispatchProject: config lands after the tasks, and the open project's model
+  // is set in an effect after the render that carries it.
+  function App({ config }: { config: DispatchProjectData['config'] }) {
+    useEffect(() => {
+      setActiveStatusModel(config === null ? null : statusModelOf(config));
+    }, [config]);
+    const data = {
+      ...dataWith(tasks, [], [shipped, payments]),
+      config,
+    } as DispatchProjectData;
+    return (
+      <Shell>
+        <TasksListView
+          data={data}
+          onSelectTask={() => {}}
+          display={{ ...DEFAULT_TASKS_DISPLAY, grouping: 'milestone' }}
+        />
+      </Shell>
+    );
+  }
+  const { container, rerender } = render(<App config={null} />);
+  act(() => rerender(<App config={linearWorkflowConfig} />));
+
+  const headers = Array.from(
+    container.querySelectorAll<HTMLElement>('[data-slot="group-header"]')
+  );
+  expect(
+    headers.map(
+      (h) => h.querySelector('[data-slot="group-header-name"]')?.textContent
+    )
+  ).toEqual(['Payments', 'Shipped']);
+  expect(headers[0]?.querySelector('[aria-label="Status: QA"]')).not.toBeNull();
+  expect(headers[0]?.style.getPropertyValue('--tint')).toBe(
+    'var(--status-progress)'
+  );
+  expect(headers[1]?.style.getPropertyValue('--tint')).toBe(
+    'var(--status-done)'
+  );
+  // Done sinks below the open rows in its group.
+  const rows = Array.from(
+    container.querySelectorAll<HTMLElement>('[data-slot="list-row"]')
+  ).map((r) => r.dataset.rowId);
+  expect(rows.slice(0, 3)).toEqual(['t-1', 't-2', 't-3']);
 });
 
 test('an empty filter result shows the no-match empty state', () => {

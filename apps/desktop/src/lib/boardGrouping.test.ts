@@ -2,7 +2,11 @@ import type { TaskDoc, TaskMeta } from '@dispatch/core/browser';
 import { defaultTaskFields } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
-import { groupTasksByLane, groupTasksByStatus } from './boardGrouping';
+import {
+  columnSuccessor,
+  groupTasksByLane,
+  groupTasksByStatus,
+} from './boardGrouping';
 
 function makeTask(
   id: string,
@@ -117,5 +121,29 @@ describe('groupTasksByLane', () => {
         );
       }
     }
+  });
+});
+
+describe('columnSuccessor', () => {
+  const lanes = groupTasksByLane(
+    [
+      makeTask('a', 'ready'),
+      makeTask('b', 'ready'),
+      makeTask('c', 'ready'),
+      makeTask('w', 'working'),
+    ],
+    ['ready', 'working'],
+    [],
+    'none'
+  );
+
+  test('the card below takes the place, else the one above, never another column', () => {
+    expect(columnSuccessor(lanes, 'a')).toBe('b');
+    expect(columnSuccessor(lanes, 'c')).toBe('b');
+    expect(columnSuccessor(lanes, 'w')).toBeNull();
+  });
+
+  test('a card no lane holds has no successor to name', () => {
+    expect(columnSuccessor(lanes, 'gone')).toBeUndefined();
   });
 });

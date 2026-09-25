@@ -1,6 +1,8 @@
 import type { TaskListItem, UpdatePatch } from '@dispatch/core/browser';
 import {
+  isCanceledStatus,
   isContainer,
+  isDoneStatus,
   parseLinearExternal,
   statusLabel,
   statusType,
@@ -43,11 +45,7 @@ import {
 } from '../../../lib/linearSettings';
 import { criteriaItems } from '../../../lib/reviewCriteria';
 import { isTerminalRunState } from '../../../lib/runState';
-import {
-  activeStatusModel,
-  isStatusCanceled,
-  isStatusDone,
-} from '../../../lib/statusModel';
+import { useStatusModelOf } from '../../../lib/statusModel';
 import { dueDateInfo } from '../../../lib/taskDates';
 import { parseTaskSections } from '../../../lib/taskDisplay';
 import { ancestorsOf } from '../../../lib/taskHierarchy';
@@ -217,7 +215,11 @@ function PropertyChips({
   const due =
     meta.dueDate === null
       ? null
-      : dueDateInfo(meta.dueDate, new Date(), isStatusDone(meta.status));
+      : dueDateInfo(
+          meta.dueDate,
+          new Date(),
+          isDoneStatus(meta.status, page.statusModel)
+        );
   return (
     <div
       data-slot="property-chips"
@@ -314,7 +316,7 @@ function TaskPageLoaded({
   );
   const runs = useMemo(() => executeRuns(allRuns), [allRuns]);
   const latestRun = runs[0];
-  const model = activeStatusModel();
+  const model = useStatusModelOf(project.config);
   const unmet = useMemo(
     () => unmetBlockers(item, tasksById, model),
     [item, tasksById, model]
@@ -450,6 +452,7 @@ function TaskPageLoaded({
     tasksById,
     unmetBlockers: unmet,
     readiness,
+    statusModel: model,
     patch,
     changeStatus,
     fail,
@@ -468,7 +471,7 @@ function TaskPageLoaded({
     statusLabel: statusLabel(meta.status),
     children: {
       total: children.length,
-      done: children.filter((c) => isStatusDone(c.meta.status)).length,
+      done: children.filter((c) => isDoneStatus(c.meta.status, model)).length,
       running: children.filter((c) => {
         const run = project.latestRunByTaskId.get(c.meta.id);
         return run !== undefined && !isTerminalRunState(run.state);
@@ -611,7 +614,7 @@ function TaskPageLoaded({
           </DropdownMenuItem>
           <DropdownMenuItem
             variant="destructive"
-            disabled={isStatusCanceled(meta.status)}
+            disabled={isCanceledStatus(meta.status, model)}
             onClick={() => changeStatus(model.roles.dropped)}
           >
             <Ban />
@@ -786,7 +789,7 @@ function TaskPageLoaded({
               stages={stages}
               active={mode === 'preview' ? autoMode : mode}
               onSelect={selectMode}
-              statusColor={statusColor(meta.status)}
+              statusColor={statusColor(meta.status, model)}
               className="max-w-[720px]"
             />
           </div>

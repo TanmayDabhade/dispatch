@@ -1,5 +1,9 @@
 import type { RunMeta } from '@dispatch/client';
-import { statusLabel } from '@dispatch/core/browser';
+import {
+  isCanceledStatus,
+  isDoneStatus,
+  statusLabel,
+} from '@dispatch/core/browser';
 import { ArrowUpRight, GitCommitHorizontal } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useMemo } from 'react';
@@ -17,7 +21,6 @@ import {
 } from '../../../lib/containerRollup';
 import { taskLedgerEntries } from '../../../lib/ledgerScope';
 import { modelLabel } from '../../../lib/models';
-import { isStatusCanceled, isStatusDone } from '../../../lib/statusModel';
 import { formatShortDate } from '../../../lib/taskDates';
 import { taskIndexOf } from '../../../lib/taskIndex';
 import { taskTimeline } from '../../../lib/taskTimeline';
@@ -146,10 +149,11 @@ export function SummaryMode({ page }: { page: TaskPageModel }) {
       page.isContainer
         ? containerRollup(
             flightScope(item, taskIndexOf(tasks).childrenOf).nodes,
-            project.runs
+            project.runs,
+            page.statusModel
           )
         : null,
-    [page.isContainer, item, tasks, project.runs]
+    [page.isContainer, item, tasks, project.runs, page.statusModel]
   );
   const runs = rollup?.runs ?? page.runs;
   const landed = rollup === null ? landingRun(runs) : undefined;
@@ -157,8 +161,8 @@ export function SummaryMode({ page }: { page: TaskPageModel }) {
   const totalTurns = runs.reduce((sum, r) => sum + (r.turns ?? 0), 0);
   const took = span(runs);
   const timeline = useMemo(() => taskTimeline(page.activity), [page.activity]);
-  const canceled = isStatusCanceled(meta.status);
-  const done = isStatusDone(meta.status);
+  const canceled = isCanceledStatus(meta.status, page.statusModel);
+  const done = isDoneStatus(meta.status, page.statusModel);
   const { result: verification, error: verificationError } =
     useTaskVerification(project.client, project.port, meta.id);
   const { entries: epicLedger } = useEpicLedger(

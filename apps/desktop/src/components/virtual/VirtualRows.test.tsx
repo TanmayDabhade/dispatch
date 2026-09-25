@@ -1,6 +1,6 @@
-import { act, render } from '@testing-library/react';
+import { act, fireEvent, render } from '@testing-library/react';
 import { expect, test } from 'bun:test';
-import { createRef, useState } from 'react';
+import { createRef, Profiler, useState } from 'react';
 
 import { VirtualRows, type VirtualRowsHandle } from './VirtualRows';
 
@@ -87,4 +87,63 @@ test('a row set that shrinks re-windows to what is left', () => {
   const { container, rerender } = render(<List />);
   rerender(<List rows={ROWS.slice(0, 3)} />);
   expect(mountedIds(container)).toEqual(['t-0', 't-1', 't-2']);
+});
+
+// Tracks on one scroller, the way the board's columns ride it.
+function SharedTracks({ tracks }: { tracks: string[] }) {
+  const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
+  return (
+    <div ref={setScroller} data-testid="scroller" style={{ overflow: 'auto' }}>
+      {tracks.map((track) => (
+        <VirtualRows
+          key={track}
+          rows={ROWS}
+          rowKey={rowKey}
+          estimateSize={size}
+          scrollElement={scroller}
+          sharedScroller
+          renderRow={(row) => (
+            <div data-row-id={`${track}:${row.id}`}>{row.id}</div>
+          )}
+        />
+      ))}
+    </div>
+  );
+}
+
+test('tracks sharing a scroller re-render in one commit, inside the scroll event', () => {
+  let commits = 0;
+  const { container, getByTestId, rerender } = render(
+    <Profiler id="tracks" onRender={() => (commits += 1)}>
+      <SharedTracks tracks={['a', 'b']} />
+    </Profiler>
+  );
+  const scroller = getByTestId('scroller');
+  // act holds back anything not rendered synchronously until it returns.
+  const scrollTo = (row: number) => {
+    let atEvent = { commits: -1, ids: [] as string[] };
+    act(() => {
+      commits = 0;
+      scroller.scrollTop = row * 36;
+      fireEvent.scroll(scroller);
+      atEvent = { commits, ids: mountedIds(container) };
+    });
+    return atEvent;
+  };
+
+  const both = scrollTo(1000);
+  expect(both.commits).toBe(1);
+  expect(both.ids).toContain('a:t-1000');
+  expect(both.ids).toContain('b:t-1000');
+
+  // A track leaving keeps the scroller's listener for the rest.
+  rerender(
+    <Profiler id="tracks" onRender={() => (commits += 1)}>
+      <SharedTracks tracks={['a']} />
+    </Profiler>
+  );
+  const one = scrollTo(1500);
+  expect(one.commits).toBe(1);
+  expect(one.ids).toContain('a:t-1500');
+  expect(one.ids.some((id) => id.startsWith('b:'))).toBe(false);
 });
