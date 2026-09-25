@@ -1,14 +1,20 @@
-import type { Assignee, Priority, TaskListItem } from '@dispatch/core/browser';
+import type {
+  Assignee,
+  Priority,
+  StatusModel,
+  TaskListItem,
+} from '@dispatch/core/browser';
 import {
   canonicalKind,
   isContainerKind,
+  isDoneStatus,
   PRIORITY_ORDER,
 } from '@dispatch/core/browser';
 
 import { statusColor } from '../components/tasks/StatusIcon';
 import { isMilestoneFinished, rollupMilestoneStatus } from './milestoneRollup';
 import { colorForEpic } from './projectColor';
-import { isStatusDone } from './statusModel';
+import { activeStatusModel } from './statusModel';
 import {
   assigneeLabel,
   assigneeRef,
@@ -71,6 +77,10 @@ export interface GroupContext {
   epics: readonly TaskListItem[];
   /** Appended as a trailing `Archived` group when non-empty (the "Show archived" toggle). */
   archivedTasks?: readonly TaskListItem[];
+  /** The project's statuses, which tint headers, roll milestones up and sink finished work.
+   * A memo keyed on config passes that config's: the module-level one updates a render
+   * later. */
+  model?: StatusModel;
 }
 
 const NO_EPIC_KEY = 'epic:none';
@@ -121,7 +131,8 @@ function comparatorFor(
  * their input order. */
 export function sortTasks(
   tasks: TaskListItem[],
-  prefs: TasksDisplayPrefs
+  prefs: TasksDisplayPrefs,
+  model: StatusModel = activeStatusModel()
 ): TaskListItem[] {
   const compare = comparatorFor(prefs);
   const sign = prefs.orderDir === 'desc' ? -1 : 1;
@@ -135,9 +146,9 @@ export function sortTasks(
   const sorted = decorated.map((d) => d.doc);
   if (!prefs.completedByRecency) return sorted;
   // The project's own status types, so Linear's "Done"/"Canceled" sink too.
-  const open = sorted.filter((doc) => !isStatusDone(doc.meta.status));
+  const open = sorted.filter((doc) => !isDoneStatus(doc.meta.status, model));
   const done = sorted
-    .filter((doc) => isStatusDone(doc.meta.status))
+    .filter((doc) => isDoneStatus(doc.meta.status, model))
     .map((doc, index) => ({ doc, index }))
     .sort((a, b) => {
       const cmp = byDateDesc('updated')(a.doc, b.doc);
@@ -216,7 +227,11 @@ function bucket(
 
 // Buckets by status in config order, with a trailing bucket per status the config does not
 // list but a task still carries (a renamed status must not vanish from the list).
-function byStatus(tasks: TaskListItem[], ctx: GroupContext): Bucket[] {
+function byStatus(
+  tasks: TaskListItem[],
+  ctx: GroupContext,
+  model: StatusModel
+): Bucket[] {
   const buckets = new Map<string, Bucket>();
   const add = (status: string) =>
     buckets.set(
@@ -224,7 +239,7 @@ function byStatus(tasks: TaskListItem[], ctx: GroupContext): Bucket[] {
       bucket({
         key: `status:${status}`,
         label: statusLabel(status),
-        tint: statusColor(status),
+        tint: statusColor(status, model),
         icon: { kind: 'status', status },
         preset: { status },
         epicId: null,
@@ -338,7 +353,11 @@ function containerHomes(
 // A parent issue is a row with its sub-issues under it, never a group of its own.
 // Headers wear the rolled-up status, finished ones sink to the end, then any dangling
 // parent ids, then "No milestone".
-function byMilestone(tasks: TaskListItem[], ctx: GroupContext): Bucket[] {
+function byMilestone(
+  tasks: TaskListItem[],
+  ctx: GroupContext,
+  model: StatusModel
+): Bucket[] {
   const containers = ctx.epics.filter((e) => isContainerKind(e.meta.kind));
   const homeOf = containerHomes(tasks, ctx.epics);
   const direct = new Map<string, TaskListItem[]>();
@@ -429,22 +448,19 @@ function byMilestone(tasks: TaskListItem[], ctx: GroupContext): Bucket[] {
   }
 
   for (const b of result) {
-    const rollup = rollupMilestoneStatus(b.tasks);
+    const rollup = rollupMilestoneStatus(b.tasks, model);
     b.icon = { kind: 'milestone', status: rollup };
-    b.tint = statusColor(rollup);
+    b.tint = statusColor(rollup, model);
   }
+  const finished = (b: Bucket) => isMilestoneFinished(b.tasks, model);
   const ordered = [
-    ...result.filter((b) => !isFinishedBucket(b)),
-    ...result.filter(isFinishedBucket),
+    ...result.filter((b) => !finished(b)),
+    ...result.filter(finished),
   ];
   if (noMilestone.length > 0) {
     ordered.push(noParentBucket('No milestone', noMilestone));
   }
   return ordered;
-}
-
-function isFinishedBucket(b: Bucket): boolean {
-  return isMilestoneFinished(b.tasks);
 }
 
 // Agents first, then people by handle, then unassigned.
@@ -512,16 +528,17 @@ export function groupTasks(
     ? tasks
     : tasks.filter((doc) => !isSubtask(doc, containerIds));
 
+  const model = ctx.model ?? activeStatusModel();
   let buckets: Bucket[];
   switch (prefs.grouping) {
     case 'status':
-      buckets = byStatus(visible, ctx);
+      buckets = byStatus(visible, ctx, model);
       break;
     case 'epic':
       buckets = byEpic(visible, ctx);
       break;
     case 'milestone':
-      buckets = byMilestone(visible, ctx);
+      buckets = byMilestone(visible, ctx, model);
       break;
     case 'assignee':
       buckets = byAssignee(visible);
@@ -554,7 +571,7 @@ export function groupTasks(
       label: b.label,
       tint: b.tint,
       icon: b.icon,
-      rows: nestRows(sortTasks(b.tasks, prefs), prefs),
+      rows: nestRows(sortTasks(b.tasks, prefs, model), prefs),
       preset: b.preset,
       epicId: b.epicId,
       archived: false,
@@ -568,7 +585,7 @@ export function groupTasks(
       label: 'Archived',
       tint: null,
       icon: null,
-      rows: nestRows(sortTasks([...archived], prefs), prefs),
+      rows: nestRows(sortTasks([...archived], prefs, model), prefs),
       preset: {},
       epicId: null,
       archived: true,

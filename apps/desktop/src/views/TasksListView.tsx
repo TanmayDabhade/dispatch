@@ -48,7 +48,7 @@ import {
   visibleRowIds,
 } from '../lib/listGrouping';
 import { colorForEpic } from '../lib/projectColor';
-import { activeStatusModel } from '../lib/statusModel';
+import { useStatusModelOf } from '../lib/statusModel';
 import { assigneeLabel, priorityLabel, statusLabel } from '../lib/taskDisplay';
 import {
   DEFAULT_TASKS_DISPLAY,
@@ -135,6 +135,7 @@ export function TasksListView({
   onRequestDisplay,
 }: TasksListViewProps) {
   const shell = useShellActions();
+  const model = useStatusModelOf(data.config);
   // `null` outside App's provider (the harness, view tests): no `Copy link` row then.
   const deepLink = useDeepLinkActions();
   const directory = usePeople();
@@ -204,6 +205,7 @@ export function TasksListView({
       archivedTasks: data.showArchived
         ? data.archivedTasks.filter(passes)
         : undefined,
+      model,
     });
   }, [
     data.tasks,
@@ -213,6 +215,7 @@ export function TasksListView({
     data.archivedTasks,
     taskFilter,
     prefs,
+    model,
   ]);
 
   const landingByTaskId = useMemo(
@@ -718,7 +721,7 @@ export function TasksListView({
                     onClick={() =>
                       void data.moveTaskStatus(
                         menuDoc.meta.id,
-                        activeStatusModel().roles.dropped
+                        model.roles.dropped
                       )
                     }
                   >

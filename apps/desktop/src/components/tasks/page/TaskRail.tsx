@@ -1,5 +1,9 @@
 import type { TaskListItem } from '@dispatch/core/browser';
-import { isContainerKind, parseLinearExternal } from '@dispatch/core/browser';
+import {
+  isContainerKind,
+  isDoneStatus,
+  parseLinearExternal,
+} from '@dispatch/core/browser';
 import { ArrowUpRight, CalendarArrowUp, Link2, Move, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
@@ -11,7 +15,6 @@ import {
   resolveLinearLink,
 } from '../../../lib/linearSettings';
 import { isTerminalRunState } from '../../../lib/runState';
-import { activeStatusModel, isStatusDone } from '../../../lib/statusModel';
 import { formatShortDate } from '../../../lib/taskDates';
 import { assigneeLabel, kindLabel } from '../../../lib/taskDisplay';
 import { ancestorsOf, parentCandidates } from '../../../lib/taskHierarchy';
@@ -272,11 +275,17 @@ export function TaskRail({
     );
     return buildFlightPlan(page.children, {
       liveTaskIds,
-      model: activeStatusModel(),
+      model: page.statusModel,
       concurrency:
         project.epicProgressById.get(meta.id)?.session?.concurrency ?? null,
     });
-  }, [page.children, project.runs, project.epicProgressById, meta.id]);
+  }, [
+    page.children,
+    page.statusModel,
+    project.runs,
+    project.epicProgressById,
+    meta.id,
+  ]);
 
   return (
     <aside
@@ -320,7 +329,7 @@ export function TaskRail({
         )}
         <DueDateControl
           value={meta.dueDate}
-          done={isStatusDone(meta.status)}
+          done={isDoneStatus(meta.status, page.statusModel)}
           onChange={(dueDate) => void page.patch({ dueDate })}
         />
         <CycleControl
@@ -475,7 +484,7 @@ export function TaskRail({
             item={item}
             tasks={tasks}
             tasksById={page.tasksById}
-            model={activeStatusModel()}
+            model={page.statusModel}
             onPatch={(patch) => void page.patch(patch)}
             onOpenTask={page.openTask}
           />

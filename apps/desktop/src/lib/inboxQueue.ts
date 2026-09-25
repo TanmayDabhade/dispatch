@@ -5,7 +5,12 @@ import type {
   RunMeta,
   RunQuestion,
 } from '@dispatch/client';
-import type { TaskDoc, TaskListItem } from '@dispatch/core/browser';
+import type {
+  StatusModel,
+  TaskDoc,
+  TaskListItem,
+} from '@dispatch/core/browser';
+import { isDoneStatus } from '@dispatch/core/browser';
 
 import type { TaskSpec } from '../components/tasks/TaskSpecView';
 import type { FeedRowModel } from './controlRoom';
@@ -14,7 +19,7 @@ import type { FeedState } from './feedState';
 import { FEED_STATE_LABEL, isUrgentState } from './feedState';
 import type { InboxEntry } from './inbox';
 import { criteriaItems } from './reviewCriteria';
-import { isStatusDone } from './statusModel';
+import { activeStatusModel } from './statusModel';
 import { parseTaskSections } from './taskDisplay';
 
 /** Everything `buildFeed` needs that the Inbox actually varies on — the Inbox is the
@@ -35,6 +40,9 @@ export interface InboxInput {
    * that person's to answer: still listed, under Teammates, but not in Needs you
    * and not in the badge. Absent means everything is yours — a solo project. */
   me?: string | null;
+  /** The project's statuses, which say a task is already landed or dropped. A memo keyed
+   * on config passes that config's; absent reads the open project's. */
+  model?: StatusModel;
 }
 
 interface InboxSection {
@@ -138,6 +146,7 @@ function collectReadyToLand(input: InboxInput): FeedRowModel[] {
   const epicTitleById = new Map(
     input.epics.map((e) => [e.meta.id, e.meta.title])
   );
+  const model = input.model ?? activeStatusModel();
 
   const newestByTask = new Map<string, (typeof input.runs)[number]>();
   for (const run of input.runs) {
@@ -148,7 +157,7 @@ function collectReadyToLand(input: InboxInput): FeedRowModel[] {
     if (queuedRunIds.has(run.id)) continue;
     const task = taskById.get(run.taskId);
     const status = task?.meta.status;
-    if (status !== undefined && isStatusDone(status)) continue;
+    if (status !== undefined && isDoneStatus(status, model)) continue;
     const seen = newestByTask.get(run.taskId);
     if (seen === undefined || run.createdAt > seen.createdAt) {
       newestByTask.set(run.taskId, run);

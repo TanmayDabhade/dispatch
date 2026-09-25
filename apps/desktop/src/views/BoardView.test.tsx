@@ -8,7 +8,10 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, expect, test } from 'bun:test';
 import type { ReactNode } from 'react';
 
-import { testConfig } from '../components/settings/fixtures.test-helper';
+import {
+  linearWorkflowConfig,
+  testConfig,
+} from '../components/settings/fixtures.test-helper';
 import {
   SavedViewsProvider,
   useSavedViewsContext,
@@ -1243,6 +1246,58 @@ test('leaving the milestones layout retires the request so returning does not re
   fireEvent.click(screen.getByRole('tab', { name: 'Board' }));
   fireEvent.click(screen.getByRole('tab', { name: 'Milestones' }));
   expect(dialogTitle()).toBeNull();
+});
+
+test('epic lane headers roll up under a mirrored workflow on their first load', () => {
+  enableEpicLanes();
+  const epics = [
+    task('e-1', 'Payments epic', 'In Progress', null, 'epic'),
+    task('e-2', 'Search epic', 'In Progress', null, 'epic'),
+  ];
+  const tasks = [
+    ...epics,
+    task('t-1', 'Card one', 'QA', 'e-1'),
+    task('t-2', 'Card two', 'Done', 'e-1'),
+    task('t-3', 'Card three', 'Done', 'e-2'),
+    task('t-4', 'Card four', 'Canceled', 'e-2'),
+  ];
+  const finished: EpicProgress = {
+    ...progress('complete'),
+    epicId: 'e-2',
+    children: [
+      { ...progress(null).children[0], id: 't-3', status: 'Done' },
+      { ...progress(null).children[0], id: 't-4', status: 'Canceled' },
+    ],
+  };
+  // Config lands after the tasks. The open project's model is left unset: it is set in an
+  // effect after the render config lands in, and any later board render (a resize, a
+  // cursor move) would mask a lane still reading it, so the lanes must read config alone.
+  function App({ config }: { config: DispatchProjectData['config'] }) {
+    const data = {
+      ...boardData(tasks, { progress: [finished] }),
+      epics,
+      config,
+    } as DispatchProjectData;
+    return view('board', { data });
+  }
+  const { rerender } = render(<App config={null} />);
+  act(() => rerender(<App config={linearWorkflowConfig} />));
+
+  const lanes = Array.from(
+    document.querySelectorAll<HTMLElement>(
+      '[data-slot=board-lane-header] [data-slot=group-header]'
+    )
+  );
+  expect(lanes).toHaveLength(2);
+  // Payments rolls up to its review-role status, not the built-in `ready`.
+  expect(lanes[0]?.querySelector('[aria-label="Status: QA"]')).not.toBeNull();
+  expect(lanes[0]?.style.getPropertyValue('--tint')).toBe(
+    'var(--status-progress)'
+  );
+  // Search's children are all Done or Canceled: it reads done and offers Land.
+  expect(lanes[1]?.querySelector('[aria-label="Status: Done"]')).not.toBeNull();
+  expect(lanes[1]?.style.getPropertyValue('--tint')).toBe('var(--status-done)');
+  expect(within(lanes[1]).getByRole('button', { name: 'Land' })).toBeTruthy();
 });
 
 test('a lane header’s Send agents… confirms through the options-shaped handleWorkEpic', async () => {

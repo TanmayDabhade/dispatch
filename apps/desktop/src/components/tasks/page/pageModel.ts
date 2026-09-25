@@ -1,5 +1,9 @@
 import type { RunMeta } from '@dispatch/client';
-import type { TaskListItem, UpdatePatch } from '@dispatch/core/browser';
+import type {
+  StatusModel,
+  TaskListItem,
+  UpdatePatch,
+} from '@dispatch/core/browser';
 
 import type { ActivityEntry } from '../../../lib/activityFeed';
 import type { DispatchReadiness } from '../../../lib/dispatchReadiness';
@@ -42,6 +46,8 @@ export interface TaskPageModel {
   unmetBlockers: string[];
   /** Whether it can go now and what to check first; the card, the menu and `d` share it. */
   readiness: DispatchReadiness;
+  /** The project's statuses, from its config in the render that carries it. */
+  statusModel: StatusModel;
   patch: (patch: UpdatePatch) => Promise<void>;
   changeStatus: (status: string) => void;
   fail: (title: string, err: unknown) => void;

@@ -6,6 +6,7 @@ import type {
   EpicWave,
 } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
+import { DEFAULT_STATUS_MODEL } from '@dispatch/core/browser';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
@@ -91,6 +92,7 @@ function mount(
   const { unmount } = render(
     <FanoutControls
       epic={payments}
+      model={DEFAULT_STATUS_MODEL}
       progress={progress}
       count={
         progress === undefined
@@ -157,6 +159,7 @@ test('the concurrency picker only shows before a session exists', () => {
   const { unmount } = render(
     <FanoutControls
       epic={payments}
+      model={DEFAULT_STATUS_MODEL}
       progress={noSession}
       count={{ done: 1, total: 2 }}
       landable={false}
@@ -171,6 +174,7 @@ test('the concurrency picker only shows before a session exists', () => {
   render(
     <FanoutControls
       epic={payments}
+      model={DEFAULT_STATUS_MODEL}
       progress={progressWith([child('t-1', 'working')], {
         session: sessionWith('active'),
       })}

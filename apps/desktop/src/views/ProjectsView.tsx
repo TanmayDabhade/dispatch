@@ -42,6 +42,7 @@ import {
   type TreeRollup,
   type TreeRow,
 } from '../lib/projectTree';
+import { useStatusModelOf } from '../lib/statusModel';
 import { dayFromNow, dueDateInfo } from '../lib/taskDates';
 import { kindLabel } from '../lib/taskDisplay';
 import { stepKey } from '../lib/virtualRows';
@@ -103,9 +104,10 @@ export function ProjectsView({
     () => new Set(data.attentionByTaskId.keys()),
     [data.attentionByTaskId]
   );
+  const model = useStatusModelOf(data.config);
   const tree = useMemo(
-    () => buildProjectTree(data.tasks, attention),
-    [data.tasks, attention]
+    () => buildProjectTree(data.tasks, attention, model),
+    [data.tasks, attention, model]
   );
   const [toggled, setToggled] = useState<ReadonlySet<string>>(() =>
     readCollapsedGroups(TOGGLED_PROJECT_NODES_STORAGE_KEY)

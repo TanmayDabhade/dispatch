@@ -5,7 +5,11 @@ import type {
   RunMeta,
   RunState,
 } from '@dispatch/client';
-import type { TaskListItem, UpdatePatch } from '@dispatch/core/browser';
+import type {
+  StatusModel,
+  TaskListItem,
+  UpdatePatch,
+} from '@dispatch/core/browser';
 import {
   DndContext,
   type DragEndEvent,
@@ -54,6 +58,7 @@ import {
   statusFromDropZoneId,
 } from '../../lib/boardGrouping';
 import type { WorkEpicOptions } from '../../lib/epicSession';
+import { useActiveStatusModel } from '../../lib/statusModel';
 import type { TaskAttention } from '../../lib/taskAttention';
 import { statusLabel } from '../../lib/taskDisplay';
 import {
@@ -103,6 +108,9 @@ interface TaskBoardProps {
   epicConcurrencyDefault: number;
   /** Every epic in the project — one lane per epic that has children, in this order. */
   epics: TaskListItem[];
+  /** The project's statuses, which roll each epic lane up; defaults to the open project's.
+   * A caller holding config passes its model, which is right in the render config lands. */
+  statusModel?: StatusModel;
   /** The Display popover's model — the card properties, and `subGrouping` for the swim
    * lanes (`none` is the flat board with an epic crumb on each card). Defaults to
    * `DEFAULT_TASKS_DISPLAY`; the ordering is applied by the caller (see `tasks`). */
@@ -584,6 +592,7 @@ export function TaskBoard({
   readinessById,
   epicConcurrencyDefault,
   epics,
+  statusModel,
   display = DEFAULT_TASKS_DISPLAY,
   collapsedLaneKeys,
   onToggleLane,
@@ -608,6 +617,8 @@ export function TaskBoard({
   archivedTaskIds = NO_IDS,
 }: TaskBoardProps) {
   const shell = useShellActions();
+  const activeModel = useActiveStatusModel();
+  const model = statusModel ?? activeModel;
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   // The scroller and the lanes' stack as state: the virtual columns need the scroller
   // once it exists, and the lane offsets are measured off both.
@@ -814,6 +825,7 @@ export function TaskBoard({
                           ? (childrenByEpicId.get(epic.meta.id) ?? [])
                           : []
                       }
+                      model={model}
                       onOpenTask={onSelect}
                       onWork={onWorkEpic}
                       onRequestWork={onRequestWorkEpic}

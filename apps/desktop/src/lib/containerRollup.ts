@@ -1,7 +1,8 @@
 import type { RunMeta } from '@dispatch/client';
-import type { TaskListItem } from '@dispatch/core/browser';
+import type { StatusModel, TaskListItem } from '@dispatch/core/browser';
+import { isCanceledStatus, isCompletedStatus } from '@dispatch/core/browser';
 
-import { isStatusCanceled, isStatusCompleted } from './statusModel';
+import { activeStatusModel } from './statusModel';
 import { executeRuns } from './taskPageMode';
 
 /** The run that carried a task's work in: the merged one, else the one with a PR. */
@@ -33,10 +34,12 @@ export interface ContainerRollup {
  * What a container's summary reads, rolled up from the work under it (the tasks its plan
  * draws): which sub-issues landed or were dropped, the run that landed each, and every
  * execute run behind them, for the totals. A container never runs an agent of its own.
+ * Landed and dropped are by `model`, the project's statuses.
  */
 export function containerRollup(
   work: readonly TaskListItem[],
-  allRuns: readonly RunMeta[]
+  allRuns: readonly RunMeta[],
+  model: StatusModel = activeStatusModel()
 ): ContainerRollup {
   const ids = new Set(work.map((t) => t.meta.id));
   const runs = executeRuns(allRuns.filter((r) => ids.has(r.taskId)));
@@ -49,8 +52,8 @@ export function containerRollup(
   let landed = 0;
   let dropped = 0;
   const subIssues = work.map((task) => {
-    if (isStatusCompleted(task.meta.status)) landed++;
-    else if (isStatusCanceled(task.meta.status)) dropped++;
+    if (isCompletedStatus(task.meta.status, model)) landed++;
+    else if (isCanceledStatus(task.meta.status, model)) dropped++;
     return {
       task,
       landedBy: landingRun(runsByTask.get(task.meta.id) ?? []),

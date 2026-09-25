@@ -1,16 +1,15 @@
-import type { TaskListItem } from '@dispatch/core/browser';
+import type { StatusModel, TaskListItem } from '@dispatch/core/browser';
 import {
   canonicalKind,
+  isCanceledStatus,
+  isCompletedStatus,
   isContainerKind,
+  isDoneStatus,
   isStartedStatus,
   PRIORITY_ORDER,
 } from '@dispatch/core/browser';
 
-import {
-  activeStatusModel,
-  isStatusCanceled,
-  isStatusCompleted,
-} from './statusModel';
+import { activeStatusModel } from './statusModel';
 
 /**
  * The Projects page's model: Linear's hierarchy as one tree — initiatives, their projects,
@@ -60,7 +59,8 @@ const EMPTY_ROLLUP: TreeRollup = {
 function childOrder(
   a: TaskListItem,
   b: TaskListItem,
-  index: ReadonlyMap<string, number>
+  index: ReadonlyMap<string, number>,
+  model: StatusModel
 ): number {
   const ka = KIND_RANK[canonicalKind(a.meta.kind)] ?? 3;
   const kb = KIND_RANK[canonicalKind(b.meta.kind)] ?? 3;
@@ -70,8 +70,8 @@ function childOrder(
     const db = b.meta.dueDate ?? '9999';
     if (da !== db) return da < db ? -1 : 1;
   } else if (ka === KIND_RANK.task) {
-    const doneA = isClosed(a) ? 1 : 0;
-    const doneB = isClosed(b) ? 1 : 0;
+    const doneA = isDoneStatus(a.meta.status, model) ? 1 : 0;
+    const doneB = isDoneStatus(b.meta.status, model) ? 1 : 0;
     if (doneA !== doneB) return doneA - doneB;
     const pa = PRIORITY_ORDER[a.meta.priority];
     const pb = PRIORITY_ORDER[b.meta.priority];
@@ -80,20 +80,16 @@ function childOrder(
   return (index.get(a.meta.id) ?? 0) - (index.get(b.meta.id) ?? 0);
 }
 
-function isClosed(doc: TaskListItem): boolean {
-  return (
-    isStatusCompleted(doc.meta.status) || isStatusCanceled(doc.meta.status)
-  );
-}
-
 /**
  * Indexes `tasks` into the hierarchy. A project listed under several initiatives appears
  * under each (its first is `parent`, the rest `initiatives`). Issues outside every
- * container are not part of the tree. `attention` names the tasks whose run needs a human.
+ * container are not part of the tree. `attention` names the tasks whose run needs a human;
+ * `model` is the project's statuses, which a memo keyed on config passes from that config.
  */
 export function buildProjectTree(
   tasks: readonly TaskListItem[],
-  attention: ReadonlySet<string> = new Set()
+  attention: ReadonlySet<string> = new Set(),
+  model: StatusModel = activeStatusModel()
 ): ProjectTree {
   const byId = new Map<string, TaskListItem>();
   const index = new Map<string, number>();
@@ -122,7 +118,8 @@ export function buildProjectTree(
     }
     if (!hasParent && isContainerKind(doc.meta.kind)) roots.push(doc);
   }
-  const compare = (a: TaskListItem, b: TaskListItem) => childOrder(a, b, index);
+  const compare = (a: TaskListItem, b: TaskListItem) =>
+    childOrder(a, b, index, model);
   const children = new Map<string, readonly string[]>();
   for (const [id, list] of lists) {
     children.set(
@@ -143,7 +140,9 @@ export function buildProjectTree(
     for (const childId of children.get(id) ?? []) {
       const child = byId.get(childId);
       if (child === undefined) continue;
-      if (!isContainerKind(child.meta.kind)) countIssue(sum, child, attention);
+      if (!isContainerKind(child.meta.kind)) {
+        countIssue(sum, child, attention, model);
+      }
       const below = children.has(childId) ? rollupOf(childId) : EMPTY_ROLLUP;
       sum.done += below.done;
       sum.total += below.total;
@@ -167,18 +166,19 @@ export function buildProjectTree(
 function countIssue(
   sum: TreeRollup,
   doc: TaskListItem,
-  attention: ReadonlySet<string>
+  attention: ReadonlySet<string>,
+  model: StatusModel
 ): void {
   const { status } = doc.meta;
-  if (isStatusCanceled(status)) return;
+  if (isCanceledStatus(status, model)) return;
   sum.total += 1;
-  if (isStatusCompleted(status)) {
+  if (isCompletedStatus(status, model)) {
     sum.done += 1;
     return;
   }
   // A closed issue's failed or unreviewed run is history, not a risk.
   if (attention.has(doc.meta.id)) sum.attention += 1;
-  if (isStartedStatus(status, activeStatusModel())) sum.started += 1;
+  if (isStartedStatus(status, model)) sum.started += 1;
 }
 
 /**

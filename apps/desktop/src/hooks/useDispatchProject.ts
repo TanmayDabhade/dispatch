@@ -53,7 +53,14 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import { hideArchivedRuns } from '../lib/archiveFilter';
 import {
@@ -993,7 +1000,6 @@ export function useDispatchProject(
   // still loading, rather than carrying the previous project's toggles over.
   useEffect(() => {
     setNotificationKinds(config?.notifications.kinds ?? null);
-    setActiveStatusModel(config === undefined ? null : statusModelOf(config));
     applyLabelColors(config?.labels ?? null);
   }, [config]);
   // The sync chip's data source — refetched only on mount and on the
@@ -1102,6 +1108,10 @@ export function useDispatchProject(
     return ids;
   }, [runs]);
   const statusModel = useMemo(() => statusModelOf(config), [config]);
+  // Before paint, so a subscribed glyph never shows a frame of the old statuses.
+  useLayoutEffect(() => {
+    setActiveStatusModel(statusModel);
+  }, [statusModel]);
   const stillWaiting = useCallback(
     (taskId: string) => {
       const task = listedTasks?.find((t) => t.meta.id === taskId);
@@ -2067,7 +2077,10 @@ export function useDispatchProject(
     });
   }, [runs]);
 
-  const blockedIds = useMemo(() => computeBlockedIds(tasks ?? []), [tasks]);
+  const blockedIds = useMemo(
+    () => computeBlockedIds(tasks ?? [], statusModel),
+    [tasks, statusModel]
+  );
 
   const liveRunStateByTaskId = useMemo(() => {
     const map = new Map<string, RunState>();

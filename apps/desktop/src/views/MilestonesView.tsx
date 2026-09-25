@@ -1,5 +1,6 @@
 import type { EpicProgressChild } from '@dispatch/client';
 import type { TaskListItem } from '@dispatch/core/browser';
+import { isCompletedStatus, isDoneStatus } from '@dispatch/core/browser';
 import { Target } from 'lucide-react';
 import type { KeyboardEvent } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -41,7 +42,7 @@ import {
   milestoneHealthPill,
 } from '../lib/milestoneRisk';
 import { isMilestoneFinished } from '../lib/milestoneRollup';
-import { isStatusCompleted, isStatusDone } from '../lib/statusModel';
+import { useStatusModelOf } from '../lib/statusModel';
 import {
   DEFAULT_TASKS_DISPLAY,
   type TasksDisplayPrefs,
@@ -117,6 +118,7 @@ export function MilestonesView({
   onRequestDisplay,
 }: MilestonesViewProps) {
   const shell = useShellActions();
+  const model = useStatusModelOf(data.config);
   const prefs = useMemo<TasksDisplayPrefs>(
     () => ({ ...(display ?? DEFAULT_TASKS_DISPLAY), grouping: 'milestone' }),
     [display]
@@ -180,20 +182,24 @@ export function MilestonesView({
         {
           statuses: data.config?.statuses ?? [],
           epics: data.epics,
+          model,
         }
       ).filter((g) => g.epicId !== null),
-    [data.tasks, data.config, data.epics, prefs]
+    [data.tasks, data.config, data.epics, prefs, model]
   );
 
   // A finished milestone's default is folded, so its key in `toggled` means "opened".
   const collapsed = useMemo(() => {
     const set = new Set<string>();
     for (const g of groups) {
-      const finished = isMilestoneFinished(g.rows.map((r) => r.doc));
+      const finished = isMilestoneFinished(
+        g.rows.map((r) => r.doc),
+        model
+      );
       if (finished !== toggled.has(g.key)) set.add(g.key);
     }
     return set;
-  }, [groups, toggled]);
+  }, [groups, toggled, model]);
 
   const orderedIds = useMemo(
     () => visibleRowIds(groups, collapsed),
@@ -244,7 +250,10 @@ export function MilestonesView({
     const group = groups.find((g) => g.epicId === focusEpic.epicId);
     if (group === undefined || listEl === null) return;
     servedFocusNonce.current = focusEpic.nonce;
-    const finished = isMilestoneFinished(group.rows.map((r) => r.doc));
+    const finished = isMilestoneFinished(
+      group.rows.map((r) => r.doc),
+      model
+    );
     setToggled((prev) => {
       // Open means "flipped" for a finished milestone and "not flipped" otherwise.
       if (finished === prev.has(group.key)) return prev;
@@ -256,7 +265,7 @@ export function MilestonesView({
     if (focusEpic.dispatch) {
       setDispatchEpic({ epicId: focusEpic.epicId, mode: 'start' });
     }
-  }, [focusEpic, groups, listEl]);
+  }, [focusEpic, groups, listEl, model]);
 
   // Stable across renders so memo'd rows skip re-rendering on a cursor move.
   const openRow = useCallback(
@@ -408,8 +417,10 @@ export function MilestonesView({
   // One milestone's header: rolled-up status glyph, title, then the fan-out controls.
   function renderHeader(group: ListGroup, isCollapsed: boolean) {
     const children = group.rows.map((r) => r.doc);
-    const done = children.filter((t) => isStatusDone(t.meta.status)).length;
-    const finished = isMilestoneFinished(children);
+    const done = children.filter((t) =>
+      isDoneStatus(t.meta.status, model)
+    ).length;
+    const finished = isMilestoneFinished(children, model);
     const status = deriveMilestoneStatus(
       children,
       data.latestRunByTaskId,
@@ -424,14 +435,15 @@ export function MilestonesView({
     // so the button never leads a 409 it could have predicted.
     const progressTotal = progress?.children.length ?? 0;
     const progressDone =
-      progress?.children.filter((c) => isStatusDone(c.status)).length ?? 0;
+      progress?.children.filter((c) => isDoneStatus(c.status, model)).length ??
+      0;
     const landable =
       epic !== undefined &&
       session?.state !== 'active' &&
       session?.state !== 'paused' &&
       progressTotal > 0 &&
       progressDone === progressTotal &&
-      !isStatusCompleted(epic.meta.status);
+      !isCompletedStatus(epic.meta.status, model);
     return (
       <div data-group-key={group.key}>
         <GroupHeader
@@ -450,6 +462,7 @@ export function MilestonesView({
             epic !== undefined && (
               <FanoutControls
                 epic={epic}
+                model={model}
                 progress={progress}
                 count={{ done, total: children.length }}
                 landable={landable}

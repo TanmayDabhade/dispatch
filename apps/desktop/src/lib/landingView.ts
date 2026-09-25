@@ -6,9 +6,10 @@ import type {
   LandingSnapshot,
   RepoPr,
 } from '@dispatch/client';
-import { isContainerKind } from '@dispatch/core/browser';
+import type { StatusModel } from '@dispatch/core/browser';
+import { isCompletedStatus, isContainerKind } from '@dispatch/core/browser';
 
-import { isStatusCompleted } from './statusModel';
+import { activeStatusModel } from './statusModel';
 
 /** The Landing view's read model over `LandingSnapshot`. Zero React — happy-dom
  * can't exercise the table reliably, so filter/group/label logic lives here. */
@@ -313,7 +314,8 @@ export interface LandedTaskRow {
 /**
  * "Recently landed", from the task store instead of the merge queue's in-memory history —
  * the queue forgets on every daemon restart, while a landed task's status is durable. The
- * caller passes the archived-inclusive task list (most landed tasks get archived).
+ * caller passes the archived-inclusive task list (most landed tasks get archived), and
+ * the project's statuses, which say what landed.
  */
 export function landedFromTasks(
   tasks: readonly {
@@ -325,11 +327,13 @@ export function landedFromTasks(
       updated: string;
     };
   }[],
+  model: StatusModel = activeStatusModel(),
   cap = 30
 ): LandedTaskRow[] {
   return tasks
     .filter(
-      (t) => isStatusCompleted(t.meta.status) && !isContainerKind(t.meta.kind)
+      (t) =>
+        isCompletedStatus(t.meta.status, model) && !isContainerKind(t.meta.kind)
     )
     .sort((a, b) => b.meta.updated.localeCompare(a.meta.updated))
     .slice(0, cap)

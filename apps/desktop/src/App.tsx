@@ -87,6 +87,7 @@ import { buildPaletteEntries } from './lib/paletteEntries';
 import { basename } from './lib/projectName';
 import { prNumberFromUrl } from './lib/reviewTarget';
 import { isTerminalRunState } from './lib/runState';
+import { useStatusModelOf } from './lib/statusModel';
 import { useTasksViewMode } from './lib/tasksViewMode';
 import {
   addProject,
@@ -637,6 +638,7 @@ function App() {
   // Everything the Inbox view shows — the Control room feed's urgent tiers, one row per
   // task. See `buildInbox`; this one result also feeds the sidebar badge and the rail's
   // attention strip, so the three surfaces always agree.
+  const statusModel = useStatusModelOf(data.config);
   const inboxData = useMemo(
     () =>
       buildInbox({
@@ -649,6 +651,7 @@ function App() {
         openQuestions: data.openQuestions,
         fixLoops: data.fixLoops,
         me: data.me,
+        model: statusModel,
       }),
     [
       data.runs,
@@ -660,6 +663,7 @@ function App() {
       data.pendingApprovals,
       data.openQuestions,
       data.fixLoops,
+      statusModel,
     ]
   );
 

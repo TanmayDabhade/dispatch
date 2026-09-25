@@ -6,11 +6,21 @@ import type {
   RunMeta,
 } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
-import { act, fireEvent, render, screen } from '@testing-library/react';
-import { beforeEach, expect, test } from 'bun:test';
-import type { ReactNode } from 'react';
+import { statusModelOf } from '@dispatch/core/browser';
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from '@testing-library/react';
+import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { type ReactNode, useEffect } from 'react';
 
-import { testConfig } from '../components/settings/fixtures.test-helper';
+import {
+  linearWorkflowConfig,
+  testConfig,
+} from '../components/settings/fixtures.test-helper';
 import {
   type CreateTaskPreset,
   type ShellActions,
@@ -24,10 +34,16 @@ import {
   TOGGLED_MILESTONES_STORAGE_KEY,
 } from '../lib/collapsedEpics';
 import type { WorkEpicOptions } from '../lib/epicSession';
+import { setActiveStatusModel } from '../lib/statusModel';
 import { type FocusEpicRequest, MilestonesView } from './MilestonesView';
 
 // Collapse state is session-scoped; start every test with nothing folded.
 beforeEach(() => window.sessionStorage.clear());
+// Unmount before resetting, so the reset does not redraw a mounted view outside act.
+afterEach(() => {
+  cleanup();
+  setActiveStatusModel(null);
+});
 
 function task(
   id: string,
@@ -384,6 +400,56 @@ test('a finished milestone sinks to the bottom, starts collapsed, and reopens on
   expect(
     window.sessionStorage.getItem(COLLAPSED_GROUPS_STORAGE_KEY)
   ).toBeNull();
+});
+
+test('a mirrored workflow folds, sinks and tints a finished milestone on its first load', () => {
+  const tasks = [
+    shipped,
+    task('t-9', 'Old work', { parent: 'e-2', status: 'Done' }),
+    task('t-8', 'Dropped work', { parent: 'e-2', status: 'Canceled' }),
+    payments,
+    task('t-1', 'Charge card', { parent: 'e-1', status: 'QA' }),
+    task('t-2', 'Refund flow', { parent: 'e-1', status: 'Todo' }),
+  ];
+  const Shell = shellWith({ presets: [], views: [] });
+  // As in useDispatchProject: config lands after the tasks, and the open project's model
+  // is set in an effect after the render that carries it.
+  function App({ config }: { config: DispatchProjectData['config'] }) {
+    useEffect(() => {
+      setActiveStatusModel(config === null ? null : statusModelOf(config));
+    }, [config]);
+    const data = {
+      ...dataWith(tasks, [shipped, payments]),
+      config,
+    } as DispatchProjectData;
+    return (
+      <Shell>
+        <MilestonesView data={data} onOpenTask={() => {}} />
+      </Shell>
+    );
+  }
+  const { container, rerender } = render(<App config={null} />);
+  act(() => rerender(<App config={linearWorkflowConfig} />));
+
+  const headers = Array.from(
+    container.querySelectorAll<HTMLElement>('[data-slot="group-header"]')
+  );
+  const nameOf = (h: HTMLElement | undefined) =>
+    h?.querySelector('[data-slot="group-header-name"]')?.textContent;
+  expect(headers.map(nameOf)).toEqual(['Payments', 'Shipped']);
+  // Shipped is finished under Linear's types: folded, done-tinted, every child counted.
+  expect(screen.queryByText('Old work')).toBeNull();
+  expect(headers[1]?.style.getPropertyValue('--tint')).toBe(
+    'var(--status-done)'
+  );
+  expect(
+    headers[1]?.querySelector('[data-slot="milestone-progress"]')?.textContent
+  ).toBe('2/2');
+  // Payments rolls up to its review-role status, not the built-in `ready`.
+  expect(headers[0]?.querySelector('[aria-label="Status: QA"]')).not.toBeNull();
+  expect(headers[0]?.style.getPropertyValue('--tint')).toBe(
+    'var(--status-progress)'
+  );
 });
 
 test('j/k and Enter walk and open the rows; + files the new task under the milestone', () => {

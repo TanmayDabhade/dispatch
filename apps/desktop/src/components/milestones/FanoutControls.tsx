@@ -1,5 +1,6 @@
 import type { EpicProgress, EpicSession } from '@dispatch/client';
-import type { TaskListItem } from '@dispatch/core/browser';
+import type { StatusModel, TaskListItem } from '@dispatch/core/browser';
+import { isCompletedStatus } from '@dispatch/core/browser';
 import {
   ChevronsUp,
   GitMerge,
@@ -24,7 +25,6 @@ import {
   spendTone,
   waveSteps,
 } from '../../lib/epicSession';
-import { isStatusCompleted } from '../../lib/statusModel';
 import { IconButton } from '@/ui/ai/icon-button';
 import { LabelPill, PillButton } from '@/ui/ai/pill';
 import { ProgressGlyph } from '@/ui/chrome';
@@ -33,6 +33,8 @@ import { StepStrip } from '@/ui/chrome/StepStrip';
 
 export interface FanoutControlsProps {
   epic: TaskListItem;
+  /** The project's statuses, which say the epic has landed. */
+  model: StatusModel;
   /** `undefined` until the epic's progress fetch resolves — the verbs still render, read
    * as "no session". */
   progress: EpicProgress | undefined;
@@ -93,6 +95,7 @@ export function sessionIdle(session: EpicSession | null): boolean {
  */
 export function FanoutControls({
   epic,
+  model,
   progress,
   count,
   landable,
@@ -250,7 +253,7 @@ export function FanoutControls({
         Land
       </PillButton>
     );
-  } else if (isStatusCompleted(epic.meta.status) || count?.total === 0) {
+  } else if (isCompletedStatus(epic.meta.status, model) || count?.total === 0) {
     // Nothing to send: a landed epic is done, and an empty milestone would open a dialog
     // whose confirm is disabled.
     controls = null;

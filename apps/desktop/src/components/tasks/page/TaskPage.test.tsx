@@ -11,6 +11,7 @@ import { describe, expect, mock, test } from 'bun:test';
 import type { ReactNode } from 'react';
 
 import type { TaskTab } from '../../../lib/appNav';
+import { linearWorkflowConfig } from '../../settings/fixtures.test-helper';
 import {
   fakeHost,
   newLog,
@@ -235,6 +236,24 @@ describe('the mode follows the task', () => {
     if (outcomes === null) throw new Error('no sub-issue outcomes');
     fireEvent.click(within(outcomes).getByText('Title of t-3'));
     expect(log.peeks).toEqual(['t-3']);
+  });
+
+  test('a mirrored workflow’s finished container reads config’s statuses before the open project’s model is set', () => {
+    const host = fakeHost(newLog(), {
+      tasks: [
+        task('t-1', { kind: 'milestone', status: 'Done' }),
+        task('t-2', { parent: 't-1', status: 'Done' }),
+        task('t-3', { parent: 't-1', status: 'Canceled' }),
+      ],
+    });
+    mount({
+      ...host,
+      project: { ...host.project, config: linearWorkflowConfig },
+    });
+    expect(modeOf()).toBe('summary');
+    expect(
+      document.querySelector('[data-slot=summary-mode]')?.textContent
+    ).toContain('1 of 2 sub-issues landed · 1 dropped');
   });
 
   test('a container opens on its plan, where the Flight Plan draws every sub-issue', () => {

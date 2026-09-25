@@ -33,6 +33,7 @@ import { landingStateByTaskId } from '../lib/landingBadge';
 import { sortTasks } from '../lib/listGrouping';
 import { countMergeReady } from '../lib/mergeReady';
 import { viewMatches } from '../lib/savedViews';
+import { useStatusModelOf } from '../lib/statusModel';
 import {
   applyTaskFilters,
   EMPTY_TASK_FILTER_SET,
@@ -349,6 +350,8 @@ export function BoardView({
       subGrouping: prev.subGrouping === 'epic' ? 'none' : 'epic',
     }));
 
+  // The project's statuses in the render its config lands: done sinks and lanes roll up by it.
+  const model = useStatusModelOf(data.config);
   // With Display › Show archived on, archived tasks join the board so their (typically done)
   // column shows them dimmed — `data.tasks` stays untouched so every other consumer keeps its
   // archived-excluded meaning.
@@ -404,8 +407,8 @@ export function BoardView({
   // The cards in the order a column shows them (Display › Ordering, done sinking when asked).
   // Sorted here, once, so the j/k cursor below and `TaskBoard` walk the same sequence.
   const orderedBoardTasks = useMemo(
-    () => sortTasks(filteredBoardTasks, prefs),
-    [filteredBoardTasks, prefs]
+    () => sortTasks(filteredBoardTasks, prefs, model),
+    [filteredBoardTasks, prefs, model]
   );
   // Card counts per status from the *unfiltered* board set — empty-column visibility is
   // decided from these, so a filter narrows cards without making columns vanish.
@@ -483,8 +486,14 @@ export function BoardView({
     [data.mergeQueue]
   );
   const mergeReadyCount = useMemo(
-    () => countMergeReady(data.runs, data.tasksIncludingArchived, queuedRunIds),
-    [data.runs, data.tasksIncludingArchived, queuedRunIds]
+    () =>
+      countMergeReady(
+        data.runs,
+        data.tasksIncludingArchived,
+        queuedRunIds,
+        model
+      ),
+    [data.runs, data.tasksIncludingArchived, queuedRunIds, model]
   );
   const handleMergeAll = async () => {
     setMergeAllPending(true);
@@ -824,6 +833,7 @@ export function BoardView({
             }
             tasks={orderedBoardTasks}
             archivedTaskIds={archivedTaskIds}
+            statusModel={model}
             statuses={visibleStatuses}
             display={prefs}
             readyIds={data.readyIds}

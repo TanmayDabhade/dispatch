@@ -38,6 +38,29 @@ export const testConfig: DispatchConfig = {
   notifications: DEFAULT_NOTIFICATIONS,
 };
 
+/** A Linear team's workflow mirrored into config: none of these names is a built-in,
+ *  so a surface still reading the built-in model gets every one of them wrong. */
+export const linearWorkflowConfig: DispatchConfig = {
+  ...testConfig,
+  statuses: ['Backlog', 'Todo', 'In Progress', 'QA', 'Done', 'Canceled'],
+  statusDefinitions: [
+    { name: 'Backlog', type: 'backlog', color: null },
+    { name: 'Todo', type: 'unstarted', color: null },
+    { name: 'In Progress', type: 'started', color: null },
+    { name: 'QA', type: 'started', color: null },
+    { name: 'Done', type: 'completed', color: null },
+    { name: 'Canceled', type: 'canceled', color: null },
+  ],
+  statusRoles: {
+    ready: 'Todo',
+    dispatched: 'In Progress',
+    review: 'QA',
+    landing: null,
+    landed: 'Done',
+    dropped: 'Canceled',
+  },
+};
+
 export const testProject = { path: '/tmp/demo', name: 'demo' };
 
 /** A `DispatchProjectData` stub carrying only what the settings sections read.

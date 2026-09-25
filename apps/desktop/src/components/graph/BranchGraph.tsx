@@ -67,7 +67,7 @@ interface BranchDotProps {
  * a size down. */
 function BranchDot({ row, status, model, onOpen }: BranchDotProps) {
   const kind = dotKind(status, model);
-  const color = statusColor(status);
+  const color = statusColor(status, model);
   const cx = laneX(row.lane);
   const cy = rowY(row.row);
   const r = row.onPath ? DOT_RADIUS : MUTED_DOT_RADIUS;
