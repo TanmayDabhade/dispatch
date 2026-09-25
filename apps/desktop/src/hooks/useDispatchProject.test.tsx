@@ -63,6 +63,9 @@ let taskListGate: Promise<void> | null = null;
 let configFixture: object | null = null;
 let configFetches = 0;
 
+// The daemon's cached readiness readings (`/api/tasks/readiness`).
+let readinessFixture: Record<string, dispatchClient.ReadinessReading> = {};
+
 // What `createRun` answers; a test swaps in a held or refused promise.
 let createRunResult: () => Promise<RunMeta> = () =>
   Promise.reject(new Error('no runs in this test'));
@@ -85,7 +88,7 @@ void mock.module('@dispatch/client', () => ({
         ? Promise.reject(new Error('no config in this test'))
         : Promise.resolve(configFixture);
     },
-    fetchReadiness: () => Promise.resolve({}),
+    fetchReadiness: () => Promise.resolve(readinessFixture),
     createRun: () => createRunResult(),
     fetchReadyTasks: () => Promise.resolve([]),
     fetchTaskList: async () => {
@@ -480,6 +483,68 @@ test('a git change or a reconnect refetches config', async () => {
   });
   taskListFixture = null;
   configFixture = null;
+});
+
+// A reading was judged against the text it describes. A draft edited and then moved to
+// ready must not bring its old reading along (a level-0 one would file it under Needs you
+// as an unclear spec until the next judge).
+test('a task edited while not ready drops its reading before it turns ready', async () => {
+  const draft = (title: string, status: string, updated: string): TaskDoc => {
+    const doc = taskDoc('t-2', title, updated);
+    return { ...doc, meta: { ...doc.meta, status } };
+  };
+  configFixture = {
+    statuses: ['draft', 'ready', 'working', 'review', 'landed', 'dropped'],
+    notifications: { kinds: null },
+  };
+  taskListFixture = [
+    { meta: taskDoc('t-1', 'Ready one', '2026-01-01T00:00:00.000Z').meta },
+    { meta: draft('Vague', 'draft', '2026-01-01T00:00:00.000Z').meta },
+  ];
+  readinessFixture = {
+    't-2': {
+      level: 0,
+      label: 'title only',
+      confidence: 1,
+      splitProbability: 0,
+    },
+  };
+  taskDocs.clear();
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { result } = renderHook(
+    () => useDispatchProject('/repo', { selectedRunId: null }),
+    { wrapper: wrapper(queryClient) }
+  );
+  await waitFor(() => {
+    expect(sink).not.toBeNull();
+    expect([...result.current.readyIds]).toEqual(['t-1']);
+    expect(
+      queryClient.getQueryData(['dispatch-readiness', PORT])
+    ).toBeDefined();
+  });
+
+  taskDocs.set('t-2', draft('Clear now', 'draft', '2026-01-02T00:00:00.000Z'));
+  act(() => {
+    sink?.onEvent({ type: 'task.changed', ids: ['t-2'] });
+  });
+  await waitFor(() => {
+    expect(
+      result.current.tasks.find((t) => t.meta.id === 't-2')?.meta.title
+    ).toBe('Clear now');
+  });
+  taskDocs.set('t-2', draft('Clear now', 'ready', '2026-01-03T00:00:00.000Z'));
+  act(() => {
+    sink?.onEvent({ type: 'task.changed', ids: ['t-2'] });
+  });
+  await waitFor(() => {
+    expect(result.current.readyIds.has('t-2')).toBe(true);
+  });
+  expect(result.current.readinessById.get('t-2')).toBeUndefined();
+  taskListFixture = null;
+  configFixture = null;
+  readinessFixture = {};
 });
 
 // Mounts with a one-ready-task list and a config, returning the hook's result.

@@ -1312,7 +1312,7 @@ export function useDispatchProject(
       readyTasks(allTasksIncludingArchived, statusModel).map((t) => t.meta.id)
     );
   }, [config, allTasksIncludingArchived, statusModel]);
-  const { readinessById, scheduleJudge } = useReadiness(
+  const { readinessById, noteTask, scheduleJudge } = useReadiness(
     client,
     port,
     allTasksFetched,
@@ -1454,10 +1454,10 @@ export function useDispatchProject(
   );
 
   // Read through a ref, so a new judge callback never reopens the socket.
-  const scheduleJudgeRef = useRef(scheduleJudge);
+  const readinessRef = useRef({ noteTask, scheduleJudge });
   useEffect(() => {
-    scheduleJudgeRef.current = scheduleJudge;
-  }, [scheduleJudge]);
+    readinessRef.current = { noteTask, scheduleJudge };
+  }, [noteTask, scheduleJudge]);
 
   useEffect(() => {
     if (client === null) return;
@@ -1474,8 +1474,10 @@ export function useDispatchProject(
         void queryClient.invalidateQueries({ queryKey: epicProgressKeyPrefix });
       }, EPIC_REFRESH_DEBOUNCE_MS);
     };
+    // Tasks changed unseen, so readings may have too.
     const refetchTaskList = () => {
       refreshEpicProgress();
+      readinessRef.current.scheduleJudge();
       if (listTimer !== null) return;
       listTimer = setTimeout(() => {
         listTimer = null;
@@ -1491,9 +1493,9 @@ export function useDispatchProject(
     };
     // Refetches just the named tasks into the cached list; an unscoped or
     // wide change, or a list fetch already in flight, refetches the list.
-    // Fan-out progress refetches only when a changed task can move it.
+    // Fan-out progress and readiness refetch only when a changed task can
+    // move them.
     const patchTasks = (ids: readonly string[] | undefined) => {
-      scheduleJudgeRef.current();
       if (
         ids === undefined ||
         ids.length === 0 ||
@@ -1507,9 +1509,12 @@ export function useDispatchProject(
       for (const id of ids) {
         client.fetchTask(id).then(
           (doc) => {
-            if (touchesFanout(cachedList(), id, doc.meta)) {
-              refreshEpicProgress();
-            }
+            const list = cachedList();
+            if (touchesFanout(list, id, doc.meta)) refreshEpicProgress();
+            readinessRef.current.noteTask(
+              list?.find((t) => t.meta.id === id)?.meta,
+              doc
+            );
             applyTaskDoc(doc);
           },
           (err: unknown) => {
