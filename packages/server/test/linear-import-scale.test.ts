@@ -248,3 +248,64 @@ describe(`importing ${ISSUES} issues through the GraphQL client`, () => {
     expect(requests.map((r) => r.operation)).toEqual(['Probe']);
   }, 60_000);
 });
+
+describe(`importing ${ISSUES} issues across two linked teams`, () => {
+  const OPS_STATES = STATES.map((s) => ({ ...s, id: `ops-${s.id}` }));
+
+  // The same world, every other issue in Ops (on its own copy of the
+  // workflow), and the project shared by both teams.
+  function twoTeams(): GraphqlWorld {
+    const base = world(ISSUES);
+    base.projects = base.projects.map((p) => ({
+      ...p,
+      teamIds: ['team-1', 'team-2'],
+    }));
+    base.issues = base.issues.map((issue, n) =>
+      n % 2 === 0
+        ? issue
+        : {
+            ...issue,
+            identifier: `OPS-${n}`,
+            team: { id: 'team-2', key: 'OPS' },
+            state: OPS_STATES[n % OPS_STATES.length],
+          }
+    );
+    base.teams = [
+      { id: 'team-2', key: 'OPS', name: 'Ops', states: OPS_STATES },
+    ];
+    return base;
+  }
+
+  it('pages each team once, shares one vocabulary, and idles on a probe per team', async () => {
+    writeFileSync(
+      join(root, '.dispatch', 'config.yml'),
+      'autoCommit: false\nlinear:\n  enabled: true\n  teamIds: [team-1, team-2]\n'
+    );
+    const { fetch, requests } = graphqlFetch(twoTeams());
+    const sync = new LinearSync({
+      rootDir: root,
+      store,
+      cache,
+      events,
+      client: new HttpLinearClient('lin_api_test', { fetchImpl: fetch }),
+      localHumanRef: 'human:wyat',
+    });
+
+    const summary = await sync.importIssues();
+
+    expect(summary.errors).toEqual([]);
+    // Every issue once, and the shared project once.
+    expect(summary.created).toBe(ISSUES + 1);
+    const pages = requests.filter((r) => r.operation === 'IssuesAll').length;
+    expect(pages).toBe(2 * Math.ceil(ISSUES / 2 / ISSUE_PAGE));
+    expect(requests.some((r) => r.operation === 'IssuesById')).toBe(false);
+    // Both teams' identical workflows collapse into one set of statuses.
+    const statuses = new Set(store.list().map((d) => d.meta.status));
+    expect(statuses.size).toBeLessThanOrEqual(STATES.length);
+
+    await sync.syncOnce();
+    requests.length = 0;
+    await sync.syncOnce();
+    expect(requests.map((r) => r.operation)).toEqual(['Probe', 'Probe']);
+  }, 300_000);
+});

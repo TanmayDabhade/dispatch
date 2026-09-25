@@ -5,7 +5,10 @@ import type { LinearWorkflowState } from '../src/linearMap.js';
 import {
   defaultStatusRoles,
   migrateStatus,
+  primaryStatusRoles,
   reconcileStatusRoles,
+  renamesForTeam,
+  statusesFromTeams,
   statusesFromWorkflowStates,
   statusRenames,
   statusTypeOfState,
@@ -73,6 +76,55 @@ describe('statusesFromWorkflowStates', () => {
   });
 });
 
+describe('statusesFromTeams', () => {
+  // A second team on a customized workflow: a QA-less board with a Design
+  // state of its own, and a "Review" that means done there.
+  const OPS: LinearWorkflowState[] = [
+    { id: 'o-backlog', name: 'Backlog', type: 'backlog', position: 0 },
+    { id: 'o-todo', name: 'todo', type: 'unstarted', position: 0 },
+    { id: 'o-progress', name: 'In Progress', type: 'started', position: 0 },
+    { id: 'o-design', name: 'Design', type: 'started', position: 1 },
+    { id: 'o-review', name: 'In Review', type: 'completed', position: 0 },
+    { id: 'o-done', name: 'Done', type: 'completed', position: 1 },
+    { id: 'o-canceled', name: 'Canceled', type: 'canceled', position: 0 },
+  ];
+
+  it('merges states by name and type, one status per shared state', () => {
+    const { definitions, names } = statusesFromTeams([STATES, OPS]);
+    expect(definitions.map((d) => [d.name, d.type])).toEqual([
+      ['Triage', 'triage'],
+      ['Backlog', 'backlog'],
+      ['Todo', 'unstarted'],
+      ['In Progress', 'started'],
+      // Ops' Design follows the state before it on Ops' board.
+      ['Design', 'started'],
+      ['QA', 'started'],
+      ['In Review', 'started'],
+      // Same name, other type: a status of its own.
+      ['In Review (2)', 'completed'],
+      ['Done', 'completed'],
+      ['Canceled', 'canceled'],
+      ['Duplicate', 'canceled'],
+    ]);
+    expect(names['o-todo']).toBe('Todo');
+    expect(names['o-progress']).toBe(names['s-progress']);
+    expect(names['o-review']).toBe('In Review (2)');
+    expect(names['s-review']).toBe('In Review');
+  });
+
+  it('never renames the primary team’s statuses when a team is linked', () => {
+    const alone = statusesFromTeams([STATES]).names;
+    const linked = statusesFromTeams([STATES, OPS]).names;
+    for (const state of STATES) expect(linked[state.id]).toBe(alone[state.id]);
+  });
+
+  it('is the single-team generation for one team', () => {
+    expect(statusesFromTeams([STATES])).toEqual(
+      statusesFromWorkflowStates(STATES)
+    );
+  });
+});
+
 describe('defaultStatusRoles', () => {
   it('routes runs to started, review to the review-named state, landing nowhere', () => {
     const { definitions } = statusesFromWorkflowStates(STATES);
@@ -91,6 +143,18 @@ describe('defaultStatusRoles', () => {
       STATES.filter((s) => s.id !== 's-review')
     );
     expect(defaultStatusRoles(definitions).review).toBe('In Progress');
+  });
+
+  it('takes several teams’ roles from the primary team’s statuses alone', () => {
+    const ops: LinearWorkflowState[] = [
+      { id: 'o-design', name: 'Design', type: 'started', position: 0 },
+      { id: 'o-shipped', name: 'Shipped', type: 'completed', position: 0 },
+    ];
+    const generated = statusesFromTeams([STATES, ops]);
+    expect(generated.definitions.map((d) => d.name)).toContain('Design');
+    expect(primaryStatusRoles(generated, STATES)).toEqual(
+      defaultStatusRoles(statusesFromWorkflowStates(STATES).definitions)
+    );
   });
 
   it('makes do with a team that has no unstarted or canceled states', () => {
@@ -203,8 +267,34 @@ describe('statusRenames and migrateStatus', () => {
 
   it('renames a status when its state was renamed in Linear', () => {
     const renames = statusRenames({ 's-qa': 'QA' }, { 's-qa': 'Verify' });
-    expect([...renames]).toEqual([['QA', 'Verify']]);
-    expect(migrateStatus('QA', { ...migration, renames })).toBe('Verify');
+    expect([...renames.shared]).toEqual([['QA', 'Verify']]);
+    expect(migrateStatus('QA', { ...migration, renames: renames.shared })).toBe(
+      'Verify'
+    );
+  });
+
+  it('moves a shared status only for the team that renamed its state', () => {
+    // Both teams' Todo merged into one status; only Ops renamed its own.
+    const renames = statusRenames(
+      { 's-todo': 'Todo', 'o-todo': 'Todo' },
+      { 's-todo': 'Todo', 'o-todo': 'Ready' },
+      new Map([
+        ['s-todo', 'team-1'],
+        ['o-todo', 'team-2'],
+      ])
+    );
+    expect([...renames.shared]).toEqual([]);
+    expect([...renamesForTeam(renames, 'team-2')]).toEqual([['Todo', 'Ready']]);
+    expect([...renamesForTeam(renames, 'team-1')]).toEqual([]);
+    expect([...renamesForTeam(renames, null)]).toEqual([]);
+  });
+
+  it('moves a shared status for everyone when every team renamed it alike', () => {
+    const renames = statusRenames(
+      { 's-todo': 'Todo', 'o-todo': 'Todo' },
+      { 's-todo': 'Ready', 'o-todo': 'Ready' }
+    );
+    expect([...renames.shared]).toEqual([['Todo', 'Ready']]);
   });
 
   it('leaves a status that is still defined alone', () => {

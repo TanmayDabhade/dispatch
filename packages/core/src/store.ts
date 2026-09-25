@@ -84,6 +84,7 @@ export interface CreateInput {
   initiatives?: string[];
   color?: string | null;
   icon?: string | null;
+  sortOrder?: number | null;
   /** Who is creating it, as an actor ref. */
   creator?: Assignee | null;
   /** The id in an external tracker (`linear:<uuid>`), linked from the start. */
@@ -122,6 +123,7 @@ export interface UpdatePatch {
   initiatives?: string[];
   color?: string | null;
   icon?: string | null;
+  sortOrder?: number | null;
   /** Who created it; a tracker sync backfills it from the remote record. */
   creator?: Assignee | null;
 
@@ -247,6 +249,7 @@ export function newTaskDoc(
     ...(input.creator === undefined ? {} : { creator: input.creator }),
     ...(input.color === undefined ? {} : { color: input.color }),
     ...(input.icon === undefined ? {} : { icon: input.icon }),
+    ...(input.sortOrder === undefined ? {} : { sortOrder: input.sortOrder }),
   };
   // The initial description is caller-supplied, so it's escaped the same
   // way setSection escapes a later edit to the same section.

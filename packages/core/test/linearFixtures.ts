@@ -183,6 +183,18 @@ export function blankIssue(
   };
 }
 
+/** Labels by lowercased key, each key listing every label that spells it. */
+function labelIndex(
+  labels: readonly LinearLabel[]
+): Map<string, LinearLabel[]> {
+  const out = new Map<string, LinearLabel[]>();
+  for (const l of labels) {
+    const key = labelKey(l).toLowerCase();
+    out.set(key, [...(out.get(key) ?? []), l]);
+  }
+  return out;
+}
+
 /** A mapping context over `tasks`, with the fixture workspace's vocabulary. */
 export function context(
   tasks: readonly TaskMeta[],
@@ -200,15 +212,14 @@ export function context(
     tasks: new Map(tasks.map((t) => [t.id, t])),
     taskByRemote,
     statusByState: new Map(Object.entries(generated.names)),
-    stateByStatus: new Map(
-      Object.entries(generated.names).map(([id, name]) => [name, id])
-    ),
+    teamStates: new Map([['team-1', STATES]]),
+    defaultTeamId: 'team-1',
     model: {
       definitions: generated.definitions,
       roles: defaultStatusRoles(generated.definitions),
     },
     people: peopleIndex(PEOPLE, 'human:wyat'),
-    labels: new Map(labels.map((l) => [labelKey(l).toLowerCase(), l])),
+    labels: labelIndex(labels),
     labelsById: new Map(labels.map((l) => [l.id, l])),
     includeAcceptanceCriteria: opts.includeAcceptanceCriteria ?? true,
     projectStatuses: PROJECT_STATUSES,

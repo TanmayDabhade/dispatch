@@ -1,23 +1,27 @@
-// The per-pass picture of the linked team: its workflow states mirrored into
-// the project's statuses, its users folded into the people registry, and the
+// The per-pass picture of the linked teams: their workflow states mirrored into
+// the project's statuses, their users folded into the people registry, and the
 // mapping context every field projection reads.
 import {
-  defaultStatusRoles,
+  labelColorIndex,
   labelKey,
   loadConfig,
   migrateStatus,
   parseLinearExternal,
   peopleIndex,
+  primaryStatusRoles,
   reconcileStatusRoles,
+  renamesForTeam,
   resolvePeople,
-  statusesFromWorkflowStates,
+  statusesFromTeams,
   statusModelOf,
   statusRenames,
+  syncLinearLabels,
   syncLinearPeople,
   updateConfig,
 } from '@dispatch/core';
 import type {
   DispatchConfig,
+  LabelColorPush,
   LinearLabel,
   LinearMapContext,
   LinearProjectStatus,
@@ -37,8 +41,10 @@ import type { LinearSyncState } from './state.js';
 export interface PassContext extends LinearMapContext {
   tasks: Map<string, TaskMeta>;
   taskByRemote: Map<string, string>;
-  labels: Map<string, LinearLabel>;
+  labels: Map<string, LinearLabel[]>;
   labelsById: Map<string, LinearLabel>;
+  /** The label registry's colors by lowercased ref, for labels a push creates. */
+  labelColors: ReadonlyMap<string, string>;
 }
 
 function sameDefinitions(
@@ -77,33 +83,57 @@ export interface StatusRegeneration {
   migrated: string[];
 }
 
+/** A linked team as status generation sees it, primary first. */
+export interface WorkflowTeam {
+  id: string;
+  key: string;
+  states: readonly LinearWorkflowState[];
+}
+
+/** The linked team a linked issue was last seen in, by its identifier's key. */
+export function linkedIssueTeam(
+  state: LinearSyncState,
+  teamByKey: ReadonlyMap<string, string>,
+  issueId: string
+): string | null {
+  const identifier = state.links[issueId]?.identifier ?? '';
+  const key = identifier.slice(0, identifier.lastIndexOf('-'));
+  return teamByKey.get(key) ?? null;
+}
+
 /**
- * Makes the project's statuses the team's workflow states (names, types,
- * colors, order) and its roles the generated defaults plus any user override,
- * then moves every task whose status left the vocabulary onto its successor.
- * A migration is bookkeeping, so it keeps each task's `updated`.
+ * Makes the project's statuses the linked teams' workflow states (names,
+ * types, colors, order; merged across teams by name and type, see
+ * statusesFromTeams) and its roles the generated defaults plus any user
+ * override, then moves every task whose status left the vocabulary onto its
+ * successor, following its own issue's team's renames. A migration is
+ * bookkeeping, so it keeps each task's `updated`.
  */
 export function regenerateStatuses(
   rootDir: string,
   store: TaskStorePort,
   docs: Map<string, TaskDoc>,
   state: LinearSyncState,
-  states: readonly LinearWorkflowState[]
+  teams: readonly WorkflowTeam[]
 ): StatusRegeneration {
   const config = loadConfig(rootDir);
-  const generated = statusesFromWorkflowStates(states);
+  const states = teams.flatMap((t) => t.states);
+  const generated = statusesFromTeams(teams.map((t) => t.states));
   if (generated.definitions.length === 0) {
     return { config, configChanged: false, migrated: [] };
   }
   const names = generated.definitions.map((d) => d.name);
-  const renames = statusRenames(state.stateNames, generated.names);
-  const fresh = defaultStatusRoles(generated.definitions);
+  const teamOf = new Map(
+    teams.flatMap((t) => t.states.map((s) => [s.id, t.id] as const))
+  );
+  const renames = statusRenames(state.stateNames, generated.names, teamOf);
+  const fresh = primaryStatusRoles(generated, teams[0]?.states ?? []);
   const roles = reconcileStatusRoles(
     config.statusRoles,
     state.generatedRoles,
     fresh,
     names,
-    renames
+    renames.shared
   );
   state.stateNames = generated.names;
   state.generatedRoles = fresh;
@@ -123,10 +153,25 @@ export function regenerateStatuses(
     })),
     statusRoles: roles,
   });
+  const teamByKey = new Map(teams.map((t) => [t.key, t.id]));
+  const perTeam = new Map<string | null, ReadonlyMap<string, string>>();
+  const renamesOf = (doc: TaskDoc) => {
+    const ref = parseLinearExternal(doc.meta.external);
+    const team =
+      ref?.entity === 'issue'
+        ? linkedIssueTeam(state, teamByKey, ref.id)
+        : null;
+    let own = perTeam.get(team);
+    if (own === undefined) {
+      own = renamesForTeam(renames, team);
+      perTeam.set(team, own);
+    }
+    return own;
+  };
   const migrated: string[] = [];
   for (const doc of docs.values()) {
     const status = migrateStatus(doc.meta.status, {
-      renames,
+      renames: renamesOf(doc),
       before,
       after,
       legacyMap: config.linear.statusMap,
@@ -167,6 +212,64 @@ export function syncPeople(
   };
 }
 
+/** What folding Linear's labels into the registry left behind. */
+export interface LabelRegistrySync {
+  config: DispatchConfig;
+  changed: boolean;
+  /** Local color edits to write to Linear. */
+  push: LabelColorPush[];
+  /** Why the registry could not be written, or null. */
+  error: string | null;
+}
+
+/**
+ * Folds the linked teams' labels into `labels:` and settles colors against
+ * the stored base. `state.labelColors` takes the next base, which assumes the
+ * color writes land. A registry that cannot be written is reported and left
+ * as it was, base and all, so the rest of the pass still runs.
+ */
+export function syncLabels(
+  rootDir: string,
+  config: DispatchConfig,
+  labels: readonly LinearLabel[],
+  state: LinearSyncState,
+  direction: { mayPull: boolean; mayPush: boolean }
+): LabelRegistrySync {
+  const result = syncLinearLabels({
+    configured: config.labels ?? [],
+    linear: labels,
+    base: state.labelColors,
+    ...direction,
+  });
+  let next = config;
+  if (result.changed) {
+    try {
+      next = updateConfig(rootDir, { labels: result.configured });
+    } catch (err) {
+      const why = err instanceof Error ? err.message : String(err);
+      return {
+        config,
+        changed: false,
+        push: [],
+        error: `label registry not updated: ${why}`,
+      };
+    }
+  }
+  state.labelColors = result.base;
+  return {
+    config: next,
+    changed: result.changed,
+    push: result.push,
+    error: null,
+  };
+}
+
+/** The linked teams as a mapping context sees them, primary first. */
+export interface LinkedTeam {
+  id: string;
+  states: readonly LinearWorkflowState[];
+}
+
 /** The mapping context over the pass's task snapshot. */
 export function buildContext(
   rootDir: string,
@@ -175,7 +278,8 @@ export function buildContext(
   docs: Map<string, TaskDoc>,
   labels: readonly LinearLabel[],
   projectStatuses: readonly LinearProjectStatus[],
-  localRef: string
+  localRef: string,
+  teams: readonly LinkedTeam[]
 ): PassContext {
   const tasks = new Map<string, TaskMeta>();
   const taskByRemote = new Map<string, string>();
@@ -184,22 +288,24 @@ export function buildContext(
     const ref = parseLinearExternal(doc.meta.external);
     if (ref !== null) taskByRemote.set(ref.id, doc.meta.id);
   }
-  const statusByState = new Map(Object.entries(state.stateNames));
-  const stateByStatus = new Map(
-    Object.entries(state.stateNames).map(([id, name]) => [name, id])
-  );
   const people = resolvePeople(config.people ?? [], rosterMembers(rootDir));
+  const labelIndex = new Map<string, LinearLabel[]>();
+  const labelsById = new Map<string, LinearLabel>();
+  const ctx = { labels: labelIndex, labelsById };
+  for (const label of labels) trackLabel(ctx, label);
   return {
     tasks,
     taskByRemote,
-    statusByState,
-    stateByStatus,
+    statusByState: new Map(Object.entries(state.stateNames)),
+    teamStates: new Map(teams.map((t) => [t.id, t.states])),
+    defaultTeamId: teams[0]?.id ?? '',
     model: statusModelOf(config),
     people: peopleIndex(people, localRef),
-    labels: new Map(labels.map((l) => [labelKey(l).toLowerCase(), l])),
-    labelsById: new Map(labels.map((l) => [l.id, l])),
+    labels: labelIndex,
+    labelsById,
     includeAcceptanceCriteria: config.linear.includeAcceptanceCriteria,
     projectStatuses,
+    labelColors: labelColorIndex(config.labels ?? []),
   };
 }
 
@@ -222,8 +328,19 @@ export function refreshPeople(
   );
 }
 
-/** Adds a label the pass created to the context. */
-export function trackLabel(ctx: PassContext, label: LinearLabel): void {
-  ctx.labels.set(labelKey(label).toLowerCase(), label);
+/** Adds (or refreshes) a label in the context's indexes. */
+export function trackLabel(
+  ctx: Pick<PassContext, 'labels' | 'labelsById'>,
+  label: LinearLabel
+): void {
+  const prior = ctx.labelsById.get(label.id);
+  if (prior !== undefined) {
+    const was = labelKey(prior).toLowerCase();
+    const rest = (ctx.labels.get(was) ?? []).filter((l) => l.id !== label.id);
+    if (rest.length === 0) ctx.labels.delete(was);
+    else ctx.labels.set(was, rest);
+  }
+  const key = labelKey(label).toLowerCase();
+  ctx.labels.set(key, [...(ctx.labels.get(key) ?? []), label]);
   ctx.labelsById.set(label.id, label);
 }

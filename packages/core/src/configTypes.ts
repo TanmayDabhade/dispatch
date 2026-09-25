@@ -1,3 +1,4 @@
+import type { LabelDefinition } from './labels.js';
 import { DEFAULT_STATUS_MAP } from './linearMap.js';
 import type { Person } from './people.js';
 import type { PolicyConfig, PolicyGate, PolicyGateMode } from './policy.js';
@@ -178,6 +179,8 @@ export interface DispatchConfig {
   statusRoles?: StatusRoles;
   /** The people registry beyond team.yml (see people.ts); absent when none. */
   people?: Person[];
+  /** The label registry (see labels.ts): colors and links; absent when none. */
+  labels?: LabelDefinition[];
   autoCommit: boolean;
   verifyCommand?: string;
   /** Verify as named steps rather than one opaque command, so a failure names
@@ -409,7 +412,12 @@ export const DEFAULT_NOTIFICATIONS: NotificationsConfig = {
 /** Linear sync settings. Holds no secret — the API key lives in `~/.dispatch/credentials.json`. */
 export interface LinearConfig {
   enabled: boolean;
+  /** The primary linked team: `teamIds[0]`, or null when none is linked.
+   *  Read from a legacy `teamId:` when `teamIds:` is absent. */
   teamId: string | null;
+  /** Every linked team, primary first. Issues follow a move between them
+   *  and unlink only when they leave all of them. */
+  teamIds: string[];
   /** Pre-mirroring map (status -> state name or type). Once a team is linked
    *  the statuses ARE its workflow states; this only guides that first move. */
   statusMap: Record<string, string>;
@@ -425,6 +433,7 @@ export const LINEAR_DIRECTIONS = ['both', 'pull', 'push'] as const;
 export const DEFAULT_LINEAR: LinearConfig = {
   enabled: false,
   teamId: null,
+  teamIds: [],
   statusMap: { ...DEFAULT_STATUS_MAP },
   intervalSec: 30,
   direction: 'both',
@@ -623,6 +632,8 @@ export interface ConfigPatch {
   statusRoles?: StatusRoles | null;
   /** Replaces `people`; null or empty removes it. */
   people?: Person[] | null;
+  /** Replaces `labels`; null or empty removes it. */
+  labels?: LabelDefinition[] | null;
   /** Named verify gates, replacing the list; null or empty removes it. */
   verifySteps?: VerifyStep[] | null;
   /** Per remote name: a config sets it, null removes it. */

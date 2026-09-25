@@ -47,6 +47,8 @@ import {
   NOTIFICATION_KINDS,
 } from './configTypes.js';
 import { describeValue } from './describe.js';
+import { labelDefinitionError, labelRef } from './labels.js';
+import type { LabelDefinition } from './labels.js';
 import { personError } from './people.js';
 import type { Person } from './people.js';
 import type { PolicyConfig, PolicyGate, PolicyGateMode } from './policy.js';
@@ -945,6 +947,13 @@ function parseVerifyConfig(raw: unknown): VerifyConfig | undefined {
   return result;
 }
 
+function isTeamIdList(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.every((id) => typeof id === 'string' && id.trim() !== '')
+  );
+}
+
 // Validates the optional `linear:` block, same contract as the blocks above. `statusMap`
 // merges over the default, so remapping one status does not unmap the other five.
 function parseLinearConfig(raw: unknown): LinearConfig {
@@ -973,6 +982,18 @@ function parseLinearConfig(raw: unknown): LinearConfig {
       'invalid .dispatch/config.yml: linear.teamId must be a string or null'
     );
   }
+  // `teamIds` wins when present; a legacy `teamId` alone is a one-team list.
+  const { teamIds } = obj;
+  if (teamIds !== undefined && teamIds !== null && !isTeamIdList(teamIds)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: linear.teamIds must be a list of team ids'
+    );
+  }
+  const linkedTeams = isTeamIdList(teamIds)
+    ? [...new Set(teamIds)]
+    : typeof teamId === 'string' && teamId.trim() !== ''
+      ? [teamId]
+      : [];
 
   const { intervalSec } = obj;
   if (
@@ -1031,7 +1052,8 @@ function parseLinearConfig(raw: unknown): LinearConfig {
 
   return {
     enabled: enabled ?? defaults.enabled,
-    teamId: teamId ?? defaults.teamId,
+    teamId: linkedTeams[0] ?? null,
+    teamIds: linkedTeams,
     statusMap: mergedStatusMap,
     intervalSec: intervalSec ?? defaults.intervalSec,
     direction: (direction as LinearConfig['direction']) ?? defaults.direction,
@@ -1362,6 +1384,40 @@ function parsePeople(raw: unknown): Person[] | undefined {
   });
 }
 
+/** Validates `labels:`, a list of { name, color, group?, external? }. */
+function parseLabels(raw: unknown): LabelDefinition[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: labels must be a list'
+    );
+  }
+  const seen = new Set<string>();
+  return (raw as unknown[]).map((entry, index) => {
+    const error = labelDefinitionError(entry);
+    if (error !== null) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: labels[${index}]: ${error}`
+      );
+    }
+    const l = entry as LabelDefinition;
+    const label: LabelDefinition = {
+      name: l.name.trim(),
+      color: l.color ?? null,
+      group: l.group ?? null,
+      external: l.external ?? null,
+    };
+    const key = labelRef(label).toLowerCase();
+    if (seen.has(key)) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: labels lists ${labelRef(label)} twice`
+      );
+    }
+    seen.add(key);
+    return label;
+  });
+}
+
 export function loadConfig(rootDir: string): DispatchConfig {
   const path = join(rootDir, DISPATCH_DIR, 'config.yml');
   if (!existsSync(path)) {
@@ -1428,6 +1484,7 @@ function parseConfig(parsed: unknown): DispatchConfig {
     }
   }
   const people = parsePeople((parsed as { people?: unknown } | null)?.people);
+  const labels = parseLabels((parsed as { labels?: unknown } | null)?.labels);
   const statusBlock = parseStatuses(raw.statuses);
   const statusRoles = parseStatusRoles(
     (parsed as { statusRoles?: unknown } | null)?.statusRoles,
@@ -1458,6 +1515,7 @@ function parseConfig(parsed: unknown): DispatchConfig {
     ...statusBlock,
     ...(statusRoles === undefined ? {} : { statusRoles }),
     ...(people === undefined ? {} : { people }),
+    ...(labels === undefined ? {} : { labels }),
     autoCommit: raw.autoCommit ?? DEFAULTS.autoCommit,
     verifyCommand: raw.verifyCommand,
     verifySteps: raw.verifySteps,
@@ -1522,11 +1580,27 @@ function applyLinearPatch(
     }
     doc.setIn(['linear', 'enabled'], patch.enabled);
   }
+  // Either key writes both: `teamIds` in full, and `teamId` as its first
+  // entry, which is all a build predating several teams reads.
+  let teams: string[] | undefined;
   if (patch.teamId !== undefined) {
     if (patch.teamId !== null && typeof patch.teamId !== 'string') {
       throw new ConfigError('invalid linear.teamId: must be a string or null');
     }
-    doc.setIn(['linear', 'teamId'], patch.teamId);
+    teams =
+      patch.teamId === null || patch.teamId.trim() === '' ? [] : [patch.teamId];
+  }
+  if (patch.teamIds !== undefined) {
+    if (!isTeamIdList(patch.teamIds)) {
+      throw new ConfigError(
+        'invalid linear.teamIds: must be a list of team ids'
+      );
+    }
+    teams = [...new Set(patch.teamIds)];
+  }
+  if (teams !== undefined) {
+    doc.setIn(['linear', 'teamIds'], teams);
+    doc.setIn(['linear', 'teamId'], teams[0] ?? null);
   }
   if (patch.intervalSec !== undefined) {
     if (!Number.isFinite(patch.intervalSec) || patch.intervalSec < 30) {
@@ -1647,6 +1721,21 @@ function applyBlockPatches(doc: YAML.Document, patch: ConfigPatch): void {
           ...(p.email == null ? {} : { email: p.email }),
           ...(p.avatarUrl == null ? {} : { avatarUrl: p.avatarUrl }),
           ...(p.external == null ? {} : { external: p.external }),
+        }))
+      );
+    }
+  }
+  if (patch.labels !== undefined) {
+    if (patch.labels === null || patch.labels.length === 0) {
+      doc.delete('labels');
+    } else {
+      doc.set(
+        'labels',
+        patch.labels.map((l) => ({
+          name: l.name,
+          ...(l.color == null ? {} : { color: l.color }),
+          ...(l.group == null ? {} : { group: l.group }),
+          ...(l.external == null ? {} : { external: l.external }),
         }))
       );
     }

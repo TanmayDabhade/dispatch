@@ -16,7 +16,80 @@ test('an env-sourced key hides Disconnect, says where the key came from, and kee
   expect(screen.queryByRole('button', { name: /Disconnect/ })).toBeNull();
   expect(screen.getByText(/LINEAR_API_KEY/)).toBeDefined();
   expect(screen.getByPlaceholderText('Linear API key')).toBeDefined();
-  expect(screen.getByRole('combobox', { name: 'Team' })).toBeDefined();
+  expect(screen.getByText('Teams')).toBeDefined();
+});
+
+const TEAMS = [
+  { id: 'team-1', key: 'HYD', name: 'Hydrogen' },
+  { id: 'team-2', key: 'OPS', name: 'Ops' },
+  { id: 'team-3', key: 'SEC', name: 'Security' },
+];
+
+// Every workspace team is a checkbox; linking one appends it, unlinking drops it, and
+// "Make primary" moves a linked team to the front, where new issues go.
+test('links and unlinks teams, and picks the primary', () => {
+  const patches: unknown[] = [];
+  render(
+    <LinearPanel
+      data={dataWith({
+        keySource: 'project',
+        connected: true,
+        linearTeams: TEAMS,
+        config: {
+          ...testConfig,
+          linear: {
+            ...testConfig.linear,
+            teamId: 'team-1',
+            teamIds: ['team-1', 'team-2'],
+          },
+        },
+        handleUpdateConfig: (patch: unknown) => {
+          patches.push(patch);
+          return Promise.resolve();
+        },
+      })}
+    />
+  );
+  const box = (name: string) =>
+    screen.getByRole('checkbox', { name: `Link ${name}` });
+  expect(box('Hydrogen').getAttribute('aria-checked')).toBe('true');
+  expect(box('Security').getAttribute('aria-checked')).toBe('false');
+  expect(screen.getByText(/Primary: new issues go here/)).toBeDefined();
+
+  fireEvent.click(box('Security'));
+  fireEvent.click(box('Hydrogen'));
+  fireEvent.click(screen.getByRole('button', { name: 'Make primary' }));
+  expect(patches).toEqual([
+    { linear: { teamIds: ['team-1', 'team-2', 'team-3'] } },
+    { linear: { teamIds: ['team-2'] } },
+    { linear: { teamIds: ['team-2', 'team-1'] } },
+  ]);
+});
+
+// A config from a daemon that predates several teams names only `teamId`.
+test('reads a legacy single teamId as the linked team', () => {
+  const { teamIds: _dropped, ...legacy } = {
+    ...testConfig.linear,
+    teamId: 'team-3',
+  };
+  render(
+    <LinearPanel
+      data={dataWith({
+        keySource: 'project',
+        connected: true,
+        linearTeams: TEAMS,
+        config: {
+          ...testConfig,
+          linear: legacy as typeof testConfig.linear,
+        },
+      })}
+    />
+  );
+  expect(
+    screen
+      .getByRole('checkbox', { name: 'Link Security' })
+      .getAttribute('aria-checked')
+  ).toBe('true');
 });
 
 // The reported symptom: the picker opened with nothing in it and no reason.
@@ -112,7 +185,7 @@ test('lists the status roles with their current choice', () => {
         landed: 'Done',
         dropped: 'Canceled',
       },
-      linear: { ...testConfig.linear, teamId: 'team-1' },
+      linear: { ...testConfig.linear, teamId: 'team-1', teamIds: ['team-1'] },
     },
   });
   render(<LinearPanel data={data} />);

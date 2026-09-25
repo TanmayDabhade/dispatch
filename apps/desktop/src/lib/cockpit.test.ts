@@ -52,6 +52,7 @@ function task(
       creator: null,
       color: null,
       icon: null,
+      sortOrder: null,
       ...overrides,
     },
   };

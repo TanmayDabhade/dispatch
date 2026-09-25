@@ -1,6 +1,10 @@
-import type { LinearSyncSummary, LinearViewer } from '@dispatch/client';
+import type {
+  LinearSyncSummary,
+  LinearTeam,
+  LinearViewer,
+} from '@dispatch/client';
 import { statusModelOf } from '@dispatch/core/browser';
-import type { StatusRoles } from '@dispatch/core/browser';
+import type { LinearConfig, StatusRoles } from '@dispatch/core/browser';
 import { CheckCircle2, RefreshCw } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -20,6 +24,7 @@ import { cn } from '@/lib/utils';
 import { PillButton } from '@/ui/ai/pill';
 import { Switch } from '@/ui/ai/switch';
 import { Button } from '@/ui/button';
+import { Checkbox } from '@/ui/checkbox';
 import { PanelRow } from '@/ui/chrome';
 import { Input } from '@/ui/input';
 import {
@@ -115,6 +120,56 @@ function StatusRoleRow({
             ))}
           </SelectContent>
         </Select>
+      }
+    />
+  );
+}
+
+// The linked teams, primary first; a config from a daemon predating several
+// teams carries only `teamId`.
+function linkedTeamIds(linear: LinearConfig): string[] {
+  if (Array.isArray(linear.teamIds)) return linear.teamIds;
+  return linear.teamId === null || linear.teamId.trim() === ''
+    ? []
+    : [linear.teamId];
+}
+
+/** One team of the workspace: a checkbox links it, and a linked team other than the
+ *  primary can become the primary, where new issues go. */
+function LinkedTeamRow({
+  team,
+  linked,
+  onChange,
+}: {
+  team: LinearTeam;
+  linked: readonly string[];
+  onChange: (teamIds: string[]) => void;
+}) {
+  const at = linked.indexOf(team.id);
+  const others = linked.filter((id) => id !== team.id);
+  return (
+    <SettingsRow
+      title={`${team.name} (${team.key})`}
+      subtitle={
+        at === 0
+          ? 'Primary: new issues go here, unless their parent issue is in another linked team.'
+          : undefined
+      }
+      control={
+        <span className="flex items-center gap-2">
+          {at > 0 && (
+            <PillButton onClick={() => onChange([team.id, ...others])}>
+              Make primary
+            </PillButton>
+          )}
+          <Checkbox
+            aria-label={`Link ${team.name}`}
+            checked={at >= 0}
+            onCheckedChange={(checked) =>
+              onChange(checked === true ? [...others, team.id] : others)
+            }
+          />
+        </span>
       }
     />
   );
@@ -217,8 +272,18 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
   }
 
   const configured = isLinearConfigured(linearStatus);
-  const teamChosen =
-    config.linear.teamId !== null && config.linear.teamId.trim() !== '';
+  const linkedTeams = linkedTeamIds(config.linear);
+  const teamChosen = linkedTeams.length > 0;
+  // A linked team the picker has not loaded (a failed fetch) still shows.
+  const teamRows: LinearTeam[] = [
+    ...linearTeams,
+    ...linkedTeams
+      .filter((id) => !linearTeams.some((t) => t.id === id))
+      .map((id) => ({ id, key: id, name: 'Unknown team' })),
+  ];
+  function setTeams(teamIds: string[]) {
+    void data.handleUpdateConfig({ linear: { teamIds } });
+  }
   const roles = statusModelOf(config).roles;
   function setRole(key: keyof StatusRoles, status: string | null) {
     void data.handleUpdateConfig({ statusRoles: { ...roles, [key]: status } });
@@ -242,7 +307,7 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
     <>
       <SettingsGroup
         title="Linear"
-        hint="Keeps this project’s tasks and one Linear team as two faithful copies: every field both ways, the team’s projects and initiatives as containers, its workflow states as your statuses, its members as your people, and issue comments as task comments. When both sides change the same field, the newer edit wins and the task’s Activity says so. The API key stays in ~/.dispatch/credentials.json, never in the repo."
+        hint="Keeps this project’s tasks and the linked Linear teams as two faithful copies: every field both ways, the teams’ projects and initiatives as containers, their workflow states as your statuses, their members as your people, their labels (and label colors) as your labels, and issue comments as task comments. When both sides change the same field, the newer edit wins and the task’s Activity says so. The API key stays in ~/.dispatch/credentials.json, never in the repo."
       >
         {linearStatus.keySource !== 'project' && (
           <SettingsRow
@@ -323,36 +388,6 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
               }
             />
 
-            {data.linearTeamsError !== null && (
-              <FetchFailureRow
-                error={data.linearTeamsError}
-                onRetry={() => data.refetchLinearTeams()}
-              />
-            )}
-
-            <SettingsRow
-              title="Team"
-              control={
-                <Select
-                  value={config.linear.teamId ?? ''}
-                  onValueChange={(teamId) =>
-                    void data.handleUpdateConfig({ linear: { teamId } })
-                  }
-                >
-                  <SelectTrigger aria-label="Team" className="w-[200px]">
-                    <SelectValue placeholder="Choose a team" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {linearTeams.map((team) => (
-                      <SelectItem key={team.id} value={team.id}>
-                        {team.name} ({team.key})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              }
-            />
-
             <SettingsRow
               title="Direction"
               control={
@@ -406,6 +441,31 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
           </>
         )}
       </SettingsGroup>
+
+      {linearStatus.connected && (
+        <SettingsGroup
+          title="Teams"
+          hint="Link every team whose issues this project mirrors. An issue that moves between linked teams stays linked; one that leaves them all is unlinked. Your statuses are the linked teams’ workflow states, merged where a name and type match."
+        >
+          {data.linearTeamsError !== null && (
+            <FetchFailureRow
+              error={data.linearTeamsError}
+              onRetry={() => data.refetchLinearTeams()}
+            />
+          )}
+          {teamRows.length === 0 && data.linearTeamsError === null && (
+            <SettingsRow title="No teams to show yet." />
+          )}
+          {teamRows.map((team) => (
+            <LinkedTeamRow
+              key={team.id}
+              team={team}
+              linked={linkedTeams}
+              onChange={setTeams}
+            />
+          ))}
+        </SettingsGroup>
+      )}
 
       {linearStatus.connected && teamChosen && (
         <SettingsGroup

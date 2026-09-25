@@ -7,6 +7,7 @@ import type {
   FindingRecommendation,
   FindingSeverity,
   FindingVerdict,
+  LabelDefinition,
   LedgerEntry,
   LedgerKind,
   ModelConfig,
@@ -23,6 +24,7 @@ import type {
 // these types directly, the same way it already can with `ApiClient`.
 export type {
   CommentPatch,
+  LabelDefinition,
   Person,
   TaskComment,
   Finding,
@@ -638,6 +640,12 @@ export interface PeopleSnapshot {
    *  mean (core's fanoutHolder). Absent from an older daemon. */
   local?: string;
   people: Person[];
+}
+
+// Mirrors GET /api/labels (and PUT's answer): the label registry, whose
+// colors every label chip draws.
+export interface LabelsSnapshot {
+  labels: LabelDefinition[];
 }
 
 // Mirrors POST /api/tasks/:id/comments's body. The server credits the
@@ -1792,7 +1800,10 @@ export interface LinearStatus {
   enabled: boolean;
   connected: boolean;
   keySource: 'project' | 'env' | 'global' | null;
+  /** The primary linked team. */
   teamId: string | null;
+  /** Every linked team, primary first. Absent from older daemons. */
+  teamIds?: string[];
   direction: 'both' | 'pull' | 'push';
   intervalSec: number;
   statusMap: Record<string, string>;
@@ -2359,6 +2370,10 @@ export interface ApiClient {
   hasTaskAttachment(id: string, name: string): Promise<boolean>;
   /** The people registry (team roster + config `people`) and who "me" is. */
   fetchPeople(): Promise<PeopleSnapshot>;
+  /** The label registry: each label's color and external link. */
+  fetchLabels(): Promise<LabelsSnapshot>;
+  /** Sets one label's color (`null` clears it); answers the new registry. */
+  setLabelColor(name: string, color: string | null): Promise<LabelsSnapshot>;
   /** A task's comment thread, oldest first. */
   fetchTaskComments(id: string): Promise<TaskComment[]>;
   addTaskComment(id: string, input: NewCommentInput): Promise<TaskComment>;
@@ -3034,6 +3049,12 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         ...jsonBody(input),
       }),
     fetchPeople: () => request(target, '/api/people'),
+    fetchLabels: () => request(target, '/api/labels'),
+    setLabelColor: (name, color) =>
+      request(target, '/api/labels', {
+        method: 'PUT',
+        ...jsonBody({ name, color }),
+      }),
     fetchTaskComments: (id) =>
       request(target, `/api/tasks/${encodeURIComponent(id)}/comments`),
     addTaskComment: (id, input) =>

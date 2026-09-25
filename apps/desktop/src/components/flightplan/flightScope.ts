@@ -45,8 +45,16 @@ function byCreatedThenId(a: TaskListItem, b: TaskListItem): number {
   return byCreated !== 0 ? byCreated : a.meta.id.localeCompare(b.meta.id);
 }
 
-// Bands read in the order the work is due: target date first (undated last), then age.
-function byTargetThenCreated(a: TaskListItem, b: TaskListItem): number {
+// Bands read in the container's own order (Linear's milestone sortOrder, unordered
+// last), then by when the work is due (undated last), then by age.
+function bandOrder(a: TaskListItem, b: TaskListItem): number {
+  const ao = a.meta.sortOrder ?? null;
+  const bo = b.meta.sortOrder ?? null;
+  if (ao !== bo) {
+    if (ao === null) return 1;
+    if (bo === null) return -1;
+    return ao - bo;
+  }
   const ad = a.meta.dueDate ?? null;
   const bd = b.meta.dueDate ?? null;
   if (ad !== bd) {
@@ -108,7 +116,7 @@ export function flightScope(
   const nodes: TaskListItem[] = [];
   const bandOf = new Map<string, string>();
   const bands: FlightBandDef[] = [];
-  for (const band of [...bandContainers].sort(byTargetThenCreated)) {
+  for (const band of [...bandContainers].sort(bandOrder)) {
     const work = workUnder(band.meta.id, children, seen).sort(byCreatedThenId);
     bands.push({ key: band.meta.id, container: band });
     for (const task of work) {

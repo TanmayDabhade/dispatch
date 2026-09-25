@@ -1,8 +1,13 @@
 import {
+  fieldHash,
   getSection,
+  labelRef,
   loadConfig,
+  MILESTONE_FIELDS,
+  PROJECT_FIELDS,
   TaskStore,
   updateConfig,
+  withLabelColor,
 } from '@dispatch/core';
 import type { LinearIssue } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
@@ -13,7 +18,12 @@ import { join } from 'node:path';
 import { TaskCache } from '../src/cache.js';
 import { EventBus } from '../src/events.js';
 import type { ServerEvent } from '../src/events.js';
-import { readLinearState, writeLinearState } from '../src/linear/state.js';
+import {
+  readBase,
+  readLinearState,
+  writeBase,
+  writeLinearState,
+} from '../src/linear/state.js';
 import { LinearSync } from '../src/linear/sync.js';
 import { FakeLinearClient, STATES, TEAMMATE, VIEWER } from './linearFake.js';
 
@@ -311,6 +321,144 @@ describe('labels', () => {
   });
 });
 
+describe('label registry', () => {
+  function registry() {
+    return (loadConfig(root).labels ?? []).map((l) => [
+      labelRef(l),
+      l.color,
+      l.external,
+    ]);
+  }
+
+  function recolor(ref: string, color: string): void {
+    updateConfig(root, {
+      labels: withLabelColor(loadConfig(root).labels ?? [], ref, color),
+    });
+  }
+
+  it('registers the team’s labels with their colors on the first sync', async () => {
+    fake.labelList = [
+      { id: 'l-web', name: 'web', color: '#5e6ad2', teamId: 'team-1' },
+      {
+        id: 'l-bug',
+        name: 'Bug',
+        color: '#eb5757',
+        group: 'Type',
+        teamId: null,
+      },
+    ];
+    await makeSync().syncOnce();
+    expect(registry()).toEqual([
+      ['web', '#5e6ad2', 'linear:l-web'],
+      ['Type/Bug', '#eb5757', 'linear:l-bug'],
+    ]);
+  });
+
+  it('pushes a local recolor once, and pulls a color Linear changed', async () => {
+    fake.labelList = [
+      { id: 'l-web', name: 'web', color: '#5e6ad2', teamId: 'team-1' },
+    ];
+    const sync = makeSync();
+    await sync.syncOnce();
+    recolor('web', '#0f783c');
+
+    await sync.syncOnce();
+    expect(fake.calls.filter((c) => c === 'updateLabel')).toHaveLength(1);
+    expect(fake.labelList[0]?.color).toBe('#0f783c');
+    // The next pass reads the label back as written, not as first cached.
+    await sync.syncOnce();
+    expect(fake.calls.filter((c) => c === 'updateLabel')).toHaveLength(1);
+    expect(registry()).toEqual([['web', '#0f783c', 'linear:l-web']]);
+
+    fake.labelList = [{ ...fake.labelList[0], color: '#f2c94c' }];
+    // An import refreshes the cached workspace, labels included.
+    await sync.importIssues();
+    expect(registry()).toEqual([['web', '#f2c94c', 'linear:l-web']]);
+  });
+
+  it('pushes the registry’s colors from a push-only project', async () => {
+    writeConfig('push');
+    updateConfig(root, { labels: [{ name: 'web', color: '#111111' }] });
+    fake.labelList = [
+      { id: 'l-web', name: 'web', color: '#222222', teamId: 'team-1' },
+    ];
+    const sync = makeSync();
+    await sync.syncOnce();
+    expect(fake.labelList[0]?.color).toBe('#111111');
+
+    recolor('web', '#333333');
+    await sync.syncOnce();
+    expect(fake.labelList[0]?.color).toBe('#333333');
+    expect(fake.calls.filter((c) => c === 'updateLabel')).toHaveLength(2);
+  });
+
+  it('retries a recolor Linear refused', async () => {
+    fake.labelList = [
+      { id: 'l-web', name: 'web', color: '#5e6ad2', teamId: 'team-1' },
+    ];
+    const sync = makeSync();
+    await sync.syncOnce();
+    recolor('web', '#0f783c');
+    fake.failures.updateLabel = {
+      ok: false,
+      kind: 'graphql',
+      error: 'not allowed',
+    };
+    await sync.syncOnce();
+    expect(readLinearState(root).labelColors['l-web']).toBe('#5e6ad2');
+    delete fake.failures.updateLabel;
+    await sync.syncOnce();
+    expect(fake.labelList[0]?.color).toBe('#0f783c');
+  });
+
+  it('folds a local-only entry into a Linear label renamed onto it', async () => {
+    updateConfig(root, { labels: [{ name: 'feature', color: '#00ff00' }] });
+    fake.labelList = [
+      { id: 'l-d', name: 'Defect', color: '#eb5757', teamId: 'team-1' },
+    ];
+    const { issue, id } = await linkedPair({ title: 'before', labels: [] });
+
+    fake.labelList = [{ ...fake.labelList[0], name: 'Feature' }];
+    issue.title = 'after';
+    touch(issue);
+    // A fresh engine reads the renamed label, as after a restart.
+    const summary = await makeSync().syncOnce();
+
+    expect(summary.errors).toEqual([]);
+    expect(store.get(id)?.meta.title).toBe('after');
+    expect(registry()).toEqual([['Feature', '#eb5757', 'linear:l-d']]);
+  });
+
+  it('reports a registry it cannot write and still runs the pass', async () => {
+    const { issue, id } = await linkedPair({ title: 'before' });
+    // A color the registry refuses, so the labels: write is rejected.
+    fake.labelList = [
+      { id: 'l-odd', name: 'odd', color: 'not-a-color', teamId: 'team-1' },
+    ];
+    issue.title = 'after';
+    touch(issue);
+    const summary = await makeSync().syncOnce();
+
+    expect(summary.errors.join('\n')).toContain('label registry not updated');
+    expect(readLinearState(root).lastError).toContain(
+      'label registry not updated'
+    );
+    expect(store.get(id)?.meta.title).toBe('after');
+  });
+
+  it('creates a missing label in the registry’s color', async () => {
+    const { id, sync } = await linkedPair();
+    recolor('perf', '#26b5ce');
+    edit(id, { labels: ['web', 'perf'] });
+
+    await sync.syncOnce();
+
+    expect(fake.labelList.find((l) => l.name === 'perf')?.color).toBe(
+      '#26b5ce'
+    );
+  });
+});
+
 describe('archive', () => {
   it('archives in Linear, and unarchives here, both ways', async () => {
     const { issue, id, sync } = await linkedPair();
@@ -337,6 +485,63 @@ describe('archive', () => {
     await sync.syncOnce();
 
     expect(fake.calls).not.toContain('archiveIssue');
+  });
+});
+
+describe('project statuses by name', () => {
+  const PAUSED = { id: 'ps-paused', name: 'Paused', type: 'paused' };
+
+  function projectTask(projectId: string) {
+    const doc = store
+      .list()
+      .find((d) => d.meta.external === `linear-project:${projectId}`);
+    if (doc === undefined) throw new Error('project not imported');
+    return doc;
+  }
+
+  it('shows a paused project as the team’s Paused state, and resumes it by name', async () => {
+    fake.states = [
+      ...STATES,
+      { id: 's-paused', name: 'Paused', type: 'backlog', position: 1 },
+    ];
+    const project = fake.project({ status: PAUSED });
+    fake.projectList = [project];
+    const sync = makeSync();
+    await sync.importIssues();
+    const id = projectTask(project.id).meta.id;
+    expect(store.get(id)?.meta.status).toBe('Paused');
+
+    edit(id, { status: 'In Progress' });
+    await sync.syncOnce();
+    expect(fake.projectList[0]?.status?.id).toBe('ps-started');
+  });
+
+  it('never unpauses a project when upgrading a base kept by category', async () => {
+    const project = fake.project({ status: PAUSED });
+    fake.projectList = [project];
+    const sync = makeSync();
+    await sync.importIssues();
+    const id = projectTask(project.id).meta.id;
+    // No Paused state here: the project reads as started locally.
+    expect(store.get(id)?.meta.status).toBe('In Progress');
+    // Rewind the base to the category-only value space.
+    const state = readLinearState(root);
+    const base = readBase(state, id, 'project');
+    if (base === null) throw new Error('no base');
+    base.local.status = fieldHash('started');
+    base.remote.status = fieldHash('started');
+    writeBase(state, id, 'project', PROJECT_FIELDS, base);
+    delete state.baseVersion;
+    writeLinearState(root, state);
+    fake.projectList[0].name = 'Renamed there';
+    fake.projectList[0].updatedAt = fake.stamp();
+    fake.calls = [];
+
+    await sync.syncOnce();
+
+    expect(store.get(id)?.meta.title).toBe('Renamed there');
+    expect(fake.calls).not.toContain('updateProject');
+    expect(fake.projectList[0]?.status?.id).toBe('ps-paused');
   });
 });
 
@@ -376,7 +581,7 @@ describe('relations and hierarchy', () => {
         name: 'Beta',
         description: null,
         targetDate: '2026-09-01',
-        sortOrder: 0,
+        sortOrder: 2,
         projectId: project.id,
         createdAt: '2026-07-01T00:00:00.000Z',
         updatedAt: '2026-07-01T00:00:00.000Z',
@@ -396,7 +601,8 @@ describe('relations and hierarchy', () => {
     });
     fake.issues = [child, parent];
 
-    await makeSync().importIssues();
+    const sync = makeSync();
+    await sync.importIssues();
 
     const byTitle = new Map(store.list().map((d) => [d.meta.title, d.meta]));
     expect(byTitle.get('Grow')?.kind).toBe('initiative');
@@ -407,6 +613,63 @@ describe('relations and hierarchy', () => {
     expect(byTitle.get('Beta')?.dueDate).toBe('2026-09-01');
     expect(byTitle.get('Parent')?.parent).toBe(byTitle.get('Beta')?.id);
     expect(byTitle.get('Child')?.parent).toBe(byTitle.get('Parent')?.id);
+    expect(byTitle.get('Beta')?.sortOrder).toBe(2);
+
+    // Reordering the milestone in Linear moves it here too.
+    const beta = fake.milestoneList[0];
+    beta.sortOrder = -1;
+    beta.updatedAt = fake.stamp();
+    await sync.syncOnce();
+    expect(store.get(byTitle.get('Beta')?.id ?? '')?.meta.sortOrder).toBe(-1);
+  });
+
+  it('reads every linked milestone once after the upgrade that added its order', async () => {
+    const project = fake.project({ name: 'Checkout' });
+    fake.projectList = [project];
+    fake.milestoneList = [
+      {
+        id: 'ms-1',
+        name: 'Beta',
+        description: null,
+        targetDate: null,
+        sortOrder: 7,
+        projectId: project.id,
+        createdAt: '2026-07-01T00:00:00.000Z',
+        updatedAt: '2026-07-01T00:00:00.000Z',
+        archivedAt: null,
+      },
+    ];
+    const sync = makeSync();
+    await sync.importIssues();
+    const beta = store.list().find((d) => d.meta.title === 'Beta');
+    if (beta === undefined) throw new Error('no milestone');
+    // Rewind to a link made before sortOrder: no local order, none in the base.
+    store.update(beta.meta.id, { sortOrder: null }, beta.meta.updated);
+    const state = readLinearState(root);
+    const base = readBase(state, beta.meta.id, 'milestone');
+    if (base === null) throw new Error('no base');
+    delete base.local.sortOrder;
+    delete base.remote.sortOrder;
+    writeBase(state, beta.meta.id, 'milestone', MILESTONE_FIELDS, base);
+    state.baseVersion = 3;
+    state.echoes = [];
+    writeLinearState(root, state);
+    // One the cursor has passed with no task here (deleted locally, say).
+    fake.milestoneList.push({
+      ...fake.milestoneList[0],
+      id: 'ms-2',
+      name: 'Old',
+    });
+
+    await sync.syncOnce();
+
+    expect(store.get(beta.meta.id)?.meta.sortOrder).toBe(7);
+    expect(store.list().map((d) => d.meta.title)).not.toContain('Old');
+    expect(readLinearState(root).milestoneWalk).toBeUndefined();
+    // The walk happens once: later passes read from the cursor again.
+    fake.calls = [];
+    await sync.syncOnce();
+    expect(fake.calls).not.toContain('projectMilestones');
   });
 
   it('publishes a legacy epic as a parent issue with its tasks as sub-issues', async () => {
@@ -458,6 +721,31 @@ describe('relations and hierarchy', () => {
     expect(store.get(milestone.meta.id)?.meta.external).toBe(
       `linear-milestone:${remoteMilestone?.id}`
     );
+  });
+
+  it('gives a milestone made here the order Linear assigns it', async () => {
+    const sync = makeSync();
+    await sync.syncOnce();
+    const at = (n: number) => new Date(Date.now() + n * 1000).toISOString();
+    const project = store.create({ title: 'Launch', kind: 'project' }, at(1));
+    const ids = ['M1', 'M2'].map(
+      (title, i) =>
+        store.create(
+          { title, kind: 'milestone', parent: project.meta.id },
+          at(2 + i)
+        ).meta.id
+    );
+
+    await sync.syncOnce();
+    fake.calls = [];
+    await sync.syncOnce();
+
+    const orders = ['M1', 'M2'].map(
+      (name) => fake.milestoneList.find((m) => m.name === name)?.sortOrder
+    );
+    expect(orders).toEqual([0, 1]);
+    expect(ids.map((id) => store.get(id)?.meta.sortOrder)).toEqual(orders);
+    expect(fake.calls).not.toContain('updateMilestone');
   });
 
   it('maps assignee and creator onto people refs', async () => {

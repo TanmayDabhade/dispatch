@@ -344,6 +344,10 @@ export const LABEL_CREATE = `mutation IssueLabelCreate($input: IssueLabelCreateI
   issueLabelCreate(input: $input) { success issueLabel { id name color isGroup team { id } parent { name } } }
 }`;
 
+export const LABEL_UPDATE = `mutation IssueLabelUpdate($id: String!, $input: IssueLabelUpdateInput!) {
+  issueLabelUpdate(id: $id, input: $input) { success issueLabel { id name color isGroup team { id } parent { name } } }
+}`;
+
 export const ATTACHMENT_LINK = `mutation AttachmentLinkURL($issueId: String!, $url: String!, $title: String) {
   attachmentLinkURL(issueId: $issueId, url: $url, title: $title) { success attachment { id title url subtitle sourceType } }
 }`;

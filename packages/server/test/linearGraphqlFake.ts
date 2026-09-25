@@ -17,6 +17,13 @@ export interface GraphqlWorld {
   labels: LinearLabel[];
   issues: LinearIssue[];
   projects: LinearProject[];
+  /** Teams beyond the default HYD one, each on its own workflow. */
+  teams?: {
+    id: string;
+    key: string;
+    name: string;
+    states: LinearWorkflowState[];
+  }[];
 }
 
 export interface GraphqlRequest {
@@ -129,15 +136,16 @@ export function graphqlFetch(world: GraphqlWorld): {
     const teamIssues = world.issues.filter(
       (i) => i.team?.id === v.teamId && (since === null || i.updatedAt > since)
     );
+    const team = world.teams?.find((t) => t.id === v.teamId);
     switch (operation) {
       case 'Workspace':
         return {
           viewer: world.viewer,
           team: {
             id: v.teamId,
-            key: 'HYD',
-            name: 'Hydrogen',
-            states: { nodes: world.states },
+            key: team?.key ?? 'HYD',
+            name: team?.name ?? 'Hydrogen',
+            states: { nodes: team?.states ?? world.states },
             members: {
               nodes: world.members,
               pageInfo: { hasNextPage: false },
@@ -193,7 +201,11 @@ export function graphqlFetch(world: GraphqlWorld): {
         return {
           projects: connection(
             world.projects
-              .filter((p) => since === null || p.updatedAt > since)
+              .filter(
+                (p) =>
+                  p.teamIds.includes(v.teamId as string) &&
+                  (since === null || p.updatedAt > since)
+              )
               .map(projectNode),
             query,
             v.after
@@ -216,7 +228,11 @@ export function graphqlFetch(world: GraphqlWorld): {
           issues: hit(teamIssues.length > 0),
           comments: hit(false),
           projects: hit(
-            world.projects.some((p) => since === null || p.updatedAt > since)
+            world.projects.some(
+              (p) =>
+                p.teamIds.includes(v.teamId as string) &&
+                (since === null || p.updatedAt > since)
+            )
           ),
           projectMilestones: hit(false),
           initiatives: hit(false),

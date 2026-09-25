@@ -195,6 +195,76 @@ describe('projects', () => {
     );
   });
 
+  // A team whose workflow has its own Paused state (backlog-typed here) can
+  // show a paused project as paused, both ways.
+  function withPausedState(tasks: TaskMeta[]) {
+    const ctx = context(tasks);
+    return {
+      ...ctx,
+      model: {
+        ...ctx.model,
+        definitions: [
+          ...ctx.model.definitions,
+          { name: 'Paused', type: 'backlog' as const, color: null },
+        ],
+      },
+    };
+  }
+
+  it('maps a project status by name when the team has a status spelling it', () => {
+    const ctx = withPausedState(workspace());
+    const paused = project({ status: PROJECT_STATUSES[3] });
+    expect(projectValues(paused, ctx).status).toBe('=paused');
+    const start = doc(
+      linked('t-x', 'project', 'p-x', 'project', { status: 'In Progress' })
+    );
+    const pulled = applyUpdatePatch(
+      start,
+      projectPatch(paused, ['status'], start, ctx),
+      NOW
+    );
+    expect(pulled.meta.status).toBe('Paused');
+    same(taskProjectValues(pulled, ctx), projectValues(paused, ctx), [
+      'status',
+    ]);
+    // Back in progress here: pushed as Linear's own In Progress, by name.
+    const resumed = applyUpdatePatch(pulled, { status: 'In Progress' }, NOW);
+    expect(taskProjectValues(resumed, ctx).status).toBe('=in progress');
+    expect(projectPush(resumed, ['status'], paused, ctx).input.statusId).toBe(
+      'ps-started'
+    );
+    expect(projectPush(pulled, ['status'], paused, ctx).input.statusId).toBe(
+      'ps-paused'
+    );
+  });
+
+  it('keeps a paused project’s local status when no status spells Paused', () => {
+    const ctx = context(workspace());
+    const paused = project({ status: PROJECT_STATUSES[3] });
+    const start = doc(
+      linked('t-x', 'project', 'p-x', 'project', { status: 'In Review' })
+    );
+    const patch = projectPatch(paused, ['status'], start, ctx);
+    expect(patch.status).toBe('In Review');
+    // Both read as started: a move among started statuses here never unpauses.
+    expect(taskProjectValues(start, ctx).status).toBe(
+      projectValues(paused, ctx).status
+    );
+  });
+
+  it('never matches a name across the done line', () => {
+    const ctx = context(workspace());
+    // A workspace that named its completed project status "Todo".
+    const odd = project({
+      status: { id: 'ps-odd', name: 'Todo', type: 'completed' },
+    });
+    expect(projectValues(odd, ctx).status).toBe('completed');
+    const start = doc(
+      linked('t-x', 'project', 'p-x', 'project', { status: 'Todo' })
+    );
+    expect(projectPatch(odd, ['status'], start, ctx).status).toBe('Done');
+  });
+
   it('turns initiative membership edits into link and unlink calls', () => {
     const ctx = context(workspace());
     const task = doc(
@@ -265,12 +335,58 @@ describe('milestones', () => {
       milestoneValues(remote, ctx),
       MILESTONE_FIELDS
     );
+    expect(pulled.meta.sortOrder).toBe(1);
     expect(milestonePush(pulled, MILESTONE_FIELDS, ctx)).toEqual({
       name: 'Beta',
       description: 'Beta cut',
       targetDate: '2026-08-15',
       projectId: 'p-1',
+      sortOrder: 1,
     });
+  });
+
+  it('never pushes an order a local milestone never had', () => {
+    const tasks = workspace();
+    const local = doc(linked('t-x', 'milestone', 'm-x'));
+    const ctx = context([...tasks, local.meta]);
+    expect(local.meta.sortOrder).toBeNull();
+    expect(milestonePush(local, ['sortOrder'], ctx)).toEqual({});
+    const moved = doc(
+      linked('t-x', 'milestone', 'm-x', 'milestone', {
+        sortOrder: -2,
+      })
+    );
+    expect(milestonePush(moved, ['sortOrder'], ctx)).toEqual({ sortOrder: -2 });
+  });
+});
+
+describe('initiative status names', () => {
+  it('matches an initiative status a team state spells, by name', () => {
+    const base = context(workspace());
+    const ctx = {
+      ...base,
+      model: {
+        ...base.model,
+        definitions: [
+          ...base.model.definitions,
+          { name: 'Active', type: 'started' as const, color: null },
+        ],
+      },
+    };
+    const active = initiative({ status: 'Active' });
+    expect(initiativeValues(active, ctx).status).toBe('=active');
+    const start = doc(
+      linked('t-x', 'initiative', 'init-x', 'initiative', {
+        status: 'In Progress',
+      })
+    );
+    const pulled = applyUpdatePatch(
+      start,
+      initiativePatch(active, ['status'], start, ctx),
+      NOW
+    );
+    expect(pulled.meta.status).toBe('Active');
+    expect(initiativePush(pulled, ['status'], ctx).status).toBe('Active');
   });
 });
 

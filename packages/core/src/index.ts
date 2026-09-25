@@ -4,6 +4,7 @@ export * from './kinds.js';
 export * from './containerRef.js';
 export * from './comments.js';
 export * from './people.js';
+export * from './labels.js';
 export {
   formatMilestoneMigrationReport,
   migrateLegacyMilestones,
@@ -308,6 +309,7 @@ export type {
 } from './credentials.js';
 export * from './linearContainers.js';
 export * from './linearFields.js';
+export * from './linearLabels.js';
 export * from './linearMerge.js';
 export * from './linearPeople.js';
 export * from './linearStatuses.js';

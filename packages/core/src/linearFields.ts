@@ -1,3 +1,4 @@
+import { labelRef } from './labels.js';
 import type {
   LinearIssue,
   LinearIssueInput,
@@ -5,6 +6,7 @@ import type {
   LinearProjectStatus,
   LinearRef,
   LinearTruncatedField,
+  LinearWorkflowState,
 } from './linearMap.js';
 import {
   externalId,
@@ -66,14 +68,17 @@ export interface LinearMapContext {
   tasks: ReadonlyMap<string, TaskMeta>;
   /** Linear record id (any kind) -> the task linked to it. */
   taskByRemote: ReadonlyMap<string, string>;
-  /** Workflow state id -> generated status name. */
+  /** Workflow state id (any linked team's) -> generated status name. */
   statusByState: ReadonlyMap<string, string>;
-  /** Status name -> workflow state id. */
-  stateByStatus: ReadonlyMap<string, string>;
+  /** Each linked team's workflow states, by team id. */
+  teamStates: ReadonlyMap<string, readonly LinearWorkflowState[]>;
+  /** The team a new issue goes to when nothing picks another. */
+  defaultTeamId: string;
   model: StatusModel;
   people: PeopleIndex;
-  /** Known labels, by lowercased label key (see labelKey). */
-  labels: ReadonlyMap<string, LinearLabel>;
+  /** Known labels by lowercased label key (see labelKey): every label that
+   *  spells the key, since each linked team can have its own. */
+  labels: ReadonlyMap<string, readonly LinearLabel[]>;
   /** Label id -> label, for resolving an issue label's group. */
   labelsById: ReadonlyMap<string, LinearLabel>;
   /** Whether Acceptance Criteria travels in the Linear description. */
@@ -83,9 +88,62 @@ export interface LinearMapContext {
 
 /** A label as a task spells it: `Group/Name` inside a group, else the name. */
 export function labelKey(label: LinearLabel): string {
-  return label.group == null || label.group === ''
-    ? label.name
-    : `${label.group}/${label.name}`;
+  return labelRef(label);
+}
+
+/**
+ * The label a task's `key` names on an issue in `teamId`: the team's own,
+ * else a workspace label, else none (Linear rejects another team's label).
+ */
+export function labelFor(
+  key: string,
+  teamId: string,
+  ctx: LinearMapContext
+): LinearLabel | undefined {
+  const candidates = ctx.labels.get(key.toLowerCase()) ?? [];
+  return (
+    candidates.find((l) => l.teamId === teamId) ??
+    candidates.find((l) => l.teamId == null)
+  );
+}
+
+/**
+ * The workflow state a status means on an issue in `teamId`: the team's state
+ * generated as that status, else the team's first state of the status's type
+ * (a status another linked team's workflow brought), else null.
+ */
+export function stateIdFor(
+  teamId: string,
+  status: string,
+  ctx: LinearMapContext
+): string | null {
+  const states = ctx.teamStates.get(teamId) ?? [];
+  const named = states.find((s) => ctx.statusByState.get(s.id) === status);
+  if (named !== undefined) return named.id;
+  const type = statusType(status, ctx.model);
+  const ofType = states
+    .filter((s) => statusTypeOfState(s.type) === type)
+    .sort((a, b) => {
+      // A state of exactly that type before a `duplicate` standing in for it.
+      const exact = Number(a.type !== type) - Number(b.type !== type);
+      return exact !== 0 ? exact : (a.position ?? 0) - (b.position ?? 0);
+    });
+  return ofType[0]?.id ?? null;
+}
+
+// The statuses the linked workflows generated, memoized per context map.
+const generatedStatuses = new WeakMap<
+  ReadonlyMap<string, string>,
+  ReadonlySet<string>
+>();
+
+function isGeneratedStatus(status: string, ctx: LinearMapContext): boolean {
+  let known = generatedStatuses.get(ctx.statusByState);
+  if (known === undefined) {
+    known = new Set(ctx.statusByState.values());
+    generatedStatuses.set(ctx.statusByState, known);
+  }
+  return known.has(status);
 }
 
 // ---------------------------------------------------------------------------
@@ -394,6 +452,19 @@ export function untrustedIssueFields(
   return out;
 }
 
+// An issue's state as the status it generated: statuses are one vocabulary
+// across the linked teams, so an issue moving between two of them does not
+// read as a state change. A state no generation named stays distinct.
+function remoteStatus(
+  issue: LinearIssue,
+  ctx: LinearMapContext
+): string | null {
+  if (issue.state === null) return null;
+  return (
+    ctx.statusByState.get(issue.state.id) ?? `\u0000state:${issue.state.id}`
+  );
+}
+
 /** A Linear issue's canonical values. */
 export function issueValues(
   issue: LinearIssue,
@@ -409,7 +480,7 @@ export function issueValues(
       issue.description ?? '',
       ctx.includeAcceptanceCriteria
     ),
-    state: issue.state?.id ?? null,
+    state: remoteStatus(issue, ctx),
     priority: issue.priority,
     estimate: issue.estimate,
     assignee: issue.assigneeId,
@@ -472,7 +543,7 @@ export function taskIssueValues(
       doc.body,
       ctx.includeAcceptanceCriteria
     ),
-    state: ctx.stateByStatus.get(meta.status) ?? UNMAPPED,
+    state: isGeneratedStatus(meta.status, ctx) ? meta.status : UNMAPPED,
     priority: priorityToLinear(meta.priority),
     estimate: meta.estimate,
     assignee: linearUserOf(meta.assignee, ctx),
@@ -662,9 +733,13 @@ export interface IssuePush {
   archive: boolean | null;
 }
 
-/** Local labels no known Linear label spells, to create before a push. */
-export function missingLabels(doc: TaskDoc, ctx: LinearMapContext): string[] {
-  return doc.meta.labels.filter((l) => !ctx.labels.has(l.toLowerCase()));
+/** Local labels no Linear label usable in `teamId` spells, to create before a push. */
+export function missingLabels(
+  doc: TaskDoc,
+  ctx: LinearMapContext,
+  teamId: string = ctx.defaultTeamId
+): string[] {
+  return doc.meta.labels.filter((l) => labelFor(l, teamId, ctx) === undefined);
 }
 
 function setDiff(a: readonly string[], b: readonly string[]): string[] {
@@ -685,13 +760,15 @@ export const ISSUE_FOLLOW_UP_FIELDS: readonly IssueField[] = [
 /**
  * The Linear writes that carry `fields` from a task to its issue. `remote` is
  * the issue as last fetched, which is where relation and attachment ids come
- * from; for a create it is null and only the scalar input is filled.
+ * from; for a create it is null and only the scalar input is filled. `teamId`
+ * is the issue's team, whose states and labels the push names.
  */
 export function issuePush(
   doc: TaskDoc,
   fields: Iterable<string>,
   remote: LinearIssue | null,
-  ctx: LinearMapContext
+  ctx: LinearMapContext,
+  teamId: string = remote?.team?.id ?? ctx.defaultTeamId
 ): IssuePush {
   const local = taskIssueValues(doc, ctx);
   const was = remote === null ? null : issueValues(remote, ctx);
@@ -720,9 +797,11 @@ export function issuePush(
       case 'description':
         input.description = value as string;
         break;
-      case 'state':
-        input.stateId = value as string;
+      case 'state': {
+        const stateId = stateIdFor(teamId, value as string, ctx);
+        if (stateId !== null) input.stateId = stateId;
         break;
+      }
       case 'priority':
         input.priority = value as number;
         break;
@@ -735,7 +814,7 @@ export function issuePush(
       case 'labels':
         input.labelIds = sortedUnique(
           doc.meta.labels.flatMap((l) => {
-            const label = ctx.labels.get(l.toLowerCase());
+            const label = labelFor(l, teamId, ctx);
             return label === undefined ? [] : [label.id];
           })
         );

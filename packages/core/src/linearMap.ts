@@ -195,6 +195,7 @@ export interface LinearMilestoneInput {
   description?: string;
   targetDate?: string | null;
   projectId?: string;
+  sortOrder?: number;
 }
 
 export interface LinearInitiativeInput {

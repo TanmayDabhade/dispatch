@@ -1,3 +1,9 @@
+import {
+  fieldHash,
+  INITIATIVE_FIELDS,
+  ISSUE_FIELDS,
+  PROJECT_FIELDS,
+} from '@dispatch/core';
 import type { FieldBase, LinearEntity, StatusRoles } from '@dispatch/core';
 import { createHash } from 'node:crypto';
 import {
@@ -48,6 +54,15 @@ interface WebhookRecord {
   secret: string;
   teamId: string;
   createdAt: string;
+  /** Hooks for the other linked teams, all signing with the same secret. */
+  more?: { teamId: string; id: string }[];
+}
+
+/** Every hook a registration holds, the primary team's first. */
+export function webhookHooks(
+  record: WebhookRecord
+): { teamId: string; id: string }[] {
+  return [{ teamId: record.teamId, id: record.id }, ...(record.more ?? [])];
 }
 
 export interface LinearSyncState {
@@ -92,6 +107,14 @@ export interface LinearSyncState {
   movedOut: Record<string, string>;
   /** When linked issues were last checked for team moves and deletions. */
   lastAuditAt: string | null;
+  /** Linear label id -> the color both sides held after the last sync. */
+  labelColors: Record<string, string | null>;
+  /** Which value spaces the stored bases were hashed in (see upgradeBases);
+   *  absent on a state written before the first upgrade. */
+  baseVersion?: number;
+  /** Set by an upgrade that added a milestone field: the next pull reads
+   *  every linked milestone once, not just those newer than the cursor. */
+  milestoneWalk?: boolean;
 }
 
 // Sync state is user-level, not project-level: `.dispatch/` is committed to the
@@ -132,6 +155,7 @@ export function emptyLinearState(): LinearSyncState {
     conflictTotal: 0,
     movedOut: {},
     lastAuditAt: null,
+    labelColors: {},
   };
 }
 
@@ -244,4 +268,77 @@ export function writeBase(
     l: encode(base.local),
     r: encode(base.remote),
   };
+}
+
+/**
+ * Rewrites stored bases hashed in a value space a field has since left, once
+ * per version. v2: an issue's `state` compares as the status it generated,
+ * not the state id, so a move between linked teams is not a change; each
+ * stored hash maps id -> name, and one no current state explains is dropped.
+ * v3: a project's or initiative's `status` compares by name where both sides
+ * spell it; old category hashes cannot say which name, so they are dropped.
+ * A dropped field syncs as on first contact: Linear's value, unless the task
+ * holds a newer unsent edit. v4: milestones gained `sortOrder`, which only a
+ * read of each one brings, so linked milestones are walked once.
+ */
+export function upgradeBases(
+  state: LinearSyncState,
+  stateNames: Readonly<Record<string, string>>
+): void {
+  let version = state.baseVersion ?? 1;
+  if (version < 2) {
+    // Nothing to translate by until a team's states have been generated.
+    if (Object.keys(stateNames).length === 0) return;
+    const byHash = new Map<string, string>([
+      [fieldHash(null), fieldHash(null)],
+    ]);
+    for (const [id, name] of Object.entries(stateNames)) {
+      byHash.set(fieldHash(id), fieldHash(name));
+    }
+    rewriteBases(state, 'issue', ISSUE_FIELDS, 'state', (hash) =>
+      byHash.get(hash)
+    );
+    version = 2;
+  }
+  if (version < 3) {
+    rewriteBases(state, 'project', PROJECT_FIELDS, 'status', () => undefined);
+    rewriteBases(
+      state,
+      'initiative',
+      INITIATIVE_FIELDS,
+      'status',
+      () => undefined
+    );
+    version = 3;
+  }
+  if (version < 4) {
+    if (Object.values(state.bases).some((b) => b.e === 'milestone')) {
+      state.milestoneWalk = true;
+    }
+    version = 4;
+  }
+  state.baseVersion = version;
+}
+
+// Maps one field's stored hashes (both sides) of every base of `entity`;
+// `undefined` drops the hash.
+function rewriteBases(
+  state: LinearSyncState,
+  entity: LinearEntity,
+  fields: readonly string[],
+  field: string,
+  map: (hash: string) => string | undefined
+): void {
+  for (const taskId of Object.keys(state.bases)) {
+    const base = readBase(state, taskId, entity);
+    if (base === null) continue;
+    for (const side of [base.local, base.remote]) {
+      const hash = side[field];
+      if (hash === undefined) continue;
+      const next = map(hash);
+      if (next === undefined) delete side[field];
+      else side[field] = next;
+    }
+    writeBase(state, taskId, entity, fields, base);
+  }
 }

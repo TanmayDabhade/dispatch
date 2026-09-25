@@ -164,19 +164,19 @@ function parseLinearFields(
     }
     return value as string[];
   };
-  const estimate = raw.estimate;
-  if (
-    estimate != null &&
-    (typeof estimate !== 'number' || !Number.isFinite(estimate))
-  ) {
-    fail('estimate', 'a number');
-  }
+  const optionalNumber = (key: string): number | null => {
+    const value = raw[key];
+    if (value == null) return null;
+    return typeof value === 'number' && Number.isFinite(value)
+      ? value
+      : fail(key, 'a number');
+  };
   const creator = optionalString('creator');
   if (creator !== null && !isValidAssignee(creator)) {
     fail('creator', 'an actor ref');
   }
   return {
-    estimate: (estimate as number | null | undefined) ?? null,
+    estimate: optionalNumber('estimate'),
     dueDate: optionalString('due-date'),
     startDate: optionalString('start-date'),
     cycle: parseCycle(raw.cycle, file),
@@ -186,6 +186,7 @@ function parseLinearFields(
     creator,
     color: optionalString('color'),
     icon: optionalString('icon'),
+    sortOrder: optionalNumber('sort-order'),
   };
 }
 
@@ -324,6 +325,7 @@ export function serializeTaskFile(doc: TaskDoc): string {
     ...(meta.creator == null ? {} : { creator: meta.creator }),
     ...(meta.color == null ? {} : { color: meta.color }),
     ...(meta.icon == null ? {} : { icon: meta.icon }),
+    ...(meta.sortOrder == null ? {} : { 'sort-order': meta.sortOrder }),
   };
   return `---\n${YAML.stringify(fm).trimEnd()}\n---\n${doc.body}`;
 }

@@ -89,6 +89,7 @@ import {
   readJsonBodyOptional,
 } from './api/http.js';
 import { getImpact } from './api/impact.js';
+import { listLabels, putLabelColor } from './api/labels.js';
 import {
   legacyMilestoneParent,
   withoutLegacyMilestone,
@@ -463,13 +464,16 @@ function validateLinearFields(value: Record<string, unknown>): string | null {
     const error = validateStringArrayField(value[key], key);
     if (error) return error;
   }
-  const { estimate, creator, cycle } = value;
-  if (
-    estimate !== undefined &&
-    estimate !== null &&
-    (typeof estimate !== 'number' || !Number.isFinite(estimate))
-  ) {
-    return 'invalid estimate: expected a number or null';
+  const { creator, cycle } = value;
+  for (const key of ['estimate', 'sortOrder'] as const) {
+    const n = value[key];
+    if (
+      n !== undefined &&
+      n !== null &&
+      (typeof n !== 'number' || !Number.isFinite(n))
+    ) {
+      return `invalid ${key}: expected a number or null`;
+    }
   }
   if (
     creator !== undefined &&
@@ -1237,6 +1241,14 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     }
     // Core validates every entry before writing.
     patch.people = people as ConfigPatch['people'];
+  }
+  if ('labels' in body) {
+    const { labels } = body;
+    if (labels !== null && !Array.isArray(labels)) {
+      return errorResponse(400, 'labels must be a list or null');
+    }
+    // Core validates every entry before writing.
+    patch.labels = labels as ConfigPatch['labels'];
   }
   if ('statusRoles' in body) {
     const roles = body.statusRoles;
@@ -6193,6 +6205,12 @@ export async function handleApi(
     // GET /api/people — the people registry pickers and avatars read.
     if (segments[0] === 'people' && segments.length === 1 && method === 'GET') {
       return listPeople(ctx);
+    }
+    // GET /api/labels — the label registry chips take their colors from;
+    // PUT sets one label's color.
+    if (segments[0] === 'labels' && segments.length === 1) {
+      if (method === 'GET') return listLabels(ctx);
+      if (method === 'PUT') return await putLabelColor(req, ctx);
     }
     // GET /api/executors — what this daemon can dispatch on, so no client has
     // to hard-code executor names.

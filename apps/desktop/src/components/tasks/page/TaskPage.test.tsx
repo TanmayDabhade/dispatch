@@ -503,6 +503,25 @@ describe('the rail', () => {
   });
 });
 
+describe('the narrow pane', () => {
+  test('its label chips are colored label pills, like the rail’s', async () => {
+    mount(fakeHost(newLog(), { tasks: [task('t-1', { labels: ['bug'] })] }), {
+      layout: 'split',
+    });
+    const chips = await waitFor(() => {
+      const found = document.querySelector('[data-slot=property-chips]');
+      if (!(found instanceof HTMLElement)) throw new Error('no chips yet');
+      return found;
+    });
+    // A label pill leads with a dot in colorForLabel's color; happy-dom drops
+    // that nested var() from the style, so the dot itself is what's checked.
+    const pill = within(chips)
+      .getByText('bug')
+      .closest('[data-slot=label-pill]');
+    expect(pill?.querySelector('span[aria-hidden]') ?? null).not.toBeNull();
+  });
+});
+
 describe('keyboard', () => {
   const opened = () => document.querySelector('[data-popup-open]') !== null;
 

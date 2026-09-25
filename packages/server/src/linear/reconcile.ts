@@ -43,9 +43,11 @@ import type {
   CreateInput,
   DispatchConfig,
   FieldValues,
+  LabelColorPush,
   LinearEntity,
   LinearInitiative,
   LinearIssue,
+  LinearLabel,
   LinearProject,
   LinearProjectMilestone,
   TaskDoc,
@@ -59,7 +61,7 @@ import type { LinearClient, LinearFailure, LinearResult } from './client.js';
 import type { ConflictRecord, LinearSyncState } from './state.js';
 import { readBase, recordConflicts, writeBase } from './state.js';
 import type { PassContext } from './workspace.js';
-import { track, trackLabel } from './workspace.js';
+import { linkedIssueTeam, track, trackLabel } from './workspace.js';
 
 /** One sync's outcome. `created` counts new local tasks; `createdIssues` counts new Linear records. */
 export interface LinearSyncSummary {
@@ -192,6 +194,7 @@ const CREATE_KEYS = [
   'initiatives',
   'color',
   'icon',
+  'sortOrder',
   'creator',
 ] as const;
 
@@ -236,7 +239,11 @@ export interface PassDeps {
   store: TaskStorePort;
   client: LinearClient;
   config: DispatchConfig;
+  /** The primary linked team: where a new record goes unless its parent's
+   *  team is another linked one. */
   teamId: string;
+  /** Linked team key (an identifier's prefix, `ENG`) -> team id. */
+  teamByKey: ReadonlyMap<string, string>;
   state: LinearSyncState;
   summary: LinearSyncSummary;
   ctx: PassContext;
@@ -244,6 +251,8 @@ export interface PassDeps {
   batch: TaskChangeBatch;
   /** Records a failure's message and arms the backoff on a throttle. */
   note: (failure: LinearFailure) => string;
+  /** Hears every label the pass creates or recolors, to keep caches current. */
+  onLabel: (label: LinearLabel) => void;
 }
 
 function later(a: string, b: string): string {
@@ -540,15 +549,46 @@ export class LinearPass {
   // ---------------------------------------------------------------------------
   // Pushes
 
-  private async ensureLabels(doc: TaskDoc): Promise<boolean> {
-    const { ctx, client, teamId } = this.d;
+  // Creates the labels a task carries that `teamId` lacks, in the registry's
+  // color when it has one.
+  private async ensureLabels(doc: TaskDoc, teamId: string): Promise<boolean> {
+    const { ctx, client } = this.d;
     let ok = true;
-    for (const name of missingLabels(doc, ctx)) {
-      const label = this.check(await client.createLabel({ name, teamId }));
+    for (const name of missingLabels(doc, ctx, teamId)) {
+      const color = ctx.labelColors.get(name.toLowerCase());
+      const label = this.check(
+        await client.createLabel({
+          name,
+          teamId,
+          ...(color === undefined ? {} : { color }),
+        })
+      );
       if (label === null) ok = false;
-      else trackLabel(ctx, label);
+      else {
+        trackLabel(ctx, label);
+        this.d.onLabel(label);
+      }
     }
     return ok;
+  }
+
+  /** Writes local label colors to Linear; answers the ids whose write failed. */
+  async pushLabelColors(
+    pushes: readonly LabelColorPush[]
+  ): Promise<Set<string>> {
+    const pending = new Set(pushes.map((p) => p.id));
+    await this.guarded(async () => {
+      for (const push of pushes) {
+        const label = this.check(
+          await this.d.client.updateLabel(push.id, { color: push.color })
+        );
+        if (label === null) continue;
+        pending.delete(push.id);
+        trackLabel(this.d.ctx, label);
+        this.d.onLabel(label);
+      }
+    });
+    return pending;
   }
 
   private async pushIssue(
@@ -559,7 +599,8 @@ export class LinearPass {
     const { client, ctx } = this.d;
     const failed = new Set<string>();
     let latest = remote;
-    if (fields.includes('labels') && !(await this.ensureLabels(doc))) {
+    const team = remote.team?.id ?? this.d.teamId;
+    if (fields.includes('labels') && !(await this.ensureLabels(doc, team))) {
       failed.add('labels');
     }
     const plan = issuePush(doc, fields, remote, ctx);
@@ -825,14 +866,19 @@ export class LinearPass {
       );
     } else {
       ops = ISSUE_OPS as unknown as EntityOps<RemoteRecord>;
-      if (!(await this.ensureLabels(doc))) failed.add('labels');
-      const plan = issuePush(doc, ISSUE_FIELDS, null, ctx);
+      const team = this.teamForNewIssue(doc);
+      if (!(await this.ensureLabels(doc, team))) failed.add('labels');
+      const plan = issuePush(doc, ISSUE_FIELDS, null, ctx, team);
       // A create leaves unset fields out rather than sending explicit nulls.
       const input = Object.fromEntries(
         Object.entries(plan.input).filter(([, v]) => v !== null)
       );
       const created = this.check(
-        await client.createIssue({ ...input, teamId, title: doc.meta.title })
+        await client.createIssue({
+          ...input,
+          teamId: team,
+          title: doc.meta.title,
+        })
       );
       remote = created;
       if (created !== null) {
@@ -848,11 +894,26 @@ export class LinearPass {
     if (remote === null) return;
     // Recording the link is bookkeeping, not an edit, so `updated` is kept.
     const current = this.d.store.get(doc.meta.id) ?? doc;
+    // A milestone made unordered takes the order Linear gave it, unless one
+    // was set here during the round-trip.
+    const order =
+      entity === 'milestone' &&
+      doc.meta.sortOrder === null &&
+      current.meta.sortOrder === null
+        ? (remote as LinearProjectMilestone).sortOrder
+        : undefined;
     const linked = this.write(
       doc.meta.id,
-      { external: linearExternal({ entity, id: remote.id }) },
+      {
+        external: linearExternal({ entity, id: remote.id }),
+        ...(order === undefined ? {} : { sortOrder: order }),
+      },
       current.meta.updated
     );
+    const sent =
+      order === undefined
+        ? doc
+        : { ...doc, meta: { ...doc.meta, sortOrder: order } };
     writeBase(
       this.d.state,
       linked.meta.id,
@@ -862,7 +923,7 @@ export class LinearPass {
       // during the round-trip still reads as a change next pass.
       nextBase(
         ops.fields,
-        ops.local(doc, ctx),
+        ops.local(sent, ctx),
         { ...ops.remote(remote, ctx), ...assumed },
         null,
         failed
@@ -875,10 +936,24 @@ export class LinearPass {
     summary.pushed++;
   }
 
+  // A new issue joins its parent issue's team when that is a linked one (a
+  // sub-issue stays beside its parent), else the primary team.
+  private teamForNewIssue(doc: TaskDoc): string {
+    const parent = parseLinearExternal(
+      this.d.ctx.tasks.get(doc.meta.parent ?? '')?.external
+    );
+    if (parent?.entity !== 'issue') return this.d.teamId;
+    return (
+      linkedIssueTeam(this.d.state, this.d.teamByKey, parent.id) ??
+      this.d.teamId
+    );
+  }
+
   /**
-   * An issue that left the linked team: the task is unlinked (and remembered,
-   * so it is linked again if the issue comes back) rather than following a
-   * team whose workflow this project does not mirror.
+   * An issue that left every linked team: the task is unlinked (and
+   * remembered, so it is linked again if the issue comes back to one) rather
+   * than following a team whose workflow this project does not mirror. A move
+   * between linked teams is followed instead, as an ordinary state change.
    */
   unlinkMoved(doc: TaskDoc, issueId: string, where: string): void {
     this.d.state.movedOut[issueId] = doc.meta.id;
@@ -887,14 +962,14 @@ export class LinearPass {
       doc.meta.id,
       {
         external: null,
-        appendActivity: `Unlinked from Linear: the issue moved to ${where}`,
+        appendActivity: `Unlinked from Linear: the issue moved to ${where}, outside the linked teams`,
         activityActor: 'none',
       },
       doc.meta.updated
     );
   }
 
-  /** Links a task back to an issue that returned to the team. */
+  /** Links a task back to an issue that returned to a linked team. */
   relink(taskId: string, issue: LinearIssue): TaskDoc | null {
     const doc = this.d.docs.get(taskId);
     if (doc === undefined || doc.meta.external !== null) return null;
@@ -903,7 +978,7 @@ export class LinearPass {
       taskId,
       {
         external: linearExternal({ entity: 'issue', id: issue.id }),
-        appendActivity: `Relinked to Linear ${issue.identifier}: the issue is back in the team`,
+        appendActivity: `Relinked to Linear ${issue.identifier}: the issue is back in a linked team`,
         activityActor: 'none',
       },
       doc.meta.updated

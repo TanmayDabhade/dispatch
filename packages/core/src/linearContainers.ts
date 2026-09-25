@@ -50,6 +50,7 @@ export const MILESTONE_FIELDS = [
   'targetDate',
   'project',
   'archived',
+  'sortOrder',
 ] as const;
 
 export const INITIATIVE_FIELDS = [
@@ -68,11 +69,82 @@ export const PULL_ONLY_CONTAINER_FIELDS: ReadonlySet<string> = new Set([
   'archived',
 ]);
 
-// A container's status compared by type: Linear's project and initiative
-// statuses are their own vocabularies, so only the category round-trips.
+// A container's status: Linear's project and initiative statuses are their own
+// vocabularies, so a status compares by name where both sides spell it (a team
+// state and a project status both called "In Progress", or a "Paused" state
+// for a paused project), else by category. A name only matches inside one
+// open/completed/canceled class, so no mapping changes whether a container
+// counts as done, which is all blocking and fan-out read of it.
 function localCategory(status: string, ctx: LinearMapContext): StatusType {
   const type = statusType(status, ctx.model);
   return type === 'triage' ? 'backlog' : type;
+}
+
+function doneClass(type: StatusType): 'open' | 'completed' | 'canceled' {
+  return type === 'completed' || type === 'canceled' ? type : 'open';
+}
+
+function nameKey(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+// The merge value of a status name both vocabularies spell.
+function namedValue(name: string): string {
+  return `=${nameKey(name)}`;
+}
+
+// The local status spelled like a Linear status of `category`, if any.
+function localStatusNamed(
+  name: string,
+  category: StatusType,
+  ctx: LinearMapContext
+): string | undefined {
+  return ctx.model.definitions.find(
+    (d) =>
+      nameKey(d.name) === nameKey(name) &&
+      doneClass(d.type) === doneClass(category)
+  )?.name;
+}
+
+// A Linear status's merge value: its name when a local status spells it, else
+// its category.
+function remoteStatusValue(
+  name: string | null,
+  category: StatusType,
+  ctx: LinearMapContext
+): string {
+  return name !== null && localStatusNamed(name, category, ctx) !== undefined
+    ? namedValue(name)
+    : category;
+}
+
+// A local status's merge value against Linear's `names` (each with its
+// category): its name when Linear spells it, else its category.
+function localStatusValue(
+  status: string,
+  names: readonly (readonly [string, StatusType])[],
+  ctx: LinearMapContext
+): string {
+  const category = localCategory(status, ctx);
+  const spelled = names.some(
+    ([name, of]) =>
+      nameKey(name) === nameKey(status) && doneClass(of) === doneClass(category)
+  );
+  return spelled ? namedValue(status) : category;
+}
+
+// The local status a Linear status pulls to: the one spelling its name, else
+// the current one when it is already of the category, else the category's
+// first.
+function statusFromRemote(
+  name: string | null,
+  category: StatusType,
+  current: string,
+  ctx: LinearMapContext
+): string {
+  const spelled =
+    name === null ? undefined : localStatusNamed(name, category, ctx);
+  return spelled ?? statusForCategory(category, current, ctx);
 }
 
 const PROJECT_TYPE_CATEGORY: Record<string, StatusType> = {
@@ -91,6 +163,17 @@ const INITIATIVE_CATEGORY: Record<string, StatusType> = {
   Completed: 'completed',
   Canceled: 'canceled',
 };
+
+const INITIATIVE_NAMES = Object.entries(INITIATIVE_CATEGORY);
+
+// A project status's category; a project with none reads as backlog.
+function projectCategory(p: LinearProject): StatusType {
+  return PROJECT_TYPE_CATEGORY[p.status?.type ?? ''] ?? 'backlog';
+}
+
+function initiativeCategory(i: LinearInitiative): StatusType {
+  return INITIATIVE_CATEGORY[i.status] ?? 'unstarted';
+}
 
 const CATEGORY_INITIATIVE: Record<StatusType, string> = {
   triage: 'Planned',
@@ -186,7 +269,7 @@ export function projectValues(p: LinearProject, ctx: LinearMapContext): Values {
   return {
     title: p.name,
     description: longText(p.content, p.summary, ctx),
-    status: PROJECT_TYPE_CATEGORY[p.status?.type ?? ''] ?? 'backlog',
+    status: remoteStatusValue(p.status?.name ?? null, projectCategory(p), ctx),
     priority: p.priority,
     lead: p.leadId,
     startDate: p.startDate,
@@ -203,7 +286,14 @@ export function taskProjectValues(doc: TaskDoc, ctx: LinearMapContext): Values {
   return {
     title: meta.title,
     description: description(doc, ctx),
-    status: localCategory(meta.status, ctx),
+    status: localStatusValue(
+      meta.status,
+      ctx.projectStatuses.map((s) => [
+        s.name,
+        PROJECT_TYPE_CATEGORY[s.type] ?? 'backlog',
+      ]),
+      ctx
+    ),
     priority: priorityToLinear(meta.priority),
     lead: linearUserOf(meta.assignee, ctx),
     startDate: meta.startDate,
@@ -232,8 +322,9 @@ export function projectPatch(
         patch.body = withDescription(doc, v.description as string, ctx);
         break;
       case 'status':
-        patch.status = statusForCategory(
-          v.status as StatusType,
+        patch.status = statusFromRemote(
+          p.status?.name ?? null,
+          projectCategory(p),
           doc.meta.status,
           ctx
         );
@@ -319,7 +410,13 @@ export function projectPush(
         input.content = value as string;
         break;
       case 'status': {
-        const id = projectStatusId(value as StatusType, ctx);
+        const wanted = doneClass(localCategory(doc.meta.status, ctx));
+        const spelled = ctx.projectStatuses.find(
+          (s) =>
+            namedValue(s.name) === value &&
+            doneClass(PROJECT_TYPE_CATEGORY[s.type] ?? 'backlog') === wanted
+        );
+        const id = spelled?.id ?? projectStatusId(value as StatusType, ctx);
         if (id !== undefined) input.statusId = id;
         break;
       }
@@ -373,6 +470,7 @@ export function milestoneValues(
     targetDate: m.targetDate,
     project: m.projectId,
     archived: m.archivedAt !== null,
+    sortOrder: m.sortOrder,
   };
 }
 
@@ -387,6 +485,9 @@ export function taskMilestoneValues(
     targetDate: meta.dueDate,
     project: projectAbove(meta, ctx),
     archived: meta.archivedAt !== undefined,
+    // Unordered locally is never sent; a milestone made here takes the order
+    // Linear gives it on creation (see createRemote).
+    sortOrder: meta.sortOrder ?? UNMAPPED,
   };
 }
 
@@ -415,6 +516,9 @@ export function milestonePatch(
       case 'archived':
         patch.archivedAt = m.archivedAt;
         break;
+      case 'sortOrder':
+        patch.sortOrder = m.sortOrder;
+        break;
     }
   }
   return patch;
@@ -429,7 +533,7 @@ export function milestonePush(
   const input: LinearMilestoneInput = {};
   for (const field of fields) {
     const value = v[field];
-    if (PULL_ONLY_CONTAINER_FIELDS.has(field)) continue;
+    if (value === UNMAPPED || PULL_ONLY_CONTAINER_FIELDS.has(field)) continue;
     switch (field) {
       case 'title':
         input.name = value as string;
@@ -442,6 +546,9 @@ export function milestonePush(
         break;
       case 'project':
         if (value !== null) input.projectId = value as string;
+        break;
+      case 'sortOrder':
+        input.sortOrder = value as number;
         break;
     }
   }
@@ -458,7 +565,7 @@ export function initiativeValues(
   return {
     title: i.name,
     description: longText(i.content, i.description, ctx),
-    status: INITIATIVE_CATEGORY[i.status] ?? 'unstarted',
+    status: remoteStatusValue(i.status, initiativeCategory(i), ctx),
     owner: i.ownerId,
     targetDate: i.targetDate,
     color: i.color,
@@ -475,7 +582,7 @@ export function taskInitiativeValues(
   return {
     title: meta.title,
     description: description(doc, ctx),
-    status: localCategory(meta.status, ctx),
+    status: localStatusValue(meta.status, INITIATIVE_NAMES, ctx),
     owner: linearUserOf(meta.assignee, ctx),
     targetDate: meta.dueDate,
     color: meta.color,
@@ -501,8 +608,9 @@ export function initiativePatch(
         patch.body = withDescription(doc, v.description as string, ctx);
         break;
       case 'status':
-        patch.status = statusForCategory(
-          v.status as StatusType,
+        patch.status = statusFromRemote(
+          i.status,
+          initiativeCategory(i),
           doc.meta.status,
           ctx
         );
@@ -545,7 +653,9 @@ export function initiativePush(
         input.content = value as string;
         break;
       case 'status':
-        input.status = CATEGORY_INITIATIVE[value as StatusType];
+        input.status =
+          INITIATIVE_NAMES.find(([name]) => namedValue(name) === value)?.[0] ??
+          CATEGORY_INITIATIVE[value as StatusType];
         break;
       case 'owner':
         input.ownerId = value as string | null;

@@ -40,32 +40,92 @@ function safeName(raw: string): string {
   return `${name.charAt(0).toUpperCase()}${name.slice(1)}`;
 }
 
-/** Statuses in Linear's board order: by type, then position within the type. */
-export function statusesFromWorkflowStates(
+// A team's states in Linear's board order: by type, then position, then name.
+function boardOrder(
   states: readonly LinearWorkflowState[]
-): GeneratedStatuses {
+): LinearWorkflowState[] {
   const order = (s: LinearWorkflowState) =>
     STATUS_TYPES.indexOf(statusTypeOfState(s.type));
-  const sorted = [...states].sort((a, b) => {
+  return [...states].sort((a, b) => {
     const byType = order(a) - order(b);
     if (byType !== 0) return byType;
     const byPosition = (a.position ?? 0) - (b.position ?? 0);
     return byPosition !== 0 ? byPosition : a.name.localeCompare(b.name);
   });
+}
+
+/** Statuses in Linear's board order: by type, then position within the type. */
+export function statusesFromWorkflowStates(
+  states: readonly LinearWorkflowState[]
+): GeneratedStatuses {
+  return statusesFromTeams([states]);
+}
+
+/**
+ * The statuses several linked teams' workflows generate together, primary
+ * team first. A state merges into a status another team already generated
+ * when both its name (case-insensitively) and its type match, so teams on the
+ * stock workflow share one Todo, one In Progress and so on; any other state
+ * is a status of its own, suffixed ` (2)` on a name clash. Names are settled
+ * team by team, so linking another team never renames the primary's statuses.
+ * Within a type, the primary's order holds and another team's extra states
+ * slot in after the state they follow on that team's board.
+ */
+export function statusesFromTeams(
+  teams: readonly (readonly LinearWorkflowState[])[]
+): GeneratedStatuses {
+  interface Merged {
+    definition: StatusDefinition;
+    teams: Set<number>;
+  }
+  const byKey = new Map<string, Merged>();
   const used = new Set<string>();
-  const definitions: StatusDefinition[] = [];
   const names: Record<string, string> = {};
-  for (const state of sorted) {
-    const base = safeName(state.name);
-    let name = base;
-    for (let n = 2; used.has(name); n++) name = `${base} (${n})`;
-    used.add(name);
-    names[state.id] = name;
-    definitions.push({
-      name,
-      type: statusTypeOfState(state.type),
-      color: state.color ?? null,
+  const ordered = teams.map(boardOrder);
+  // Pass 1: which status each state is, naming new ones team by team.
+  const statusOf: Merged[][] = ordered.map((states, t) =>
+    states.map((state) => {
+      const type = statusTypeOfState(state.type);
+      const key = `${state.name.trim().toLowerCase()}\u0000${type}`;
+      const shared = byKey.get(key);
+      if (shared !== undefined && !shared.teams.has(t)) {
+        shared.teams.add(t);
+        names[state.id] = shared.definition.name;
+        return shared;
+      }
+      const base = safeName(state.name);
+      let name = base;
+      for (let n = 2; used.has(name); n++) name = `${base} (${n})`;
+      used.add(name);
+      names[state.id] = name;
+      const merged: Merged = {
+        definition: { name, type, color: state.color ?? null },
+        teams: new Set([t]),
+      };
+      if (shared === undefined) byKey.set(key, merged);
+      return merged;
+    })
+  );
+  // Pass 2: board order within each type, each team's new statuses placed
+  // after the status its previous state of that type became.
+  const definitions: StatusDefinition[] = [];
+  for (const type of STATUS_TYPES) {
+    const block: Merged[] = [];
+    ordered.forEach((states, t) => {
+      let after = -1;
+      states.forEach((state, i) => {
+        if (statusTypeOfState(state.type) !== type) return;
+        const merged = statusOf[t][i];
+        const at = block.indexOf(merged);
+        if (at >= 0) {
+          after = Math.max(after, at);
+          return;
+        }
+        block.splice(after + 1, 0, merged);
+        after += 1;
+      });
     });
+    for (const merged of block) definitions.push(merged.definition);
   }
   return { definitions, names };
 }
@@ -101,6 +161,22 @@ export function defaultStatusRoles(
 }
 
 /**
+ * The default roles for several linked teams: the primary team's statuses
+ * alone decide them, so linking another team never moves a lifecycle role
+ * onto a status only that team has (its states can sort first in a type).
+ */
+export function primaryStatusRoles(
+  generated: GeneratedStatuses,
+  primary: readonly LinearWorkflowState[]
+): StatusRoles {
+  const own = new Set(primary.map((s) => generated.names[s.id]));
+  const definitions = generated.definitions.filter((d) => own.has(d.name));
+  return defaultStatusRoles(
+    definitions.length > 0 ? definitions : generated.definitions
+  );
+}
+
+/**
  * The roles to write after regenerating statuses. A role the user changed away
  * from what the last generation wrote is an override and survives, following a
  * rename, as long as it still names a status; everything else takes the fresh
@@ -131,17 +207,57 @@ export function reconcileStatusRoles(
   return out;
 }
 
-/** Old status name -> new, for every state whose generated name changed. */
+/**
+ * How generated status names moved between two generations. Teams merged
+ * onto one status can rename it apart, so a name moves for everyone only when
+ * every state that carried it agrees; each team's own renames are kept too.
+ */
+export interface StatusRenames {
+  /** Old name -> new, where every state that carried the old name agrees. */
+  shared: Map<string, string>;
+  /** Team id -> old name -> new, for that team's renamed states. */
+  byTeam: Map<string, Map<string, string>>;
+}
+
+/** The renames between two generations; `teamOf` maps state id -> team id. */
 export function statusRenames(
   previous: Readonly<Record<string, string>>,
-  next: Readonly<Record<string, string>>
-): Map<string, string> {
-  const renames = new Map<string, string>();
+  next: Readonly<Record<string, string>>,
+  teamOf: ReadonlyMap<string, string> = new Map()
+): StatusRenames {
+  const votes = new Map<string, Set<string>>();
+  const byTeam = new Map<string, Map<string, string>>();
   for (const [stateId, before] of Object.entries(previous)) {
     const after = next[stateId];
-    if (after !== undefined && after !== before) renames.set(before, after);
+    if (after === undefined) continue;
+    const vote = votes.get(before) ?? new Set<string>();
+    vote.add(after);
+    votes.set(before, vote);
+    const team = teamOf.get(stateId);
+    if (after === before || team === undefined) continue;
+    const own = byTeam.get(team) ?? new Map<string, string>();
+    own.set(before, after);
+    byTeam.set(team, own);
   }
-  return renames;
+  const shared = new Map<string, string>();
+  for (const [before, afters] of votes) {
+    const [after] = afters;
+    if (afters.size === 1 && after !== before) shared.set(before, after);
+  }
+  return { shared, byTeam };
+}
+
+/**
+ * The renames a task follows: its issue's team's own over the shared ones.
+ * A task with no known team (unlinked, or never seen) follows only the shared.
+ */
+export function renamesForTeam(
+  renames: StatusRenames,
+  teamId: string | null
+): ReadonlyMap<string, string> {
+  const own = teamId === null ? undefined : renames.byTeam.get(teamId);
+  if (own === undefined) return renames.shared;
+  return new Map([...renames.shared, ...own]);
 }
 
 /** Everything `migrateStatus` needs about the old and new vocabularies. */
