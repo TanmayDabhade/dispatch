@@ -156,6 +156,9 @@ interface TaskBoardProps {
 // Stable empty-set defaults — no fresh `Set` per render for the common case.
 const NO_IDS: ReadonlySet<string> = new Set();
 const noop = () => {};
+// One object for every render: fresh options make new sensors, and new sensors hand every
+// card new drag listeners, so each board render (a cursor move, a dispatch) redrew them all.
+const POINTER_SENSOR_OPTIONS = { activationConstraint: { distance: 6 } };
 
 // Linear's column: 348px including 12px of padding either side, so the 322px card sits on
 // the 324px inner width. Shared by the sticky header row and every lane's columns.
@@ -691,7 +694,7 @@ export function TaskBoard({
   }, [tasks]);
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(PointerSensor, POINTER_SENSOR_OPTIONS),
     useSensor(KeyboardSensor)
   );
 
