@@ -5522,7 +5522,10 @@ export async function handleApi(
         segments[2] === 'resume' &&
         method === 'POST'
       ) {
-        return jsonResponse(ctx.orchestrator.resumeRun(segments[1]), 201);
+        return jsonResponse(
+          ctx.orchestrator.resumeRun(segments[1], { actor: humanActor(ctx) }),
+          201
+        );
       }
       if (
         segments.length === 3 &&

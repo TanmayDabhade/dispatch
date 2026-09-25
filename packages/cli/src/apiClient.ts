@@ -46,7 +46,8 @@ export interface RunMeta {
   turns?: number;
   sessionId?: string;
   error?: string;
-  /** ActorRef of the human who dispatched this run — see the server's RunMeta. */
+  /** ActorRef of the human the run is for (who dispatched it, or started its
+   *  fan-out) — see the server's RunMeta. */
   dispatchedBy?: string;
   model?: string;
   reviewedAt?: string;

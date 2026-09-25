@@ -258,11 +258,13 @@ export interface RunMeta {
   // ExecutorStartOptions.model) — surfaced so the UI can show which model ran
   // a given task.
   model?: string;
-  // Serialized ActorRef of the human who pressed dispatch, e.g. `human:ada`.
-  // Absent for a run nobody dispatched by hand (an epic session's auto-fill)
-  // and for runs recorded before this field existed. It is what makes a run —
-  // and the files it claims, and the decisions it parks on — someone's on a
-  // daemon more than one person uses.
+  // Serialized ActorRef of the human the run is for, e.g. `human:ada`: who
+  // pressed dispatch, or started the fan-out that dispatched it. A resume,
+  // follow-up or review/verify run keeps its work's owner unless a person
+  // pressed for it. Absent for a run nobody owns (no human at all) and for
+  // runs recorded before this field existed. It is what makes a run — and the
+  // files it claims, and the decisions it parks on — someone's on a daemon
+  // more than one person uses.
   dispatchedBy?: string;
   // C2: once a run has been merged or discarded, review() must refuse any
   // further review/resume calls on it — this pair of fields, once set, is

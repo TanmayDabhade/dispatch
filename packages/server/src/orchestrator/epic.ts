@@ -914,7 +914,7 @@ export class EpicEngine {
 
     const tasks = this.ctx.cache.query({ includeArchived: true });
     const statuses = statusModelFor(this.ctx.rootDir);
-    const { holder } = this.holderFor(session);
+    const { dispatcher, holder } = this.holderFor(session);
     const mine = new Set(
       work.filter((t) => holder(t) === null).map((t) => t.meta.id)
     );
@@ -997,13 +997,15 @@ export class EpicEngine {
     for (const taskId of batch) {
       try {
         // The epic scheduler's own auto-fill decided this task was next —
-        // no human pressed dispatch for it specifically. Through
+        // no human pressed dispatch for it specifically, but the run is the
+        // starter's work (a legacy session's, the local human's). Through
         // dispatchOrResume, not dispatch: a task whose last run a restart left
         // recoverable must be picked back up here too, since a fresh run would
         // strand that worktree and cancel the sweep still watching it.
         await this.ctx.orchestrator.dispatchOrResume(taskId, {
           executor: session.executor,
           actor: 'none',
+          dispatchedBy: dispatcher,
           guard,
         });
       } catch (err) {
