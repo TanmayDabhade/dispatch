@@ -4,6 +4,7 @@ import { describe, expect, test } from 'bun:test';
 
 import {
   removeTaskListItem,
+  sameItems,
   touchesFanout,
   upsertTaskListItem,
   withDispatching,
@@ -138,4 +139,13 @@ describe('withDispatching', () => {
     ).toBe(list);
     expect(withDispatching(list, new Map(), DEFAULT_STATUS_MODEL)).toBe(list);
   });
+});
+
+test('sameItems compares by identity, in order', () => {
+  const a = { id: 'a' };
+  const b = { id: 'b' };
+  expect(sameItems([a, b], [a, b])).toBe(true);
+  expect(sameItems([a, b], [b, a])).toBe(false);
+  expect(sameItems([a], [{ id: 'a' }])).toBe(false);
+  expect(sameItems([a], [a, b])).toBe(false);
 });

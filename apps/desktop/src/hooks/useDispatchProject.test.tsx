@@ -667,6 +667,59 @@ test('a reconnect judges readiness again after an unjudged answer', async () => 
   configFixture = null;
 });
 
+// Every list row takes the containers. A new copy on each task change (the dispatch's
+// overlay, a patch) redrew every row, though no container had changed.
+test('epics keep their identity while no container changes', async () => {
+  configFixture = {
+    statuses: ['draft', 'ready', 'working', 'review', 'landed', 'dropped'],
+    notifications: { kinds: null },
+  };
+  const parent = taskDoc('t-parent', 'Parent', '2026-01-01T00:00:00.000Z');
+  const child = taskDoc('t-child', 'Child', '2026-01-01T00:00:00.000Z');
+  child.meta.parent = 't-parent';
+  const loose = taskDoc('t-1', 'Loose', '2026-01-01T00:00:00.000Z');
+  taskListFixture = [
+    { meta: parent.meta },
+    { meta: child.meta },
+    { meta: loose.meta },
+  ];
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { result } = renderHook(
+    () => useDispatchProject('/repo', { selectedRunId: null }),
+    { wrapper: wrapper(queryClient) }
+  );
+  await waitFor(() => {
+    expect(result.current.readyIds.has('t-1')).toBe(true);
+  });
+  const epics = result.current.epics;
+  expect(epics.map((t) => t.meta.id)).toEqual(['t-parent']);
+
+  createRunResult = () => new Promise(() => {});
+  act(() => {
+    void result.current.handleDispatch('t-1', undefined, undefined, {
+      optimistic: true,
+    });
+  });
+  expect(result.current.readyIds.has('t-1')).toBe(false);
+  expect(result.current.epics).toBe(epics);
+
+  taskDocs.set('t-1', taskDoc('t-1', 'Renamed', '2026-01-02T00:00:00.000Z'));
+  act(() => {
+    sink?.onEvent({ type: 'task.changed', ids: ['t-1'] });
+  });
+  await waitFor(() => {
+    expect(
+      result.current.tasks.find((t) => t.meta.id === 't-1')?.meta.title
+    ).toBe('Renamed');
+  });
+  expect(result.current.epics).toBe(epics);
+  taskDocs.clear();
+  taskListFixture = null;
+  configFixture = null;
+});
+
 // Every board card takes moveTaskStatus. It used to hang off the archived ids, rebuilt on
 // each task change, so a dispatch handed every card a new callback and redrew them all.
 test('moveTaskStatus keeps its identity through a dispatch', async () => {

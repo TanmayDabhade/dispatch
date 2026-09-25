@@ -30,6 +30,11 @@ export function upsertTaskListItem(
   return [...list.slice(0, at), { meta }, ...list.slice(at)];
 }
 
+/** Whether two lists hold the same items in the same order, by identity. */
+export function sameItems<T>(a: readonly T[], b: readonly T[]): boolean {
+  return a.length === b.length && a.every((item, i) => item === b[i]);
+}
+
 /** The cached task list without `id` — the task was deleted. */
 export function removeTaskListItem(
   list: TaskListItem[],

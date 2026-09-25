@@ -101,6 +101,7 @@ import { deriveTaskAttentionById } from '../lib/taskAttention';
 import { computeBlockedIds } from '../lib/taskGraph';
 import {
   removeTaskListItem,
+  sameItems,
   touchesFanout,
   upsertTaskListItem,
   withDispatching,
@@ -1397,11 +1398,18 @@ export function useDispatchProject(
   });
 
   // Every container: a container kind, or any task with children.
+  // The same array while it holds the same containers: every list row takes it, so a
+  // copy per task change (a dispatch, a patch) redrew them all.
+  const epicsRef = useRef<TaskListItem[]>([]);
   const epics = useMemo(() => {
     const all = tasks ?? [];
     const parentIds = parentIdsOf(all);
-    return all.filter((t) => isContainer(t.meta, parentIds));
+    const next = all.filter((t) => isContainer(t.meta, parentIds));
+    return sameItems(epicsRef.current, next) ? epicsRef.current : next;
   }, [tasks]);
+  useEffect(() => {
+    epicsRef.current = epics;
+  }, [epics]);
 
   // Task 9: the archived subset of the archived-inclusive query.
   const archivedTasks = useMemo(
