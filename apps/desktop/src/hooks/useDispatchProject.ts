@@ -2136,8 +2136,10 @@ export function useDispatchProject(
       // Task 9: an archived task is read-only — gated here (not just at the drag-and-drop
       // call site) so every path that can move a task's status, board drag or the inline
       // status picker alike, is covered by one check rather than each caller remembering it.
-      if (archivedTaskIds.has(id)) return;
+      // Read from the cache, so the callback keeps its identity as tasks change.
       const previous = queryClient.getQueryData<TaskListItem[]>(tasksQueryKey);
+      const moving = previous?.find((doc) => doc.meta.id === id);
+      if (moving?.meta.archivedAt !== undefined) return;
       queryClient.setQueryData<TaskListItem[]>(tasksQueryKey, (old) =>
         old?.map((doc) =>
           doc.meta.id === id ? { ...doc, meta: { ...doc.meta, status } } : doc
@@ -2154,7 +2156,7 @@ export function useDispatchProject(
       }
       applyTaskDoc(updated);
     },
-    [client, queryClient, applyTaskDoc, tasksQueryKey, archivedTaskIds]
+    [client, queryClient, applyTaskDoc, tasksQueryKey]
   );
 
   const handleCreate = useCallback(

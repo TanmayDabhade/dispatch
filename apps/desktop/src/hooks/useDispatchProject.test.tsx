@@ -66,6 +66,9 @@ let configFetches = 0;
 // The daemon's cached readiness readings (`/api/tasks/readiness`).
 let readinessFixture: Record<string, dispatchClient.ReadinessReading> = {};
 
+// Every `updateTask` the hook sent, by task id and patch.
+const taskUpdates: [string, object][] = [];
+
 // What `createRun` answers; a test swaps in a held or refused promise.
 let createRunResult: () => Promise<RunMeta> = () =>
   Promise.reject(new Error('no runs in this test'));
@@ -90,6 +93,13 @@ void mock.module('@dispatch/client', () => ({
     },
     fetchReadiness: () => Promise.resolve(readinessFixture),
     createRun: () => createRunResult(),
+    updateTask: (id: string, patch: object) => {
+      taskUpdates.push([id, patch]);
+      const doc = taskDocs.get(id);
+      return doc === undefined
+        ? Promise.reject(new Error(`no doc for ${id}`))
+        : Promise.resolve({ ...doc, meta: { ...doc.meta, ...patch } });
+    },
     fetchReadyTasks: () => Promise.resolve([]),
     fetchTaskList: async () => {
       taskListFetches += 1;
@@ -610,6 +620,57 @@ test('a refused optimistic dispatch puts the task back and rejects', async () =>
   expect((error as Error | null)?.message).toBe('task is blocked');
   expect(statusOf(result.current.tasks)).toBe('ready');
   expect(result.current.readyIds.has('t-1')).toBe(true);
+  taskListFixture = null;
+  configFixture = null;
+});
+
+// Every board card takes moveTaskStatus. It used to hang off the archived ids, rebuilt on
+// each task change, so a dispatch handed every card a new callback and redrew them all.
+test('moveTaskStatus keeps its identity through a dispatch', async () => {
+  const result = await mountReadyTask();
+  const move = result.current.moveTaskStatus;
+  createRunResult = () => new Promise(() => {});
+  act(() => {
+    void result.current.handleDispatch('t-1', undefined, undefined, {
+      optimistic: true,
+    });
+  });
+  expect(statusOf(result.current.tasks)).toBe('working');
+  expect(result.current.moveTaskStatus).toBe(move);
+  taskListFixture = null;
+  configFixture = null;
+});
+
+test('moveTaskStatus leaves an archived task alone', async () => {
+  configFixture = {
+    statuses: ['draft', 'ready', 'working', 'review', 'landed', 'dropped'],
+    notifications: { kinds: null },
+  };
+  const live = taskDoc('t-1', 'Live', '2026-01-01T00:00:00.000Z');
+  const shelved = taskDoc('t-2', 'Shelved', '2026-01-01T00:00:00.000Z');
+  shelved.meta.archivedAt = '2026-01-02T00:00:00.000Z';
+  taskListFixture = [{ meta: live.meta }, { meta: shelved.meta }];
+  taskDocs.set('t-1', live);
+  taskDocs.set('t-2', shelved);
+  taskUpdates.length = 0;
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { result } = renderHook(
+    () => useDispatchProject('/repo', { selectedRunId: null }),
+    { wrapper: wrapper(queryClient) }
+  );
+  await waitFor(() => {
+    expect(result.current.archivedTasks.map((t) => t.meta.id)).toEqual(['t-2']);
+  });
+
+  await act(async () => {
+    await result.current.moveTaskStatus('t-2', 'working');
+    await result.current.moveTaskStatus('t-1', 'review');
+  });
+  expect(taskUpdates).toEqual([['t-1', { status: 'review' }]]);
+  expect(result.current.archivedTasks[0]?.meta.status).toBe('ready');
+  taskDocs.clear();
   taskListFixture = null;
   configFixture = null;
 });
