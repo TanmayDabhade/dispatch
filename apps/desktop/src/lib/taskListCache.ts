@@ -39,8 +39,9 @@ export function removeTaskListItem(
 }
 
 /** Whether a change to task `id` can move a fan-out's progress: it sits under a
- * container before or after (`next`, null once deleted), is a container, or has
- * children. With no list cached, it might. */
+ * container before or after (`next`, null once deleted), is a container, has
+ * children, or blocks a task in a fan-out (whose phase reads "waiting on" its
+ * blockers). With no list cached, it might. */
 export function touchesFanout(
   list: readonly TaskListItem[] | undefined,
   id: string,
@@ -50,12 +51,10 @@ export function touchesFanout(
   if (next !== null && (next.parent !== null || isContainerKind(next.kind))) {
     return true;
   }
-  for (const task of list) {
-    if (task.meta.parent === id) return true;
-    if (
-      task.meta.id === id &&
-      (task.meta.parent !== null || isContainerKind(task.meta.kind))
-    ) {
+  for (const { meta } of list) {
+    if (meta.parent === id) return true;
+    const inFanout = meta.parent !== null || isContainerKind(meta.kind);
+    if (inFanout && (meta.id === id || meta.blockedBy.includes(id))) {
       return true;
     }
   }

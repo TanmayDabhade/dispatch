@@ -55,8 +55,12 @@ test('removeTaskListItem drops only the named task', () => {
 });
 
 describe('touchesFanout', () => {
-  const node = (id: string, parent: string | null, kind = 'task') =>
-    ({ meta: { id, parent, kind } as TaskMeta }) as TaskListItem;
+  const node = (
+    id: string,
+    parent: string | null,
+    kind = 'task',
+    blockedBy: string[] = []
+  ) => ({ meta: { id, parent, kind, blockedBy } as TaskMeta }) as TaskListItem;
   const list = [
     node('e-1', null, 'milestone'),
     node('t-child', 'e-1'),
@@ -86,6 +90,24 @@ describe('touchesFanout', () => {
     expect(touchesFanout(list, 'e-1', null)).toBe(true);
     expect(touchesFanout(list, 't-parent', node('t-parent', null).meta)).toBe(
       true
+    );
+  });
+
+  test('a loose blocker of a task in a fan-out does', () => {
+    // The child's phase reads "waiting on t-blocker" until the blocker lands.
+    const blocked = [
+      ...list,
+      node('t-waits', 'e-1', 'task', ['t-blocker']),
+      node('t-blocker', null),
+    ];
+    expect(
+      touchesFanout(blocked, 't-blocker', node('t-blocker', null).meta)
+    ).toBe(true);
+    expect(touchesFanout(blocked, 't-blocker', null)).toBe(true);
+    // A loose task blocking another loose task still moves nothing.
+    const loose = [...list, node('t-after', null, 'task', ['t-loose'])];
+    expect(touchesFanout(loose, 't-loose', node('t-loose', null).meta)).toBe(
+      false
     );
   });
 
