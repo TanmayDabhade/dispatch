@@ -8,7 +8,7 @@ import type { TaskDoc } from '@dispatch/core/browser';
 import { PRIORITY_ORDER } from '@dispatch/core/browser';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
-import { type ReactNode, useState } from 'react';
+import { Profiler, type ReactNode, useState } from 'react';
 
 import { toggleCollapsedGroup } from '../../lib/collapsedEpics';
 import type { WorkEpicOptions } from '../../lib/epicSession';
@@ -1006,6 +1006,31 @@ test('a dragged card stays mounted when the board scrolls it out of view', async
   expect(mounted.some((id) => id.includes('t-001'))).toBe(false);
   // …but the card in hand never unmounted.
   expect(mounted.some((id) => id.includes('t-000'))).toBe(true);
+});
+
+// Each column is its own virtualizer on the board's one scroller. Rendering inside every
+// column's scroll listener laid the board out once per column per scroll event.
+test('a scroll renders the board’s columns in one commit, not one per column', () => {
+  const tall = STATUSES.flatMap((status) =>
+    Array.from({ length: 60 }, (_, i) =>
+      task(`t-${status}-${i}`, `Card ${status} ${i}`, status)
+    )
+  );
+  let commits = 0;
+  render(
+    <Profiler id="board" onRender={() => (commits += 1)}>
+      <Harness tasks={tall} epics={[]} display={display('none')} />
+    </Profiler>
+  );
+  const board = document.querySelector<HTMLElement>('[data-slot=task-board]');
+  if (board === null) throw new Error('no board');
+  commits = 0;
+  act(() => {
+    board.scrollTop = 30 * 112;
+    fireEvent.scroll(board);
+  });
+  expect(commits).toBe(1);
+  expect(cardIds().some((id) => id.includes('t-done-30'))).toBe(true);
 });
 
 // A reading whose `splitProbability` counts reads: a card reads it once per render, and
