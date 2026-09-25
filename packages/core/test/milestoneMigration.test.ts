@@ -106,6 +106,58 @@ describe('migrateLegacyMilestones', () => {
     });
   });
 
+  it('files a task whose value is a container id under that container', () => {
+    // An older "+" stored the container's id in the legacy field, parent unset.
+    eachBackend((store) => {
+      const beta = store.create({ title: 'Beta', kind: 'milestone' });
+      const issue = store.create({ title: 'Schema' });
+      const made = store.create({ title: 'From +', milestone: beta.meta.id });
+      const sub = store.create({ title: 'Sub', milestone: issue.meta.id });
+      const project = store.create({
+        title: 'Too broad',
+        kind: 'project',
+        milestone: beta.meta.id,
+      });
+      const first = migrateLegacyMilestones(store);
+      expect(first.projects).toEqual([]);
+      expect(first.tasksAfter).toBe(first.tasksBefore);
+      expect(first.parity).toBe(true);
+      expect(store.get(made.meta.id)!.meta.parent).toBe(beta.meta.id);
+      expect(store.get(sub.meta.id)!.meta.parent).toBe(issue.meta.id);
+      expect(first.skipped).toEqual([
+        {
+          id: project.meta.id,
+          milestone: beta.meta.id,
+          reason: 'a project cannot sit under a milestone',
+        },
+      ]);
+      const second = migrateLegacyMilestones(store);
+      expect(second.reparented).toEqual([]);
+      expect(second.skipped.map((s) => s.reason).sort()).toEqual([
+        'a project cannot sit under a milestone',
+        'already under its milestone',
+        'already under its task',
+      ]);
+    });
+  });
+
+  it('never files a task under its own sub-task', () => {
+    eachBackend((store) => {
+      const top = store.create({ title: 'Top' });
+      const below = store.create({ title: 'Below', parent: top.meta.id });
+      store.update(top.meta.id, { milestone: below.meta.id });
+      const report = migrateLegacyMilestones(store);
+      expect(store.get(top.meta.id)!.meta.parent).toBeNull();
+      expect(report.skipped).toEqual([
+        {
+          id: top.meta.id,
+          milestone: below.meta.id,
+          reason: `${below.meta.id} sits under it`,
+        },
+      ]);
+    });
+  });
+
   it('orders by milestone name when creation times tie', () => {
     // Every task shares one timestamp, and the ids put the v2 tasks first, so
     // the store's own order (created, then id) is the reverse of name order.

@@ -1,11 +1,13 @@
 // The one-time move from the legacy free-form `milestone` string to Linear's
 // hierarchy: each distinct value becomes one `kind: 'project'` task, and the
-// unparented tasks carrying it are reparented under that project.
+// unparented tasks carrying it are reparented under that project. A value that
+// is an existing task's id (an older "+" stored its container's id there)
+// names that task instead, and no project is made for it.
 //
 // Idempotent: a project is found again by kind + title, and a task already
 // under its project is left alone, so a second run creates and moves nothing.
 // Non-destructive: the `milestone` field itself is kept on every task.
-import { isValidParentKind } from './kinds.js';
+import { canonicalKind, isValidParentKind } from './kinds.js';
 import type { TaskStorePort } from './store.js';
 import type { TaskDoc } from './types.js';
 
@@ -51,6 +53,22 @@ function byName(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
+// Whether `id` is `doc` or one of its ancestors, so moving `id` under `doc` would loop.
+function isAtOrAbove(
+  id: string,
+  doc: TaskDoc,
+  byId: ReadonlyMap<string, TaskDoc>
+): boolean {
+  const seen = new Set<string>();
+  for (let at: TaskDoc | undefined = doc; at !== undefined; ) {
+    if (at.meta.id === id) return true;
+    if (seen.has(at.meta.id) || at.meta.parent === null) return false;
+    seen.add(at.meta.id);
+    at = byId.get(at.meta.parent);
+  }
+  return false;
+}
+
 /** Runs (or rehearses) the milestone migration against `store`. */
 export function migrateLegacyMilestones(
   store: TaskStorePort,
@@ -59,6 +77,7 @@ export function migrateLegacyMilestones(
   const dryRun = options.dryRun ?? false;
   const docs = store.list();
   const tasksBefore = docs.length;
+  const byId = new Map(docs.map((doc) => [doc.meta.id, doc]));
   const existing = new Map<string, string>();
   for (const doc of docs) {
     if (doc.meta.kind === 'project' && !existing.has(doc.meta.title.trim())) {
@@ -75,6 +94,8 @@ export function migrateLegacyMilestones(
   const projects: MilestoneProject[] = [];
   const projectIds = new Map<string, string | null>();
   for (const name of names) {
+    // A task's id: its tasks move under that task below.
+    if (byId.has(name)) continue;
     const found = existing.get(name);
     if (found !== undefined) {
       projects.push({ name, projectId: found, created: false });
@@ -108,11 +129,17 @@ export function migrateLegacyMilestones(
     })
     .sort((a, b) => byName(a.milestone, b.milestone));
   for (const { doc, milestone } of withMilestone) {
-    const parent = projectIds.get(milestone) ?? null;
+    const named = byId.get(milestone);
+    const parent = named?.meta.id ?? projectIds.get(milestone) ?? null;
+    const parentKind = canonicalKind(named?.meta.kind ?? 'project');
     const { id } = doc.meta;
     if (parent !== null && id === parent) continue;
     if (parent !== null && doc.meta.parent === parent) {
-      skipped.push({ id, milestone, reason: 'already under its project' });
+      skipped.push({
+        id,
+        milestone,
+        reason: `already under its ${named === undefined ? 'project' : parentKind}`,
+      });
       continue;
     }
     if (doc.meta.parent !== null) {
@@ -123,12 +150,16 @@ export function migrateLegacyMilestones(
       });
       continue;
     }
-    if (!isValidParentKind(doc.meta.kind, 'project')) {
+    if (!isValidParentKind(doc.meta.kind, parentKind)) {
       skipped.push({
         id,
         milestone,
-        reason: `a ${doc.meta.kind} cannot sit under a project`,
+        reason: `a ${doc.meta.kind} cannot sit under a ${parentKind}`,
       });
+      continue;
+    }
+    if (named !== undefined && isAtOrAbove(id, named, byId)) {
+      skipped.push({ id, milestone, reason: `${named.meta.id} sits under it` });
       continue;
     }
     if (!dryRun && parent !== null) {
