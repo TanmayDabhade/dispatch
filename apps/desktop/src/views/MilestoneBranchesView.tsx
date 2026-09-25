@@ -1,5 +1,5 @@
 import type { TaskListItem } from '@dispatch/core/browser';
-import { isContainerKind } from '@dispatch/core/browser';
+import { isContainerKind, statusModelOf } from '@dispatch/core/browser';
 import { GitBranch, SearchX } from 'lucide-react';
 import type { FocusEvent, KeyboardEvent, ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -143,6 +143,7 @@ export function MilestoneBranchesView({
   // redone here from the unfiltered children. A bucket for a parent that is not an epic (a
   // sub-task's task) is no milestone and is dropped. The layout orders the rows itself, so
   // the group's own row order is only the input.
+  const model = useMemo(() => statusModelOf(data.config), [data.config]);
   const branches = useMemo<MilestoneBranch[]>(() => {
     const open: MilestoneBranch[] = [];
     const finished: MilestoneBranch[] = [];
@@ -155,7 +156,7 @@ export function MilestoneBranchesView({
       const all =
         group.epicId === null ? undefined : childrenByEpic.get(group.epicId);
       if (all === undefined) continue;
-      const rollup = rollupMilestoneStatus(all);
+      const rollup = rollupMilestoneStatus(all, model);
       // The path runs through the container's own children; a sub-issue travels with its
       // parent issue, and stands in for it only when the filter hid that issue.
       const docs = group.rows.map((r) => r.doc);
@@ -167,23 +168,23 @@ export function MilestoneBranchesView({
           !inGroup.has(doc.meta.parent)
       );
       const dagTasks = children.map(dagTaskFromDoc);
-      const layout = branchLayout(dagTasks);
+      const layout = branchLayout(dagTasks, model);
       const branch: MilestoneBranch = {
         group: {
           ...group,
-          tint: statusColor(rollup),
+          tint: statusColor(rollup, model),
           icon: { kind: 'milestone', status: rollup },
         },
         children,
         dagTasks,
         summary: layout.pathSummary,
         rowIds: layout.rows.map((r) => r.id),
-        finished: isMilestoneFinished(all),
+        finished: isMilestoneFinished(all, model),
       };
       (branch.finished ? finished : open).push(branch);
     }
     return [...open, ...finished];
-  }, [filteredTasks, prefs, data.config, data.epics, childrenByEpic]);
+  }, [filteredTasks, prefs, data.config, data.epics, childrenByEpic, model]);
 
   // A finished milestone's default is folded, so its key in `toggled` means "opened".
   const collapsed = useMemo(() => {
@@ -378,6 +379,7 @@ export function MilestoneBranchesView({
             {!isCollapsed && (
               <BranchGraph
                 tasks={branch.dagTasks}
+                model={model}
                 ariaLabel={`${group.label} branches`}
                 focusedId={focusedTaskId}
                 accessoryFor={(id) => {

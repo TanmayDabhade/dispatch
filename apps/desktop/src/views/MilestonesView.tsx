@@ -29,6 +29,7 @@ import {
   showsPhasePill,
   type WorkEpicOptions,
 } from '../lib/epicSession';
+import { landingStateByTaskId } from '../lib/landingBadge';
 import {
   groupTasks,
   type ListGroup,
@@ -154,6 +155,10 @@ export function MilestonesView({
     for (const doc of data.tasks) map.set(doc.meta.id, doc);
     return map;
   }, [data.tasks]);
+  const landingByTaskId = useMemo(
+    () => landingStateByTaskId(data.mergeQueue),
+    [data.mergeQueue]
+  );
 
   // Each child's fan-out phase, by epic then child id, for the epics that have a session —
   // a row under any other milestone shows no phase, so those epics are left out.
@@ -507,6 +512,7 @@ export function MilestonesView({
               run={data.latestRunByTaskId.get(row.key)}
               live={data.liveRunStateByTaskId.has(row.key)}
               needsYou={data.attentionByTaskId.has(row.key)}
+              landing={landingByTaskId.get(row.key)}
               fixLoop={data.fixLoops.get(row.key)}
               statuses={statuses}
               epics={data.epics}

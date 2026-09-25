@@ -1,4 +1,5 @@
-import { canonicalStatus, isDoneStatus } from '@dispatch/core/browser';
+import type { StatusModel } from '@dispatch/core/browser';
+import { isDoneStatus, isStartedStatus } from '@dispatch/core/browser';
 import type { ReactNode } from 'react';
 import { useMemo } from 'react';
 
@@ -8,6 +9,7 @@ import {
   type BranchRow,
 } from '../../lib/branchLayout';
 import type { DagTask } from '../../lib/dagLayout';
+import { useActiveStatusModel } from '../../lib/statusModel';
 import { statusColor, StatusIcon } from '../tasks/StatusIcon';
 import { cn } from '@/lib/utils';
 
@@ -29,14 +31,12 @@ const BACK_EDGE_OFFSET = 2;
 
 type DotKind = 'done' | 'open' | 'live';
 
-// The machine-set statuses a run is currently advancing. The dot reads liveness from the
-// task's own status rather than a run-state prop, so the gutter never disagrees with the
-// status glyph beside it; the live-run mark itself arrives through `accessoryFor`.
-const LIVE_STATUSES = new Set(['working', 'review', 'landing']);
-
-function dotKind(status: string): DotKind {
-  if (isDoneStatus(status)) return 'done';
-  if (LIVE_STATUSES.has(canonicalStatus(status))) return 'live';
+// Liveness is the status's type (started), read from the task's own status rather than a
+// run-state prop so the gutter never disagrees with the status glyph beside it; the live-run
+// mark itself arrives through `accessoryFor`.
+function dotKind(status: string, model: StatusModel): DotKind {
+  if (isDoneStatus(status, model)) return 'done';
+  if (isStartedStatus(status, model)) return 'live';
   return 'open';
 }
 
@@ -56,6 +56,7 @@ function rowY(row: number): number {
 interface BranchDotProps {
   row: BranchRow;
   status: string;
+  model: StatusModel;
   onOpen?: () => void;
 }
 
@@ -63,8 +64,8 @@ interface BranchDotProps {
  * ring for a live one — all in the status's own colour from `StatusIcon`'s map, so the
  * gutter and the glyph beside it always agree. On-path dots are the full radius, off-path
  * a size down. */
-function BranchDot({ row, status, onOpen }: BranchDotProps) {
-  const kind = dotKind(status);
+function BranchDot({ row, status, model, onOpen }: BranchDotProps) {
+  const kind = dotKind(status, model);
   const color = statusColor(status);
   const cx = laneX(row.lane);
   const cy = rowY(row.row);
@@ -298,6 +299,8 @@ export interface BranchGraphProps {
   onOpenNode?: (id: string) => void;
   /** The roving keyboard cursor; that line is marked with the active surface. */
   focusedId?: string | null;
+  /** The project's statuses, which type each dot; defaults to the open project's. */
+  model?: StatusModel;
   ariaLabel?: string;
   className?: string;
 }
@@ -319,8 +322,11 @@ export function BranchGraph({
   focusedId = null,
   ariaLabel = 'Branch graph',
   className,
+  model: modelProp,
 }: BranchGraphProps) {
-  const layout = useMemo(() => branchLayout(tasks), [tasks]);
+  const activeModel = useActiveStatusModel();
+  const model = modelProp ?? activeModel;
+  const layout = useMemo(() => branchLayout(tasks, model), [tasks, model]);
   const tasksById = useMemo(
     () => new Map(tasks.map((t) => [t.id, t])),
     [tasks]
@@ -413,6 +419,7 @@ export function BranchGraph({
               key={row.id}
               row={row}
               status={task.status}
+              model={model}
               onOpen={
                 onOpenNode === undefined ? undefined : () => onOpenNode(row.id)
               }

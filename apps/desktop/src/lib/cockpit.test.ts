@@ -1,4 +1,9 @@
-import type { EpicProgress, RunMeta } from '@dispatch/client';
+import type {
+  EpicProgress,
+  MergeQueueEntry,
+  MergeQueueEntryState,
+  RunMeta,
+} from '@dispatch/client';
 import type { TaskListItem } from '@dispatch/core/browser';
 import { DEFAULT_STATUS_MODEL } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
@@ -95,6 +100,7 @@ function input(
     me: ME,
     scope: { kind: 'me' },
     pending: new Map(),
+    landing: new Map(),
     ...rest,
   };
 }
@@ -310,6 +316,98 @@ describe('buildCockpit: In flight', () => {
         ).flight
       )
     ).toEqual(['run:r-1']);
+  });
+});
+
+describe('buildCockpit: landing', () => {
+  function queued(
+    r: RunMeta,
+    state: MergeQueueEntryState = 'verifying'
+  ): MergeQueueEntry {
+    return {
+      runId: r.id,
+      taskId: r.taskId,
+      taskTitle: r.taskTitle,
+      state,
+      enqueuedAt: '2026-09-20T01:00:00.000Z',
+    };
+  }
+  const finished = (id: string, taskId: string, by = ME) =>
+    run(id, taskId, {
+      state: 'finished',
+      reviewedAt: '2026-09-20T00:30:00.000Z',
+      dispatchedBy: by,
+    });
+
+  test('a run the queue is landing sits in flight, in queue order, whoever the task is assigned to', () => {
+    const tasks = [
+      task('t-agent', { status: 'landing', assignee: 'agent' }),
+      task('t-none', { status: 'landing' }),
+      task('t-me', { status: 'landing', assignee: ME }),
+    ];
+    const rAgent = finished('r-agent', 't-agent');
+    const rNone = finished('r-none', 't-none');
+    const rMe = finished('r-me', 't-me');
+    const runs = [rAgent, rNone, rMe];
+    const landing = new Map(
+      [rMe, rAgent, rNone].map((r) => [r.taskId, queued(r)])
+    );
+    for (const scope of [{ kind: 'me' }, { kind: 'team' }] as const) {
+      const lanes = buildCockpit(
+        input({
+          tasks,
+          runs,
+          latestRunByTaskId: new Map(runs.map((r) => [r.taskId, r])),
+          landing,
+          scope,
+        })
+      );
+      expect(keys(lanes.flight)).toEqual([
+        'landing:t-me',
+        'landing:t-agent',
+        'landing:t-none',
+      ]);
+      expect(lanes.flight[0]).toEqual(
+        expect.objectContaining({ kind: 'landing', owner: ME, run: rMe })
+      );
+      expect(lanes.needs).toEqual([]);
+    }
+  });
+
+  test('a held landing waits on me in Needs you, not also in flight', () => {
+    const tasks = [task('t-held', { status: 'landing', assignee: 'agent' })];
+    const held = finished('r-held', 't-held');
+    const runs = [held];
+    const lanes = buildCockpit(
+      input({
+        tasks,
+        runs,
+        latestRunByTaskId: new Map(runs.map((r) => [r.taskId, r])),
+        attentionByTaskId: new Map([['t-held', 'waiting']]),
+        landing: new Map([['t-held', queued(held, 'blocked-environment')]]),
+      })
+    );
+    expect(keys(lanes.needs)).toEqual(['needs:t-held']);
+    expect(lanes.flight).toEqual([]);
+  });
+
+  test('a teammate’s landing run is theirs, not mine', () => {
+    const tasks = [task('t-1', { status: 'landing', assignee: 'agent' })];
+    const mayas = finished('r-1', 't-1', 'human:maya');
+    const base = {
+      tasks,
+      runs: [mayas],
+      latestRunByTaskId: new Map([['t-1', mayas]]),
+      landing: new Map([['t-1', queued(mayas)]]),
+    };
+    expect(buildCockpit(input(base)).flight).toEqual([]);
+    expect(
+      keys(
+        buildCockpit(
+          input({ ...base, scope: { kind: 'person', ref: 'human:maya' } })
+        ).flight
+      )
+    ).toEqual(['landing:t-1']);
   });
 });
 

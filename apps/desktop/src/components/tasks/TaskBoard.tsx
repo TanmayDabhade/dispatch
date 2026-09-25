@@ -1,5 +1,6 @@
 import type {
   EpicProgress,
+  MergeQueueEntryState,
   ReadinessReading,
   RunMeta,
   RunState,
@@ -86,6 +87,8 @@ interface TaskBoardProps {
    * those cards carry a `Needs you` pill. Optional so a board rendered without live run
    * data simply shows none. */
   attentionByTaskId?: ReadonlyMap<string, TaskAttention>;
+  /** Tasks whose run is in the merge queue, with the entry's state — a `Landing` pill. */
+  landingByTaskId?: ReadonlyMap<string, MergeQueueEntryState>;
   /** Epic dispatch progress per epic id, once fetched. */
   /** Readiness readings per task id (see `useDispatchProject`); a card with none shows no pill. */
   readinessById?: ReadonlyMap<string, ReadinessReading>;
@@ -483,6 +486,7 @@ export function TaskBoard({
   liveRunStateByTaskId,
   latestRunByTaskId,
   attentionByTaskId,
+  landingByTaskId,
   epicProgressById,
   readinessById,
   epicConcurrencyDefault,
@@ -798,6 +802,7 @@ export function TaskBoard({
                                 needsAttention={
                                   attentionByTaskId?.has(doc.meta.id) === true
                                 }
+                                landing={landingByTaskId?.get(doc.meta.id)}
                               />
                             )}
                           />

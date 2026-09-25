@@ -1,10 +1,19 @@
 import type { EpicProgress, RunMeta } from '@dispatch/client';
 import type { TaskListItem } from '@dispatch/core/browser';
-import { act, fireEvent, render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, mock, test } from 'bun:test';
-import type { ReactNode } from 'react';
+import { statusModelOf } from '@dispatch/core/browser';
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { type ReactNode, useEffect } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
+import { setActiveStatusModel } from '../../lib/statusModel';
+import { testConfig } from '../settings/fixtures.test-helper';
 
 // The split pane mounts the task page, whose Review mode pulls in the Pierre diff; its
 // worker import only Vite resolves.
@@ -17,6 +26,11 @@ const { ContainerFlightPlanSection, FlightPlanHostContext } =
 const { FlightPlan } = await import('./FlightPlanView');
 
 beforeEach(() => window.localStorage.clear());
+// Unmount before resetting, so the reset does not redraw a mounted plan outside act.
+afterEach(() => {
+  cleanup();
+  setActiveStatusModel(null);
+});
 
 function task(
   id: string,
@@ -378,6 +392,61 @@ describe('FlightPlan', () => {
       await Promise.resolve();
     });
     expect(sent).toEqual([]);
+  });
+
+  test('a band wears its milestone’s rolled-up status under a mirrored workflow on first load', () => {
+    const linear = {
+      ...testConfig,
+      statuses: ['Todo', 'In Progress', 'Done', 'Canceled'],
+      statusDefinitions: [
+        { name: 'Todo', type: 'unstarted', color: null },
+        { name: 'In Progress', type: 'started', color: null },
+        { name: 'Done', type: 'completed', color: null },
+        { name: 'Canceled', type: 'canceled', color: null },
+      ],
+      statusRoles: {
+        ready: 'Todo',
+        dispatched: 'In Progress',
+        review: 'In Progress',
+        landing: null,
+        landed: 'Done',
+        dropped: 'Canceled',
+      },
+    } as unknown as DispatchProjectData['config'];
+    const tasks = [
+      task('e-p', { kind: 'project', parent: null, status: 'In Progress' }),
+      task('e-1', { kind: 'milestone', parent: 'e-p', status: 'In Progress' }),
+      task('e-2', { kind: 'milestone', parent: 'e-p', status: 'Todo' }),
+      task('t-1', { parent: 'e-1', status: 'Done' }),
+      task('t-2', { parent: 'e-2', status: 'Todo', blockedBy: ['t-1'] }),
+    ];
+    // As in useDispatchProject: config lands after the tasks, and the open project's model
+    // is set in an effect after the render that carries it.
+    function App({ config }: { config: DispatchProjectData['config'] }) {
+      useEffect(() => {
+        setActiveStatusModel(config === null ? null : statusModelOf(config));
+      }, [config]);
+      return (
+        <FlightPlan
+          containerId="e-p"
+          data={{ ...dataWith(tasks, []), config }}
+          dispatchTask={() => Promise.resolve()}
+          onDispatchFailed={() => {}}
+          onOpenTask={() => {}}
+          openIn="page"
+        />
+      );
+    }
+    const { rerender } = render(<App config={null} />);
+    act(() => rerender(<App config={linear} />));
+    const bandStatus = (key: string) =>
+      document
+        .querySelector(
+          `[data-slot=flight-band-head][data-band="${key}"] [role=img]`
+        )
+        ?.getAttribute('aria-label');
+    expect(bandStatus('e-1')).toBe('Status: Done');
+    expect(bandStatus('e-2')).toBe('Status: Todo');
   });
 
   test('an empty container says what will appear', () => {

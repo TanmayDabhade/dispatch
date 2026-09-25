@@ -1,16 +1,6 @@
 import type { TaskListItem } from '@dispatch/core/browser';
-import { parseLinearExternal } from '@dispatch/core/browser';
-import {
-  ArrowUpRight,
-  Box,
-  CircleDot,
-  Diamond,
-  Link2,
-  type LucideIcon,
-  Move,
-  Target,
-  X,
-} from 'lucide-react';
+import { isContainerKind, parseLinearExternal } from '@dispatch/core/browser';
+import { ArrowUpRight, CalendarArrowUp, Link2, Move, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import type { TaskCommentsApi } from '../../../hooks/useTaskComments';
@@ -22,14 +12,17 @@ import {
 } from '../../../lib/linearSettings';
 import { isTerminalRunState } from '../../../lib/runState';
 import { activeStatusModel, isStatusDone } from '../../../lib/statusModel';
-import { kindLabel } from '../../../lib/taskDisplay';
+import { formatShortDate } from '../../../lib/taskDates';
+import { assigneeLabel, kindLabel } from '../../../lib/taskDisplay';
 import { ancestorsOf, parentCandidates } from '../../../lib/taskHierarchy';
 import { taskIndexOf } from '../../../lib/taskIndex';
 import { taskTimeline } from '../../../lib/taskTimeline';
 import { buildFlightPlan } from '../../flightplan/flightPlan';
 import { FlightPlanMini } from '../../flightplan/FlightPlanMini';
+import { usePeople } from '../../people/PeopleContext';
 import { MergeLadderPill } from '../../runs/MergeLadderDot';
 import { RunStatePill } from '../../runs/RunStatePill';
+import { AssigneeAvatar } from '../AssigneeAvatar';
 import { PickerPopover } from '../detail/PickerPopover';
 import { railRowClass, RailSection } from '../detail/RailSection';
 import { SelfReviewRow } from '../detail/SelfReviewRow';
@@ -46,11 +39,13 @@ import { getStackByTaskId, StackRail } from '../StackRail';
 import { StatusIcon } from '../StatusIcon';
 import { ActivityTimeline } from './ActivityTimeline';
 import { CommentsSection } from './CommentsSection';
+import { ContainerIcon, kindIcon } from './ContainerIcon';
 import type { TaskPageModel } from './pageModel';
 import { RelationsEditor } from './RelationsEditor';
 import { cn } from '@/lib/utils';
 import { LabelPill, Pill } from '@/ui/ai/pill';
 import { Button } from '@/ui/button';
+import { Popover, PopoverContent, PopoverTrigger } from '@/ui/popover';
 
 /** Which rail picker the page's single-key shortcuts have opened. */
 export type RailPicker =
@@ -60,18 +55,11 @@ export type RailPicker =
   | 'labels'
   | 'parent';
 
-const KIND_ICON: Record<string, LucideIcon> = {
-  initiative: Target,
-  project: Box,
-  milestone: Diamond,
-  task: CircleDot,
-};
-
 const NO_PARENT = '__none__';
 const SUB_ISSUES_SHOWN = 6;
 
-/** A row in the hierarchy: the container's kind glyph (in its colour when it has one),
- * its title, and its kind on hover. */
+/** A row in the hierarchy: the container's icon (in its colour when it has one), its
+ * title, and its kind on hover. */
 function HierarchyRow({
   task,
   onOpen,
@@ -79,7 +67,6 @@ function HierarchyRow({
   task: TaskListItem;
   onOpen: (taskId: string) => void;
 }) {
-  const Icon = KIND_ICON[task.meta.kind] ?? CircleDot;
   return (
     <button
       type="button"
@@ -87,14 +74,123 @@ function HierarchyRow({
       onClick={() => onOpen(task.meta.id)}
       className={railRowClass()}
     >
-      <Icon
-        className="text-muted-foreground"
-        style={
-          task.meta.color === null ? undefined : { color: task.meta.color }
-        }
+      <ContainerIcon
+        kind={task.meta.kind}
+        icon={task.meta.icon}
+        color={task.meta.color}
       />
       <span className="truncate">{task.meta.title}</span>
     </button>
+  );
+}
+
+/** A container's own face: its icon in its colour, its kind, and a swatch of the colour. */
+function ContainerRow({ meta }: { meta: TaskListItem['meta'] }) {
+  const detail = [
+    meta.icon === null ? null : `Icon ${meta.icon}`,
+    meta.color === null ? null : `Color ${meta.color}`,
+  ].filter((part) => part !== null);
+  return (
+    <div
+      data-slot="container-row"
+      title={detail.length === 0 ? undefined : detail.join(' · ')}
+      className={railRowClass({ readOnly: true })}
+    >
+      <ContainerIcon kind={meta.kind} icon={meta.icon} color={meta.color} />
+      <span className="truncate">{kindLabel(meta.kind)}</span>
+      {meta.color !== null && (
+        <span
+          aria-hidden
+          data-slot="container-color"
+          className="ml-auto size-2.5 shrink-0 rounded-full"
+          style={{ backgroundColor: meta.color }}
+        />
+      )}
+    </div>
+  );
+}
+
+// A `YYYY-MM-DD` day in local time, so the rail never shows the day before in the west.
+function calendarDay(day: string): Date {
+  const [y, m, d] = day.slice(0, 10).split('-').map(Number);
+  return new Date(y ?? 0, (m ?? 1) - 1, d ?? 1);
+}
+
+/** The start date: `Starts Sep 30` (or `Started` once it is past), opening a date field
+ * and Clear. */
+function StartDateRow({
+  value,
+  onChange,
+}: {
+  value: string | null;
+  onChange: (startDate: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  function pick(next: string | null) {
+    onChange(next);
+    setOpen(false);
+  }
+  const started = value !== null && calendarDay(value).getTime() <= Date.now();
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        aria-label="Change start date"
+        data-slot="start-date-control"
+        data-unset={value === null || undefined}
+        className={railRowClass({ unset: value === null })}
+      >
+        <CalendarArrowUp />
+        <span className="truncate">
+          {value === null
+            ? 'Set start date'
+            : `${started ? 'Started' : 'Starts'} ${formatShortDate(calendarDay(value))}`}
+        </span>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="flex w-56 flex-col gap-0.5 p-1"
+        onKeyDown={(e) => e.stopPropagation()}
+      >
+        <input
+          type="date"
+          aria-label="Start date"
+          className="bg-field rounded-control shadow-inset-field mx-1 my-1 h-8 px-2 text-[13px] text-(--text-secondary) outline-none"
+          value={value ?? ''}
+          onChange={(e) => {
+            if (e.target.value !== '') pick(e.target.value);
+          }}
+        />
+        {value !== null && (
+          <button
+            type="button"
+            className={railRowClass({ unset: true })}
+            onClick={() => pick(null)}
+          >
+            Clear start date
+          </button>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** Who created the task, and when — read-only. */
+function CreatorRow({
+  creator,
+  created,
+}: {
+  creator: string;
+  created: string;
+}) {
+  const name = usePeople().personFor(creator)?.name ?? assigneeLabel(creator);
+  return (
+    <div data-slot="creator-row" className={railRowClass({ readOnly: true })}>
+      <AssigneeAvatar assignee={creator} size={16} />
+      <span className="truncate">Created by {name}</span>
+      <span className="font-book text-muted-foreground ml-auto shrink-0 text-[12px]">
+        {formatShortDate(created)}
+      </span>
+    </div>
   );
 }
 
@@ -114,9 +210,10 @@ export interface TaskRailProps {
 }
 
 /**
- * The task page's right rail, Linear's issue sidebar in Dispatch's grammar: every property
- * on a 32px row you click to change (status, priority, assignee, estimate, due date,
- * cycle, labels, self review), where the task sits (initiative › project › milestone ›
+ * The task page's right rail, Linear's issue sidebar in Dispatch's grammar: a container's
+ * icon and colour, every property on a 32px row you click to change (status, priority,
+ * assignee, estimate, start date, due date, cycle, labels, self review), who created it,
+ * where the task sits (initiative › project › milestone ›
  * parent, and Move to…), its Linear and PR links, relations, sub-issues with a mini
  * Flight Plan, the comment thread, and recent activity.
  */
@@ -191,6 +288,7 @@ export function TaskRail({
       )}
     >
       <RailSection title="Properties">
+        {isContainerKind(meta.kind) && <ContainerRow meta={meta} />}
         <StatusControl
           value={meta.status}
           statuses={project.config?.statuses ?? [meta.status]}
@@ -214,6 +312,12 @@ export function TaskRail({
           value={meta.estimate}
           onChange={(estimate) => void page.patch({ estimate })}
         />
+        {(isContainerKind(meta.kind) || meta.startDate !== null) && (
+          <StartDateRow
+            value={meta.startDate}
+            onChange={(startDate) => void page.patch({ startDate })}
+          />
+        )}
         <DueDateControl
           value={meta.dueDate}
           done={isStatusDone(meta.status)}
@@ -260,6 +364,9 @@ export function TaskRail({
           value={meta.selfReview}
           onChange={(selfReview) => void page.patch({ selfReview })}
         />
+        {meta.creator !== null && (
+          <CreatorRow creator={meta.creator} created={meta.created} />
+        )}
       </RailSection>
 
       <RailSection title="Hierarchy">
@@ -288,7 +395,7 @@ export function TaskRail({
                   },
                 ]),
             ...parentCandidates(item, tasks, parentIds).map((t) => {
-              const Icon = KIND_ICON[t.meta.kind] ?? CircleDot;
+              const Icon = kindIcon(t.meta.kind);
               return {
                 value: t.meta.id,
                 label: t.meta.title,

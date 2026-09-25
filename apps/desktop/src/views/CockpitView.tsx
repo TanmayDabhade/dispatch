@@ -48,6 +48,7 @@ import {
   moveCockpitCursor,
   resolveCockpitKey,
 } from '../lib/cockpitKeys';
+import { landingEntryByTaskId } from '../lib/landingBadge';
 import { pendingStarts } from '../lib/optimisticDispatch';
 import { isTerminalRunState } from '../lib/runState';
 import { flattenGroups } from '../lib/virtualRows';
@@ -216,6 +217,11 @@ export function CockpitView({
     [optimistic.pending]
   );
 
+  const landingByTaskId = useMemo(
+    () => landingEntryByTaskId(data.mergeQueue),
+    [data.mergeQueue]
+  );
+
   // The per-task half of the lanes, held across scope flips, dispatches and run updates.
   const index = useMemo(
     () => indexCockpitTasks(data.tasksIncludingArchived, model),
@@ -233,6 +239,7 @@ export function CockpitView({
         me,
         scope,
         pending,
+        landing: landingByTaskId,
       }),
     [
       index,
@@ -244,6 +251,7 @@ export function CockpitView({
       me,
       scope,
       pending,
+      landingByTaskId,
     ]
   );
 
@@ -355,11 +363,9 @@ export function CockpitView({
   const openFull = useCallback(
     (item: CockpitItem) => {
       const run =
-        item.kind === 'run'
+        item.kind === 'run' || item.kind === 'needs' || item.kind === 'landing'
           ? item.run
-          : item.kind === 'needs'
-            ? item.run
-            : undefined;
+          : undefined;
       if (run === undefined) {
         onOpenTask(item.taskId);
         return;
@@ -584,6 +590,7 @@ export function CockpitView({
                 count={laneKeys[lane].length}
                 focusedKey={cursor.lane === lane ? cursor.key : null}
                 plans={plans}
+                landingByTaskId={landingByTaskId}
                 loading={!data.tasksReady}
                 onActivate={activate}
                 onDispatch={lane === 'ready' ? dispatchFromRow : undefined}

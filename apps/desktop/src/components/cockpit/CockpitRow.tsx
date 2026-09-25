@@ -1,6 +1,8 @@
+import type { MergeQueueEntryState } from '@dispatch/client';
 import { Bot, Layers, Play } from 'lucide-react';
 import { memo } from 'react';
 
+import { useRunStep } from '../../hooks/useRunStep';
 import {
   type CockpitItem,
   formatAge,
@@ -8,12 +10,14 @@ import {
   type RosterHeader,
 } from '../../lib/cockpit';
 import { formatUsd } from '../../lib/epicSession';
+import { landingStepLabel } from '../../lib/landingBadge';
 import { runKindLabel } from '../../lib/liveRail';
 import { formatShortDate } from '../../lib/taskDates';
 import type { FlightPlan } from '../flightplan/flightPlan';
 import { FlightPlanMini } from '../flightplan/FlightPlanMini';
 import { RunStatePill } from '../runs/RunStatePill';
 import { AssigneeAvatar } from '../tasks/AssigneeAvatar';
+import { LandingBadge } from '../tasks/LandingBadge';
 import { PriorityIcon } from '../tasks/PriorityIcon';
 import { StatusIcon } from '../tasks/StatusIcon';
 import type { FeedState } from '@/lib/feedState';
@@ -51,11 +55,32 @@ function Elapsed({ since }: { since: number }) {
   return <MetaText>{useElapsed(since)}</MetaText>;
 }
 
+// The run's latest step, standing in for the agent's name (kept in the tooltip) so the
+// title keeps its room; the name until the first step arrives. Its own component so a
+// chatty run re-renders only this text.
+function AgentStep({ runId, agent }: { runId: string; agent: string }) {
+  const step = useRunStep(runId);
+  if (step === null) {
+    return <MetaText className="max-w-24 truncate">{agent}</MetaText>;
+  }
+  return (
+    <span
+      data-slot="run-step"
+      title={`${agent} · ${step}`}
+      className="font-book text-muted-foreground max-w-40 truncate text-[12px]"
+    >
+      {step}
+    </span>
+  );
+}
+
 interface CockpitRowProps {
   item: CockpitItem;
   focused: boolean;
   /** The fan-out's plan, for a fan-out row. */
   plan: FlightPlan | undefined;
+  /** Where the row's task sits in the merge queue, while it is landing. */
+  landing?: MergeQueueEntryState;
   onActivate: (key: string) => void;
   /** Present on Ready rows: the hover `Dispatch` button. */
   onDispatch?: (taskId: string) => void;
@@ -64,17 +89,21 @@ interface CockpitRowProps {
 /**
  * One 36px Cockpit row, on the list row's anatomy. What fills the slots depends on the
  * item: a ready task (priority, id, status, title, cycle or due chip, assignee, age), a
- * live run (state mark, id, title, agent, step, cost, a ticking clock), a fan-out (its
- * container and the mini Flight Plan), a teammate's started task (their avatar, status,
- * age) or something waiting on you (why, and since when).
+ * live run (state mark, id, title, its latest step or else the agent, cost, a ticking
+ * clock), a fan-out (its container and the mini Flight Plan), a run being landed (the
+ * badge, its queue step, cost, time in that step), a teammate's started task (their
+ * avatar, status, age) or something waiting on you (why, and since when).
  */
 export const CockpitRow = memo(function CockpitRow({
   item,
   focused,
   plan,
+  landing,
   onActivate,
   onDispatch,
 }: CockpitRowProps) {
+  const landingBadge =
+    landing === undefined ? null : <LandingBadge state={landing} />;
   const common = {
     domId: cockpitRowId(item.key),
     'data-row-key': item.key,
@@ -148,9 +177,11 @@ export const CockpitRow = memo(function CockpitRow({
           title={item.task?.meta.title ?? run.taskTitle}
           trailing={
             <>
-              <MetaText className="max-w-24 truncate">
-                {kind === 'agent' ? run.executor : `${kind} run`}
-              </MetaText>
+              {landingBadge}
+              <AgentStep
+                runId={run.id}
+                agent={kind === 'agent' ? run.executor : `${kind} run`}
+              />
               {run.subagents !== undefined && run.subagents.total > 0 && (
                 <MetaText className="flex items-center gap-0.5">
                   <Bot aria-hidden className="size-3" />
@@ -224,10 +255,32 @@ export const CockpitRow = memo(function CockpitRow({
           id={meta.id}
           status={<StatusIcon status={meta.status} />}
           title={meta.title}
+          trailing={landingBadge ?? undefined}
           date={formatAge(meta.updated)}
         />
       );
     }
+    case 'landing':
+      return (
+        <ListRow
+          {...common}
+          leading={<StateMark state="landing" />}
+          id={item.taskId}
+          title={item.task?.meta.title ?? item.run?.taskTitle ?? item.taskId}
+          trailing={
+            <>
+              {landingBadge}
+              {landing !== undefined && (
+                <MetaText>{landingStepLabel(landing)}</MetaText>
+              )}
+              {item.run?.costUsd !== undefined && (
+                <MetaText>{formatUsd(item.run.costUsd)}</MetaText>
+              )}
+            </>
+          }
+          date={formatAge(item.since)}
+        />
+      );
     case 'needs':
       return (
         <ListRow
@@ -245,6 +298,7 @@ export const CockpitRow = memo(function CockpitRow({
               >
                 {NEEDS_LABEL[item.reason]}
               </Pill>
+              {landingBadge}
               {item.owner !== null && (
                 <AssigneeAvatar assignee={item.owner} size={16} />
               )}

@@ -29,6 +29,7 @@ import {
   concurrencyLabel,
 } from '../../lib/epicConcurrency';
 import type { WorkEpicOptions } from '../../lib/epicSession';
+import { landingStateByTaskId } from '../../lib/landingBadge';
 import { resolveLinearLink } from '../../lib/linearSettings';
 import { rollupMilestoneStatus } from '../../lib/milestoneRollup';
 import { pendingStarts } from '../../lib/optimisticDispatch';
@@ -456,6 +457,10 @@ export function FlightPlan({
     [plan, sessions]
   );
   const liveClaims = useMemo(() => liveClaimsFrom(data.runs), [data.runs]);
+  const landingByTaskId = useMemo(
+    () => landingStateByTaskId(data.mergeQueue),
+    [data.mergeQueue]
+  );
   const nodeViews = useMemo(
     () =>
       flightNodeViews(plan, geometry.layout, path, queue, {
@@ -468,6 +473,7 @@ export function FlightPlan({
           sessions.get(owner)?.session?.state === 'active',
         phaseOf: (id) => phases.get(id),
         liveClaims,
+        landingByTaskId,
         personName: (assignee) =>
           directory.personFor(assignee)?.name ??
           assigneeRef(assignee)?.handle ??
@@ -486,6 +492,7 @@ export function FlightPlan({
       sessions,
       phases,
       liveClaims,
+      landingByTaskId,
       directory,
     ]
   );
@@ -662,7 +669,7 @@ export function FlightPlan({
         title:
           band.container?.meta.title ?? `Directly in ${container.meta.title}`,
         refLabel: band.container === null ? null : refFor(band.key),
-        status: rollupMilestoneStatus(work),
+        status: rollupMilestoneStatus(work, model),
         done: work.filter((t) => isDoneStatus(t.meta.status, model)).length,
         total: work.length,
         // The container's own live fan-out already covers every band.

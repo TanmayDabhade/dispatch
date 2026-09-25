@@ -38,6 +38,7 @@ import {
   toggleCollapsedGroup,
   writeCollapsedGroups,
 } from '../lib/collapsedEpics';
+import { landingStateByTaskId } from '../lib/landingBadge';
 import {
   type GroupIcon,
   groupTasks,
@@ -212,6 +213,11 @@ export function TasksListView({
     taskFilter,
     prefs,
   ]);
+
+  const landingByTaskId = useMemo(
+    () => landingStateByTaskId(data.mergeQueue),
+    [data.mergeQueue]
+  );
 
   const docById = useMemo(() => {
     const map = new Map<string, TaskListItem>();
@@ -465,6 +471,7 @@ export function TasksListView({
                     run={data.latestRunByTaskId.get(id)}
                     live={data.liveRunStateByTaskId.has(id)}
                     needsYou={data.attentionByTaskId.has(id)}
+                    landing={landingByTaskId.get(id)}
                     statuses={statuses}
                     epics={data.epics}
                     labelCandidates={

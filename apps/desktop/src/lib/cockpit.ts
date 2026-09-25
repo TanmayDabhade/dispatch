@@ -1,4 +1,9 @@
-import type { EpicProgress, ReadinessReading, RunMeta } from '@dispatch/client';
+import type {
+  EpicProgress,
+  MergeQueueEntry,
+  ReadinessReading,
+  RunMeta,
+} from '@dispatch/client';
 import type { Person, StatusModel, TaskListItem } from '@dispatch/core/browser';
 import {
   canonicalAssignee,
@@ -78,6 +83,14 @@ export type CockpitItem =
     })
   /** A person's started task with no live run — a teammate at work by hand. */
   | (ItemBase & { kind: 'started'; task: TaskListItem })
+  /** A finished run the merge queue is landing. */
+  | (ItemBase & {
+      kind: 'landing';
+      task: TaskListItem | undefined;
+      run: RunMeta | undefined;
+      /** When the entry reached its current step. */
+      since: string;
+    })
   | (ItemBase & {
       kind: 'needs';
       reason: NeedsReason;
@@ -123,6 +136,8 @@ export interface CockpitInput {
   scope: CockpitScope;
   /** Tasks dispatched from the Cockpit whose run has not shown up yet, with when. */
   pending: ReadonlyMap<string, number>;
+  /** Each task's merge-queue entry, in queue order (`landingEntryByTaskId`). */
+  landing: ReadonlyMap<string, MergeQueueEntry>;
 }
 
 /** The person an assignee names — a canonical `human:` ref — or null for an agent, the
@@ -243,7 +258,8 @@ function isLive(run: RunMeta): boolean {
  * The three lanes. Ready is the unstarted, unblocked queue (core's `readyTasks` under the
  * project's status model) in scope, ranked by `compareReady`. In flight is every live run —
  * fan-outs first with their runs nested under them, then the rest newest first — plus
- * rows for dispatches still starting and people's started tasks with no run. Needs you is
+ * rows for dispatches still starting, runs the merge queue is landing (in queue order,
+ * owned like a run) and people's started tasks with no run. Needs you is
  * runs waiting on a human (approval, question, blocked checkout), failed and awaiting
  * review, then tasks in the review status, then unclear specs assigned to someone. A task
  * appears in one lane only.
@@ -407,6 +423,29 @@ export function buildCockpit(input: CockpitInput): CockpitLanes {
       run,
       task: taskById.get(run.taskId),
       nested: false,
+    });
+  }
+  // A held landing already waits on its owner in Needs you (its attention claimed it).
+  for (const [taskId, entry] of input.landing) {
+    if (claimed.has(taskId) || liveTaskIds.has(taskId)) continue;
+    const latest = input.latestRunByTaskId.get(taskId);
+    const run =
+      latest?.id === entry.runId
+        ? latest
+        : input.runs.find((r) => r.id === entry.runId);
+    const task = taskById.get(taskId);
+    const owner =
+      run === undefined ? ownerOf(task?.meta.assignee) : runOwner(run);
+    if (!inScope(owner, scope, me)) continue;
+    claimed.add(taskId);
+    flight.push({
+      kind: 'landing',
+      key: `landing:${taskId}`,
+      taskId,
+      owner,
+      task,
+      run,
+      since: entry.stateSince ?? entry.enqueuedAt,
     });
   }
   for (const task of index.started) {

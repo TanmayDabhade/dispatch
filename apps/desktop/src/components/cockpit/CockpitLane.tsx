@@ -1,3 +1,4 @@
+import type { MergeQueueEntry } from '@dispatch/client';
 import { CircleDot, Hourglass, LoaderCircle } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -66,6 +67,8 @@ interface CockpitLaneProps {
   /** The keyboard cursor's row in this lane, or null when the cursor is elsewhere. */
   focusedKey: string | null;
   plans: ReadonlyMap<string, FlightPlan>;
+  /** Tasks whose run is in the merge queue — their rows carry a `Landing` badge. */
+  landingByTaskId: ReadonlyMap<string, MergeQueueEntry>;
   loading: boolean;
   onActivate: (key: string) => void;
   onDispatch?: (taskId: string) => void;
@@ -82,6 +85,7 @@ export function CockpitLane({
   count,
   focusedKey,
   plans,
+  landingByTaskId,
   loading,
   onActivate,
   onDispatch,
@@ -109,11 +113,12 @@ export function CockpitLane({
               ? plans.get(row.item.progress.epicId)
               : undefined
           }
+          landing={landingByTaskId.get(row.item.taskId)?.state}
           onActivate={onActivate}
           onDispatch={onDispatch}
         />
       ),
-    [focusedKey, plans, onActivate, onDispatch]
+    [focusedKey, plans, landingByTaskId, onActivate, onDispatch]
   );
   return (
     <div
