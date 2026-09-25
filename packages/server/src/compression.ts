@@ -20,9 +20,10 @@ function acceptsGzip(header: string | null): boolean {
 /**
  * Gzips a large JSON response for a client on another machine: a teammate
  * reaching this daemon in team-local mode. A loopback client (the desktop
- * app, the CLI, MCP) gets it untouched. Measured in Chromium on the 1.1MB
- * meta list: over loopback, 13.8ms plain against 15.8ms gzipped; over an
- * emulated 100 megabit link, 138ms plain against 33ms gzipped.
+ * app, the CLI, MCP) gets it untouched. Reading the 1.1MB meta list over
+ * loopback took 9ms plain against 12ms gzipped in WKWebView (the desktop's
+ * engine) and 13.8ms against 15.8ms in Chromium; over an emulated 100 megabit
+ * link, Chromium took 138ms plain against 33ms gzipped.
  *
  * `peer` is the client's address, or null when the transport has none.
  */
