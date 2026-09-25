@@ -2000,6 +2000,19 @@ function jsonBody(value: unknown): RequestInit {
   };
 }
 
+// A daemon older than `?fields=id` ignores it and sends whole docs, which
+// carry the id under `meta`; read it from either shape.
+type ReadyIdReply =
+  | ReadyTaskRef
+  | (TaskListItem & { readiness?: ReadinessReading });
+
+function toReadyTaskRef(item: ReadyIdReply): ReadyTaskRef {
+  if ('id' in item) return item;
+  return item.readiness === undefined
+    ? { id: item.meta.id }
+    : { id: item.meta.id, readiness: item.readiness };
+}
+
 // The base path a ReviewTarget's comment routes hang off — /api/runs/:id
 // or /api/prs/:number, matching the server's own run- vs PR-keyed split.
 // Shared by every fetch/add/resolve/reply call below so a target's routing
@@ -2984,7 +2997,10 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       request(target, `/api/tasks${taskQueryString(filter, true)}`),
     fetchReadyTasks: () => request(target, '/api/tasks/ready'),
     fetchReadyTaskList: () => request(target, '/api/tasks/ready?fields=meta'),
-    fetchReadyTaskIds: () => request(target, '/api/tasks/ready?fields=id'),
+    fetchReadyTaskIds: async () =>
+      (await request<ReadyIdReply[]>(target, '/api/tasks/ready?fields=id')).map(
+        toReadyTaskRef
+      ),
     fetchReadiness: () => request(target, '/api/tasks/readiness'),
     fetchTask: (id) => request(target, `/api/tasks/${id}`),
     createTask: (input) =>
