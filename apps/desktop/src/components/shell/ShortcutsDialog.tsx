@@ -45,6 +45,7 @@ const SHELL_GROUPS: ShortcutGroup[] = [
       { label: 'Inbox', keys: ['G', 'I'], chord: true },
       { label: 'Tasks', keys: ['G', 'T'], chord: true },
       { label: 'Projects', keys: ['G', 'R'], chord: true },
+      { label: 'Live', keys: ['G', 'F'], chord: true },
       { label: 'Overview', keys: ['G', 'C'], chord: true },
       { label: 'Assistant', keys: ['G', 'A'], chord: true },
       { label: 'Settings', keys: ['G', 'S'], chord: true },
@@ -81,6 +82,14 @@ const LIST_GROUPS: ShortcutGroup[] = [
       { label: 'Open beside', keys: ['↵'] },
       { label: 'Mine / team', keys: ['T'] },
       { label: 'Group by person', keys: ['G', 'P'], chord: true },
+    ],
+  },
+  {
+    heading: 'Live',
+    rows: [
+      { label: 'Next / previous node', keys: ['J', 'K'] },
+      { label: 'Next / previous band', keys: ['⇧J', '⇧K'] },
+      { label: 'Across columns', keys: ['H', 'L'] },
     ],
   },
   {

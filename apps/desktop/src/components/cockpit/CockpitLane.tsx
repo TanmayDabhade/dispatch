@@ -1,6 +1,13 @@
 import type { MergeQueueEntry } from '@dispatch/client';
 import { CircleDot, Hourglass, LoaderCircle } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import type {
   CockpitItem,
@@ -72,6 +79,8 @@ interface CockpitLaneProps {
   loading: boolean;
   onActivate: (key: string) => void;
   onDispatch?: (taskId: string) => void;
+  /** Right of the lane's title: In flight's way into the Live view. */
+  actions?: ReactNode;
   className?: string;
 }
 
@@ -89,6 +98,7 @@ export function CockpitLane({
   loading,
   onActivate,
   onDispatch,
+  actions,
   className,
 }: CockpitLaneProps) {
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
@@ -131,6 +141,7 @@ export function CockpitLane({
           icon={<LaneIcon lane={lane} />}
           name={LANE_TITLE[lane]}
           count={count}
+          actions={actions}
         />
       </div>
       <div

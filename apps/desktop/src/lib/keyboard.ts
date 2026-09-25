@@ -57,12 +57,14 @@ export type GlobalKeyCommand =
   /** Open the keyboard-shortcuts reference (`?`). */
   | 'open-shortcuts'
   /** The `g` chords: `g h` Home, `g s` Settings, `g i` Inbox, `g t` Tasks, `g r` Projects
-   * (the roadmap), `g c` Control room, `g a` Overseer (Linear's "Agent"). */
+   * (the roadmap), `g f` Live (work in flight), `g c` Control room, `g a` Overseer
+   * (Linear's "Agent"). */
   | 'goto-home'
   | 'goto-settings'
   | 'goto-inbox'
   | 'goto-tasks'
   | 'goto-projects'
+  | 'goto-live'
   | 'goto-control-room'
   | 'goto-overseer'
   /** Jump straight to the Nth entry in the sidebar's primary rail. */
@@ -75,6 +77,7 @@ const G_CHORDS: Record<string, GlobalKeyCommand> = {
   i: 'goto-inbox',
   t: 'goto-tasks',
   r: 'goto-projects',
+  f: 'goto-live',
   c: 'goto-control-room',
   a: 'goto-overseer',
 };

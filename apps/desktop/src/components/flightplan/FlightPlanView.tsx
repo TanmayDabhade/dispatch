@@ -107,8 +107,8 @@ function useNow(intervalMs: number): number {
 
 // Whether `d` may send an agent at a node: unstarted, no blocker ahead of it, not its
 // own plan, not a teammate's or a derived task, and not already running. A held
-// (critical) node qualifies — by hand is exactly how it starts.
-function canDispatch(
+// (critical) node qualifies — by hand is exactly how it starts. The Live view shares it.
+export function canDispatch(
   node: FlightNode | undefined,
   model: Parameters<typeof isUnstartedStatus>[1]
 ): node is FlightNode {

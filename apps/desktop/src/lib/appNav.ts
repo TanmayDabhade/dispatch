@@ -18,6 +18,8 @@ export type ProjectView =
   | 'board'
   /** Initiatives → projects → milestones → issues, as one tree to browse. */
   | 'projects'
+  /** Everything in motion at once: a Flight Plan band per container with work moving. */
+  | 'live'
   /** retired — normalized to 'inbox' */
   | 'runs'
   | 'branches'

@@ -116,6 +116,7 @@ import { GetStartedView } from './views/GetStartedView';
 import { ImpactView } from './views/ImpactView';
 import { InboxView } from './views/InboxView';
 import { LandingTableView } from './views/LandingTableView';
+import { LiveView } from './views/LiveView';
 import type { FocusEpicRequest } from './views/MilestonesView';
 import { OverseerView } from './views/OverseerView';
 import { OverviewView } from './views/OverviewView';
@@ -697,6 +698,7 @@ function App() {
       else if (command === 'goto-inbox') selectProjectView('inbox');
       else if (command === 'goto-tasks') selectProjectView('board');
       else if (command === 'goto-projects') selectProjectView('projects');
+      else if (command === 'goto-live') selectProjectView('live');
       else if (command === 'goto-control-room') selectProjectView('overview');
       else if (command.startsWith('goto-')) {
         // Position in the rail, not an id — ⌘1 is the first row, and so on.
@@ -1260,6 +1262,19 @@ function App() {
                                 <>
                                   {navState.projectView === 'cockpit' && (
                                     <CockpitView
+                                      projectName={activeProject?.name ?? null}
+                                      data={data}
+                                      dispatchTask={cockpitDispatch}
+                                      onDispatchFailed={onCockpitDispatchFailed}
+                                      onOpenTask={openTaskView}
+                                      onPeekTask={peekTask}
+                                      onOpenLive={() =>
+                                        selectProjectView('live')
+                                      }
+                                    />
+                                  )}
+                                  {navState.projectView === 'live' && (
+                                    <LiveView
                                       projectName={activeProject?.name ?? null}
                                       data={data}
                                       dispatchTask={cockpitDispatch}
