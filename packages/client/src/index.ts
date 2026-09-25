@@ -76,6 +76,7 @@ export type {
   InboxTriage,
   InboxTriageSnapshot,
   ReadinessReading,
+  ReadyTaskRef,
   RunChecklist,
   InboxKind,
   CreateNoteInput,

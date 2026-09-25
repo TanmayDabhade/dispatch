@@ -7,7 +7,7 @@ import {
   isSatisfiedForDispatchStatus,
   isUnstartedStatus,
 } from '@dispatch/core';
-import type { StatusModel, TaskDoc } from '@dispatch/core';
+import type { StatusModel, TaskDoc, TaskListItem } from '@dispatch/core';
 
 import type { FixLoopState } from './fixLoop.js';
 import type { RunMeta } from './types.js';
@@ -255,7 +255,7 @@ export function summarizeWaves(children: EpicProgressChild[]): EpicWave[] {
  *  core's `dispatchableTasks`). */
 export function unsatisfiedBlockersOf(
   task: TaskDoc,
-  lookup: (id: string) => TaskDoc | null,
+  lookup: (id: string) => TaskListItem | null,
   model: StatusModel = DEFAULT_STATUS_MODEL
 ): string[] {
   return task.meta.blockedBy.filter((id) => {

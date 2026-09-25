@@ -137,6 +137,37 @@ describe('readiness on the ready route', () => {
     expect(factor?.value).toBe(0);
   });
 
+  it('attaches the same readings to the meta and id projections', async () => {
+    const store = new TaskStore(root);
+    const bare = store.create({ title: 'Bare', status: 'ready' });
+    const full = store.create({
+      title: 'Full',
+      status: 'ready',
+      description: 'Change src/x.ts so the thing works.',
+    });
+    await boot({ judgments: bodyAwareClient() });
+
+    const docs = (await (
+      await fetch(`${baseUrl}/api/tasks/ready`)
+    ).json()) as ReadyTask[];
+    const lean = (await (
+      await fetch(`${baseUrl}/api/tasks/ready?fields=meta`)
+    ).json()) as ReadyTask[];
+    const ids = (await (
+      await fetch(`${baseUrl}/api/tasks/ready?fields=id`)
+    ).json()) as { id: string; readiness?: { level: number } }[];
+
+    expect(lean).toEqual(
+      docs.map((doc) => ({ meta: doc.meta, readiness: doc.readiness }))
+    );
+    expect(ids).toEqual(
+      docs.map((doc) => ({ id: doc.meta.id, readiness: doc.readiness }))
+    );
+    const levels = new Map(ids.map((t) => [t.id, t.readiness?.level]));
+    expect(levels.get(bare.meta.id)).toBe(0);
+    expect(levels.get(full.meta.id)).toBe(3);
+  });
+
   it('leaves the ready route and the queue untouched without a client', async () => {
     const store = new TaskStore(root);
     const bare = store.create({ title: 'Bare', status: 'ready' });

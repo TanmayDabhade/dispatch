@@ -42,6 +42,7 @@ import type { ApiContext, DaemonTokenPair, DaemonTokens } from './api.js';
 import { spawnGitSync } from './blockingGit.js';
 import { BrowserRegistry } from './browser/registry.js';
 import { TaskCache } from './cache.js';
+import { compressForNetwork } from './compression.js';
 import { ConversationStore } from './conversations.js';
 import {
   assertRootNotServed,
@@ -502,7 +503,8 @@ function withCors(
       'content-type, authorization'
     );
     // The allowed origin is request-dependent, so caches must key on it.
-    res.headers.set('vary', 'origin');
+    // Appended: a gzipped reply already varies by accept-encoding.
+    res.headers.append('vary', 'origin');
   }
   return res;
 }
@@ -996,6 +998,9 @@ async function bootServer(
         })
       : null;
   safeSync(store, cache);
+  // Serialized now, so the desktop's first request (every task, no bodies)
+  // is answered from memory instead of built during a cold load.
+  cache.queryMetaJson({ includeArchived: true });
 
   // The board syncer: commits and pushes outstanding task files from a
   // private worktree, gated on config.yml's `autoCommit`. No trunk to pin to
@@ -1920,7 +1925,15 @@ async function bootServer(
             idle === null
               ? await handleApi(req, apiCtx)
               : await idle.track(() => handleApi(req, apiCtx));
-          return withCors(response, origin, ownOriginSet);
+          return withCors(
+            await compressForNetwork(
+              req,
+              response,
+              srv.requestIP(req)?.address ?? null
+            ),
+            origin,
+            ownOriginSet
+          );
         }
 
         if (webDistDir !== null) {

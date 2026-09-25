@@ -2,6 +2,8 @@ import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import { spawnGitSync } from '../blockingGit.js';
+import type { CommandResult } from './pr.js';
+import { defaultCommandRunner } from './pr.js';
 
 interface DiffFile {
   path: string;
@@ -50,15 +52,44 @@ function runGit(cwd: string, args: string[]): GitResult {
   };
 }
 
+// runGit off the event loop, for reads a request waits on while the daemon
+// keeps serving others (the Branches listing).
+function runGitAsync(cwd: string, args: string[]): Promise<CommandResult> {
+  return defaultCommandRunner(cwd, ['git', ...args]);
+}
+
+const ORIGIN_HEAD_ARGS = ['symbolic-ref', 'refs/remotes/origin/HEAD'];
+const CURRENT_BRANCH_ARGS = ['rev-parse', '--abbrev-ref', 'HEAD'];
+const STATUS_ARGS = ['status', '--porcelain'];
+
+// The branch origin/HEAD names, or null when the remote has none. M3: strip
+// only the fixed prefix, since a default branch like `release/v2` has a `/`.
+function originHeadBranch(result: CommandResult): string | null {
+  if (!result.ok) return null;
+  const ref = result.stdout.trim();
+  const prefix = 'refs/remotes/origin/';
+  return ref.startsWith(prefix) ? ref.slice(prefix.length) : null;
+}
+
+function currentBranchName(result: CommandResult): string {
+  if (!result.ok) {
+    throw new Error(
+      `unable to determine current branch: ${result.stderr.trim()}`
+    );
+  }
+  return result.stdout.trim();
+}
+
 /**
  * Owns every real git operation the orchestrator needs against the project's
  * main checkout and its dispatch worktrees: creating/removing worktrees,
  * checking the main checkout's cleanliness, squash-merging a run's branch
  * back in, and producing the unified diff a run's review surface shows.
  *
- * Every method shells out to a real `git` binary (via Bun.spawnSync) rather
- * than reimplementing git plumbing — the plan is explicit that tests must
- * assert real git effects (diff, merge, discard) against real temp repos.
+ * Every method shells out to a real `git` binary (via Bun.spawnSync, or
+ * Bun.spawn for the Branches listing's reads) rather than reimplementing git
+ * plumbing — the plan is explicit that tests must assert real git effects
+ * (diff, merge, discard) against real temp repos.
  */
 export class WorktreeManager {
   constructor(private readonly mainRepoDir: string) {}
@@ -68,29 +99,20 @@ export class WorktreeManager {
   // otherwise the current branch of the main checkout — the only option in
   // tests and in a freshly-initialized local repo with no remote.
   defaultBaseBranch(): string {
-    const originHead = runGit(this.mainRepoDir, [
-      'symbolic-ref',
-      'refs/remotes/origin/HEAD',
-    ]);
-    if (originHead.ok) {
-      const ref = originHead.stdout.trim();
-      // M3: strip only the fixed `refs/remotes/origin/` prefix — a
-      // `.split('/').pop()` here would truncate any default branch name
-      // that itself contains a `/` (e.g. `release/v2`) down to just `v2`.
-      const prefix = 'refs/remotes/origin/';
-      if (ref.startsWith(prefix)) return ref.slice(prefix.length);
-    }
-    const current = runGit(this.mainRepoDir, [
-      'rev-parse',
-      '--abbrev-ref',
-      'HEAD',
-    ]);
-    if (!current.ok) {
-      throw new Error(
-        `unable to determine current branch: ${current.stderr.trim()}`
-      );
-    }
-    return current.stdout.trim();
+    return (
+      originHeadBranch(runGit(this.mainRepoDir, ORIGIN_HEAD_ARGS)) ??
+      currentBranchName(runGit(this.mainRepoDir, CURRENT_BRANCH_ARGS))
+    );
+  }
+
+  // defaultBaseBranch without blocking the event loop.
+  async defaultBaseBranchAsync(): Promise<string> {
+    return (
+      originHeadBranch(await runGitAsync(this.mainRepoDir, ORIGIN_HEAD_ARGS)) ??
+      currentBranchName(
+        await runGitAsync(this.mainRepoDir, CURRENT_BRANCH_ARGS)
+      )
+    );
   }
 
   // Creates a worktree at `path` on a new branch `branch`, based on
@@ -174,8 +196,8 @@ export class WorktreeManager {
   //
   // The `%09` in the format is a literal tab — chosen as the field separator
   // because a git branch name can contain almost anything except a tab.
-  listBranches(prefix: string): BranchRef[] {
-    const result = runGit(this.mainRepoDir, [
+  async listBranches(prefix: string): Promise<BranchRef[]> {
+    const result = await runGitAsync(this.mainRepoDir, [
       'for-each-ref',
       '--format=%(refname:short)%09%(committerdate:iso-strict)',
       `refs/heads/${prefix}`,
@@ -200,8 +222,8 @@ export class WorktreeManager {
   // (`worktree <path>`, then `HEAD <sha>`, then either `branch <ref>` or
   // `detached`), which is parsed line-by-line here rather than by splitting on
   // blank lines so a trailing/missing separator can't drop the last record.
-  listWorktrees(): WorktreeRef[] {
-    const result = runGit(this.mainRepoDir, [
+  async listWorktrees(): Promise<WorktreeRef[]> {
+    const result = await runGitAsync(this.mainRepoDir, [
       'worktree',
       'list',
       '--porcelain',
@@ -266,11 +288,26 @@ export class WorktreeManager {
     return Number.isNaN(parsed) ? 0 : parsed;
   }
 
-  // How many commits `base` has that `branch` does not — how far the base has
-  // moved on since this branch diverged. The mirror of aheadCount, so it
-  // inherits the same tolerance: 0 when either ref is missing.
-  behindCount(branch: string, base: string): number {
-    return this.aheadCount(base, branch);
+  // aheadCount and its mirror (commits `base` has that `branch` lacks: how far
+  // the base moved on) in one walk. Null when either ref is missing.
+  async aheadBehind(
+    branch: string,
+    base: string
+  ): Promise<{ ahead: number; behind: number } | null> {
+    const result = await runGitAsync(this.mainRepoDir, [
+      'rev-list',
+      '--left-right',
+      '--count',
+      `${base}...${branch}`,
+    ]);
+    if (!result.ok) return null;
+    const [behind, ahead] = result.stdout
+      .trim()
+      .split(/\s+/)
+      .map((n) => Number.parseInt(n, 10));
+    if (behind === undefined || ahead === undefined) return null;
+    if (Number.isNaN(behind) || Number.isNaN(ahead)) return null;
+    return { ahead, behind };
   }
 
   // True when every commit on `branch` is already reachable from `base` —
@@ -394,13 +431,14 @@ export class WorktreeManager {
   }
 
   // False when origin/<base> doesn't exist locally — unpushed is the safe answer.
-  isOnOriginBase(commit: string, base: string): boolean {
-    return runGit(this.mainRepoDir, [
+  async isOnOriginBase(commit: string, base: string): Promise<boolean> {
+    const result = await runGitAsync(this.mainRepoDir, [
       'merge-base',
       '--is-ancestor',
       commit,
       `refs/remotes/origin/${base}`,
-    ]).ok;
+    ]);
+    return result.ok;
   }
 
   // Whether a run's worktree has uncommitted work sitting in it. Runs in the
@@ -410,7 +448,14 @@ export class WorktreeManager {
   // lists refs whose directory may already be gone.
   isWorktreeDirty(path: string): boolean {
     if (!existsSync(path)) return false;
-    const status = runGit(path, ['status', '--porcelain']);
+    const status = runGit(path, STATUS_ARGS);
+    return status.ok && status.stdout.trim().length > 0;
+  }
+
+  // isWorktreeDirty without blocking the event loop.
+  async isWorktreeDirtyAsync(path: string): Promise<boolean> {
+    if (!existsSync(path)) return false;
+    const status = await runGitAsync(path, STATUS_ARGS);
     return status.ok && status.stdout.trim().length > 0;
   }
 
