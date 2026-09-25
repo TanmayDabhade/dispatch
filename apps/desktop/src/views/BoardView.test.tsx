@@ -6,7 +6,7 @@ import type {
 import type { TaskDoc } from '@dispatch/core/browser';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, expect, test } from 'bun:test';
-import type { ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
 
 import {
   linearWorkflowConfig,
@@ -719,6 +719,36 @@ test('d dispatches the focused ready card in place', () => {
   expect(focusedCardText()).not.toContain('Card one');
   fireEvent.keyDown(anchor, { key: 'd' });
   expect(sent).toHaveLength(1);
+});
+
+// A click on a card's Dispatch focuses the card first. The cursor used to follow the card
+// to its new column, and focusing it there scrolled the board away from where you clicked.
+test('a card’s Dispatch hands the cursor to the card that takes its place', () => {
+  function Live() {
+    const [tasks, setTasks] = useState(TASKS);
+    const data = {
+      ...boardData(tasks),
+      // The optimistic move: the card leaves Todo for Done at once.
+      handleDispatch: (id: string) => {
+        setTasks((prev) =>
+          prev.map((t) =>
+            t.meta.id === id ? { ...t, meta: { ...t.meta, status: 'done' } } : t
+          )
+        );
+        return Promise.resolve();
+      },
+    } as DispatchProjectData;
+    return view('board', { data });
+  }
+  render(<Live />);
+  const dispatch = within(cardRoot('Card one')).getByRole('button', {
+    name: /Dispatch/,
+  });
+  act(() => dispatch.focus());
+  expect(focusedCardText()).toContain('Card one');
+  fireEvent.click(dispatch);
+  expect(focusedCardText()).toContain('Card three');
+  expect(focusedCardText()).not.toContain('Card one');
 });
 
 // Every card takes the visible column list. A dispatch moves a column's count but not the

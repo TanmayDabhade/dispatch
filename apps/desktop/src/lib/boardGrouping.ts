@@ -323,6 +323,26 @@ export function visibleLaneTaskIds(
 }
 
 /**
+ * The card that takes `taskId`'s place when it leaves its column (a dispatch): the one
+ * below it, else the one above, else null once the column is empty. Undefined when no lane
+ * holds it.
+ */
+export function columnSuccessor(
+  lanes: readonly BoardLane[],
+  taskId: string
+): string | null | undefined {
+  for (const lane of lanes) {
+    for (const column of lane.columns) {
+      const index = column.tasks.findIndex((t) => t.meta.id === taskId);
+      if (index === -1) continue;
+      const next = column.tasks[index + 1] ?? column.tasks[index - 1];
+      return next === undefined ? null : next.meta.id;
+    }
+  }
+  return undefined;
+}
+
+/**
  * A drop zone's @dnd-kit id, unique per lane *and* status.
  *
  * The same status column repeats once per lane, and @dnd-kit keys its droppable containers by id

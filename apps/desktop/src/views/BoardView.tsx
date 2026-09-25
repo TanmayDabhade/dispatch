@@ -1,7 +1,14 @@
 import type { TaskListItem } from '@dispatch/core/browser';
 import { isContainerKind } from '@dispatch/core/browser';
 import { Ellipsis, Layers, Star } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { useSavedViewsContext } from '../components/shell/SavedViewsContext';
@@ -11,12 +18,12 @@ import { DisplayPopover } from '../components/tasks/DisplayPopover';
 import { FilterMenu } from '../components/tasks/FilterMenu';
 import { SaveViewDialog } from '../components/tasks/SaveViewDialog';
 import { TaskBoard } from '../components/tasks/TaskBoard';
-import { useCursorHandoff } from '../hooks/useCursorHandoff';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { isTypingTarget } from '../hooks/useGlobalKeyboard';
 import type { TaskTab } from '../lib/appNav';
 import {
   type BoardLane,
+  columnSuccessor,
   groupTasksByLane,
   visibleBoardColumns,
   visibleLaneTaskIds,
@@ -526,8 +533,25 @@ export function BoardView({
       handleDispatch(taskId, undefined, undefined, { optimistic: true }),
     [handleDispatch]
   );
-  // The dispatched card moves to another column; the cursor stays where it was.
-  const handOffCursor = useCursorHandoff(orderedTaskIds, setFocusedTaskId);
+  // What a dispatch reads when it runs, so the card's Dispatch keeps one identity.
+  const shown = useRef({ lanes, cursor: focusedTaskId });
+  useLayoutEffect(() => {
+    shown.current = { lanes, cursor: focusedTaskId };
+  });
+  // `d` and a card's Dispatch (clicking it focuses the card first): the card moves to
+  // another column, and the cursor stays where it was, on the card that slides into its
+  // place — in the same render, or the cursor follows the card and the board scrolls to it.
+  const dispatchCard = useCallback(
+    (taskId: string) => {
+      const { lanes: onScreen, cursor } = shown.current;
+      if (taskId === cursor) {
+        const next = columnSuccessor(onScreen, taskId);
+        if (next !== undefined) setFocusedTaskId(next);
+      }
+      return dispatchInPlace(taskId);
+    },
+    [dispatchInPlace]
+  );
 
   function handleBoardKeyDown(e: React.KeyboardEvent) {
     // A keydown that lands on (or inside) one of the track's own interactive controls — an
@@ -566,8 +590,7 @@ export function BoardView({
     if (command === 'list-dispatch') {
       if (focusedTaskId === null || !readyIds.has(focusedTaskId)) return;
       e.preventDefault();
-      handOffCursor(focusedTaskId);
-      void dispatchInPlace(focusedTaskId);
+      void dispatchCard(focusedTaskId);
       return;
     }
     if (command !== 'list-down' && command !== 'list-up') return;
@@ -849,7 +872,7 @@ export function BoardView({
             }
             epics={data.epics}
             onSelect={onSelectTask}
-            onDispatch={dispatchInPlace}
+            onDispatch={dispatchCard}
             onWorkEpic={data.handleWorkEpic}
             onPauseEpic={data.handlePauseEpic}
             onResumeEpic={data.handleResumeEpic}
