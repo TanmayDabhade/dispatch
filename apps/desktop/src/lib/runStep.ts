@@ -2,8 +2,9 @@ import type { NormalizedEntry, RunMeta } from '@dispatch/client';
 
 // A live run's latest step, in words ("Editing src/foo.ts", "Running tests"), read from the
 // `run.log` entries the event socket already delivers for every run, and seeded from the
-// run record's `lastStep` for a run already live when the window opened. Only the label is
-// kept, never the entry, so a run writing big files costs a short string per run.
+// run record's `lastStep` ({ text, at }) for a run already live when the window opened.
+// Only the label is kept, never the entry, so a run writing big files costs a short string
+// per run.
 
 const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'NotebookEdit', 'Update']);
 const MAX_TEXT = 48;
@@ -146,18 +147,16 @@ function isEntry(value: unknown): value is NormalizedEntry {
   );
 }
 
-/** The step a run record says its run last took, from the daemon's `lastStep`: a label, or
- * the log entry that announced it. Null when a daemon sends none (older ones) or it says
- * nothing. */
+/** The step a run record says its run last took, from the daemon's `lastStep`: core's
+ * `{ text, at }`, else a bare label or the log entry that announced it. Null when a daemon
+ * sends none (older ones) or it says nothing. */
 export function runStepFromRecord(
   run: RunMeta & { lastStep?: unknown }
 ): string | null {
   const last = run.lastStep;
-  if (typeof last === 'string') {
-    const label = text(last);
-    return label === null ? null : clip(label);
-  }
-  return isEntry(last) ? runStepFromEntry(last, run.id) : null;
+  if (isEntry(last)) return runStepFromEntry(last, run.id);
+  const label = text(typeof last === 'string' ? last : record(last).text);
+  return label === null ? null : clip(label);
 }
 
 // Coarse running sentences the live step replaces or extends; the rest (Starting, Waiting

@@ -891,8 +891,14 @@ test("a live run's open scope request is surfaced from the listing, without a sc
 test('a run live on open shows the step its record carries, until run.log says more', async () => {
   const { runSteps } = await import('../lib/runStep');
   runsFixture = [
-    { ...runFixture('r-step-live', 'running'), lastStep: 'Running tests' },
-    { ...runFixture('r-step-done', 'finished'), lastStep: 'Committing' },
+    {
+      ...runFixture('r-step-live', 'running'),
+      lastStep: { text: 'Running tests', at: '2026-09-25T13:00:00.000Z' },
+    },
+    {
+      ...runFixture('r-step-done', 'finished'),
+      lastStep: { text: 'Committing', at: '2026-09-25T13:00:00.000Z' },
+    },
     runFixture('r-step-old-daemon', 'running'),
   ] as RunMeta[];
   await mountConnected();

@@ -126,6 +126,17 @@ describe('runStepFromRecord', () => {
   const record = (lastStep?: unknown) =>
     ({ id: RUN, lastStep }) as RunMeta & { lastStep?: unknown };
 
+  // What dispatchd sends: core's RunStep, the label and when the run announced it.
+  test('reads the daemon’s { text, at } step as its label', () => {
+    const at = '2026-09-25T13:00:00.000Z';
+    expect(runStepFromRecord(record({ text: 'Editing src/a.ts', at }))).toBe(
+      'Editing src/a.ts'
+    );
+    expect(
+      runStepFromRecord(record({ text: `Using ${'x'.repeat(60)}`, at }))
+    ).toHaveLength(48);
+  });
+
   test('reads a label as it is, clipped like a logged one', () => {
     expect(runStepFromRecord(record('Running tests'))).toBe('Running tests');
     expect(runStepFromRecord(record(`Using ${'x'.repeat(60)}`))).toHaveLength(
@@ -144,7 +155,8 @@ describe('runStepFromRecord', () => {
   test('an older daemon’s record, or one that says nothing, gives no step', () => {
     expect(runStepFromRecord(record())).toBeNull();
     expect(runStepFromRecord(record('  '))).toBeNull();
-    expect(runStepFromRecord(record({ text: 'no kind' }))).toBeNull();
+    expect(runStepFromRecord(record({ text: ' ', at: '' }))).toBeNull();
+    expect(runStepFromRecord(record({ at: '' }))).toBeNull();
     expect(
       runStepFromRecord(record({ ts: '', kind: 'assistant', text: 'ok' }))
     ).toBeNull();
