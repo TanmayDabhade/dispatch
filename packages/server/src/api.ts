@@ -919,6 +919,7 @@ async function sendRunMessage(
   }
   const meta = ctx.orchestrator.sendMessage(runId, body.text, {
     resume: body.resume === true,
+    actor: humanActor(ctx),
   });
   return jsonResponse(meta);
 }
@@ -1911,7 +1912,7 @@ function sendReviewToAgent(
   return ctx.orchestrator.sendMessage(
     runId,
     message,
-    resume ? { resume: true } : {}
+    resume ? { resume: true, actor: humanActor(ctx) } : {}
   );
 }
 

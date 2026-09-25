@@ -1400,10 +1400,10 @@ export class Orchestrator {
   // come to rest with a resumable session, and re-dispatches into the *same*
   // worktree/branch rather than provisioning a new one. Otherwise this is a
   // plain mid-run message to a live run's executor.
-  // `actor` (resume path only) credits who asked for the redispatch: omitted
-  // (the API's chat composer) defaults to the daemon's human; FixLoop's own
-  // automatic escalation passes 'none' explicitly — no one typed anything,
-  // the loop just moved to its next round.
+  // `actor` (resume path only) credits who asked for the redispatch: the API
+  // passes its caller, and omitted defaults to the daemon's human; FixLoop's
+  // own automatic escalation passes 'none' explicitly — no one typed
+  // anything, the loop just moved to its next round.
   sendMessage(
     runId: string,
     text: string,
