@@ -4,6 +4,8 @@ import {
   parseTeam,
   resolvePeople,
   TeamParseError,
+  UNRESOLVED_LINEAR_ASSIGNEE,
+  UNRESOLVED_LINEAR_PERSON,
 } from '@dispatch/core';
 import type { Person, TeamMember } from '@dispatch/core';
 import { existsSync, readFileSync } from 'node:fs';
@@ -38,14 +40,23 @@ export function rosterMembers(rootDir: string): TeamMember[] {
 
 // GET /api/people — the team roster merged with config `people` (see core's
 // resolvePeople). Agents are not listed: executors come from /api/executors.
+// While a task holds the Linear placeholder assignee, it is listed under a
+// name that says so, never as a person called "linear-user".
 export function listPeople(
-  ctx: Pick<ApiContext, 'rootDir' | 'caller' | 'actorContext'>
+  ctx: Pick<ApiContext, 'rootDir' | 'caller' | 'actorContext' | 'cache'>
 ): Response {
   const configured = loadConfig(ctx.rootDir).people ?? [];
+  const people = resolvePeople(configured, rosterMembers(ctx.rootDir));
+  if (
+    ctx.cache.hasAssignee(UNRESOLVED_LINEAR_ASSIGNEE) &&
+    !people.some((p) => p.ref === UNRESOLVED_LINEAR_ASSIGNEE)
+  ) {
+    people.push(UNRESOLVED_LINEAR_PERSON);
+  }
   const snapshot: PeopleSnapshot = {
     me: humanActor(ctx),
     local: ctx.actorContext.humanRef,
-    people: resolvePeople(configured, rosterMembers(ctx.rootDir)),
+    people,
   };
   return jsonResponse(snapshot);
 }

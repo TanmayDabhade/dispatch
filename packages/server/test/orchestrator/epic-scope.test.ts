@@ -129,6 +129,10 @@ describe('a fan-out never picks up a teammate’s task', () => {
     expect(h.dispatched()).toEqual(
       new Set([ids.unassigned, ids.agent, ids.mine, ids.legacyMine])
     );
+    // Every run is the starter's, though no one pressed dispatch on it.
+    expect(new Set(h.orchestrator.list().map((r) => r.dispatchedBy))).toEqual(
+      new Set(['human:test'])
+    );
     // Untouched: no dispatched status, so nothing for Linear to push.
     const samAfter = h.store.get(ids.samTask);
     expect(samAfter?.meta.status).toBe(samBefore?.meta.status);
@@ -167,6 +171,10 @@ describe('a fan-out never picks up a teammate’s task', () => {
 
     // Bare `human` is the daemon's operator, a teammate from Ada's side.
     expect(h.dispatched()).toEqual(new Set([ids.unassigned, ids.ada]));
+    // Ada's runs, not the operator's: another window's "me" lane skips them.
+    expect(new Set(h.orchestrator.list().map((r) => r.dispatchedBy))).toEqual(
+      new Set(['human:ada'])
+    );
     const phases = new Map(h.epics.progress(m).children.map((c) => [c.id, c]));
     expect(phases.get(ids.operator)?.reason).toBe('assigned to human:test');
     expect(phases.get(ids.bare)?.reason).toBe('assigned to human:test');
@@ -442,6 +450,7 @@ it('a session persisted without a starter works for the local human', async () =
   await waitFor(() => orchestrator.list().length === 1);
   await sleep(50);
   expect(orchestrator.list().map((r) => r.taskId)).toEqual([mine]);
+  expect(orchestrator.list()[0]?.dispatchedBy).toBe('human:test');
 });
 
 it('a project session persisted before plan-wide fan-outs keeps to its direct issues', async () => {

@@ -375,6 +375,14 @@ export class TaskCache {
     return row !== null;
   }
 
+  // Whether any task, archived included, is assigned to `assignee`.
+  hasAssignee(assignee: string): boolean {
+    const row = this.db
+      .query('SELECT 1 AS hit FROM tasks WHERE assignee = $assignee LIMIT 1')
+      .get({ $assignee: assignee });
+    return row !== null;
+  }
+
   get(id: string): TaskDoc | null {
     const row = this.db
       .query('SELECT json FROM tasks WHERE id = $id')

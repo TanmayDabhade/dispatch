@@ -14,6 +14,7 @@ import type {
   MutationEvidence,
   Person,
   Priority,
+  RunStep,
   TaskComment,
   TaskDoc,
   TaskListItem,
@@ -159,7 +160,8 @@ export interface RunMeta {
   error?: string;
   /** The Claude model this run was dispatched with, if one was chosen. */
   model?: string;
-  /** ActorRef of the human who dispatched this run — see the server's RunMeta. */
+  /** ActorRef of the human the run is for (who dispatched it, or started its
+   *  fan-out) — see the server's RunMeta. */
   dispatchedBy?: string;
   // The approval this run is parked on while `state` is 'awaiting-approval',
   // so a client that connects after the `approval.requested` event fired (a
@@ -172,6 +174,11 @@ export interface RunMeta {
   // from them on replay. Absent until the first sub-agent is spawned. Mirrors
   // RunMeta.subagents / SubagentSummary in @dispatch/core.
   subagents?: SubagentSummary;
+  // What a live run's agent is doing, in words ("Editing src/a.ts"), and when
+  // it said so — the step a list shows before any `run.log` event arrives.
+  // Absent before the first step and once the run is terminal. Mirrors
+  // RunMeta.lastStep; label new entries with core's runStepFromEntry.
+  lastStep?: RunStep;
   // Phase 5 P1: set once a run has been reviewed (merge/discard/pr) or its PR
   // has merged — mirrors RunMeta's own one-way markers in
   // packages/server/src/orchestrator/types.ts.

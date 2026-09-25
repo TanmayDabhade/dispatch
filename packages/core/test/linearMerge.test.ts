@@ -122,6 +122,20 @@ describe('mergeFields with a base', () => {
       decide('mine', 'theirs', base('a'), { unknown: new Set(['f']) })
     ).toEqual([]);
   });
+
+  it('pulls a placeholder Linear can now fill, though neither side moved', () => {
+    const settled = base(UNMAPPED, 'u-new');
+    // Without the hint, nothing ever replaces it.
+    expect(decide(UNMAPPED, 'u-new', settled)).toEqual([]);
+    const refresh = new Set(['f']);
+    expect(decide(UNMAPPED, 'u-new', settled, { refresh })).toEqual([
+      { field: 'f', action: 'pull', conflict: false },
+    ]);
+    // An untrusted fetch still says nothing about the field.
+    expect(
+      decide(UNMAPPED, 'u-new', settled, { refresh, unknown: refresh })
+    ).toEqual([]);
+  });
 });
 
 describe('mergeFields without a base', () => {

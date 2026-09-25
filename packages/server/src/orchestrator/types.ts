@@ -1,4 +1,4 @@
-import type { SubagentEvent, SubagentSummary } from '@dispatch/core';
+import type { RunStep, SubagentEvent, SubagentSummary } from '@dispatch/core';
 
 // The Vibe Kanban pattern: every executor, real or fake, streams a uniform
 // log shape so the transcript/UI never needs to know which executor produced
@@ -258,11 +258,13 @@ export interface RunMeta {
   // ExecutorStartOptions.model) — surfaced so the UI can show which model ran
   // a given task.
   model?: string;
-  // Serialized ActorRef of the human who pressed dispatch, e.g. `human:ada`.
-  // Absent for a run nobody dispatched by hand (an epic session's auto-fill)
-  // and for runs recorded before this field existed. It is what makes a run —
-  // and the files it claims, and the decisions it parks on — someone's on a
-  // daemon more than one person uses.
+  // Serialized ActorRef of the human the run is for, e.g. `human:ada`: who
+  // pressed dispatch, or started the fan-out that dispatched it. A resume,
+  // follow-up or review/verify run keeps its work's owner unless a person
+  // pressed for it. Absent for a run nobody owns (no human at all) and for
+  // runs recorded before this field existed. It is what makes a run — and the
+  // files it claims, and the decisions it parks on — someone's on a daemon
+  // more than one person uses.
   dispatchedBy?: string;
   // C2: once a run has been merged or discarded, review() must refuse any
   // further review/resume calls on it — this pair of fields, once set, is
@@ -347,6 +349,11 @@ export interface RunMeta {
   // so lists can show fan-out without reading the transcript. Absent until
   // the first sub-agent is spawned.
   subagents?: SubagentSummary;
+  // What a live run's agent is doing, in words (core's runStepFromEntry), and
+  // when it said so: kept current from its log entries as they are written,
+  // so a list read never opens a transcript. In memory only; absent before
+  // the first step and once the run is terminal.
+  lastStep?: RunStep;
 }
 
 // A run's kind, defaulted for the transcripts and registry entries written

@@ -10,6 +10,7 @@ import {
 import { beforeEach, expect, test } from 'bun:test';
 import type { ReactNode } from 'react';
 
+import { PeopleProvider } from '../components/people/PeopleContext';
 import { testConfig } from '../components/settings/fixtures.test-helper';
 import {
   type DeepLinkActions,
@@ -501,6 +502,48 @@ test('the context menu offers the property submenus, open/peek/dispatch/copy, ar
 
   fireEvent.click(within(menu).getByRole('menuitem', { name: 'Copy link' }));
   expect(linked).toEqual(['t-1']);
+});
+
+test('the Assignee submenu never offers the unknown-Linear-user placeholder', async () => {
+  const people = [
+    { ref: 'human:wyat', name: 'Wyat Soule' },
+    {
+      ref: 'human:linear-user',
+      name: 'Unknown Linear user',
+      placeholder: true,
+    },
+  ];
+  const Shell = shellWith(shellLog());
+  render(
+    <Shell>
+      <PeopleProvider people={people} me="human:wyat">
+        <TasksListView
+          data={dataWith([task('t-1', 'First task')])}
+          onSelectTask={() => {}}
+        />
+      </PeopleProvider>
+    </Shell>
+  );
+
+  fireEvent.contextMenu(rowOf('First task'), { clientX: 10, clientY: 10 });
+  const menu = await screen.findByRole('menu');
+  await act(async () => {
+    fireEvent.click(within(menu).getByRole('menuitem', { name: /Assignee/ }));
+    await Promise.resolve();
+  });
+
+  const [, submenu] = await screen.findAllByRole('menu');
+  if (submenu === undefined) throw new Error('no Assignee submenu');
+  // Each label follows its avatar's initials.
+  expect(
+    within(submenu)
+      .getAllByRole('menuitem')
+      .map((item) => item.textContent)
+  ).toEqual([
+    expect.stringMatching(/Wyat Soule$/),
+    expect.stringMatching(/Agent$/),
+    expect.stringMatching(/Unassigned$/),
+  ]);
 });
 
 // Outside App's `DeepLinkProvider` (the harness, most view tests) there is nothing to

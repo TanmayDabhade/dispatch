@@ -298,10 +298,10 @@ export function AssigneeControl({
   // nobody; without one, the three fixed kinds. A value in neither list (a ref from before
   // the roster had them) is listed on top rather than silently rendering as unassigned.
   const choices =
-    directory.people.length === 0
+    directory.assignable.length === 0
       ? ASSIGNEES
       : [
-          ...directory.people
+          ...directory.assignable
             .map((p) => p.ref)
             .sort((a, b) =>
               a === directory.me ? -1 : b === directory.me ? 1 : 0

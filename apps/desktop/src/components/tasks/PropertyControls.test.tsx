@@ -1,4 +1,4 @@
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { Person, TaskDoc } from '@dispatch/core/browser';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
 import { type ReactElement, useState } from 'react';
@@ -479,6 +479,62 @@ describe('the assignee picker lists people and agents', () => {
     expect(
       screen.getByRole('button', { name: 'Change assignee' }).textContent
     ).toContain('Wyat Soule');
+  });
+
+  // Listed by GET /api/people while a Linear issue's assignee has no name yet.
+  const placeholder = {
+    ref: 'human:linear-user',
+    name: 'Unknown Linear user',
+    placeholder: true,
+  };
+
+  // The open menu's labels for an unassigned task.
+  async function offered(
+    listed: readonly Person[]
+  ): Promise<(string | null)[]> {
+    const view = render(
+      <PeopleProvider people={listed} me="human:wyat">
+        <AssigneeControl value="none" onChange={() => {}} />
+      </PeopleProvider>
+    );
+    await settle(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Change assignee' }));
+    });
+    const labels = screen
+      .getAllByRole('menuitem')
+      .map((item) => item.querySelector('.truncate')?.textContent ?? null);
+    view.unmount();
+    return labels;
+  }
+
+  test('never offers the unknown-Linear-user placeholder', async () => {
+    expect(await offered([...people, placeholder])).toEqual([
+      'Wyat Soule',
+      'Maya Chen',
+      'Agent',
+      'Unassigned',
+    ]);
+    // Alone it is no registry: the fixed kinds stay, yourself included.
+    expect(await offered([placeholder])).toEqual([
+      'Agent',
+      'Human',
+      'Unassigned',
+    ]);
+  });
+
+  test('a task the placeholder holds still names it', () => {
+    render(
+      <PeopleProvider people={[...people, placeholder]} me="human:wyat">
+        <AssigneeControl
+          value="human:linear-user"
+          onChange={() => {}}
+          variant="row"
+        />
+      </PeopleProvider>
+    );
+    expect(
+      screen.getByRole('button', { name: 'Change assignee' }).textContent
+    ).toContain('Unknown Linear user');
   });
 });
 

@@ -19,7 +19,7 @@ import type { PeopleIndex } from './linearPeople.js';
 import { statusTypeOfState } from './linearStatuses.js';
 // Every Linear issue field, both directions, as canonical per-field values the
 // three-way merge compares (linearMerge.ts). Pure: no node:* imports.
-import { canonicalAssignee } from './people.js';
+import { canonicalAssignee, UNRESOLVED_LINEAR_ASSIGNEE } from './people.js';
 import type { StatusModel } from './status.js';
 import { isDoneStatus, statusesOfType, statusType } from './status.js';
 import type { CreateInput, UpdatePatch } from './store.js';
@@ -601,9 +601,26 @@ function parentFor(
   return null;
 }
 
-// A Linear user the people registry cannot name yet: still somebody, so a
-// fan-out never takes the issue for unassigned. Never pushed (linearUserOf).
-const UNRESOLVED_ASSIGNEE = 'human:linear-user';
+/**
+ * Fields whose local value only stands in for Linear's and that the context
+ * can now fill: an assignee pulled before the people registry could name
+ * them. The merge pulls these (see MergeInput.refresh); never a local edit.
+ */
+export function replaceableIssueFields(
+  doc: TaskDoc,
+  issue: LinearIssue,
+  ctx: LinearMapContext
+): ReadonlySet<string> {
+  const fields = new Set<string>();
+  if (
+    doc.meta.assignee === UNRESOLVED_LINEAR_ASSIGNEE &&
+    issue.assigneeId !== null &&
+    ctx.people.refByUser.has(issue.assigneeId)
+  ) {
+    fields.add('assignee');
+  }
+  return fields;
+}
 
 /** Linear's value of `field`, as the UpdatePatch that writes it locally. */
 export function issuePatch(
@@ -646,7 +663,7 @@ export function issuePatch(
           issue.assigneeId === null
             ? 'none'
             : (ctx.people.refByUser.get(issue.assigneeId) ??
-              UNRESOLVED_ASSIGNEE);
+              UNRESOLVED_LINEAR_ASSIGNEE);
         break;
       case 'labels':
         patch.labels = [

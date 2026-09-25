@@ -8,6 +8,7 @@ import {
   isDoneStatus,
   loadConfig,
   nextSubagentStatus,
+  runStepFromEntry,
   slugify,
   summarizeSubagents,
   TaskParseError,
@@ -81,7 +82,7 @@ import { RunRegistry } from './registry.js';
 import { RepoDigestCache } from './repoDigest.js';
 import type { RunScopeRequest } from './scopeRequests.js';
 import type { RunDetail } from './transcript.js';
-import { replayTranscript, Transcript } from './transcript.js';
+import { recentEntries, replayTranscript, Transcript } from './transcript.js';
 import type {
   ApprovalDecision,
   BranchEntry,
@@ -326,6 +327,12 @@ function checkGuard(task: TaskDoc, guard: DispatchGuard | undefined): void {
   }
 }
 
+// Only a person owns a run (RunMeta.dispatchedBy): 'none', an agent and the
+// legacy bare `human` read as nobody.
+function humanOwner(ref: string | undefined): string | undefined {
+  return ref?.startsWith('human:') === true ? ref : undefined;
+}
+
 // How a reviewed run was closed out, for refusal messages: a run merged by
 // hand and picked up by the external-merge reconciler reads "merged as
 // <sha>", which tells the operator why their resume was refused far better
@@ -408,6 +415,9 @@ export class Orchestrator {
   // When each run's claims were last refreshed from git status — see
   // scheduleClaimsRefresh's cooldown check.
   private readonly lastClaimsCheck = new Map<string, number>();
+  // Live runs whose RunMeta.lastStep this process has followed from their
+  // log (or read back once, see backfillLastSteps).
+  private readonly stepsFollowed = new Set<string>();
   // Each live run's sub-agents by spawning tool_use id and their latest
   // status — the working set recordSubagentEvent folds RunMeta.subagents from.
   private readonly subagentStatuses = new Map<
@@ -556,6 +566,31 @@ export class Orchestrator {
 
   list(): RunMeta[] {
     return this.registry.list();
+  }
+
+  /**
+   * Gives every live run the registry holds without a followed step its
+   * lastStep, read once from the tail of its transcript: a run whose log was
+   * written before this process started following it. Runs this process
+   * follows (see makeEvents) cost a set lookup, so request paths call this
+   * before they list.
+   */
+  backfillLastSteps(): void {
+    for (const meta of this.registry.list()) {
+      if (TERMINAL_RUN_STATES.has(meta.state)) continue;
+      if (this.stepsFollowed.has(meta.id)) continue;
+      this.stepsFollowed.add(meta.id);
+      const entries = recentEntries(transcriptPath(this.ctx.rootDir, meta.id));
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const entry = entries[i];
+        const text = runStepFromEntry(entry, meta.id);
+        if (text === null) continue;
+        this.registry.updateMeta(meta.id, {
+          lastStep: { text, at: entry.ts },
+        });
+        break;
+      }
+    }
   }
 
   // Every live run's current claims, for GET /api/runs/claims and the epic
@@ -768,8 +803,14 @@ export class Orchestrator {
     // `actor` credits who caused this dispatch: omitted (the API's manual
     // dispatch) defaults to the daemon's human, but an automatic caller
     // (EpicEngine's auto-fill) passes 'none' explicitly — no human pressed
-    // dispatch for that specific task.
-    opts: { model?: string; actor?: string; guard?: DispatchGuard } = {}
+    // dispatch for that specific task. `dispatchedBy` names whom the run is
+    // for when the actor is nobody: a fan-out's runs are its starter's.
+    opts: {
+      model?: string;
+      actor?: string;
+      dispatchedBy?: string;
+      guard?: DispatchGuard;
+    } = {}
   ): Promise<RunMeta> {
     const task = this.ctx.store.get(taskId);
     if (task === null) {
@@ -810,9 +851,9 @@ export class Orchestrator {
 
     this.worktrees.add(wtPath, branch, baseBranch);
 
-    const actor = opts.actor ?? this.ctx.actorContext?.humanRef;
-    const dispatchedBy =
-      actor !== undefined && actor.startsWith('human:') ? actor : undefined;
+    const dispatchedBy = humanOwner(
+      opts.dispatchedBy ?? opts.actor ?? this.ctx.actorContext?.humanRef
+    );
     const meta: RunMeta = {
       id: runId,
       taskId,
@@ -825,8 +866,8 @@ export class Orchestrator {
       createdAt: now,
       updatedAt: now,
       model: opts.model,
-      // Only a human ref is recorded: 'none' is how an automatic caller says
-      // nobody pressed dispatch for this task, and crediting that to anyone
+      // Only a human ref is recorded: 'none' with no `dispatchedBy` is how an
+      // automatic caller says the run is nobody's, and crediting it to anyone
       // would be inventing an owner.
       ...(dispatchedBy === undefined ? {} : { dispatchedBy }),
       // Seeded from the task's own declared write-set — see RunMeta.claims.
@@ -913,6 +954,13 @@ export class Orchestrator {
     const wtPath = worktreePath(this.ctx.rootDir, runId);
     this.worktrees.add(wtPath, branch, opts.head);
 
+    // A review, verify or fix run serves the task's latest work, so it is
+    // for whoever that run was for.
+    const owner = this.registry
+      .list()
+      .find(
+        (r) => r.taskId === opts.taskId && runKind(r) === 'execute'
+      )?.dispatchedBy;
     const meta: RunMeta = {
       id: runId,
       taskId: opts.taskId,
@@ -927,6 +975,7 @@ export class Orchestrator {
       model: opts.model,
       kind: opts.kind,
       claims: [...task.meta.writes],
+      ...(owner === undefined ? {} : { dispatchedBy: owner }),
     };
     this.registry.create(meta);
     this.transcriptFor(runId).writeHeader(meta);
@@ -1351,10 +1400,10 @@ export class Orchestrator {
   // come to rest with a resumable session, and re-dispatches into the *same*
   // worktree/branch rather than provisioning a new one. Otherwise this is a
   // plain mid-run message to a live run's executor.
-  // `actor` (resume path only) credits who asked for the redispatch: omitted
-  // (the API's chat composer) defaults to the daemon's human; FixLoop's own
-  // automatic escalation passes 'none' explicitly — no one typed anything,
-  // the loop just moved to its next round.
+  // `actor` (resume path only) credits who asked for the redispatch: the API
+  // passes its caller, and omitted defaults to the daemon's human; FixLoop's
+  // own automatic escalation passes 'none' explicitly — no one typed
+  // anything, the loop just moved to its next round.
   sendMessage(
     runId: string,
     text: string,
@@ -2125,6 +2174,8 @@ export class Orchestrator {
       model?: string;
       fresh?: boolean;
       actor?: string;
+      /** Whom the run is for, when not the actor (see dispatch()). */
+      dispatchedBy?: string;
       defaults?: { executor?: string; model?: string };
       /** Re-checked on the task as it stands just before a run registers. */
       guard?: DispatchGuard;
@@ -2137,7 +2188,7 @@ export class Orchestrator {
     if (request.fresh !== true) {
       const resumable = this.resumableRunForTask(taskId);
       if (resumable !== null && this.resumeHonoursRequest(resumable, request)) {
-        return this.resumeForRedispatch(resumable, request.actor);
+        return this.resumeForRedispatch(resumable, request);
       }
     }
     const executorName =
@@ -2152,6 +2203,7 @@ export class Orchestrator {
     const meta = await this.dispatch(taskId, executorName, {
       model,
       actor: request.actor,
+      dispatchedBy: request.dispatchedBy,
       guard: request.guard,
     });
     if (reason !== null) {
@@ -2232,14 +2284,20 @@ export class Orchestrator {
   // into that is the two-agents-in-one-checkout hazard the sweep exists to
   // avoid — so rather than racing it, this re-arms the sweep and refuses,
   // saying so in terms the caller can act on.
-  private resumeForRedispatch(run: RunMeta, actor?: string): RunMeta {
+  private resumeForRedispatch(
+    run: RunMeta,
+    who: { actor?: string; dispatchedBy?: string }
+  ): RunMeta {
     if (this.needsQuietProof(run)) {
       this.scheduleAutoResume(run.id);
       throw new OrchestratorConflictError(
         `run ${run.id} is still being recovered after a daemon restart — waiting for the agent it orphaned to stop writing to ${run.branch}. It will resume on its own; dispatch with fresh=true to start over instead.`
       );
     }
-    return this.resumeRun(run.id, { actor });
+    return this.resumeRun(run.id, {
+      actor: who.actor,
+      dispatchedBy: who.dispatchedBy,
+    });
   }
 
   // True when this run could still have the agent a restart orphaned writing
@@ -4381,9 +4439,13 @@ export class Orchestrator {
     // `reviewFailure` is likewise only written when the finish carries it:
     // `null` clears a prior failure, absent leaves it alone.
     const { reviewFailure, sessionId, ...fields } = finish ?? {};
+    // A step is what a live run is doing; a finished one is doing nothing.
+    const ended = TERMINAL_RUN_STATES.has(state);
+    if (ended) this.stepsFollowed.delete(runId);
     this.registry.updateMeta(runId, {
       state,
       updatedAt: now,
+      ...(ended ? { lastStep: undefined } : {}),
       ...fields,
       ...(sessionId !== undefined ? { sessionId } : {}),
       ...(reviewFailure !== undefined
@@ -4479,8 +4541,18 @@ export class Orchestrator {
     return {
       onEntry: (entry) => {
         this.transcriptFor(runId).appendEntry(entry);
+        // The step rides on the meta so a list read has it without the log;
+        // a stray entry after the finish names no step.
+        const state = this.registry.get(runId)?.state;
+        const live = state !== undefined && !TERMINAL_RUN_STATES.has(state);
+        const text = live ? runStepFromEntry(entry, runId) : null;
+        if (live) this.stepsFollowed.add(runId);
+        const now = new Date().toISOString();
         this.registry.updateMeta(runId, {
-          updatedAt: new Date().toISOString(),
+          updatedAt: now,
+          ...(text === null
+            ? {}
+            : { lastStep: { text, at: entry.ts === '' ? now : entry.ts } }),
         });
         const fanOutChanged = this.recordSubagentEvent(runId, entry);
         this.ctx.events.broadcast({ type: 'run.log', runId, entry });
@@ -4735,6 +4807,9 @@ export class Orchestrator {
     } = this.resolveExecutorForResume(oldMeta.executor);
     const now = new Date().toISOString();
     const runId = generateRunId(now);
+    // For the person who asked; the fix loop's rounds ('none') stay with
+    // whomever the conversation was for.
+    const owner = humanOwner(actor) ?? oldMeta.dispatchedBy;
     const meta: RunMeta = {
       id: runId,
       taskId: oldMeta.taskId,
@@ -4756,6 +4831,7 @@ export class Orchestrator {
       // follow-up must not look like it has never touched anything.
       claims: oldMeta.claims,
       resumedFrom: oldMeta.id,
+      ...(owner === undefined ? {} : { dispatchedBy: owner }),
       // The resumed run inherits the same worktree and the same BRANCH, so it
       // inherits the branch's stacking facts too. Dropping them here was how a
       // still-running resume ended up invisible to the merge queue: with no
@@ -4849,10 +4925,12 @@ export class Orchestrator {
   // run back rather than crediting the human whose daemon happened to reboot.
   // `actor` is the same override dispatch() takes, for the callers that resume
   // on someone else's behalf (dispatchOrResume, reached from the epic
-  // auto-fill, credits 'none' exactly as its dispatch does).
+  // auto-fill, credits 'none' exactly as its dispatch does). The successor is
+  // for `dispatchedBy` when given, else whoever pressed resume, else — the
+  // boot sweep, an automatic caller — whomever its predecessor was for.
   resumeRun(
     runId: string,
-    opts: { auto?: boolean; actor?: string } = {}
+    opts: { auto?: boolean; actor?: string; dispatchedBy?: string } = {}
   ): RunMeta {
     const meta = this.requireRun(runId);
     if (!TERMINAL_RUN_STATES.has(meta.state)) {
@@ -4884,6 +4962,12 @@ export class Orchestrator {
     const now = new Date().toISOString();
     const newRunId = generateRunId(now);
     const continuing = meta.sessionId !== undefined;
+    const owner =
+      humanOwner(opts.dispatchedBy) ??
+      (opts.auto === true
+        ? undefined
+        : humanOwner(opts.actor ?? this.ctx.actorContext?.humanRef)) ??
+      meta.dispatchedBy;
     const newMeta: RunMeta = {
       id: newRunId,
       taskId: meta.taskId,
@@ -4905,6 +4989,7 @@ export class Orchestrator {
       // its predecessor had already claimed.
       claims: meta.claims,
       resumedFrom: meta.id,
+      ...(owner === undefined ? {} : { dispatchedBy: owner }),
       ...(meta.stackParents !== undefined
         ? { stackParents: meta.stackParents }
         : {}),

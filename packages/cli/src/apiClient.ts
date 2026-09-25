@@ -46,7 +46,8 @@ export interface RunMeta {
   turns?: number;
   sessionId?: string;
   error?: string;
-  /** ActorRef of the human who dispatched this run — see the server's RunMeta. */
+  /** ActorRef of the human the run is for (who dispatched it, or started its
+   *  fan-out) — see the server's RunMeta. */
   dispatchedBy?: string;
   model?: string;
   reviewedAt?: string;
@@ -79,6 +80,9 @@ export interface RunMeta {
     failed: number;
     stopped: number;
   };
+  // What a live run's agent is doing, in words, and when it said so; absent
+  // before its first step and once terminal — mirrors RunMeta.lastStep.
+  lastStep?: { text: string; at: string };
 }
 
 export interface NormalizedEntry {

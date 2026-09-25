@@ -919,6 +919,7 @@ async function sendRunMessage(
   }
   const meta = ctx.orchestrator.sendMessage(runId, body.text, {
     resume: body.resume === true,
+    actor: humanActor(ctx),
   });
   return jsonResponse(meta);
 }
@@ -1911,7 +1912,7 @@ function sendReviewToAgent(
   return ctx.orchestrator.sendMessage(
     runId,
     message,
-    resume ? { resume: true } : {}
+    resume ? { resume: true, actor: humanActor(ctx) } : {}
   );
 }
 
@@ -5413,6 +5414,7 @@ export async function handleApi(
 
     if (segments[0] === 'runs') {
       if (segments.length === 1 && method === 'GET') {
+        ctx.orchestrator.backfillLastSteps();
         return jsonResponse(
           ctx.orchestrator.decorateRunsWithPendingApproval(
             ctx.orchestrator.decorateRunsWithPushed(ctx.orchestrator.list())
@@ -5427,6 +5429,7 @@ export async function handleApi(
         return listRunClaims(ctx);
       }
       if (segments.length === 2 && method === 'GET') {
+        ctx.orchestrator.backfillLastSteps();
         const result = ctx.orchestrator.getRun(segments[1]);
         if (result === null) {
           return errorResponse(404, `run not found: ${segments[1]}`);
@@ -5522,7 +5525,10 @@ export async function handleApi(
         segments[2] === 'resume' &&
         method === 'POST'
       ) {
-        return jsonResponse(ctx.orchestrator.resumeRun(segments[1]), 201);
+        return jsonResponse(
+          ctx.orchestrator.resumeRun(segments[1], { actor: humanActor(ctx) }),
+          201
+        );
       }
       if (
         segments.length === 3 &&

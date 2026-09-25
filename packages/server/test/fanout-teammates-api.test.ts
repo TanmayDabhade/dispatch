@@ -125,6 +125,14 @@ async function dispatchedTaskIds(epicId: string): Promise<Set<string>> {
   );
 }
 
+// Whom GET /api/runs says each run is for (the Cockpit's "me" lane reads it).
+async function runOwners(): Promise<Set<string | undefined>> {
+  const runs = (await json(await fetch(`${baseUrl}/api/runs`))) as {
+    dispatchedBy?: string;
+  }[];
+  return new Set(runs.map((r) => r.dispatchedBy));
+}
+
 describe('POST /api/epics/:id/dispatch and teammates', () => {
   it('leaves a teammate’s unstarted issue alone on a single-user daemon', async () => {
     const { epicId, ids } = milestone({
@@ -148,6 +156,7 @@ describe('POST /api/epics/:id/dispatch and teammates', () => {
     expect(await dispatchedTaskIds(epicId)).toEqual(
       new Set([ids.unassigned, ids.mine])
     );
+    expect(await runOwners()).toEqual(new Set([me]));
     const samTask = await json(
       await fetch(`${baseUrl}/api/tasks/${ids.samTask}`)
     );
@@ -178,6 +187,8 @@ describe('POST /api/epics/:id/dispatch and teammates', () => {
     expect(await dispatchedTaskIds(epicId)).toEqual(
       new Set([ids.unassigned, ids.ada])
     );
+    // Her fan-out's runs are hers, not the operator's.
+    expect(await runOwners()).toEqual(new Set(['human:ada']));
   });
 
   it('tells a teammate’s window whom a bare human assignee means', async () => {

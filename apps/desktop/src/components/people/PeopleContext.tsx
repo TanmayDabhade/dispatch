@@ -6,6 +6,9 @@ import { createContext, useContext, useMemo } from 'react';
  * avatar and assignee picker so neither needs the registry threaded through its row. */
 export interface PeopleDirectory {
   people: readonly Person[];
+  /** Whom an assignee picker offers: everyone but a placeholder, which only
+   *  names a task that already holds it. */
+  assignable: readonly Person[];
   /** This window's own ref, or null until the daemon says. */
   me: string | null;
   /** The person an assignee names (the legacy bare `human` is `me`). */
@@ -14,6 +17,7 @@ export interface PeopleDirectory {
 
 const EMPTY: PeopleDirectory = {
   people: [],
+  assignable: [],
   me: null,
   personFor: () => undefined,
 };
@@ -33,6 +37,7 @@ export function PeopleProvider({
     const byRef = new Map(people.map((p) => [p.ref, p]));
     return {
       people,
+      assignable: people.filter((p) => p.placeholder !== true),
       me,
       personFor: (assignee) =>
         byRef.get(me === null ? assignee : canonicalAssignee(assignee, me)),

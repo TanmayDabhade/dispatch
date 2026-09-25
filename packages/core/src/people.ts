@@ -12,7 +12,27 @@ export interface Person {
   avatarUrl?: string | null;
   /** The id in an external tracker (`linear:<user-uuid>`), or null. */
   external?: string | null;
+  /** A stand-in for someone the registry cannot name yet: shown where a task
+   *  holds it, never offered as a choice (see UNRESOLVED_LINEAR_PERSON). */
+  placeholder?: boolean;
 }
+
+/**
+ * The assignee a Linear pull writes for an issue whose Linear user the
+ * registry cannot name yet: still somebody, so a fan-out never takes the issue
+ * for unassigned. Never pushed; pulled again once the registry names them.
+ */
+export const UNRESOLVED_LINEAR_ASSIGNEE = 'human:linear-user';
+
+/** How GET /api/people lists that placeholder while a task holds it. */
+export const UNRESOLVED_LINEAR_PERSON: Person = {
+  ref: UNRESOLVED_LINEAR_ASSIGNEE,
+  name: 'Unknown Linear user',
+  email: null,
+  avatarUrl: null,
+  external: null,
+  placeholder: true,
+};
 
 /** Why `value` is not a valid `people:` entry, or null when it is. */
 export function personError(value: unknown): string | null {
