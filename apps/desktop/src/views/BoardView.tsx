@@ -412,7 +412,9 @@ export function BoardView({
     }
     return map;
   }, [boardTasks]);
-  const visibleStatuses = useMemo(
+  // Keyed on its contents: every card takes this array, so a dispatch that moves a count
+  // but no column must hand them the same one or they all redraw.
+  const visibleStatusKey = useMemo(
     () =>
       data.config !== null
         ? visibleBoardColumns(
@@ -420,9 +422,13 @@ export function BoardView({
             countByStatus,
             prefs.showEmptyGroups,
             hiddenColumns
-          )
-        : [],
+          ).join('\0')
+        : '',
     [data.config, countByStatus, prefs.showEmptyGroups, hiddenColumns]
+  );
+  const visibleStatuses = useMemo(
+    () => (visibleStatusKey === '' ? [] : visibleStatusKey.split('\0')),
+    [visibleStatusKey]
   );
   // The same lanes `TaskBoard` renders, from the same pure functions over the same sorted
   // input — this copy exists only to give the j/k cursor an order that matches the screen.

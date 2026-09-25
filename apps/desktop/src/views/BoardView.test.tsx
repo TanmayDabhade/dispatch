@@ -1,4 +1,8 @@
-import type { EpicProgress, EpicSession } from '@dispatch/client';
+import type {
+  EpicProgress,
+  EpicSession,
+  ReadinessReading,
+} from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, expect, test } from 'bun:test';
@@ -710,6 +714,46 @@ test('d dispatches the focused ready card in place', () => {
   expect(focusedCardText()).not.toContain('Card one');
   fireEvent.keyDown(anchor, { key: 'd' });
   expect(sent).toHaveLength(1);
+});
+
+// Every card takes the visible column list. A dispatch moves a column's count but not the
+// columns, so a rebuilt copy of the same list used to redraw every card on the board.
+test('a card moving between shown columns redraws only that card', () => {
+  const renders = new Map<string, number>();
+  // A card reads its reading's `splitProbability` once per render, and nothing else does.
+  const counted = (id: string) =>
+    ({
+      level: 3,
+      label: 'clear',
+      confidence: 1,
+      get splitProbability() {
+        renders.set(id, (renders.get(id) ?? 0) + 1);
+        return 0;
+      },
+    }) as ReadinessReading;
+  const data = {
+    ...boardData(),
+    readinessById: new Map(
+      TASKS.filter((t) => t.meta.kind === 'task').map((t) => [
+        t.meta.id,
+        counted(t.meta.id),
+      ])
+    ),
+  } as DispatchProjectData;
+  const { rerender } = render(view('board', { data }));
+  expect(screen.queryByText('Card three')).not.toBeNull();
+  renders.clear();
+
+  // t-3 leaves todo for done; both columns were already showing.
+  const moved = TASKS.map((t) =>
+    t.meta.id === 't-3' ? { ...t, meta: { ...t.meta, status: 'done' } } : t
+  );
+  rerender(
+    view('board', {
+      data: { ...data, tasks: moved, tasksIncludingArchived: moved },
+    })
+  );
+  expect([...renders.keys()]).toEqual(['t-3']);
 });
 
 // The regression this guards: `initial` used to win over storage, so App's never-updated
