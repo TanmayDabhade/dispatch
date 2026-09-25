@@ -1312,7 +1312,7 @@ export function useDispatchProject(
       readyTasks(allTasksIncludingArchived, statusModel).map((t) => t.meta.id)
     );
   }, [config, allTasksIncludingArchived, statusModel]);
-  const { readinessById, noteTask, scheduleJudge } = useReadiness(
+  const { readinessById, noteTask, scheduleJudge, reconnected } = useReadiness(
     client,
     port,
     allTasksFetched,
@@ -1454,10 +1454,10 @@ export function useDispatchProject(
   );
 
   // Read through a ref, so a new judge callback never reopens the socket.
-  const readinessRef = useRef({ noteTask, scheduleJudge });
+  const readinessRef = useRef({ noteTask, scheduleJudge, reconnected });
   useEffect(() => {
-    readinessRef.current = { noteTask, scheduleJudge };
-  }, [noteTask, scheduleJudge]);
+    readinessRef.current = { noteTask, scheduleJudge, reconnected };
+  }, [noteTask, scheduleJudge, reconnected]);
 
   useEffect(() => {
     if (client === null) return;
@@ -1545,6 +1545,7 @@ export function useDispatchProject(
           // Events sent while the socket was down are lost, so a reconnect
           // refetches the list rather than trusting the patched cache.
           if (cachedList() !== undefined) {
+            readinessRef.current.reconnected();
             refetchTaskList();
             void queryClient.invalidateQueries({
               queryKey: readinessKey(port),

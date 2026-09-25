@@ -65,6 +65,12 @@ let configFetches = 0;
 
 // The daemon's cached readiness readings (`/api/tasks/readiness`).
 let readinessFixture: Record<string, dispatchClient.ReadinessReading> = {};
+// What the judging route (`/api/tasks/ready`) answers, and how often it was asked.
+let judgedFixture: {
+  meta: { id: string };
+  readiness?: dispatchClient.ReadinessReading;
+}[] = [];
+let judgeCalls = 0;
 
 // Every `updateTask` the hook sent, by task id and patch.
 const taskUpdates: [string, object][] = [];
@@ -100,7 +106,10 @@ void mock.module('@dispatch/client', () => ({
         ? Promise.reject(new Error(`no doc for ${id}`))
         : Promise.resolve({ ...doc, meta: { ...doc.meta, ...patch } });
     },
-    fetchReadyTasks: () => Promise.resolve([]),
+    fetchReadyTasks: () => {
+      judgeCalls += 1;
+      return Promise.resolve(judgedFixture);
+    },
     fetchTaskList: async () => {
       taskListFetches += 1;
       if (taskListGate !== null) await taskListGate;
@@ -620,6 +629,40 @@ test('a refused optimistic dispatch puts the task back and rejects', async () =>
   expect((error as Error | null)?.message).toBe('task is blocked');
   expect(statusOf(result.current.tasks)).toBe('ready');
   expect(result.current.readyIds.has('t-1')).toBe(true);
+  taskListFixture = null;
+  configFixture = null;
+});
+
+// A reconnect is likely a restarted daemon, which may have a judgment client now, so the
+// back-off an unjudged answer set must not hold the next judge for minutes.
+test('a reconnect judges readiness again after an unjudged answer', async () => {
+  judgedFixture = [{ meta: { id: 't-1' } }];
+  judgeCalls = 0;
+  const result = await mountReadyTask();
+  await waitFor(
+    () => {
+      expect(judgeCalls).toBe(1);
+    },
+    { timeout: 4000 }
+  );
+  judgedFixture = [
+    {
+      meta: { id: 't-1' },
+      readiness: { level: 2, label: 'ok', confidence: 1, splitProbability: 0 },
+    },
+  ];
+
+  act(() => {
+    sink?.onEvent({ type: 'hello', version: '0.0.1' });
+  });
+  await waitFor(
+    () => {
+      expect(result.current.readinessById.get('t-1')?.level).toBe(2);
+    },
+    { timeout: 4000 }
+  );
+  expect(judgeCalls).toBe(2);
+  judgedFixture = [];
   taskListFixture = null;
   configFixture = null;
 });

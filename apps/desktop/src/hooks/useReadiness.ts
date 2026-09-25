@@ -122,6 +122,9 @@ interface Readiness {
   /** Tasks changed in ways not looked at one by one (a wide change, a reconnect):
    * judge again shortly. */
   scheduleJudge: () => void;
+  /** The socket reconnected, likely to a restarted daemon whose judgment client may
+   * differ: drop any back-off and judge again shortly. */
+  reconnected: () => void;
 }
 
 /**
@@ -264,9 +267,17 @@ export function useReadiness(
     () => schedule(delays.debounce),
     [schedule, delays.debounce]
   );
+  const reconnected = useCallback(() => {
+    const s = state.current;
+    s.misses = 0;
+    s.notBefore = 0;
+    if (s.timer !== null) clearTimeout(s.timer);
+    s.timer = null;
+    schedule(delays.debounce);
+  }, [schedule, delays.debounce]);
   const readinessById = useMemo(
     () => readinessFor(readings, readyIds),
     [readings, readyIds]
   );
-  return { readinessById, noteTask, scheduleJudge };
+  return { readinessById, noteTask, scheduleJudge, reconnected };
 }

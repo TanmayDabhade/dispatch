@@ -179,6 +179,33 @@ describe('useReadiness', () => {
     expect(calls.judge).toBe(2);
   });
 
+  // A reconnect is likely a restarted daemon, which may have a judgment client now.
+  test('a reconnect drops the back-off and judges again soon', async () => {
+    const { client, calls } = fakeClient(
+      [
+        [{ meta: { id: 't-1' } }],
+        [{ meta: { id: 't-1' }, readiness: reading(2) }],
+      ],
+      {}
+    );
+    const { result } = mount(client, new Set(['t-1']), 60_000);
+    await waitFor(() => {
+      expect(calls.judge).toBe(1);
+    });
+    act(() => {
+      result.current.scheduleJudge();
+    });
+    await settle();
+    expect(calls.judge).toBe(1);
+    act(() => {
+      result.current.reconnected();
+    });
+    await waitFor(() => {
+      expect(result.current.readinessById.get('t-1')?.level).toBe(2);
+    });
+    expect(calls.judge).toBe(2);
+  });
+
   test('answers that judge nothing space the next judge out, doubling', async () => {
     const { client, calls } = fakeClient([[{ meta: { id: 't-1' } }]], {});
     const { result } = mount(client, new Set(['t-1']), 200);
