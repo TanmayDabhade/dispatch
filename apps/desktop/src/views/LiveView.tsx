@@ -407,16 +407,19 @@ export function LiveView({
     }
   }, [daemonReady, hasBands]);
 
-  const activate = useCallback(
-    (taskId: string) => {
-      const where = located.get(taskId);
-      if (where === undefined) return;
-      setCursor({ band: where.band, id: taskId });
-      setPaneTaskId(taskId);
-      gridRef.current?.focus({ preventScroll: true });
-    },
-    [located]
-  );
+  // A card's click, read through a ref so its identity never changes: every card takes it,
+  // and a new one would re-render them all on each event.
+  const locatedRef = useRef(located);
+  useEffect(() => {
+    locatedRef.current = located;
+  }, [located]);
+  const activate = useCallback((taskId: string) => {
+    const where = locatedRef.current.get(taskId);
+    if (where === undefined) return;
+    setCursor({ band: where.band, id: taskId });
+    setPaneTaskId(taskId);
+    gridRef.current?.focus({ preventScroll: true });
+  }, []);
   const openPlan = useCallback(
     (containerId: string) => onOpenTask(containerId, 'plan'),
     [onOpenTask]
