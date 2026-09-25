@@ -142,10 +142,10 @@ export function TasksListView({
   // three fixed kinds when there is no registry.
   const assigneeChoices = useMemo<Assignee[]>(
     () =>
-      directory.people.length === 0
+      directory.assignable.length === 0
         ? ASSIGNEES
-        : [...directory.people.map((p) => p.ref), 'agent', 'none'],
-    [directory.people]
+        : [...directory.assignable.map((p) => p.ref), 'agent', 'none'],
+    [directory.assignable]
   );
   const prefs = display ?? DEFAULT_TASKS_DISPLAY;
 
