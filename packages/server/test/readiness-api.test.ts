@@ -138,6 +138,28 @@ describe('readiness on the ready route', () => {
     expect(factor?.value).toBe(0);
   });
 
+  it('leaves the ready route and the queue untouched without a client', async () => {
+    const store = new TaskStore(root);
+    const bare = store.create({ title: 'Bare', status: 'ready' });
+    await boot({ judgments: null });
+
+    const ready = (await (
+      await fetch(`${baseUrl}/api/tasks/ready`)
+    ).json()) as ReadyTask[];
+    expect(ready[0].meta.id).toBe(bare.meta.id);
+    expect('readiness' in ready[0]).toBe(false);
+
+    const cache = await (await fetch(`${baseUrl}/api/tasks/readiness`)).json();
+    expect(cache).toEqual({});
+
+    const queue = (await (await fetch(`${baseUrl}/api/queue`)).json()) as {
+      tasks: { factors: { key: string; weight: number; detail: string }[] }[];
+    };
+    const factor = queue.tasks[0].factors.find((f) => f.key === 'readiness');
+    expect(factor?.weight).toBe(0);
+    expect(factor?.detail).toBe('not judged');
+  });
+
   // The cache map is what the board and the Cockpit paint first, so a reading judged
   // against text since edited must not come back from it: the ready route drops it too.
   it('serves only cached readings that still match their task', async () => {
@@ -175,27 +197,5 @@ describe('readiness on the ready route', () => {
 
     const cache = await (await fetch(`${baseUrl}/api/tasks/readiness`)).json();
     expect(cache).toEqual({});
-  });
-
-  it('leaves the ready route and the queue untouched without a client', async () => {
-    const store = new TaskStore(root);
-    const bare = store.create({ title: 'Bare', status: 'ready' });
-    await boot({ judgments: null });
-
-    const ready = (await (
-      await fetch(`${baseUrl}/api/tasks/ready`)
-    ).json()) as ReadyTask[];
-    expect(ready[0].meta.id).toBe(bare.meta.id);
-    expect('readiness' in ready[0]).toBe(false);
-
-    const cache = await (await fetch(`${baseUrl}/api/tasks/readiness`)).json();
-    expect(cache).toEqual({});
-
-    const queue = (await (await fetch(`${baseUrl}/api/queue`)).json()) as {
-      tasks: { factors: { key: string; weight: number; detail: string }[] }[];
-    };
-    const factor = queue.tasks[0].factors.find((f) => f.key === 'readiness');
-    expect(factor?.weight).toBe(0);
-    expect(factor?.detail).toBe('not judged');
   });
 });
