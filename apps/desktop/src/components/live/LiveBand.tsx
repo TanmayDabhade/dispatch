@@ -2,7 +2,14 @@ import type { EpicProgress } from '@dispatch/client';
 import type { StatusModel, TaskListItem } from '@dispatch/core/browser';
 import { isCompletedStatus, isDoneStatus } from '@dispatch/core/browser';
 import { ChevronRight, Shapes, Waypoints } from 'lucide-react';
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  memo,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import { rollupMilestoneStatus } from '../../lib/milestoneRollup';
 import { kindLabel } from '../../lib/taskDisplay';
@@ -18,6 +25,7 @@ import {
   cullWindow,
   sameWindow,
 } from '../flightplan/flightCull';
+import { flightNodeDomId } from '../flightplan/FlightNodeCard';
 import { FlightPlanMini } from '../flightplan/FlightPlanMini';
 import {
   flightEdgeViews,
@@ -233,7 +241,8 @@ function BandHead({
  * canvas for its scope, finished leading waves folded to a count. The canvas scrolls
  * sideways on its own and draws only the cards near the viewport — its own scroll across,
  * the page's down — re-culling only as either crosses a tile. Memoized: a cursor move
- * re-renders the band it leaves and the band it enters, nothing else.
+ * re-renders the band it leaves and the band it enters, nothing else; the cursor's card
+ * scrolls into view as it lands.
  */
 export const LiveBand = memo(function LiveBand({
   band,
@@ -246,6 +255,9 @@ export const LiveBand = memo(function LiveBand({
 }: LiveBandProps) {
   const { spec, plan, layout } = band;
   const model = actions.model;
+  // A band coming into reach draws its title row at once and its cards at low priority,
+  // so a fast scroll or a band jump never spends a whole frame on one band.
+  const drawn = useDeferredValue(true, false);
 
   const path = useMemo(
     () =>
@@ -362,6 +374,17 @@ export const LiveBand = memo(function LiveBand({
     };
   }, [scroller, top]);
 
+  // The cursor's card comes into view once drawn: across the band, and down the page.
+  useEffect(() => {
+    if (focusedId === null || !drawn) return;
+    const frame = requestAnimationFrame(() =>
+      document
+        .getElementById(flightNodeDomId(focusedId))
+        ?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [focusedId, drawn]);
+
   const container = spec.container;
   const refLabel = container === null ? null : ctx.view.refFor(spec.key);
   return (
@@ -393,16 +416,18 @@ export const LiveBand = memo(function LiveBand({
           className="relative shrink-0 [scrollbar-width:thin] overflow-x-auto overflow-y-hidden"
           style={{ height: WAVE_HEADER_HEIGHT + layout.height }}
         >
-          <FlightCanvas
-            layout={layout}
-            nodes={nodes}
-            edges={edges}
-            waves={waves}
-            bands={subBands}
-            focusedId={focusedId}
-            onActivate={actions.onActivate}
-            cull={cull}
-          />
+          {drawn && (
+            <FlightCanvas
+              layout={layout}
+              nodes={nodes}
+              edges={edges}
+              waves={waves}
+              bands={subBands}
+              focusedId={focusedId}
+              onActivate={actions.onActivate}
+              cull={cull}
+            />
+          )}
         </div>
       )}
     </section>

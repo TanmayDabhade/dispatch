@@ -495,14 +495,10 @@ export function LiveView({
     [bandCtx, actions, focusedBand, focusedId, expanded, scroller, tops]
   );
 
-  // Brings a node into view: its band stays mounted (pinned), so the card is there to find.
-  const reveal = useCallback((next: LiveCursor, bandChanged: boolean) => {
-    if (bandChanged) rows.current?.scrollToKey(next.band, 'auto');
-    requestAnimationFrame(() =>
-      document
-        .getElementById(flightNodeDomId(next.id))
-        ?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
-    );
+  // A band jump brings the band's title to the top; the band scrolls its own card into
+  // view (the cursor's band stays mounted, so it is there to find).
+  const revealBand = useCallback((band: string) => {
+    rows.current?.scrollToKey(band, 'start');
   }, []);
 
   const pauseAll = useCallback(async () => {
@@ -579,7 +575,9 @@ export function LiveView({
         const next = moveLiveCursor(navBands, focused, command);
         if (next === null) return;
         setCursor(next);
-        reveal(next, next.band !== focusedBand);
+        if (command === 'next-band' || command === 'prev-band') {
+          revealBand(next.band);
+        }
         return;
       }
       case 'open':
