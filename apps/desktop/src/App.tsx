@@ -23,10 +23,7 @@ import {
   useCopyTaskLink,
 } from './components/shell/DeepLinkContext';
 import { ErrorBoundary } from './components/shell/ErrorBoundary';
-import {
-  FrameStatusStrip,
-  type LiveCeilings,
-} from './components/shell/FrameStatusStrip';
+import { FrameStatusStrip } from './components/shell/FrameStatusStrip';
 import { LiveRail } from './components/shell/LiveRail';
 import {
   type NotificationInbox,
@@ -83,6 +80,7 @@ import { hasDispatchKey, launchRootKey } from './lib/bootWarm';
 import type { InboxTarget } from './lib/inbox';
 import { projectViewForInboxTarget, unreadCount } from './lib/inbox';
 import { buildInbox } from './lib/inboxQueue';
+import { liveCeilingsOf, spendToday } from './lib/liveSpend';
 import { buildPaletteEntries } from './lib/paletteEntries';
 import { basename } from './lib/projectName';
 import { prNumberFromUrl } from './lib/reviewTarget';
@@ -592,18 +590,8 @@ function App() {
   // Every non-terminal run for this project — the "Agents" view's list and the sidebar's live
   // badge both read from this single project's own run list now, not a cross-project fan-out
   // of N daemons (the old `useAllAgents`, removed with this pivot).
-  // Everything spent today across this project's runs. Summed from RunMeta.costUsd, which the
-  // executor stamps once a run finishes — so this is settled spend, not an estimate of work in
-  // flight. `null` when nothing has cost anything yet, which hides the readout entirely.
-  const todaySpend = useMemo(() => {
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    const total = data.runs.reduce((sum, r) => {
-      if (r.costUsd === undefined) return sum;
-      return new Date(r.updatedAt) >= start ? sum + r.costUsd : sum;
-    }, 0);
-    return total > 0 ? total : null;
-  }, [data.runs]);
+  // Everything spent today across this project's runs; `null` hides the readout.
+  const todaySpend = useMemo(() => spendToday(data.runs), [data.runs]);
 
   const liveRuns = useMemo(
     () => data.runs.filter((run) => !isTerminalRunState(run.state)),
@@ -612,18 +600,10 @@ function App() {
 
   // The live fan-outs summed for the status strip: settled spend across them and their
   // spend ceilings added up — `null` ceilings when no live session set one.
-  const liveCeilings = useMemo<LiveCeilings | null>(() => {
-    const sessions = data.liveEpicSessions;
-    if (sessions.length === 0) return null;
-    let settledUsd = 0;
-    let ceilingUsd: number | null = null;
-    for (const progress of sessions) {
-      settledUsd += progress.spend.settledUsd;
-      const ceiling = progress.session?.maxSpendUsd ?? null;
-      if (ceiling !== null) ceilingUsd = (ceilingUsd ?? 0) + ceiling;
-    }
-    return { live: sessions.length, settledUsd, ceilingUsd };
-  }, [data.liveEpicSessions]);
+  const liveCeilings = useMemo(
+    () => liveCeilingsOf(data.liveEpicSessions),
+    [data.liveEpicSessions]
+  );
 
   // How many runs the archive filter is holding back, computed off the *unfiltered* list so
   // the All-agents toggle can still say what turning it on would reveal while it is already
