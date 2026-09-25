@@ -99,6 +99,8 @@ function session(
       maxSpendUsd: 60,
       maxRuns: null,
       startedAt: '2026-08-04T00:00:00.000Z',
+      startedBy: null,
+      scope: 'plan',
       updatedAt: '2026-08-04T00:00:00.000Z',
       active: true,
     },

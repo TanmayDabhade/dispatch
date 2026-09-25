@@ -170,6 +170,8 @@ function session(
     maxSpendUsd: 60,
     maxRuns: 20,
     startedAt: '2026-09-20T00:00:00.000Z',
+    startedBy: null,
+    scope: 'plan',
     updatedAt: '2026-09-20T00:00:00.000Z',
     active: state === 'active',
     ...overrides,
