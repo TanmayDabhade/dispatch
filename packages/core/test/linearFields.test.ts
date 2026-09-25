@@ -15,6 +15,7 @@ import {
   missingLabels,
   normalizeMarkdown,
   PULL_ONLY_ISSUE_FIELDS,
+  replaceableIssueFields,
   stateIdFor,
   taskIssueValues,
   untrustedIssueFields,
@@ -26,7 +27,8 @@ import type {
   LinearRelation,
   LinearWorkflowState,
 } from '../src/linearMap.js';
-import { UNMAPPED } from '../src/linearMerge.js';
+import { mergeFields, nextBase, UNMAPPED } from '../src/linearMerge.js';
+import { peopleIndex } from '../src/linearPeople.js';
 import { statusesFromTeams } from '../src/linearStatuses.js';
 import { fanoutHolder } from '../src/people.js';
 import { isDoneStatus } from '../src/status.js';
@@ -296,6 +298,56 @@ describe('issue field details', () => {
     const pulled = applyUpdatePatch(task, patch, NOW);
     expect(taskIssueValues(pulled, ctx).assignee).toBe(UNMAPPED);
     expect(issuePush(pulled, ['assignee'], issue, ctx).input).toEqual({});
+  });
+
+  it('pulls the person over the placeholder once the registry names them', () => {
+    const before = context(workspace());
+    const issue = blankIssue('i-x', { assigneeId: 'u-new' });
+    const task = doc(linked('t-x', 'issue', 'i-x'));
+    const held = applyUpdatePatch(
+      task,
+      issuePatch(issue, ['assignee'], task, before),
+      NOW
+    );
+    const base = nextBase(
+      ISSUE_FIELDS,
+      taskIssueValues(held, before),
+      issueValues(issue, before),
+      null
+    );
+    expect(replaceableIssueFields(held, issue, before).size).toBe(0);
+
+    // A users sync names u-new; neither side has moved since the base.
+    const after = {
+      ...before,
+      people: peopleIndex(
+        [{ ref: 'human:nia', name: 'Nia', external: 'linear:u-new' }],
+        'human:wyat'
+      ),
+    };
+    const merge = (current: TaskDoc) =>
+      mergeFields({
+        fields: ISSUE_FIELDS,
+        local: taskIssueValues(current, after),
+        remote: issueValues(issue, after),
+        base,
+        localUpdated: NOW,
+        remoteUpdated: NOW,
+        localDirty: false,
+        refresh: replaceableIssueFields(current, issue, after),
+      }).filter((d) => d.field === 'assignee');
+    // A pull, not a conflict or a push: the placeholder was never an edit.
+    expect(merge(held)).toEqual([
+      { field: 'assignee', action: 'pull', conflict: false },
+    ]);
+    const resolved = applyUpdatePatch(
+      held,
+      issuePatch(issue, ['assignee'], held, after),
+      NOW
+    );
+    expect(resolved.meta.assignee).toBe('human:nia');
+    expect(replaceableIssueFields(resolved, issue, after).size).toBe(0);
+    expect(taskIssueValues(resolved, after).assignee).toBe('u-new');
   });
 
   it('reads the legacy bare human as the local user', () => {

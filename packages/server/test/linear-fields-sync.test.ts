@@ -9,7 +9,7 @@ import {
   updateConfig,
   withLabelColor,
 } from '@dispatch/core';
-import type { LinearIssue } from '@dispatch/core';
+import type { LinearIssue, LinearUser } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -756,6 +756,62 @@ describe('relations and hierarchy', () => {
     const meta = store.get(id)?.meta;
     expect(meta?.assignee).toBe('human:ana');
     expect(meta?.creator).toBe('human:wyat');
+  });
+
+  describe('an assignee the registry could not name', () => {
+    const GUEST: LinearUser = {
+      id: 'u-gus',
+      name: 'Gus Guest',
+      displayName: 'gus',
+      email: 'gus@example.com',
+      avatarUrl: null,
+      active: true,
+    };
+
+    // Imported while the lookup that would name Gus fails.
+    async function heldPair() {
+      fake.failures.users = { ok: false, kind: 'network', error: 'offline' };
+      const pair = await linkedPair({ assigneeId: GUEST.id });
+      delete fake.failures.users;
+      expect(store.get(pair.id)?.meta.assignee).toBe('human:linear-user');
+      return pair;
+    }
+
+    it('becomes the person once the registry names them, as a pull', async () => {
+      const { issue, id, sync } = await heldPair();
+      // Nobody new to name: the issue is not read again.
+      await sync.syncOnce();
+      expect(fake.calls).not.toContain('issuesByIds');
+      expect(store.get(id)?.meta.assignee).toBe('human:linear-user');
+
+      updateConfig(root, {
+        people: [
+          ...(loadConfig(root).people ?? []),
+          { ref: 'human:gus', name: 'Gus', external: `linear:${GUEST.id}` },
+        ],
+      });
+      await sync.syncOnce();
+
+      const meta = store.get(id)?.meta;
+      expect(meta?.assignee).toBe('human:gus');
+      // Linear already had Gus: nothing goes back, and the pull left no
+      // local edit for a later pass to send.
+      expect(fake.updated).toEqual([]);
+      expect(readLinearState(root).pushed[id]).toBe(meta?.updated ?? '');
+      await sync.syncOnce();
+      expect(fake.updated).toEqual([]);
+      expect(issue.assigneeId).toBe(GUEST.id);
+    });
+
+    it('becomes the person when a users sync brings them onto the team', async () => {
+      const { id } = await heldPair();
+      fake.members = [VIEWER, TEAMMATE, GUEST];
+
+      await makeSync().syncOnce();
+
+      expect(store.get(id)?.meta.assignee).toBe('human:gus');
+      expect(fake.updated).toEqual([]);
+    });
   });
 });
 

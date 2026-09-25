@@ -88,6 +88,9 @@ export interface MergeInput {
   /** Without a base, only these fields may push (default: all). The rest
    *  have no history to say the local value is an edit, so Linear's wins. */
   noBasePush?: ReadonlySet<string>;
+  /** Fields whose local value is a placeholder Linear's can now replace:
+   *  pulled, with no conflict, whatever the base says. */
+  refresh?: ReadonlySet<string>;
 }
 
 /**
@@ -103,6 +106,10 @@ export function mergeFields(input: MergeInput): FieldDecision[] {
   );
   for (const field of input.fields) {
     if (input.unknown?.has(field) === true) continue;
+    if (input.refresh?.has(field) === true) {
+      decisions.push({ field, action: 'pull', conflict: false });
+      continue;
+    }
     const localValue = input.local[field];
     const lh = fieldHash(localValue);
     const rh = fieldHash(input.remote[field]);

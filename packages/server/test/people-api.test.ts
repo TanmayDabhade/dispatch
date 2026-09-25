@@ -1,9 +1,12 @@
-import { TaskStore } from '@dispatch/core';
+import { ActorContext, TaskStore } from '@dispatch/core';
+import type { Person } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { listPeople } from '../src/api/people.js';
+import { TaskCache } from '../src/cache.js';
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
 import { runGitSync } from './orchestrator/helpers.js';
@@ -91,5 +94,40 @@ describe('GET /api/people', () => {
       body: JSON.stringify({ people: [{ ref: 'agent:x', name: 'X' }] }),
     });
     expect(res.status).toBe(400);
+  });
+});
+
+describe('the Linear placeholder assignee', () => {
+  // The listing as a window sees it with these tasks cached.
+  async function peopleWith(assignees: string[]) {
+    const store = TaskStore.init(root);
+    for (const assignee of assignees) {
+      store.create({ title: assignee, assignee });
+    }
+    const cache = new TaskCache();
+    cache.rebuild(store);
+    const res = listPeople({
+      rootDir: root,
+      actorContext: ActorContext.resolve(root, () => 'test@example.com'),
+      cache,
+    });
+    return (await json<{ people: Person[] }>(res)).people;
+  }
+
+  it('is listed by what it is, as a placeholder, while a task holds it', async () => {
+    const people = await peopleWith(['human:linear-user']);
+    expect(people.find((p) => p.ref === 'human:linear-user')).toEqual({
+      ref: 'human:linear-user',
+      name: 'Unknown Linear user',
+      email: null,
+      avatarUrl: null,
+      external: null,
+      placeholder: true,
+    });
+  });
+
+  it('is not listed when no task holds it', async () => {
+    const people = await peopleWith(['human:ana']);
+    expect(people.some((p) => p.ref === 'human:linear-user')).toBe(false);
   });
 });

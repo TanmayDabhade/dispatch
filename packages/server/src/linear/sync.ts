@@ -5,6 +5,7 @@ import {
   loadConfig,
   parseLinearExternal,
   resolveLinearApiKey,
+  UNRESOLVED_LINEAR_ASSIGNEE,
   writeProjectCredential,
 } from '@dispatch/core';
 import type {
@@ -393,6 +394,9 @@ export class LinearSync {
   // Whether anything local may have changed since the last full pass; a
   // fresh engine assumes so.
   private localDirty = true;
+  // How many Linear users the registry named when placeholder assignees were
+  // last re-read (see resolvePlaceholders); -1 so a fresh engine tries once.
+  private namedUsers = -1;
   private workspaceCache: {
     key: string;
     at: number;
@@ -998,6 +1002,7 @@ export class LinearSync {
         this.setProgress({ phase: 'containers', done: 0, total: null });
       }
       await pass.guarded(() => this.pull(run));
+      await pass.guarded(() => this.resolvePlaceholders(run));
     }
 
     const pushing = baselining ? opts.taskIds !== undefined : !run.importing;
@@ -1481,6 +1486,40 @@ export class LinearSync {
       refreshPeople(this.deps.rootDir, ctx, result.config);
       this.deps.events.broadcast({ type: 'config.changed' });
     }
+  }
+
+  // Re-reads the issues of tasks still assigned to UNRESOLVED_LINEAR_ASSIGNEE
+  // when the registry may name someone new (it grew since the last try, or the
+  // audit is due), so the person replaces the placeholder without waiting for
+  // the issue to change in Linear. The pull already re-read any it touched.
+  private async resolvePlaceholders(run: Run): Promise<void> {
+    const { pass, session, state, ctx, docs, touched, mayPull } = run;
+    const named = ctx.people.refByUser.size;
+    if (named === this.namedUsers && !this.auditDue(state)) return;
+    const held = new Map<string, string>();
+    for (const doc of docs.values()) {
+      if (doc.meta.assignee !== UNRESOLVED_LINEAR_ASSIGNEE) continue;
+      if (touched.has(doc.meta.id)) continue;
+      const ref = parseLinearExternal(doc.meta.external);
+      if (ref?.entity === 'issue') held.set(ref.id, doc.meta.id);
+    }
+    if (held.size > 0) {
+      const fresh = pass.take(
+        await session.client.issuesByIds([...held.keys()])
+      );
+      if (fresh === null) return;
+      await this.learnUsers(run, { issues: fresh });
+      for (const issue of fresh) {
+        const doc = docs.get(held.get(issue.id) ?? '');
+        if (doc === undefined || !inLinkedTeam(issue, session)) continue;
+        touched.add(doc.meta.id);
+        await pass.reconcileIssue(doc, issue, {
+          mayPull,
+          mayPush: run.canPush(doc.meta.id),
+        });
+      }
+    }
+    this.namedUsers = ctx.people.refByUser.size;
   }
 
   private async applyContainers(run: Run, fetched: Fetched): Promise<void> {
