@@ -107,7 +107,7 @@ const PROJECT_STATUSES: LinearProjectStatus[] = [
   { id: 'ps-canceled', name: 'Canceled', type: 'canceled' },
 ];
 
-type Method = keyof LinearClient;
+export type Method = keyof LinearClient;
 
 function ok<T>(data: T): Promise<LinearResult<T>> {
   return Promise.resolve({ ok: true, data });
@@ -155,6 +155,8 @@ export class FakeLinearClient implements LinearClient {
   linkFailure: LinearFailure | null = null;
   /** Runs inside createIssue, standing in for a local edit landing mid-round-trip. */
   onCreate: (() => void) | null = null;
+  /** Runs as any method is called: a local edit landing while a pass waits on Linear. */
+  onCall: ((method: Method) => void) | null = null;
   truncated = false;
   sinceSeen: (string | null)[] = [];
   linkQueries = 0;
@@ -173,6 +175,7 @@ export class FakeLinearClient implements LinearClient {
 
   private fail(method: Method): LinearFailure | null {
     this.calls.push(method);
+    this.onCall?.(method);
     return this.failures[method] ?? null;
   }
 

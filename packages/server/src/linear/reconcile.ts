@@ -427,15 +427,33 @@ export class LinearPass {
     );
   }
 
-  private async reconcile<R extends RemoteRecord>(
+  // The task as it is now, when the merge would replace a placeholder: a
+  // refresh pulls without a base, and the pass's snapshot can predate a
+  // person reassigning the task while the pass waited on Linear.
+  private beforeRefresh<R extends RemoteRecord>(
     ops: EntityOps<R>,
     doc: TaskDoc,
+    remote: R
+  ): TaskDoc {
+    if (ops.refresh === undefined) return doc;
+    if (ops.refresh(doc, remote, this.d.ctx).size === 0) return doc;
+    const current = this.d.store.get(doc.meta.id);
+    if (current === null) return doc;
+    this.d.docs.set(current.meta.id, current);
+    track(this.d.ctx, current);
+    return current;
+  }
+
+  private async reconcile<R extends RemoteRecord>(
+    ops: EntityOps<R>,
+    snapshot: TaskDoc,
     remote: R,
     mode: ReconcileMode,
     push: (doc: TaskDoc, fields: string[], remote: R) => Promise<PushResult<R>>
   ): Promise<void> {
     const { ctx, state, summary } = this.d;
     const { mayPull, mayPush } = mode;
+    const doc = this.beforeRefresh(ops, snapshot, remote);
     const id = doc.meta.id;
     const base = readBase(state, id, ops.entity);
     const unknown = ops.unknown(remote);

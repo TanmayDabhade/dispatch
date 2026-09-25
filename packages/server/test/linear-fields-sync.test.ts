@@ -26,6 +26,7 @@ import {
 } from '../src/linear/state.js';
 import { LinearSync } from '../src/linear/sync.js';
 import { FakeLinearClient, STATES, TEAMMATE, VIEWER } from './linearFake.js';
+import type { Method } from './linearFake.js';
 
 let root: string;
 let store: TaskStore;
@@ -777,6 +778,24 @@ describe('relations and hierarchy', () => {
       return pair;
     }
 
+    function nameGus(): void {
+      updateConfig(root, {
+        people: [
+          ...(loadConfig(root).people ?? []),
+          { ref: 'human:gus', name: 'Gus', external: `linear:${GUEST.id}` },
+        ],
+      });
+    }
+
+    // A person reassigns the task to Ana the first time the pass calls `method`.
+    function reassignDuring(id: string, method: Method): void {
+      fake.onCall = (called) => {
+        if (called !== method) return;
+        fake.onCall = null;
+        edit(id, { assignee: 'human:ana' });
+      };
+    }
+
     it('becomes the person once the registry names them, as a pull', async () => {
       const { issue, id, sync } = await heldPair();
       // Nobody new to name: the issue is not read again.
@@ -784,12 +803,7 @@ describe('relations and hierarchy', () => {
       expect(fake.calls).not.toContain('issuesByIds');
       expect(store.get(id)?.meta.assignee).toBe('human:linear-user');
 
-      updateConfig(root, {
-        people: [
-          ...(loadConfig(root).people ?? []),
-          { ref: 'human:gus', name: 'Gus', external: `linear:${GUEST.id}` },
-        ],
-      });
+      nameGus();
       await sync.syncOnce();
 
       const meta = store.get(id)?.meta;
@@ -811,6 +825,37 @@ describe('relations and hierarchy', () => {
 
       expect(store.get(id)?.meta.assignee).toBe('human:gus');
       expect(fake.updated).toEqual([]);
+    });
+
+    it('keeps a reassignment made while the pass re-reads the issue', async () => {
+      const { issue, id, sync } = await heldPair();
+      nameGus();
+      reassignDuring(id, 'issuesByIds');
+
+      await sync.syncOnce();
+
+      expect(store.get(id)?.meta.assignee).toBe('human:ana');
+      expect(fake.updated).toEqual([
+        { id: issue.id, input: { assigneeId: TEAMMATE.id } },
+      ]);
+    });
+
+    it('keeps a reassignment made while the pull reads the team', async () => {
+      const { issue, id, sync } = await heldPair();
+      nameGus();
+      // Changed in Linear, so the pull itself meets the placeholder.
+      issue.title = 'Renamed in Linear';
+      issue.updatedAt = fake.stamp();
+      reassignDuring(id, 'projects');
+
+      await sync.syncOnce();
+
+      const meta = store.get(id)?.meta;
+      expect(meta?.title).toBe('Renamed in Linear');
+      expect(meta?.assignee).toBe('human:ana');
+      expect(fake.updated).toEqual([
+        { id: issue.id, input: { assigneeId: TEAMMATE.id } },
+      ]);
     });
   });
 });
