@@ -151,6 +151,12 @@ describe('LiveView', () => {
     mount(dataWith());
     expect(bands()).toEqual(['m-1', '__loose', 'm-2', 'm-3']);
     expect(
+      Array.from(
+        document.querySelectorAll('[data-slot=live-band-title]'),
+        (t) => t.textContent
+      )
+    ).toEqual(['Checkout', 'Loose work', 'Search', 'Billing']);
+    expect(
       ['t-a', 't-b', 't-c', 't-d', 't-e'].map((id) =>
         node(id)?.getAttribute('data-state')
       )

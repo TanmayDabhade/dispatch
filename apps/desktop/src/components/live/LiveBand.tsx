@@ -29,7 +29,7 @@ import { FanoutControls } from '../milestones/FanoutControls';
 import { ContainerIcon } from '../tasks/page/ContainerIcon';
 import type { LiveBandModel } from './liveBandModel';
 import { cn } from '@/lib/utils';
-import { PillButton } from '@/ui/ai/pill';
+import { IconButton } from '@/ui/ai/icon-button';
 
 /** The band's title row. */
 const LIVE_BAND_HEAD = 44;
@@ -115,6 +115,7 @@ function BandControls({
       progress={progress}
       landable={landable}
       phases={false}
+      waves={false}
       showOpen={false}
       onSendAgents={actions.onSendAgents}
       onPause={actions.onPause}
@@ -127,7 +128,8 @@ function BandControls({
   );
 }
 
-// The title row: what the band is, how it is moving, the fold, then the verbs.
+// The title row: what the band is, its fold, how it is moving, then the verbs. The left
+// side clips from its end when the row runs short, so the title and fold always show.
 function BandHead({
   band,
   actions,
@@ -141,81 +143,84 @@ function BandHead({
 }) {
   const { spec, stats, plan } = band;
   const container = spec.container;
-  const foldable = band.finishedWaves.waves > 0;
+  const finished = band.finishedWaves;
   return (
     <div
       data-slot="live-band-head"
-      className="flex shrink-0 items-center gap-2 px-4"
+      className="flex shrink-0 items-center gap-3 px-4"
       style={{ height: LIVE_BAND_HEAD }}
     >
-      {container === null ? (
-        <Shapes
-          aria-hidden
-          className="text-muted-foreground size-3.5 shrink-0"
-        />
-      ) : (
-        <ContainerIcon
-          kind={container.meta.kind}
-          icon={container.meta.icon}
-          color={container.meta.color}
-        />
-      )}
-      <span className="text-foreground min-w-0 truncate text-[13px] font-medium">
-        {container?.meta.title ?? 'Loose work'}
-      </span>
-      {refLabel !== null && (
-        <span className="font-book shrink-0 text-[12px] tracking-(--id-tracking) text-(--text-muted)">
-          {refLabel}
-        </span>
-      )}
-      <span className="shrink-0 text-[12px] text-(--text-muted)">
-        {container === null
-          ? 'Outside any container'
-          : spec.kind === 'fanout'
-            ? `${containerLabel(container)} · fan-out`
-            : containerLabel(container)}
-      </span>
-      {band.showWaves && plan.waves.length > 0 && (
-        <FlightPlanMini plan={plan} className="ml-1" />
-      )}
-      {stats.queued > 0 && (
-        <span className="font-book shrink-0 text-[12px] text-(--text-muted) tabular-nums">
-          {stats.queued} queued
-        </span>
-      )}
-      <span className="font-book shrink-0 text-[12px] text-(--text-muted) tabular-nums">
-        {stats.done}/{stats.total} landed
-      </span>
-      {foldable && (
-        <button
-          type="button"
-          data-slot="live-band-fold"
-          aria-expanded={expanded}
-          onClick={() => actions.onToggleFold(spec.key)}
-          className="rounded-control hover:bg-surface-control flex h-6 shrink-0 items-center gap-1 px-1.5 text-[12px] text-(--text-muted) transition-colors duration-100 hover:text-(--text-secondary)"
-        >
-          <ChevronRight
+      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+        {container === null ? (
+          <Shapes
             aria-hidden
-            className={cn(
-              'size-3 transition-transform duration-150',
-              expanded && 'rotate-90'
-            )}
+            className="text-muted-foreground size-3.5 shrink-0"
           />
-          {expanded
-            ? 'Fold landed waves'
-            : `${band.finishedWaves.waves} landed ${band.finishedWaves.waves === 1 ? 'wave' : 'waves'} · ${band.finishedWaves.tasks}`}
-        </button>
-      )}
+        ) : (
+          <ContainerIcon
+            kind={container.meta.kind}
+            icon={container.meta.icon}
+            color={container.meta.color}
+          />
+        )}
+        <span
+          data-slot="live-band-title"
+          className="text-foreground min-w-[6rem] truncate text-[13px] font-medium"
+        >
+          {container?.meta.title ?? 'Loose work'}
+        </span>
+        {refLabel !== null && (
+          <span className="font-book shrink-0 text-[12px] tracking-(--id-tracking) text-(--text-muted)">
+            {refLabel}
+          </span>
+        )}
+        <span className="shrink-0 text-[12px] text-(--text-muted)">
+          {container === null
+            ? 'Outside any container'
+            : containerLabel(container)}
+        </span>
+        {finished.waves > 0 && (
+          <button
+            type="button"
+            data-slot="live-band-fold"
+            aria-expanded={expanded}
+            onClick={() => actions.onToggleFold(spec.key)}
+            className="rounded-control hover:bg-surface-control flex h-6 shrink-0 items-center gap-1 px-1.5 text-[12px] text-(--text-muted) transition-colors duration-100 hover:text-(--text-secondary)"
+          >
+            <ChevronRight
+              aria-hidden
+              className={cn(
+                'size-3 transition-transform duration-150',
+                expanded && 'rotate-90'
+              )}
+            />
+            {expanded
+              ? 'Fold landed waves'
+              : `${finished.waves} landed ${finished.waves === 1 ? 'wave' : 'waves'} · ${finished.tasks}`}
+          </button>
+        )}
+        {band.showWaves && plan.waves.length > 0 && (
+          <FlightPlanMini plan={plan} />
+        )}
+        {stats.queued > 0 && (
+          <span className="font-book shrink-0 text-[12px] text-(--text-muted) tabular-nums">
+            {stats.queued} queued
+          </span>
+        )}
+        <span className="font-book shrink-0 text-[12px] text-(--text-muted) tabular-nums">
+          {stats.done}/{stats.total} landed
+        </span>
+      </div>
       {container !== null && (
-        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-1.5">
           <BandControls container={container} actions={actions} />
-          <PillButton
+          <IconButton
             data-slot="live-band-open-plan"
+            label={`Open the Flight Plan for ${container.meta.title}`}
             onClick={() => actions.onOpenPlan(container.meta.id)}
           >
-            <Waypoints className="size-3" />
-            Flight Plan
-          </PillButton>
+            <Waypoints aria-hidden />
+          </IconButton>
         </div>
       )}
     </div>

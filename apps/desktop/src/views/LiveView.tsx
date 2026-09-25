@@ -744,12 +744,8 @@ export function LiveView({
                 ?
               </AlertDialogTitle>
               <AlertDialogDescription>
-                Nothing new starts until you resume.{' '}
-                {totals.running === 1
-                  ? 'The agent running now finishes what it is on.'
-                  : totals.running > 1
-                    ? `The ${totals.running} agents running now finish what they are on.`
-                    : ''}
+                Nothing new starts in them until you resume. Agents already
+                running finish what they are on.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>

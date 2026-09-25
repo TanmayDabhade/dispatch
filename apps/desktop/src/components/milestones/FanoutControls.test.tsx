@@ -479,3 +479,20 @@ test('phases={false} drops the chips and keeps the verbs', () => {
   expect(document.querySelector('[data-slot=phase-chip]')).toBeNull();
   expect(screen.getByRole('button', { name: 'Pause' })).not.toBeNull();
 });
+
+test('waves={false} drops the wave strip and keeps the verbs', () => {
+  const waves = [
+    { index: 1, total: 2, byPhase: { landed: 2 } },
+    { index: 2, total: 1, byPhase: { working: 1 } },
+  ];
+  const active = progressWith([child('t-1', 'working')], {
+    session: sessionWith('active'),
+    waves,
+  });
+  const { unmount } = mount(active);
+  expect(document.querySelector('ol')).not.toBeNull();
+  unmount();
+  mount(active, { waves: false });
+  expect(document.querySelector('ol')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Pause' })).not.toBeNull();
+});
