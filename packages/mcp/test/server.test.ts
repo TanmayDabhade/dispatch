@@ -128,6 +128,48 @@ describe('task_save', () => {
     expect(updatedMeta.writes).toEqual(['c.ts']);
   });
 
+  it('files a task under the milestone its title names, by setting parent', async () => {
+    const store = new TaskStore(root);
+    const project = store.create({ title: 'Payments', kind: 'project' });
+    const beta = store.create({
+      title: 'Beta',
+      kind: 'milestone',
+      parent: project.meta.id,
+    });
+    const created = (await client.callTool({
+      name: 'task_save',
+      arguments: { title: 'Refunds', milestone: 'beta' },
+    })) as ToolCallResult;
+    expect(created.isError).toBeUndefined();
+    const meta = created.structuredContent?.meta as {
+      id: string;
+      parent: string | null;
+      milestone: string | null;
+    };
+    expect(meta.parent).toBe(beta.meta.id);
+    expect(meta.milestone).toBeNull();
+
+    const moved = (await client.callTool({
+      name: 'task_save',
+      arguments: { id: meta.id, milestone: 'Payments' },
+    })) as ToolCallResult;
+    const movedMeta = moved.structuredContent?.meta as
+      | { parent: string | null }
+      | undefined;
+    expect(movedMeta?.parent).toBe(project.meta.id);
+  });
+
+  it('reports a milestone no container is titled', async () => {
+    const result = (await client.callTool({
+      name: 'task_save',
+      arguments: { title: 'Refunds', milestone: 'Gamma' },
+    })) as ToolCallResult;
+    expect(result.isError).toBe(true);
+    expect(callToolText(result)).toBe(
+      'invalid milestone: no project or milestone is titled "Gamma" — create it first, or send parent'
+    );
+  });
+
   it('rejects an empty title on create', async () => {
     const result = (await client.callTool({
       name: 'task_save',
@@ -392,7 +434,7 @@ describe('task_comment', () => {
     TaskStore.init(root);
   });
 
-  it('appends a timestamped activity line', async () => {
+  it('adds a comment to the thread task_comments reads back', async () => {
     const store = new TaskStore(root);
     const doc = store.create({ title: 'Track me' });
 
@@ -401,12 +443,24 @@ describe('task_comment', () => {
       arguments: { id: doc.meta.id, text: 'made progress' },
     })) as ToolCallResult;
     expect(result.isError).toBeUndefined();
-    expect((result.structuredContent!.meta as { id: string }).id).toBe(
-      doc.meta.id
-    );
+    const comment = result.structuredContent!.comment as {
+      id: string;
+      taskId: string;
+      body: string;
+    };
+    expect(comment).toMatchObject({
+      taskId: doc.meta.id,
+      body: 'made progress',
+    });
 
-    const onDisk = store.get(doc.meta.id);
-    expect(onDisk?.body).toMatch(/- \d{4}-\d{2}-\d{2}T.*made progress/);
+    const read = (await client.callTool({
+      name: 'task_comments',
+      arguments: { id: doc.meta.id },
+    })) as ToolCallResult;
+    const thread = read.structuredContent!.comments as { id: string }[];
+    expect(thread.map((c) => c.id)).toEqual([comment.id]);
+    // Nothing lands in the Activity log any more.
+    expect(store.get(doc.meta.id)?.body).not.toContain('made progress');
   });
 
   it('reports task not found for an unknown id', async () => {

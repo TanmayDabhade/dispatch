@@ -120,6 +120,7 @@ import type { FocusEpicRequest } from './views/MilestonesView';
 import { OverseerView } from './views/OverseerView';
 import { OverviewView } from './views/OverviewView';
 import { PlansView } from './views/PlansView';
+import { ProjectsView } from './views/ProjectsView';
 import { PrReviewView } from './views/PrReviewView';
 import { SessionsHubView } from './views/SessionsHubView';
 import { SettingsView } from './views/SettingsView';
@@ -413,6 +414,11 @@ function App() {
   // below is the quick-add fallback.
   const openCreateTask = useCallback((preset?: CreateTaskPreset) => {
     setCreatePreset(preset ?? null);
+    // The AI composer drafts issues only; a project or milestone opens the form.
+    if (preset?.kind !== undefined && preset.kind !== 'task') {
+      setShowCreate(true);
+      return;
+    }
     dispatchNav({ type: 'openNewTask' });
   }, []);
 
@@ -705,6 +711,7 @@ function App() {
       else if (command === 'goto-home') selectProjectView('cockpit');
       else if (command === 'goto-inbox') selectProjectView('inbox');
       else if (command === 'goto-tasks') selectProjectView('board');
+      else if (command === 'goto-projects') selectProjectView('projects');
       else if (command === 'goto-control-room') selectProjectView('overview');
       else if (command.startsWith('goto-')) {
         // Position in the rail, not an id — ⌘1 is the first row, and so on.
@@ -1304,6 +1311,13 @@ function App() {
                                       }
                                     />
                                   )}
+                                  {navState.projectView === 'projects' && (
+                                    <ProjectsView
+                                      projectName={activeProject?.name ?? null}
+                                      data={data}
+                                      onOpenTask={openTaskView}
+                                    />
+                                  )}
                                   {navState.projectView === 'inbox' && (
                                     <InboxView
                                       projectName={activeProject?.name ?? null}
@@ -1563,9 +1577,9 @@ function App() {
                           projectName={activeProject?.name}
                           data={data}
                           onStartDraft={rawData.handleStartDraft}
-                          onQuickAdd={() => {
+                          onQuickAdd={(preset) => {
                             setAiComposerOpen(false);
-                            openQuickAddTask(createPreset ?? undefined);
+                            openQuickAddTask(preset);
                           }}
                           onClose={() => setAiComposerOpen(false)}
                         />

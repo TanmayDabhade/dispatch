@@ -103,8 +103,9 @@ function rowDomId(id: string): string {
  * is — over the same 36px `TaskListRow`s the Tasks list renders, with the same pickers and
  * single-key shortcuts, each row carrying its fan-out phase while a session exists. A
  * finished milestone (every child landed/dropped) reads as landed and sinks to the bottom,
- * starting collapsed. Milestone = epic here, front-running the epic→milestone rename
- * (e-be4827).
+ * starting collapsed. Groups follow the real hierarchy (initiative › project ›
+ * milestone): a parent issue is a row with its sub-issues under it, and a header's "+"
+ * files the new task under that container.
  */
 export function MilestonesView({
   data,
@@ -363,9 +364,12 @@ export function MilestonesView({
       <DispatchDialog
         title={`${dispatchEpic.mode === 'raise' ? 'Raise ceiling' : 'Send agents'} · ${dialogEpic.meta.title}`}
         tasks={
+          // What a fan-out works on: the container's own children. Sub-issues nest
+          // in its group but go with their parent issue.
           groups
             .find((g) => g.epicId === dispatchEpic.epicId)
-            ?.rows.map((r) => r.doc) ?? []
+            ?.rows.map((r) => r.doc)
+            .filter((doc) => doc.meta.parent === dispatchEpic.epicId) ?? []
         }
         readyIds={data.readyIds}
         runningNow={data.liveRunStateByTaskId.size}

@@ -20,9 +20,9 @@ never change.
    \`task\`, status \`todo\`, every entry in \`blockedBy\` already done),
    priority-ordered.
 2. Pick one, do the work.
-3. Call \`task_comment\` as you make progress — it appends a timestamped line
-   to the task's Activity log, so anyone (human or agent) reading the file
-   later can follow what happened.
+3. Call \`task_comment\` as you make progress — it adds a comment to the
+   task's thread, credited to you, so anyone (human or agent) can follow what
+   happened. \`task_comments\` reads the thread back.
 4. Call \`task_save\` with the task's \`id\` and \`status\` to move it forward
    (e.g. \`in-progress\`, then \`done\`).
 

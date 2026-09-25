@@ -110,6 +110,43 @@ export async function addComment(
   return jsonResponse(comment, 201);
 }
 
+// POST /api/tasks/:id/comment — the pre-thread `task_comment` target, kept
+// for MCP servers older than the thread: `{ text, runId? }` becomes a comment,
+// credited to the run's agent or `none` (never the operator), and the answer
+// is still the task doc those servers read `meta` from.
+export async function addLegacyTaskNote(
+  req: Request,
+  ctx: CommentRouteContext,
+  taskId: string
+): Promise<Response> {
+  const doc = ctx.store.get(taskId);
+  if (doc === null) {
+    return errorResponse(404, `task not found: ${taskId}`);
+  }
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { text?: unknown; runId?: unknown };
+  if (typeof body.text !== 'string' || body.text.trim() === '') {
+    return errorResponse(400, 'invalid text: text is required');
+  }
+  const run =
+    typeof body.runId === 'string'
+      ? (ctx.orchestrator?.getRun(body.runId) ?? null)
+      : null;
+  const comment = commentsOf(ctx).add({
+    taskId,
+    author:
+      run === null ? 'none' : ctx.actorContext.agentRef(run.meta.executor),
+    body: body.text,
+  });
+  ctx.events.broadcast({
+    type: 'comment.changed',
+    taskId,
+    commentIds: [comment.id],
+  });
+  return jsonResponse(doc);
+}
+
 // Resolves the comment a PATCH/DELETE targets and checks the caller wrote it.
 function ownComment(
   ctx: CommentRouteContext,

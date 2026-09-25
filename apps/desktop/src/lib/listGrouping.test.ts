@@ -1,7 +1,9 @@
 import type { TaskDoc } from '@dispatch/core/browser';
-import { describe, expect, test } from 'bun:test';
+import { statusModelOf } from '@dispatch/core/browser';
+import { afterEach, describe, expect, test } from 'bun:test';
 
 import { groupTasks, nestRows, sortTasks, visibleRowIds } from './listGrouping';
+import { setActiveStatusModel } from './statusModel';
 import { DEFAULT_TASKS_DISPLAY, type TasksDisplayPrefs } from './tasksPrefs';
 
 type Meta = TaskDoc['meta'];
@@ -34,6 +36,8 @@ function task(id: string, overrides: Partial<Meta> = {}, title = id): TaskDoc {
 }
 
 const STATUSES = ['draft', 'ready', 'working', 'review', 'landed', 'dropped'];
+
+afterEach(() => setActiveStatusModel(null));
 
 function prefs(overrides: Partial<TasksDisplayPrefs> = {}): TasksDisplayPrefs {
   return { ...DEFAULT_TASKS_DISPLAY, ...overrides };
@@ -223,6 +227,125 @@ describe('groupTasks by epic and milestone', () => {
     expect(groups[0]?.tint).toBe('var(--status-progress)');
     expect(groups[1]?.icon).toEqual({ kind: 'milestone', status: 'landed' });
   });
+
+  test("a milestone group's + files the new task under it as its parent", () => {
+    const groups = groupTasks(tasks, prefs({ grouping: 'milestone' }), {
+      statuses: STATUSES,
+      epics: [epic],
+    });
+    expect(groups[0]?.key).toBe('milestone:e-1');
+    expect(groups[0]?.preset).toEqual({ epic: 'e-1' });
+    expect(groups.find((g) => g.key === 'milestone:ghost')?.preset).toEqual({
+      epic: 'ghost',
+    });
+  });
+});
+
+describe('groupTasks by milestone follows the real hierarchy', () => {
+  // Growth › Payments (project) › Beta, GA (milestones); a parent issue under Beta with
+  // two sub-issues; one issue filed straight under the project; a loose parent issue.
+  const growth = task('i-1', { kind: 'initiative' }, 'Growth');
+  const payments = task('p-1', { kind: 'project', parent: 'i-1' }, 'Payments');
+  const beta = task('m-1', { kind: 'milestone', parent: 'p-1' }, 'Beta');
+  const ga = task('m-2', { kind: 'milestone', parent: 'p-1' }, 'GA');
+  const checkout = task('t-1', { parent: 'm-1' }, 'Checkout');
+  const card = task('t-2', { parent: 't-1' }, 'Card form');
+  const receipt = task('t-3', { parent: 't-1' }, 'Receipt');
+  const direct = task('t-4', { parent: 'p-1' }, 'Pricing page');
+  const launch = task('t-5', { parent: 'm-2' }, 'Launch');
+  const loose = task('t-6', {}, 'Loose parent');
+  const looseChild = task('t-7', { parent: 't-6' }, 'Loose child');
+  const all = [
+    growth,
+    payments,
+    beta,
+    ga,
+    checkout,
+    card,
+    receipt,
+    direct,
+    launch,
+    loose,
+    looseChild,
+  ];
+  // What the app passes: every container kind plus every task with children.
+  const epics = [growth, payments, beta, ga, checkout, loose];
+
+  test('groups are milestones (and projects with work straight under them), in tree order', () => {
+    const groups = groupTasks(all, prefs({ grouping: 'milestone' }), {
+      statuses: STATUSES,
+      epics,
+    });
+    expect(groups.map((g) => [g.key, g.label])).toEqual([
+      ['milestone:p-1', 'Growth › Payments'],
+      ['milestone:m-1', 'Payments › Beta'],
+      ['milestone:m-2', 'Payments › GA'],
+      ['epic:none', 'No milestone'],
+    ]);
+    // A parent issue is a row with its sub-issues nested under it, not a group.
+    expect(
+      groups[1]?.rows.map((r) => [r.doc.meta.id, r.indent] as const)
+    ).toEqual([
+      ['t-1', 0],
+      ['t-2', 1],
+      ['t-3', 1],
+    ]);
+    expect(groups[0]?.rows.map((r) => r.doc.meta.id)).toEqual(['t-4']);
+    expect(groups[3]?.rows.map((r) => r.doc.meta.id)).toEqual(['t-6', 't-7']);
+  });
+
+  test('a project with only milestones under it is no group, however empty they are', () => {
+    const groups = groupTasks(
+      [growth, payments, beta, ga],
+      prefs({ grouping: 'milestone', showEmptyGroups: true }),
+      { statuses: STATUSES, epics: [growth, payments, beta, ga] }
+    );
+    expect(groups.map((g) => g.key)).toEqual([
+      'milestone:m-1',
+      'milestone:m-2',
+    ]);
+  });
+
+  test('an empty project with nothing below it is still a group', () => {
+    const lone = task('p-2', { kind: 'project' }, 'Lone');
+    const groups = groupTasks(
+      [lone],
+      prefs({ grouping: 'milestone', showEmptyGroups: true }),
+      { statuses: STATUSES, epics: [lone] }
+    );
+    expect(groups.map((g) => [g.key, g.label])).toEqual([
+      ['milestone:p-2', 'Lone'],
+    ]);
+  });
+
+  test('a filter that hides a parent issue leaves its sub-issues under their milestone', () => {
+    // The list passes only the rows its filter keeps; the parent issues are still epics.
+    const groups = groupTasks(
+      [card, looseChild],
+      prefs({ grouping: 'milestone' }),
+      { statuses: STATUSES, epics }
+    );
+    expect(groups.map((g) => [g.key, g.label, g.preset])).toEqual([
+      ['milestone:m-1', 'Payments › Beta', { epic: 'm-1' }],
+      ['epic:none', 'No milestone', {}],
+    ]);
+    expect(groups[0]?.rows.map((r) => r.doc.meta.id)).toEqual(['t-2']);
+    expect(groups[1]?.rows.map((r) => r.doc.meta.id)).toEqual(['t-7']);
+  });
+
+  test('showSubtasks off hides sub-issues even though their parent has children', () => {
+    const groups = groupTasks(
+      all,
+      prefs({ grouping: 'milestone', showSubtasks: false }),
+      { statuses: STATUSES, epics }
+    );
+    expect(groups.flatMap((g) => g.rows.map((r) => r.doc.meta.id))).toEqual([
+      't-4',
+      't-1',
+      't-5',
+      't-6',
+    ]);
+  });
 });
 
 describe('groupTasks by assignee, priority and none', () => {
@@ -324,6 +447,25 @@ describe('sortTasks', () => {
         (t) => t.meta.id
       )
     ).toEqual(['l', 'u']);
+  });
+
+  test("completedByRecency reads the project's own status types", () => {
+    setActiveStatusModel(
+      statusModelOf({
+        statuses: ['Todo', 'Done', 'Canceled'],
+        statusDefinitions: [
+          { name: 'Todo', type: 'unstarted', color: null },
+          { name: 'Done', type: 'completed', color: null },
+          { name: 'Canceled', type: 'canceled', color: null },
+        ],
+      })
+    );
+    const done = task('d', { status: 'Done', priority: 'urgent' });
+    const canceled = task('c', { status: 'Canceled', priority: 'urgent' });
+    const todo = task('o', { status: 'Todo', priority: 'low' });
+    expect(
+      sortTasks([done, canceled, todo], prefs()).map((t) => t.meta.id)
+    ).toEqual(['o', 'd', 'c']);
   });
 
   test('completedByRecency sinks landed/dropped below open rows, newest first', () => {

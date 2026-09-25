@@ -540,8 +540,12 @@ export interface DispatchProjectData {
    * chats), newest activity first — the non-run half of the All agents page. */
   agentSessions: AgentSessionMeta[];
   /** Starts a background single-task draft and returns immediately with its `running`
-   * record; the tray/`drafts` picks up its progress via `draft.changed`. */
-  handleStartDraft: (prompt: string) => Promise<DraftRecord>;
+   * record; the tray/`drafts` picks up its progress via `draft.changed`. `parent` is the
+   * container the saved task goes under. */
+  handleStartDraft: (
+    prompt: string,
+    options?: { parent?: string | null }
+  ) => Promise<DraftRecord>;
   /** Dismisses a draft so it stops appearing in the tray — used both for "Discard" in the
    * review dialog and for "Create task", once a ready draft has become a real task. */
   handleDismissDraft: (id: string) => Promise<void>;
@@ -2029,9 +2033,12 @@ export function useDispatchProject(
   // Seeds the drafts query with the 202's `running` record immediately, so the tray shows it
   // without waiting on a refetch.
   const handleStartDraft = useCallback(
-    async (prompt: string): Promise<DraftRecord> => {
+    async (
+      prompt: string,
+      options?: { parent?: string | null }
+    ): Promise<DraftRecord> => {
       if (client === null) throw new Error('dispatchd client not ready');
-      const record = await client.draftTask(prompt);
+      const record = await client.draftTask(prompt, options);
       queryClient.setQueryData<DraftRecord[]>(draftsQueryKey, (prev) => [
         record,
         ...(prev ?? []),

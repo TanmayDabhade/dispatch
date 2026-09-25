@@ -426,7 +426,10 @@ export interface TaskApiClient {
   listTasks(query?: TaskListQuery): Promise<TaskDoc[]>;
   readyTasks(): Promise<TaskDoc[]>;
   getTask(id: string): Promise<TaskDoc>;
+  /** A `milestone` names a project or milestone the daemon files the task
+   * under (as `parent`); it 400s when none matches and never stores it. */
   createTask(input: CreateInput): Promise<TaskDoc>;
+  /** `milestone` moves the task the same way `createTask`'s does. */
   updateTask(id: string, patch: UpdatePatch): Promise<TaskDoc>;
   /** `POST /api/migrations/milestones`: legacy milestones to projects. */
   migrateMilestones(dryRun: boolean): Promise<MilestoneMigrationReport>;

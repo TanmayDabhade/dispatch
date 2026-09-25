@@ -1,5 +1,6 @@
 import type { DraftRecord } from '@dispatch/client';
 import {
+  Box,
   Brain,
   CircleDot,
   Crosshair,
@@ -60,6 +61,8 @@ const WORK_VIEWS: ViewRow<ProjectView>[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   // Board, list and milestones are header view tabs inside Tasks now, not rail rows.
   { id: 'board', label: 'Tasks', icon: ListChecks },
+  // The hierarchy above the tasks: initiatives, projects, milestones.
+  { id: 'projects', label: 'Projects', icon: Box },
   { id: 'plans', label: 'Plans', icon: NotebookPen },
   { id: 'brain-dump', label: 'Notes', icon: Brain },
 ];

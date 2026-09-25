@@ -53,6 +53,7 @@ import {
 import { humanActor } from './api/caller.js';
 import {
   addComment,
+  addLegacyTaskNote,
   deleteComment,
   listComments,
   updateComment,
@@ -88,6 +89,10 @@ import {
   readJsonBodyOptional,
 } from './api/http.js';
 import { getImpact } from './api/impact.js';
+import {
+  legacyMilestoneParent,
+  withoutLegacyMilestone,
+} from './api/legacyMilestone.js';
 import { isLinearWebhook, linearWebhook } from './api/linearWebhook.js';
 import { migrateMilestones } from './api/migrations.js';
 import { listPeople } from './api/people.js';
@@ -540,6 +545,8 @@ function validateTaskFields(
     'assignee'
   );
   if (assigneeError) return assigneeError;
+  const parentError = validateStringOrNullField(value.parent, 'parent');
+  if (parentError) return parentError;
   const labelsError = validateStringArrayField(value.labels, 'labels');
   if (labelsError) return labelsError;
   const blockedByError = validateStringArrayField(value.blockedBy, 'blockedBy');
@@ -595,11 +602,18 @@ async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
     { includeKind: true, includeBody: false }
   );
   if (fieldsError) return errorResponse(400, fieldsError);
+  const legacy = legacyMilestoneParent(
+    ctx,
+    parsed.value as Record<string, unknown>,
+    input.kind ?? 'task'
+  );
+  if (!legacy.ok) return errorResponse(400, legacy.error);
 
   // Credit whoever made the request unless the caller names a creator (a
   // sync importing someone else's issue).
   const doc = ctx.store.create({
-    ...input,
+    ...withoutLegacyMilestone(input),
+    ...(legacy.parent === undefined ? {} : { parent: legacy.parent }),
     // Omitted, a task starts in the project's ready role.
     status: input.status ?? statusModelFor(ctx.rootDir).roles.ready,
     creator: input.creator ?? humanActor(ctx),
@@ -614,9 +628,22 @@ async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
 async function draftTask(req: Request, ctx: ApiContext): Promise<Response> {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
-  const body = parsed.value as { prompt?: unknown; planner?: unknown };
+  const body = parsed.value as {
+    prompt?: unknown;
+    planner?: unknown;
+    parent?: unknown;
+  };
   if (typeof body.prompt !== 'string' || body.prompt.trim() === '') {
     return errorResponse(400, 'invalid prompt: prompt is required');
+  }
+  // The container a "+" started this draft in, checked now so a stale id
+  // fails here rather than at save.
+  const parent = body.parent ?? null;
+  if (parent !== null && typeof parent !== 'string') {
+    return errorResponse(400, 'invalid parent: expected a task id or null');
+  }
+  if (parent !== null && ctx.cache.get(parent) === null) {
+    return errorResponse(400, `invalid parent: no task ${parent}`);
   }
   const knownPlannerNames = ctx.planManager.registeredPlannerNames();
   if (
@@ -631,7 +658,7 @@ async function draftTask(req: Request, ctx: ApiContext): Promise<Response> {
   }
   const plannerName =
     typeof body.planner === 'string' ? body.planner : 'claude';
-  const draft = ctx.planManager.startDraft(body.prompt, plannerName);
+  const draft = ctx.planManager.startDraft(body.prompt, plannerName, parent);
   return jsonResponse(draft, 202);
 }
 
@@ -676,13 +703,14 @@ async function updateTask(
   ctx: ApiContext,
   id: string
 ): Promise<Response> {
-  if (ctx.store.get(id) === null) {
+  const existing = ctx.store.get(id);
+  if (existing === null) {
     return errorResponse(404, `task not found: ${id}`);
   }
 
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
-  const patch = parsed.value as UpdatePatch;
+  const requested = parsed.value as UpdatePatch;
   const config = loadConfig(ctx.rootDir);
   const fieldsError = validateTaskFields(
     parsed.value as Record<string, unknown>,
@@ -690,6 +718,16 @@ async function updateTask(
     { includeKind: false, includeBody: true }
   );
   if (fieldsError) return errorResponse(400, fieldsError);
+  const legacy = legacyMilestoneParent(
+    ctx,
+    parsed.value as Record<string, unknown>,
+    requested.kind ?? existing.meta.kind
+  );
+  if (!legacy.ok) return errorResponse(400, legacy.error);
+  const patch: UpdatePatch = {
+    ...withoutLegacyMilestone(requested),
+    ...(legacy.parent === undefined ? {} : { parent: legacy.parent }),
+  };
 
   // PATCH /api/tasks/:id is only ever reached by a human — the web/desktop
   // task drawer, or a direct API call — so any Activity line it appends is
@@ -700,44 +738,6 @@ async function updateTask(
   }
 
   const doc = ctx.store.update(id, patch);
-  ctx.cache.refresh(ctx.store, [id]);
-  ctx.events.broadcast({ type: 'task.changed', ids: [id] });
-  return jsonResponse(doc);
-}
-
-// Credits whoever actually left the comment. `runId` is how the MCP
-// `task_comment` tool (called BY an agent from inside a run) says "this came
-// from the run I'm in" — mirrors findings.ts's ledgerAuthorFor, but unlike
-// that helper a missing/unresolvable runId here is NEVER the daemon's human:
-// this endpoint has no other caller, so an unresolvable run must still yield
-// 'none' rather than crediting whoever happens to be operating the daemon.
-function commentAuthorFor(ctx: ApiContext, runId: string | null): string {
-  if (runId === null) return 'none';
-  const run = ctx.orchestrator.getRun(runId);
-  return run === null ? 'none' : ctx.actorContext.agentRef(run.meta.executor);
-}
-
-// POST /api/tasks/:id/comment — task_comment's proxy target: an agent's
-// mid-run note appended to the task's Activity log.
-async function createTaskComment(
-  req: Request,
-  ctx: ApiContext,
-  id: string
-): Promise<Response> {
-  if (ctx.store.get(id) === null) {
-    return errorResponse(404, `task not found: ${id}`);
-  }
-  const parsed = await readJsonBody(req);
-  if (!parsed.ok) return parsed.response;
-  const body = parsed.value as { text?: unknown; runId?: unknown };
-  if (typeof body.text !== 'string' || body.text.trim() === '') {
-    return errorResponse(400, 'invalid text: text is required');
-  }
-  const runId = typeof body.runId === 'string' ? body.runId : null;
-  const doc = ctx.store.update(id, {
-    appendActivity: `${new Date().toISOString()} ${body.text}`,
-    activityActor: commentAuthorFor(ctx, runId),
-  });
   ctx.cache.refresh(ctx.store, [id]);
   ctx.events.broadcast({ type: 'task.changed', ids: [id] });
   return jsonResponse(doc);
@@ -5283,7 +5283,7 @@ export async function handleApi(
         segments[2] === 'comment' &&
         method === 'POST'
       ) {
-        return await createTaskComment(req, ctx, segments[1]);
+        return await addLegacyTaskNote(req, ctx, segments[1]);
       }
       if (
         segments.length === 3 &&

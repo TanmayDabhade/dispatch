@@ -68,6 +68,7 @@ test('the exported view order is the ⌘N order App.tsx indexes into', () => {
     'inbox',
     'overview',
     'board',
+    'projects',
     'plans',
     'brain-dump',
     'landing',
@@ -82,6 +83,7 @@ test('the exported view order is the ⌘N order App.tsx indexes into', () => {
     'Inbox',
     'Overview',
     'Tasks',
+    'Projects',
     'Plans',
     'Notes',
     'Merge queue',
@@ -102,6 +104,7 @@ test('sections come in Linear order: fixed top group, then Work, Runs, Code, Liv
     'overseer',
     'overview',
     'board',
+    'projects',
     'plans',
     'brain-dump',
     'landing',
@@ -277,7 +280,7 @@ test('saved views nest under Tasks as indented rows and select through onSelectS
     'board',
     'view-v-1',
     'view-v-2',
-    'plans',
+    'projects',
   ]);
   const row = screen.getByRole('button', { name: 'Blocked urgent' });
   expect(row.className).toContain('pl-6');

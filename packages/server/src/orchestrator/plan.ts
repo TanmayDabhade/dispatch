@@ -129,6 +129,8 @@ export interface DraftRecord {
   error: string | null;
   createdAt: string;
   updatedAt: string;
+  /** The container a "+" on it started this draft in; the saved task's parent. */
+  parent?: string;
 }
 
 // Cap on how many drafts stay in memory at once; eviction only drops
@@ -363,7 +365,11 @@ export class PlanManager {
 
   // Starts a single-task draft's planner turn in the background and returns
   // the DraftRecord immediately at `running`; no busy-guard between drafts.
-  startDraft(prompt: string, plannerName = 'claude'): DraftRecord {
+  startDraft(
+    prompt: string,
+    plannerName = 'claude',
+    parent: string | null = null
+  ): DraftRecord {
     const planner = this.planners.get(plannerName);
     if (planner === undefined) {
       throw new OrchestratorClientError(`unknown planner: ${plannerName}`);
@@ -380,6 +386,7 @@ export class PlanManager {
       error: null,
       createdAt: now,
       updatedAt: now,
+      ...(parent === null ? {} : { parent }),
     };
     this.drafts.set(record.id, record);
     this.evictOldDrafts();
