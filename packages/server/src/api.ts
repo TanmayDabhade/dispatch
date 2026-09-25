@@ -2345,7 +2345,7 @@ async function freeBranchDisk(
   if (typeof body.branch !== 'string' || body.branch === '') {
     return errorResponse(400, 'branch is required');
   }
-  return jsonResponse(ctx.orchestrator.freeWorktreeDisk(body.branch));
+  return jsonResponse(await ctx.orchestrator.freeWorktreeDisk(body.branch));
 }
 
 // DELETE /api/branches/:branch — removes a branch ref and any worktree it
@@ -2354,9 +2354,13 @@ async function freeBranchDisk(
 // `branches/` is rejoined and decoded rather than read as a single segment.
 // `?force=1` opts into deleting a branch whose commits have NOT landed on its
 // base — the one irreversible case, which the orchestrator refuses otherwise.
-function deleteBranch(ctx: ApiContext, branch: string, url: URL): Response {
+async function deleteBranch(
+  ctx: ApiContext,
+  branch: string,
+  url: URL
+): Promise<Response> {
   const force = url.searchParams.get('force') === '1';
-  ctx.orchestrator.deleteBranch(branch, { force });
+  await ctx.orchestrator.deleteBranch(branch, { force });
   return jsonResponse({ ok: true });
 }
 
@@ -5852,7 +5856,7 @@ export async function handleApi(
 
     if (segments[0] === 'branches') {
       if (segments.length === 1 && method === 'GET') {
-        return jsonResponse(ctx.orchestrator.listBranches());
+        return jsonResponse(await ctx.orchestrator.listBranches());
       }
       if (
         segments.length === 2 &&
@@ -5869,7 +5873,7 @@ export async function handleApi(
           .slice(1)
           .map((part) => decodeURIComponent(part))
           .join('/');
-        return deleteBranch(ctx, branch, url);
+        return await deleteBranch(ctx, branch, url);
       }
     }
 

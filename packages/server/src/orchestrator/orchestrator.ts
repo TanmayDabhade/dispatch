@@ -43,6 +43,7 @@ import { FindingStore } from '../findings.js';
 import type { FindingStorePort } from '../findings.js';
 import { GitRepo } from '../git/commands.js';
 import type { JudgmentClient } from '../judgments/client.js';
+import { mapLimit } from '../judgments/client.js';
 import { judgeRunModel } from '../judgments/modelTier.js';
 import type { RunModelChoice } from '../judgments/modelTier.js';
 import { LedgerStore } from '../ledger.js';
@@ -244,6 +245,10 @@ const AUTO_RESUME_QUIET_MS = 30_000;
 // code leaves every crashed run — failed, unreviewed, resumable by hand — so
 // the ceiling costs nothing but bounds the retry loop.
 const AUTO_RESUME_MAX_ATTEMPTS = 20;
+
+// Branches the listing measures at once. Each is up to three git reads plus
+// a size walk, so this bounds how many processes one listing spawns.
+const BRANCH_PROBE_CONCURRENCY = 4;
 
 // Sort order for the Branches surface: the rows that need a human decision
 // come first, read-only live runs last.
@@ -3330,68 +3335,82 @@ export class Orchestrator {
    * Registry entries whose ref is already gone are intentionally NOT listed:
    * there is nothing left to clean up, and including them would turn every
    * run in project history into permanent noise on this surface.
+   *
+   * Every git read here is async, a few branches at a time: one listing is
+   * dozens of git processes, and the desktop fetches it on its cold load.
    */
-  listBranches(): BranchEntry[] {
-    const refs = this.worktrees.listBranches(DISPATCH_BRANCH_PREFIX);
+  async listBranches(): Promise<BranchEntry[]> {
+    // Orphan refs have no recorded base branch of their own, so they're
+    // measured against the project's default base. Tolerant of failure: a
+    // repo with no remote and an unborn HEAD would otherwise take the whole
+    // listing down.
+    const [refs, epicRefs, worktrees, fallbackBase] = await Promise.all([
+      this.worktrees.listBranches(DISPATCH_BRANCH_PREFIX),
+      this.worktrees.listBranches(EPIC_BRANCH_PREFIX),
+      this.worktrees.listWorktrees(),
+      this.worktrees.defaultBaseBranchAsync().catch(() => 'HEAD'),
+    ]);
     const pathByBranch = new Map<string, string>();
-    for (const wt of this.worktrees.listWorktrees()) {
+    for (const wt of worktrees) {
       if (wt.branch !== undefined) pathByBranch.set(wt.branch, wt.path);
     }
     const runByBranch = this.newestRunByBranch();
-    // Orphan refs have no recorded base branch of their own, so they're
-    // measured against the project's default base. Resolved once per call
-    // (it shells out to git) and tolerant of failure: a repo with no remote
-    // and an unborn HEAD would otherwise take the whole listing down.
-    let fallbackBase: string;
-    try {
-      fallbackBase = this.worktrees.defaultBaseBranch();
-    } catch {
-      fallbackBase = 'HEAD';
-    }
 
-    const entries: BranchEntry[] = refs.map((ref) => {
-      const meta = runByBranch.get(ref.branch);
-      const wtPath = pathByBranch.get(ref.branch) ?? meta?.worktreePath;
-      const base = meta?.baseBranch ?? fallbackBase;
-      const worktreeExists = wtPath !== undefined && existsSync(wtPath);
-      const merged = this.worktrees.isMergedInto(ref.branch, base);
-      return {
-        branch: ref.branch,
-        worktreePath: wtPath,
-        worktreeExists,
-        // Only measured when the directory is actually there — a reclaimed
-        // worktree has nothing to weigh, and reporting 0 for it would read as
-        // "measured and empty" rather than "gone".
-        diskBytes: worktreeExists ? dirSizeBytes(wtPath).bytes : undefined,
-        dirty: wtPath !== undefined && this.worktrees.isWorktreeDirty(wtPath),
-        lastCommitAt: ref.lastCommitAt === '' ? undefined : ref.lastCommitAt,
-        ahead: this.worktrees.aheadCount(ref.branch, base),
-        // Only measured while unmerged: the count answers "how far has the
-        // base moved past this still-out work", which stops meaning anything
-        // once the work landed — and skipping it saves a git call per row.
-        behindBase: merged
-          ? undefined
-          : this.worktrees.behindCount(ref.branch, base),
-        mergedIntoBase: merged,
-        runId: meta?.id,
-        taskId: meta?.taskId,
-        taskTitle: meta?.taskTitle,
-        runState: meta?.state,
-        baseBranch: meta?.baseBranch,
-        reviewedAt: meta?.reviewedAt,
-        stackParents: meta?.stackParents,
-        prUrl: meta?.prUrl,
-        // The recorded merge commit is the only reliable probe for a squash
-        // merge; a branch git itself sees as merged (hand-merged, no run, or
-        // a run without a mergeCommit) is judged by its own tip instead, so
-        // "pushed" doesn't read false just because no run claims the ref.
-        pushedToOrigin:
-          meta?.mergeCommit !== undefined
-            ? this.worktrees.isOnOriginBase(meta.mergeCommit, base)
-            : merged && this.worktrees.isOnOriginBase(ref.branch, base),
-        status: branchEntryStatus(meta),
-      } satisfies BranchEntry;
-    });
+    const entries: BranchEntry[] = await mapLimit(
+      refs,
+      BRANCH_PROBE_CONCURRENCY,
+      async (ref) => {
+        const meta = runByBranch.get(ref.branch);
+        const wtPath = pathByBranch.get(ref.branch) ?? meta?.worktreePath;
+        const base = meta?.baseBranch ?? fallbackBase;
+        const worktreeExists = wtPath !== undefined && existsSync(wtPath);
+        const [counts, dirty, size] = await Promise.all([
+          this.worktrees.aheadBehind(ref.branch, base),
+          wtPath === undefined
+            ? false
+            : this.worktrees.isWorktreeDirtyAsync(wtPath),
+          worktreeExists ? dirSizeBytes(wtPath) : undefined,
+        ]);
+        // Nothing ahead is exactly "the base already reaches every commit";
+        // a ref git cannot resolve reads as unmerged with nothing to lose.
+        const merged = counts !== null && counts.ahead === 0;
+        return {
+          branch: ref.branch,
+          worktreePath: wtPath,
+          worktreeExists,
+          // Only measured when the directory is actually there — a reclaimed
+          // worktree has nothing to weigh, and reporting 0 for it would read
+          // as "measured and empty" rather than "gone".
+          diskBytes: size?.bytes,
+          dirty,
+          lastCommitAt: ref.lastCommitAt === '' ? undefined : ref.lastCommitAt,
+          ahead: counts?.ahead ?? 0,
+          // Only reported while unmerged: the count answers "how far has the
+          // base moved past this still-out work", which stops meaning
+          // anything once the work landed.
+          behindBase: merged ? undefined : (counts?.behind ?? 0),
+          mergedIntoBase: merged,
+          runId: meta?.id,
+          taskId: meta?.taskId,
+          taskTitle: meta?.taskTitle,
+          runState: meta?.state,
+          baseBranch: meta?.baseBranch,
+          reviewedAt: meta?.reviewedAt,
+          stackParents: meta?.stackParents,
+          prUrl: meta?.prUrl,
+          // The recorded merge commit is the only reliable probe for a squash
+          // merge; a branch git itself sees as merged (hand-merged, no run, or
+          // a run without a mergeCommit) is judged by its own tip instead, so
+          // "pushed" doesn't read false just because no run claims the ref.
+          pushedToOrigin:
+            meta?.mergeCommit !== undefined
+              ? await this.worktrees.isOnOriginBase(meta.mergeCommit, base)
+              : merged &&
+                (await this.worktrees.isOnOriginBase(ref.branch, base)),
+          status: branchEntryStatus(meta),
+        } satisfies BranchEntry;
+      }
+    );
 
     // Epic integration branches (`epic/<id>`) are part of the same surface:
     // dispatch created them, runs land on them, and a human eventually has to
@@ -3399,24 +3418,34 @@ export class Orchestrator {
     // Their `behindBase` is the drift signal: dispatch never updates an epic
     // branch against the default base on its own, it only reports how far
     // behind it has fallen.
-    for (const ref of this.worktrees.listBranches(EPIC_BRANCH_PREFIX)) {
-      entries.push({
-        branch: ref.branch,
-        worktreeExists: false,
-        dirty: false,
-        lastCommitAt: ref.lastCommitAt === '' ? undefined : ref.lastCommitAt,
-        ahead: this.worktrees.aheadCount(ref.branch, fallbackBase),
-        mergedIntoBase: this.worktrees.isMergedInto(ref.branch, fallbackBase),
-        behindBase: this.worktrees.behindCount(ref.branch, fallbackBase),
-        baseBranch: fallbackBase,
-        // "Pushed" for an integration branch means origin has its tip — the
-        // question a human asks before deleting the local ref. The branch
-        // name is passed as the commit-ish directly: resolving it first could
-        // throw on a ref deleted mid-listing, where this just reports false.
-        pushedToOrigin: this.worktrees.isOnOriginBase(ref.branch, ref.branch),
-        status: 'epic',
-      } satisfies BranchEntry);
-    }
+    const epicEntries = await mapLimit(
+      epicRefs,
+      BRANCH_PROBE_CONCURRENCY,
+      async (ref) => {
+        const [counts, pushedToOrigin] = await Promise.all([
+          this.worktrees.aheadBehind(ref.branch, fallbackBase),
+          // "Pushed" for an integration branch means origin has its tip — the
+          // question a human asks before deleting the local ref. The branch
+          // name is passed as the commit-ish directly: resolving it first
+          // could throw on a ref deleted mid-listing, where this just reports
+          // false.
+          this.worktrees.isOnOriginBase(ref.branch, ref.branch),
+        ]);
+        return {
+          branch: ref.branch,
+          worktreeExists: false,
+          dirty: false,
+          lastCommitAt: ref.lastCommitAt === '' ? undefined : ref.lastCommitAt,
+          ahead: counts?.ahead ?? 0,
+          mergedIntoBase: counts !== null && counts.ahead === 0,
+          behindBase: counts?.behind ?? 0,
+          baseBranch: fallbackBase,
+          pushedToOrigin,
+          status: 'epic',
+        } satisfies BranchEntry;
+      }
+    );
+    entries.push(...epicEntries);
 
     // Most-urgent-first within a stable order so the UI's grouping never has
     // to re-sort, and so two consecutive polls can't shuffle rows around.
@@ -3456,8 +3485,11 @@ export class Orchestrator {
    * tests `existsSync` on it and falls back to the snapshot persisted just
    * below — the same mechanism every review path already relies on.
    */
-  freeWorktreeDisk(branch: string): BranchEntry {
-    const entry = this.requireCleanableBranch(branch);
+  async freeWorktreeDisk(branch: string): Promise<BranchEntry> {
+    const listing = await this.listBranches();
+    // From the guard to the removal nothing awaits, so no run can start on
+    // this branch in between.
+    const entry = this.requireCleanableBranch(branch, listing);
     const meta =
       entry.runId !== undefined ? this.registry.get(entry.runId) : undefined;
     if (meta !== undefined) this.persistDiffSnapshot(meta);
@@ -3478,8 +3510,13 @@ export class Orchestrator {
    * the commits already landed on the base branch, and without that proof this
    * is the one action here that destroys work with no way back.
    */
-  deleteBranch(branch: string, opts: { force?: boolean } = {}): void {
-    const entry = this.requireCleanableBranch(branch);
+  async deleteBranch(
+    branch: string,
+    opts: { force?: boolean } = {}
+  ): Promise<void> {
+    const listing = await this.listBranches();
+    // From the guard to the deletion nothing awaits, as in freeWorktreeDisk.
+    const entry = this.requireCleanableBranch(branch, listing);
     if (!entry.mergedIntoBase && opts.force !== true) {
       throw new OrchestratorConflictError(
         `branch is not merged into ${entry.baseBranch ?? 'its base'} and has ${entry.ahead} unmerged commit(s): ${branch} — retry with force to delete anyway`
@@ -3496,8 +3533,8 @@ export class Orchestrator {
     this.ctx.events.broadcast({ type: 'run.changed' });
   }
 
-  private requireBranchEntry(branch: string): BranchEntry {
-    const entry = this.listBranches().find((e) => e.branch === branch);
+  private async requireBranchEntry(branch: string): Promise<BranchEntry> {
+    const entry = (await this.listBranches()).find((e) => e.branch === branch);
     if (entry === undefined) {
       throw new OrchestratorNotFoundError(`branch not found: ${branch}`);
     }
@@ -3506,24 +3543,27 @@ export class Orchestrator {
 
   // The shared guard for both destructive branch actions. Refuses anything
   // that would pull a worktree or ref out from under something still using it,
-  // naming the specific reason so the UI can show it verbatim.
-  private requireCleanableBranch(branch: string): BranchEntry {
-    const all = this.listBranches();
-    const entry = all.find((e) => e.branch === branch);
+  // naming the specific reason so the UI can show it verbatim. `listing` is
+  // the git side; the run side is re-read here, since a run can start or
+  // resume while the listing's git reads were out.
+  private requireCleanableBranch(
+    branch: string,
+    listing: BranchEntry[]
+  ): BranchEntry {
+    const entry = listing.find((e) => e.branch === branch);
     if (entry === undefined) {
       throw new OrchestratorNotFoundError(`branch not found: ${branch}`);
     }
+    const run = this.newestRunByBranch().get(branch);
     // A live agent is actively writing into this worktree.
-    if (entry.status === 'active') {
+    if (branchEntryStatus(run) === 'active') {
       throw new OrchestratorConflictError(
-        `branch has a live run: ${branch} (run ${entry.runId ?? 'unknown'}, state ${entry.runState ?? 'unknown'})`
+        `branch has a live run: ${branch} (run ${run?.id ?? 'unknown'}, state ${run?.state ?? 'unknown'})`
       );
     }
     // Same rule review() enforces: an open PR points at exactly this branch
     // and worktree, so tearing them down would break the remote review.
-    const meta =
-      entry.runId !== undefined ? this.registry.get(entry.runId) : undefined;
-    if (meta !== undefined) this.requireNoOpenPr(meta);
+    if (run !== undefined) this.requireNoOpenPr(run);
     // `git branch -D` would refuse the checked-out branch anyway; failing
     // here names the reason instead of surfacing git's error text.
     if (branch === this.currentMainBranch()) {
@@ -3531,7 +3571,7 @@ export class Orchestrator {
         `branch is checked out in the main repo: ${branch}`
       );
     }
-    this.requireNoStackedDependent(branch, all);
+    this.requireNoStackedDependent(branch, listing);
     return entry;
   }
 
@@ -3557,18 +3597,27 @@ export class Orchestrator {
    *
    * `entries` is passed in by callers that already computed listBranches() so
    * the guard and the rows the user is looking at can never disagree about what
-   * depends on what.
+   * depends on what. A live run cut from `branch` counts too, since its ref
+   * may postdate that listing.
    */
   private requireNoStackedDependent(
     branch: string,
-    entries = this.listBranches()
+    entries: BranchEntry[]
   ): void {
-    const dependent = entries.find(
-      (e) => e.branch !== branch && e.baseBranch === branch
-    );
+    const dependent =
+      entries.find((e) => e.branch !== branch && e.baseBranch === branch)
+        ?.branch ??
+      this.registry
+        .list()
+        .find(
+          (m) =>
+            m.branch !== branch &&
+            m.baseBranch === branch &&
+            !TERMINAL_RUN_STATES.has(m.state)
+        )?.branch;
     if (dependent !== undefined) {
       throw new OrchestratorConflictError(
-        `branch is the base of ${dependent.branch} — clean that up first`
+        `branch is the base of ${dependent} — clean that up first`
       );
     }
   }
