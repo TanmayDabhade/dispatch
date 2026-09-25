@@ -414,6 +414,11 @@ function App() {
   // below is the quick-add fallback.
   const openCreateTask = useCallback((preset?: CreateTaskPreset) => {
     setCreatePreset(preset ?? null);
+    // The AI composer drafts issues only; a project or milestone opens the form.
+    if (preset?.kind !== undefined && preset.kind !== 'task') {
+      setShowCreate(true);
+      return;
+    }
     dispatchNav({ type: 'openNewTask' });
   }, []);
 

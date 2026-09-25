@@ -187,6 +187,15 @@ test('the Parent picker lists where this kind can live, and clears to no parent'
   expect(created[0]).toMatchObject({ parent: null });
 });
 
+test('a kind preset starts the Kind chip there and creates that kind', async () => {
+  const { created } = mount({ preset: { kind: 'project' } });
+  expect(screen.getByLabelText('Kind').textContent).toBe('Project');
+  fireEvent.change(titleField(), { target: { value: 'Payments' } });
+  fireEvent.click(createButton());
+  await settle();
+  expect(created[0]).toMatchObject({ title: 'Payments', kind: 'project' });
+});
+
 test('switching to a broader kind drops a parent that cannot hold it', () => {
   mount({ preset: { epic: 'e-1' } });
   fireEvent.click(screen.getByLabelText('Kind'));

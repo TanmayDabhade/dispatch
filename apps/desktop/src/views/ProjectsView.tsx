@@ -229,7 +229,7 @@ export function ProjectsView({
           description="Initiatives, projects and milestones — made here or synced from Linear — show up as a tree to browse."
           primary={{
             label: 'New project',
-            onClick: () => shell.openCreateTask(),
+            onClick: () => shell.openCreateTask({ kind: 'project' }),
           }}
           className="min-h-0 flex-1"
         />

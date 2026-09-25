@@ -1,9 +1,9 @@
 import type { TaskDoc } from '@dispatch/core/browser';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, expect, test } from 'bun:test';
-import type { ReactNode } from 'react';
 
 import {
+  type CreateTaskPreset,
   type ShellActions,
   ShellActionsProvider,
 } from '../components/shell/ShellActionsContext';
@@ -57,25 +57,22 @@ function dataWith(
   } as unknown as DispatchProjectData;
 }
 
-function Shell({ children }: { children: ReactNode }) {
-  const actions = { openCreateTask: () => {} } as unknown as ShellActions;
-  return (
-    <ShellActionsProvider value={actions}>{children}</ShellActionsProvider>
-  );
-}
-
 function renderProjects(data: DispatchProjectData) {
   const opened: string[] = [];
+  const creates: (CreateTaskPreset | undefined)[] = [];
+  const actions = {
+    openCreateTask: (preset?: CreateTaskPreset) => creates.push(preset),
+  } as unknown as ShellActions;
   const result = render(
-    <Shell>
+    <ShellActionsProvider value={actions}>
       <ProjectsView
         projectName="Acme"
         data={data}
         onOpenTask={(id) => opened.push(id)}
       />
-    </Shell>
+    </ShellActionsProvider>
   );
-  return { ...result, opened };
+  return { ...result, opened, creates };
 }
 
 const growth = task('i-1', 'Growth', { kind: 'initiative' });
@@ -182,6 +179,12 @@ test('the chevron folds a node without opening it; a click on the row opens it',
 test('with no containers the empty state says what the page is for', () => {
   renderProjects(dataWith([task('t-1', 'Loose')]));
   expect(screen.getByText('No projects yet')).not.toBeNull();
+});
+
+test("the empty state's New project opens the creator on a project", () => {
+  const { creates } = renderProjects(dataWith([]));
+  fireEvent.click(screen.getByRole('button', { name: /New project/ }));
+  expect(creates).toEqual([{ kind: 'project' }]);
 });
 
 test('2000 tasks mount only a window of rows', () => {

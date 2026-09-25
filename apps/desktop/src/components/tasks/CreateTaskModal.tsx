@@ -340,7 +340,7 @@ export function CreateTaskModal({
   const [description, setDescription] = usePersistedDraft(
     CREATE_TASK_DESCRIPTION_KEY
   );
-  const [kind, setKind] = useState<TaskKind>('task');
+  const [kind, setKind] = useState<TaskKind>(createPreset?.kind ?? 'task');
   const [priority, setPriority] = useState<Priority>('none');
   const [assignee, setAssignee] = useState<Assignee>('none');
   const [status, setStatus] = useState(

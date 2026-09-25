@@ -1,3 +1,4 @@
+import type { TaskKind } from '@dispatch/core/browser';
 import { createContext, useContext } from 'react';
 
 import type {
@@ -13,6 +14,8 @@ export interface CreateTaskPreset {
   status?: string;
   /** The container (milestone, project, parent issue…) the new task goes under. */
   epic?: string;
+  /** What to create; any kind but a task skips the AI composer for the quick-add form. */
+  kind?: TaskKind;
 }
 
 /**
