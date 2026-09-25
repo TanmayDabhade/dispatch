@@ -24,25 +24,25 @@ export interface QueueSlot {
 }
 
 /**
- * Each queued node's place in line under its own fan-out session, in the server's fill
- * order (priority, then age). `concurrencyOf` answers for a parent with an active
- * session and null otherwise; queued nodes under no active session get no place.
+ * Each queued node's place in line under the fan-out session that owns it (`node.owner`),
+ * in the server's fill order (priority, then age). `concurrencyOf` answers for an owner
+ * with an active session and null otherwise; queued nodes under no active session get no
+ * place, and a teammate's node is never queued.
  */
 export function queuePositions(
   nodes: readonly FlightNode[],
-  concurrencyOf: (parentId: string) => number | null
+  concurrencyOf: (ownerId: string) => number | null
 ): Map<string, QueueSlot> {
-  const byParent = new Map<string, FlightNode[]>();
+  const byOwner = new Map<string, FlightNode[]>();
   for (const node of nodes) {
-    const parent = node.task.meta.parent;
-    if (parent === null) continue;
-    const bucket = byParent.get(parent);
-    if (bucket === undefined) byParent.set(parent, [node]);
+    if (node.owner === null) continue;
+    const bucket = byOwner.get(node.owner);
+    if (bucket === undefined) byOwner.set(node.owner, [node]);
     else bucket.push(node);
   }
   const out = new Map<string, QueueSlot>();
-  for (const [parent, group] of byParent) {
-    const concurrency = concurrencyOf(parent);
+  for (const [owner, group] of byOwner) {
+    const concurrency = concurrencyOf(owner);
     if (concurrency === null) continue;
     const running = group.filter((n) => n.state === 'running').length;
     const free = Math.max(0, concurrency - running);
@@ -69,8 +69,8 @@ export interface NodeViewContext {
   live: ReadonlySet<string>;
   /** Dispatches sent from here whose run has not shown up yet, by task id → when sent. */
   pending: ReadonlyMap<string, number>;
-  /** Whether a node's parent is fanning out right now. */
-  sessionActive: (parentId: string) => boolean;
+  /** Whether a node's owning fan-out (`node.owner`) is filling slots right now. */
+  sessionActive: (ownerId: string) => boolean;
   /** The server's reading of a node inside its parent's fan-out. */
   phaseOf: (taskId: string) => EpicProgressChild | undefined;
   /** Live runs' claimed files, for spotting a queued node parked behind one. */
@@ -103,8 +103,7 @@ export function flightNodeViews(
       ? undefined
       : ctx.pending.get(meta.id);
     const liveRun = pendingAt === undefined ? run : undefined;
-    const sessionActive =
-      meta.parent !== null && ctx.sessionActive(meta.parent);
+    const sessionActive = node.owner !== null && ctx.sessionActive(node.owner);
     const slot = queue.get(meta.id) ?? null;
     let parkedBehind: string | null = null;
     if (
@@ -126,7 +125,7 @@ export function flightNodeViews(
       parkedBehind,
       run: node.state === 'running' ? liveRun : run,
       phase: ctx.phaseOf(meta.id),
-      personName: ctx.personName(meta.assignee),
+      personName: ctx.personName(node.holder ?? meta.assignee),
       model: ctx.model,
     });
     const running = node.state === 'running';
@@ -138,7 +137,7 @@ export function flightNodeViews(
       glyphStatus: meta.status,
       sentence: sentence.text,
       tone: sentence.tone,
-      owner: ownerOf(meta.assignee),
+      owner: node.holder ?? ownerOf(meta.assignee),
       startedAt: running
         ? (pendingAt ??
           (liveRun === undefined ? null : Date.parse(liveRun.createdAt)))

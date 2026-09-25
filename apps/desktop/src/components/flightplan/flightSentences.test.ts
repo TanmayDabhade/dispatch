@@ -30,6 +30,8 @@ function node(
     wave: 0,
     waitingOn: [],
     subPlan: false,
+    owner: 'e-1',
+    holder: null,
     ...extra,
   };
 }
@@ -99,6 +101,9 @@ describe('nodeSentence', () => {
     expect(text(input(node('blocked', {}, { subPlan: true })))).toBe(
       'Fans out on its own plan'
     );
+    expect(text(input(node('blocked', { derivedFrom: 'github-pr:7' })))).toBe(
+      'Anchors a review · agents never start it'
+    );
     expect(
       text(
         input(node('blocked', { status: 'working' }), {
@@ -148,12 +153,37 @@ describe('nodeSentence', () => {
           personName: 'Maya Chen',
         })
       )
-    ).toBe('Working · Maya Chen');
+    ).toBe('Maya’s · Working');
     expect(text(input(node('review', { status: 'review' })))).toBe(
       'Ready for review'
     );
     expect(text(input(node('review', { status: 'landing' })))).toBe('Landing');
   });
+});
+
+test('a teammate’s unstarted node says it will not auto-start', () => {
+  const samTask = node(
+    'teammate',
+    { status: 'ready' },
+    { holder: 'human:sam' }
+  );
+  expect(nodeSentence(input(samTask, { personName: 'Sam Rivera' }))).toEqual({
+    text: 'Sam’s — won’t auto-start',
+    tone: 'muted',
+  });
+  // Even under a live fan-out with slots free: it is never queued.
+  expect(
+    text(
+      input(samTask, {
+        personName: 'Sam',
+        sessionActive: true,
+        queue: { position: 0, free: 2 },
+      })
+    )
+  ).toBe('Sam’s — won’t auto-start');
+  expect(text(input(node('teammate', { status: 'draft' })))).toBe(
+    'A teammate’s — won’t auto-start'
+  );
 });
 
 test('runStep reads the run, then the fan-out phase', () => {

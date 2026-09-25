@@ -19,6 +19,7 @@ import {
 } from '../src/linearFields.js';
 import type { LinearIssue, LinearRelation } from '../src/linearMap.js';
 import { UNMAPPED } from '../src/linearMerge.js';
+import { fanoutHolder } from '../src/people.js';
 import { isDoneStatus } from '../src/status.js';
 import { applyUpdatePatch } from '../src/store.js';
 import { getSection } from '../src/taskfile.js';
@@ -269,6 +270,21 @@ describe('issue field details', () => {
     expect(issuePush(task, ['assignee'], blankIssue('i-x'), ctx).input).toEqual(
       {}
     );
+  });
+
+  it('keeps an assignee the people registry cannot name somebody’s, never pushed', () => {
+    const ctx = context(workspace());
+    const task = doc(linked('t-x', 'issue', 'i-x'));
+    const issue = blankIssue('i-x', { assigneeId: 'u-unknown' });
+    const patch = issuePatch(issue, ['assignee'], task, ctx);
+    // Never unassigned: a fan-out would take it for anyone's to start.
+    expect(patch.assignee).toBe('human:linear-user');
+    expect(fanoutHolder(patch.assignee, 'human:wyat', 'human:wyat')).toBe(
+      'human:linear-user'
+    );
+    const pulled = applyUpdatePatch(task, patch, NOW);
+    expect(taskIssueValues(pulled, ctx).assignee).toBe(UNMAPPED);
+    expect(issuePush(pulled, ['assignee'], issue, ctx).input).toEqual({});
   });
 
   it('reads the legacy bare human as the local user', () => {

@@ -108,6 +108,54 @@ export function dispatchableTasks<T extends TaskListItem = TaskDoc>(
   );
 }
 
+/** What a fan-out knows about one blocker beyond its status. */
+export interface FanoutBlocker {
+  /** A teammate's (core's `fanoutHolder` is non-null for it). */
+  held: boolean;
+  /** Its work sits on a Dispatch run branch a dependent can stack on. */
+  hasRunBranch: boolean;
+}
+
+/**
+ * Whether a blocker lets a fan-out start its dependents. Done always does; the
+ * review and landing roles only with a run branch to stack on that is no
+ * teammate's. A teammate's In Review (or one moved there by hand) has no such
+ * branch, so a dependent cut then would lack that work: it waits for done.
+ */
+export function releasesFanoutDependents(
+  status: string,
+  model: StatusModel,
+  blocker: FanoutBlocker
+): boolean {
+  if (isDoneStatus(status, model)) return true;
+  return (
+    !blocker.held &&
+    blocker.hasRunBranch &&
+    isSatisfiedForDispatchStatus(status, model)
+  );
+}
+
+/**
+ * The blockers still holding `task` back in a fan-out, by
+ * `releasesFanoutDependents`. An id `lookup` cannot resolve never holds, as in
+ * `dispatchableTasks`.
+ */
+export function fanoutWaitingOn<T extends TaskListItem>(
+  task: T,
+  lookup: (id: string) => T | null | undefined,
+  model: StatusModel,
+  describe: (blocker: T) => FanoutBlocker
+): string[] {
+  return task.meta.blockedBy.filter((id) => {
+    const blocker = lookup(id);
+    return (
+      blocker !== null &&
+      blocker !== undefined &&
+      !releasesFanoutDependents(blocker.meta.status, model, describe(blocker))
+    );
+  });
+}
+
 /**
  * Tasks safe to start now: kind=task, status=todo, not archived, all blockers
  * done. Dangling blocker ids (no task in the set) do not block; `doctor`

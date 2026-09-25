@@ -24,6 +24,7 @@ import { cockpitRowId } from '../components/cockpit/CockpitRow';
 import {
   buildFlightPlan,
   type FlightPlan,
+  sessionScope,
 } from '../components/flightplan/flightPlan';
 import { usePeople } from '../components/people/PeopleContext';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
@@ -259,9 +260,15 @@ export function CockpitView({
       else bucket.push(task);
     }
     for (const progress of data.liveEpicSessions) {
+      // What the session covers: a project's milestone issues too.
+      const scope = sessionScope(
+        progress.epicId,
+        progress.session?.scope,
+        (id) => childrenOf.get(id) ?? []
+      );
       out.set(
         progress.epicId,
-        buildFlightPlan(childrenOf.get(progress.epicId) ?? [], {
+        buildFlightPlan(scope, {
           liveTaskIds,
           model,
           concurrency: progress.session?.concurrency ?? null,

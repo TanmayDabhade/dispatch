@@ -4,10 +4,9 @@ import {
   hasStatusRole,
   isCompletedStatus,
   isDoneStatus,
-  isSatisfiedForDispatchStatus,
   isUnstartedStatus,
 } from '@dispatch/core';
-import type { StatusModel, TaskDoc, TaskListItem } from '@dispatch/core';
+import type { StatusModel, TaskListItem } from '@dispatch/core';
 
 import type { FixLoopState } from './fixLoop.js';
 import type { RunMeta } from './types.js';
@@ -73,7 +72,7 @@ export interface EpicWave {
 }
 
 export interface ChildPhaseInput {
-  task: TaskDoc;
+  task: TaskListItem;
   liveRun: RunMeta | null;
   latestRun: RunMeta | null;
   fixLoop: FixLoopState | null;
@@ -83,6 +82,9 @@ export interface ChildPhaseInput {
   unsatisfiedBlockers: string[];
   /** Whether core's `dispatchableTasks` over the full set includes the task. */
   dispatchable: boolean;
+  /** The teammate the task belongs to (core's `fanoutHolder`): the fan-out
+   *  never starts it. Null or omitted when it may. */
+  heldBy?: string | null;
   /** The project's status model; the built-in one when omitted. */
   statuses?: StatusModel;
 }
@@ -163,6 +165,8 @@ export function deriveChildPhase(input: ChildPhaseInput): ChildPhase {
   if (inReview) return withRun(input, 'needs-review');
   if (isUnstartedStatus(status, model)) {
     if (task.meta.risk === 'critical') return withRun(input, 'held');
+    const heldBy = input.heldBy ?? null;
+    if (heldBy !== null) return withRun(input, 'held', `assigned to ${heldBy}`);
     if (input.unsatisfiedBlockers.length > 0) {
       return withRun(
         input,
@@ -181,7 +185,9 @@ export function deriveChildPhase(input: ChildPhaseInput): ChildPhase {
  * not count. Cycle-safe — a blocker already on the current path is skipped,
  * so a hand-edited cycle yields the longest acyclic depth instead of hanging.
  */
-export function deriveWaves(children: TaskDoc[]): Map<string, number> {
+export function deriveWaves(
+  children: readonly TaskListItem[]
+): Map<string, number> {
   const byId = new Map(children.map((c) => [c.meta.id, c]));
   const waves = new Map<string, number>();
   const visiting = new Set<string>();
@@ -248,21 +254,4 @@ export function summarizeWaves(children: EpicProgressChild[]): EpicWave[] {
     wave.byPhase[child.phase] = (wave.byPhase[child.phase] ?? 0) + 1;
   }
   return [...byWave.values()].sort((a, b) => a.index - b.index);
-}
-
-/** Blocker ids on `task` that are not yet dispatch-satisfying, resolved
- *  through `lookup`; an id that resolves to nothing never blocks (matches
- *  core's `dispatchableTasks`). */
-export function unsatisfiedBlockersOf(
-  task: TaskDoc,
-  lookup: (id: string) => TaskListItem | null,
-  model: StatusModel = DEFAULT_STATUS_MODEL
-): string[] {
-  return task.meta.blockedBy.filter((id) => {
-    const blocker = lookup(id);
-    return (
-      blocker !== null &&
-      !isSatisfiedForDispatchStatus(blocker.meta.status, model)
-    );
-  });
 }

@@ -15,8 +15,11 @@ import { jsonResponse } from './http.js';
 
 /** GET /api/people's body: everyone a picker offers, and who is asking. */
 interface PeopleSnapshot {
-  /** The caller's own ref; the legacy bare `human` assignee means this. */
+  /** The caller's own ref. */
   me: string;
+  /** The daemon's own human, whom a legacy bare `human` assignee means when a
+   *  fan-out asks whose a task is (core's fanoutHolder). */
+  local: string;
   people: Person[];
 }
 
@@ -41,6 +44,7 @@ export function listPeople(
   const configured = loadConfig(ctx.rootDir).people ?? [];
   const snapshot: PeopleSnapshot = {
     me: humanActor(ctx),
+    local: ctx.actorContext.humanRef,
     people: resolvePeople(configured, rosterMembers(ctx.rootDir)),
   };
   return jsonResponse(snapshot);
