@@ -179,12 +179,17 @@ export function VirtualRows<R>({
       className={cn('relative w-full shrink-0', className)}
       style={{ height: totalSize }}
     >
+      {/* A layer per row: WebKit repaints every row sharing a backing when one mounts or
+          unmounts, so each window change on a scroll repainted the whole screenful. */}
       {items.map((item) => (
         <div
           key={item.key.toString()}
           data-index={item.index}
           ref={measure ? virtualizer.measureElement : undefined}
-          className={cn('absolute top-0 left-0 w-full', rowClassName)}
+          className={cn(
+            'absolute top-0 left-0 w-full will-change-transform',
+            rowClassName
+          )}
           style={{
             transform: `translateY(${item.start - scrollMargin}px)`,
             height: measure ? undefined : item.size,

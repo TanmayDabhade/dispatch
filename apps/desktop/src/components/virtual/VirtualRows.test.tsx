@@ -63,6 +63,16 @@ test('places each row at its offset', () => {
   expect(second?.style.height).toBe('36px');
 });
 
+test('gives every row its own compositing layer', () => {
+  // WebKit repaints every row sharing a backing when one mounts, so each is a layer.
+  const { container } = render(<List />);
+  const rows = Array.from(container.querySelectorAll('[data-index]'));
+  expect(rows.length).toBeGreaterThan(0);
+  for (const row of rows) {
+    expect(row.classList.contains('will-change-transform')).toBe(true);
+  }
+});
+
 test('keeps a pinned row mounted however far away it is', () => {
   const { container } = render(<List pinnedKeys={['t-1500']} />);
   expect(mountedIds(container)).toContain('t-1500');
