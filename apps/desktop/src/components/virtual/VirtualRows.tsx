@@ -1,5 +1,6 @@
 import {
   measureElement,
+  observeElementOffset,
   observeElementRect,
   useVirtualizer,
   type Virtualizer,
@@ -19,6 +20,7 @@ import {
   UNMEASURED_VIEWPORT,
   viewportOrFallback,
 } from '../../lib/virtualRows';
+import { observeSharedOffset } from './sharedScroll';
 import { cn } from '@/lib/utils';
 
 type ScrollAlign = 'start' | 'center' | 'end' | 'auto';
@@ -53,10 +55,10 @@ export interface VirtualRowsProps<R> {
   scrollPaddingStart?: number;
   /** Keys kept mounted however far they scroll away (see `pinnedRangeExtractor`). */
   pinnedKeys?: readonly string[];
-  /** Re-render inside each scroll event (the default), so a lone list never paints a
-   * frame short of rows. Off for tracks sharing one scroller: their scroll updates batch
-   * into one render and one layout, instead of one each per track. */
-  flushSync?: boolean;
+  /** On for tracks sharing one scroller (the board's columns): every track re-renders in
+   * one commit per scroll instead of one each (see `observeSharedOffset`). Either way a
+   * track renders inside the scroll event, so no frame paints short of rows. */
+  sharedScroller?: boolean;
   handleRef?: Ref<VirtualRowsHandle>;
   className?: string;
   rowClassName?: string;
@@ -97,7 +99,7 @@ export function VirtualRows<R>({
   scrollMargin = 0,
   scrollPaddingStart = 0,
   pinnedKeys,
-  flushSync = true,
+  sharedScroller = false,
   handleRef,
   className,
   rowClassName,
@@ -139,7 +141,10 @@ export function VirtualRows<R>({
     observeElementRect: observeRect,
     measureElement: measureRow,
     initialRect: UNMEASURED_VIEWPORT,
-    useFlushSync: flushSync,
+    observeElementOffset: sharedScroller
+      ? observeSharedOffset
+      : observeElementOffset,
+    useFlushSync: !sharedScroller,
   });
 
   useImperativeHandle(

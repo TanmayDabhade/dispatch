@@ -391,8 +391,8 @@ function VirtualColumn({
         scrollMargin={scrollMargin}
         scrollPaddingStart={COLUMN_HEADER_HEIGHT}
         pinnedKeys={pinnedKeys}
-        // Every column rides the board's one scroller: one render per scroll, not one each.
-        flushSync={false}
+        // Every column rides the board's one scroller: one commit per scroll, not one each.
+        sharedScroller
         handleRef={handle}
         renderRow={renderLazyCard}
       />
