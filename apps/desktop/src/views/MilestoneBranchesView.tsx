@@ -2,17 +2,28 @@ import type { TaskListItem } from '@dispatch/core/browser';
 import { isContainerKind, statusModelOf } from '@dispatch/core/browser';
 import { GitBranch, SearchX } from 'lucide-react';
 import type { FocusEvent, KeyboardEvent, ReactNode } from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { BranchGraph } from '../components/graph/BranchGraph';
+import {
+  BRANCH_LINE_HEIGHT,
+  BranchGraph,
+} from '../components/graph/BranchGraph';
 import { RunStatePill } from '../components/runs/RunStatePill';
 import { useShellActions } from '../components/shell/ShellActionsContext';
 import { AssigneeAvatar } from '../components/tasks/AssigneeAvatar';
 import { statusColor, StatusIcon } from '../components/tasks/StatusIcon';
+import {
+  VirtualRows,
+  type VirtualRowsHandle,
+} from '../components/virtual/VirtualRows';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { isTypingTarget } from '../hooks/useGlobalKeyboard';
 import type { TaskTab } from '../lib/appNav';
-import { branchLayout, type BranchPathSummary } from '../lib/branchLayout';
+import {
+  type BranchLayout,
+  branchLayout,
+  type BranchPathSummary,
+} from '../lib/branchLayout';
 import {
   readCollapsedGroups,
   toggleCollapsedGroup,
@@ -29,6 +40,7 @@ import {
   DEFAULT_TASKS_DISPLAY,
   type TasksDisplayPrefs,
 } from '../lib/tasksPrefs';
+import { cn } from '@/lib/utils';
 import { GroupHeader } from '@/ui/ai/group-header';
 import { EmptyState } from '@/ui/chrome';
 
@@ -55,14 +67,45 @@ interface MilestoneBranchesViewProps {
 }
 
 /** One milestone ready to draw: its group (header tint, label, preset), the children as
- * layout nodes, and the layout's path summary and row order (the j/k sequence). */
+ * layout nodes, the layout, its path summary and row order (the j/k sequence). */
 interface MilestoneBranch {
   group: ListGroup;
   children: TaskListItem[];
   dagTasks: DagTask[];
+  layout: BranchLayout;
   summary: BranchPathSummary;
   rowIds: string[];
   finished: boolean;
+}
+
+/** A virtual row: a milestone's header, or one band of its graph's lines. */
+type BranchRowModel =
+  | { kind: 'header'; key: string; branch: MilestoneBranch }
+  | {
+      kind: 'band';
+      key: string;
+      branch: MilestoneBranch;
+      start: number;
+      end: number;
+    };
+
+// A milestone's graph is cut into bands of this many lines, so a long one mounts only the
+// bands on screen, plus one either side.
+const BAND_LINES = 16;
+const HEADER_HEIGHT = 36;
+// The graph's padding above its first line and below its last.
+const GRAPH_PAD = 4;
+
+const bandKey = (groupKey: string, start: number) =>
+  `band:${groupKey}:${start}`;
+const branchRowKey = (row: BranchRowModel) => row.key;
+
+function branchRowHeight(row: BranchRowModel): number {
+  if (row.kind === 'header') return HEADER_HEIGHT;
+  const pad =
+    (row.start === 0 ? GRAPH_PAD : 0) +
+    (row.end === row.branch.rowIds.length ? GRAPH_PAD : 0);
+  return (row.end - row.start) * BRANCH_LINE_HEIGHT + pad;
 }
 
 /** The header's one-line reading of the path: how much of the trunk is still open and which
@@ -103,7 +146,14 @@ export function MilestoneBranchesView({
   const [toggled, setToggled] = useState<ReadonlySet<string>>(() =>
     readCollapsedGroups(BRANCHES_TOGGLED_STORAGE_KEY)
   );
-  const listRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  // The scroller as state too: the virtual rows need it once it exists.
+  const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
+  const setListEl = useCallback((node: HTMLDivElement | null) => {
+    listRef.current = node;
+    setScroller(node);
+  }, []);
+  const virtualRef = useRef<VirtualRowsHandle>(null);
 
   const filteredTasks = useMemo(
     () =>
@@ -177,6 +227,7 @@ export function MilestoneBranchesView({
         },
         children,
         dagTasks,
+        layout,
         summary: layout.pathSummary,
         rowIds: layout.rows.map((r) => r.id),
         finished: isMilestoneFinished(all, model),
@@ -199,6 +250,39 @@ export function MilestoneBranchesView({
     () => branches.flatMap((b) => (collapsed.has(b.group.key) ? [] : b.rowIds)),
     [branches, collapsed]
   );
+
+  // The virtual rows: each milestone's header, then its graph in bands of lines.
+  const rows = useMemo<BranchRowModel[]>(() => {
+    const out: BranchRowModel[] = [];
+    for (const branch of branches) {
+      const key = branch.group.key;
+      out.push({ kind: 'header', key: `header:${key}`, branch });
+      if (collapsed.has(key)) continue;
+      const count = branch.rowIds.length;
+      for (let start = 0; start < count; start += BAND_LINES) {
+        const end = Math.min(count, start + BAND_LINES);
+        out.push({
+          kind: 'band',
+          key: bandKey(key, start),
+          branch,
+          start,
+          end,
+        });
+      }
+    }
+    return out;
+  }, [branches, collapsed]);
+  // Each drawn task's band, for scrolling the cursor into view.
+  const bandOfTask = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const branch of branches) {
+      if (collapsed.has(branch.group.key)) continue;
+      branch.rowIds.forEach((id, index) => {
+        map.set(id, bandKey(branch.group.key, index - (index % BAND_LINES)));
+      });
+    }
+    return map;
+  }, [branches, collapsed]);
 
   useEffect(() => {
     if (orderedIds.length === 0) {
@@ -223,13 +307,28 @@ export function MilestoneBranchesView({
     });
   }
 
-  // Only a keyboard move scrolls — the cursor never follows the pointer here.
+  // Only a keyboard move scrolls — the cursor never follows the pointer here. A line whose
+  // band is not mounted has the band brought in first, then the line once it draws. Focus
+  // on a control (a tabbed-to line, a header's button) returns to the grid: that control's
+  // band unmounts once the cursor is a few bands away, and focus would drop to the body.
   function moveCursor(id: string | null) {
+    const list = listRef.current;
+    const active = document.activeElement;
+    if (list !== null && active !== list && list.contains(active)) {
+      list.focus({ preventScroll: true });
+    }
     setFocusedTaskId(id);
     if (id === null) return;
-    listRef.current
-      ?.querySelector(`[data-task-id="${id}"]`)
-      ?.scrollIntoView({ block: 'nearest' });
+    const lineOf = () =>
+      listRef.current?.querySelector(`[data-task-id="${id}"]`) ?? null;
+    const line = lineOf();
+    if (line !== null) {
+      line.scrollIntoView({ block: 'nearest' });
+      return;
+    }
+    const band = bandOfTask.get(id);
+    if (band !== undefined) virtualRef.current?.scrollToKey(band);
+    requestAnimationFrame(() => lineOf()?.scrollIntoView({ block: 'nearest' }));
   }
 
   // Tab landing on a line's button moves the cursor there, so the mark and the focus ring
@@ -334,9 +433,71 @@ export function MilestoneBranchesView({
     );
   }
 
+  const focusedBand =
+    focusedTaskId === null ? undefined : bandOfTask.get(focusedTaskId);
+  const renderRow = (row: BranchRowModel) => {
+    const { branch } = row;
+    const { group } = branch;
+    if (row.kind === 'header') {
+      const isCollapsed = collapsed.has(group.key);
+      return (
+        <div
+          data-slot="milestone-branch"
+          data-group-key={group.key}
+          data-finished={branch.finished || undefined}
+        >
+          <GroupHeader
+            tint={group.tint ?? undefined}
+            icon={
+              group.icon?.kind === 'milestone' ? (
+                <StatusIcon status={group.icon.status} />
+              ) : undefined
+            }
+            name={group.label}
+            collapsed={isCollapsed}
+            onToggle={() => toggle(group.key)}
+            onAdd={() => shell.openCreateTask(group.preset)}
+            addLabel={`New task in ${group.label}`}
+            actions={
+              <span
+                data-slot="branch-path-summary"
+                className="font-book mr-1 text-[12px] text-(--text-muted) tabular-nums"
+              >
+                {pathSummaryLabel(branch.summary)}
+              </span>
+            }
+          />
+        </div>
+      );
+    }
+    const docById = new Map(branch.children.map((t) => [t.meta.id, t]));
+    return (
+      <div
+        className={cn(
+          row.start === 0 && 'pt-1',
+          row.end === branch.rowIds.length && 'pb-1'
+        )}
+      >
+        <BranchGraph
+          tasks={branch.dagTasks}
+          layout={branch.layout}
+          band={{ start: row.start, end: row.end }}
+          model={model}
+          ariaLabel={`${group.label} branches`}
+          focusedId={focusedTaskId}
+          accessoryFor={(id) => {
+            const doc = docById.get(id);
+            return doc === undefined ? undefined : accessoryFor(id, doc);
+          }}
+          onOpenNode={(id) => onOpenTask(id)}
+        />
+      </div>
+    );
+  };
+
   return (
     <div
-      ref={listRef}
+      ref={setListEl}
       tabIndex={0}
       role="grid"
       aria-label="Branches"
@@ -344,55 +505,16 @@ export function MilestoneBranchesView({
       onKeyDown={handleKeyDown}
       className="flex h-full min-h-0 flex-col overflow-y-auto px-2 pb-2 outline-none"
     >
-      {branches.map((branch) => {
-        const { group } = branch;
-        const isCollapsed = collapsed.has(group.key);
-        const docById = new Map(branch.children.map((t) => [t.meta.id, t]));
-        return (
-          <div
-            key={group.key}
-            data-slot="milestone-branch"
-            data-group-key={group.key}
-            data-finished={branch.finished || undefined}
-          >
-            <GroupHeader
-              tint={group.tint ?? undefined}
-              icon={
-                group.icon?.kind === 'milestone' ? (
-                  <StatusIcon status={group.icon.status} />
-                ) : undefined
-              }
-              name={group.label}
-              collapsed={isCollapsed}
-              onToggle={() => toggle(group.key)}
-              onAdd={() => shell.openCreateTask(group.preset)}
-              addLabel={`New task in ${group.label}`}
-              actions={
-                <span
-                  data-slot="branch-path-summary"
-                  className="font-book mr-1 text-[12px] text-(--text-muted) tabular-nums"
-                >
-                  {pathSummaryLabel(branch.summary)}
-                </span>
-              }
-            />
-            {!isCollapsed && (
-              <BranchGraph
-                tasks={branch.dagTasks}
-                model={model}
-                ariaLabel={`${group.label} branches`}
-                focusedId={focusedTaskId}
-                accessoryFor={(id) => {
-                  const doc = docById.get(id);
-                  return doc === undefined ? undefined : accessoryFor(id, doc);
-                }}
-                onOpenNode={(id) => onOpenTask(id)}
-                className="py-1"
-              />
-            )}
-          </div>
-        );
-      })}
+      <VirtualRows
+        rows={rows}
+        rowKey={branchRowKey}
+        estimateSize={branchRowHeight}
+        overscan={1}
+        scrollElement={scroller}
+        pinnedKeys={focusedBand === undefined ? undefined : [focusedBand]}
+        handleRef={virtualRef}
+        renderRow={renderRow}
+      />
     </div>
   );
 }

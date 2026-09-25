@@ -31,6 +31,7 @@ beforeEach(() => window.sessionStorage.clear());
 interface DispatchCall {
   taskId: string;
   batch: boolean | undefined;
+  optimistic?: boolean;
 }
 
 function task(
@@ -83,9 +84,13 @@ function dataWith(
       taskId: string,
       _executor?: string,
       _model?: string,
-      opts?: { batch?: boolean }
+      opts?: { batch?: boolean; optimistic?: boolean }
     ) => {
-      calls.push({ taskId, batch: opts?.batch });
+      calls.push({
+        taskId,
+        batch: opts?.batch,
+        ...(opts?.optimistic !== undefined && { optimistic: opts.optimistic }),
+      });
       return Promise.resolve();
     },
   } as unknown as DispatchProjectData;
@@ -201,6 +206,61 @@ test('a bulk dispatch of one task still follows it', async () => {
 
   await waitFor(() => expect(calls.length).toBe(1));
   expect(calls[0]?.batch).toBe(false);
+});
+
+// `d` goes through the optimistic path, like the Cockpit's: the row shows as started at
+// once and the list stays where it is.
+test('d dispatches the focused ready row in place', async () => {
+  const calls: DispatchCall[] = [];
+  const data = dataWith(
+    [task('t-1', 'First task'), task('t-2', 'Second task')],
+    calls
+  );
+  renderList({ ...data, readyIds: new Set(['t-2']) });
+  const grid = screen.getByRole('grid', { name: 'Tasks' });
+
+  fireEvent.keyDown(grid, { key: 'd' });
+  fireEvent.keyDown(grid, { key: 'j' });
+  fireEvent.keyDown(grid, { key: 'd' });
+
+  await waitFor(() => expect(calls.length).toBe(1));
+  expect(calls).toEqual([
+    { taskId: 't-2', batch: undefined, optimistic: true },
+  ]);
+});
+
+// Dispatching regroups the row under its new status; the cursor stays where it was, on the
+// row that took its place, so `d` `d` walks down the Ready group.
+test('after d moves the row to another group, the cursor stays in place', () => {
+  const calls: DispatchCall[] = [];
+  const tasks = [
+    task('t-1', 'First task', { status: 'todo' }),
+    task('t-2', 'Second task', { status: 'todo' }),
+    task('t-3', 'Third task', { status: 'todo' }),
+  ];
+  const view = (list: typeof tasks) => (
+    <TasksListView
+      data={{ ...dataWith(list, calls), readyIds: new Set(['t-1', 't-2']) }}
+      onSelectTask={() => {}}
+    />
+  );
+  const Shell = shellWith(shellLog());
+  const { rerender } = render(<Shell>{view(tasks)}</Shell>);
+  const grid = screen.getByRole('grid', { name: 'Tasks' });
+  expect(rowOf('First task').getAttribute('data-focused')).toBe('true');
+
+  fireEvent.keyDown(grid, { key: 'd' });
+  // The optimistic status lands: t-1 now sorts into In progress, below the Todo rows.
+  rerender(
+    <Shell>
+      {view([
+        task('t-1', 'First task', { status: 'in-progress' }),
+        tasks[1],
+        tasks[2],
+      ])}
+    </Shell>
+  );
+  expect(rowOf('Second task').getAttribute('data-focused')).toBe('true');
 });
 
 // §4: rows are 36px ListRows straight on the panel — no table, no header row, no divider,

@@ -4323,16 +4323,12 @@ async function getReadyTasks(
   return jsonTextResponse(`[${items.join(',')}]`);
 }
 
-// The readiness cache as `{ [taskId]: reading }`, with the hashes dropped:
-// they are the store's concern, not the client's.
+// The readiness cache as `{ [taskId]: reading }`, holding only readings still
+// judged against their task's current text, and none without a judgment
+// client: the ready route's readings, minus its judging.
 function cachedReadiness(ctx: ApiContext): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [id, entry] of Object.entries(
-    new ReadinessStore(ctx.rootDir).load()
-  )) {
-    out[id] = entry.reading;
-  }
-  return out;
+  if (ctx.judgments === null) return {};
+  return new ReadinessStore(ctx.rootDir).loadFresh((id) => ctx.cache.get(id));
 }
 
 // GET /api/inbox/clusters — the persisted result of the last clustering pass,

@@ -2,6 +2,7 @@ import type {
   EpicProgress,
   EpicProgressChild,
   EpicSession,
+  ReadinessReading,
 } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
 import { PRIORITY_ORDER } from '@dispatch/core/browser';
@@ -52,6 +53,7 @@ function task(
 }
 
 const STATUSES = ['todo', 'in-progress', 'done'];
+const NO_KEYS: ReadonlySet<string> = new Set();
 
 // A progress row with the session/spend/wave halves defaulted, so a test states only the
 // children it cares about.
@@ -1002,4 +1004,67 @@ test('a dragged card stays mounted when the board scrolls it out of view', async
   expect(mounted.some((id) => id.includes('t-001'))).toBe(false);
   // …but the card in hand never unmounted.
   expect(mounted.some((id) => id.includes('t-000'))).toBe(true);
+});
+
+// A reading whose `splitProbability` counts reads: a card reads it once per render, and
+// nothing above the card reads it at all, so the count is the card's render count.
+function countedReading(renders: Map<string, number>, id: string) {
+  return {
+    level: 3,
+    label: 'clear',
+    confidence: 1,
+    get splitProbability() {
+      renders.set(id, (renders.get(id) ?? 0) + 1);
+      return 0;
+    },
+  } as ReadinessReading;
+}
+
+// Every board render used to hand each card new drag listeners, so a cursor move (or a
+// dispatch) redrew every mounted card rather than the ones it touched.
+test('moving the cursor redraws only the two cards it moves between', () => {
+  const cards = TASKS.filter((t) => t.meta.kind === 'task');
+  const renders = new Map<string, number>();
+  const readinessById = new Map(
+    cards.map((t) => [t.meta.id, countedReading(renders, t.meta.id)])
+  );
+  const readyIds = new Set<string>();
+  const blockedIds = new Set<string>();
+  const runs = new Map();
+  const progress = new Map();
+  const shell = shellWith([]);
+  const onToggleLane = () => {};
+  const onSelect = () => {};
+  const onEpic = async () => {};
+  const board = (focusedTaskId: string) => (
+    <TooltipProvider>
+      <TaskBoard
+        tasks={TASKS}
+        statuses={STATUSES}
+        epics={EPICS}
+        readyIds={readyIds}
+        blockedIds={blockedIds}
+        liveRunStateByTaskId={runs}
+        latestRunByTaskId={runs}
+        readinessById={readinessById}
+        epicProgressById={progress}
+        epicConcurrencyDefault={3}
+        display={DEFAULT_TASKS_DISPLAY}
+        collapsedLaneKeys={NO_KEYS}
+        onToggleLane={onToggleLane}
+        onSelect={onSelect}
+        onWorkEpic={onEpic}
+        onStopEpic={onEpic}
+        focusedTaskId={focusedTaskId}
+      />
+    </TooltipProvider>
+  );
+  const { rerender } = render(board('t-1'), { wrapper: shell });
+  expect([...renders.keys()].sort()).toEqual(
+    cards.map((t) => t.meta.id).sort()
+  );
+  renders.clear();
+
+  rerender(board('t-2'));
+  expect([...renders.keys()].sort()).toEqual(['t-1', 't-2']);
 });

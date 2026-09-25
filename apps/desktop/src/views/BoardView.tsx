@@ -11,6 +11,7 @@ import { DisplayPopover } from '../components/tasks/DisplayPopover';
 import { FilterMenu } from '../components/tasks/FilterMenu';
 import { SaveViewDialog } from '../components/tasks/SaveViewDialog';
 import { TaskBoard } from '../components/tasks/TaskBoard';
+import { useCursorHandoff } from '../hooks/useCursorHandoff';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { isTypingTarget } from '../hooks/useGlobalKeyboard';
 import type { TaskTab } from '../lib/appNav';
@@ -416,7 +417,9 @@ export function BoardView({
     }
     return map;
   }, [boardTasks]);
-  const visibleStatuses = useMemo(
+  // Keyed on its contents: every card takes this array, so a dispatch that moves a count
+  // but no column must hand them the same one or they all redraw.
+  const visibleStatusKey = useMemo(
     () =>
       data.config !== null
         ? visibleBoardColumns(
@@ -424,9 +427,13 @@ export function BoardView({
             countByStatus,
             prefs.showEmptyGroups,
             hiddenColumns
-          )
-        : [],
+          ).join('\0')
+        : '',
     [data.config, countByStatus, prefs.showEmptyGroups, hiddenColumns]
+  );
+  const visibleStatuses = useMemo(
+    () => (visibleStatusKey === '' ? [] : visibleStatusKey.split('\0')),
+    [visibleStatusKey]
   );
   // The same lanes `TaskBoard` renders, from the same pure functions over the same sorted
   // input — this copy exists only to give the j/k cursor an order that matches the screen.
@@ -501,6 +508,18 @@ export function BoardView({
     [client]
   );
 
+  // A card's Dispatch, `Dispatch all ready` and `d`: in place and optimistic, like the
+  // Cockpit's — the card moves to the dispatched column at once.
+  const handleDispatch = data.handleDispatch;
+  const readyIds = data.readyIds;
+  const dispatchInPlace = useCallback(
+    (taskId: string) =>
+      handleDispatch(taskId, undefined, undefined, { optimistic: true }),
+    [handleDispatch]
+  );
+  // The dispatched card moves to another column; the cursor stays where it was.
+  const handOffCursor = useCursorHandoff(orderedTaskIds, setFocusedTaskId);
+
   function handleBoardKeyDown(e: React.KeyboardEvent) {
     // A keydown that lands on (or inside) one of the track's own interactive controls — an
     // epic lane header's buttons or pickers, a column's menu, a card's Dispatch button.
@@ -533,6 +552,13 @@ export function BoardView({
       if (onControl) return;
       e.preventDefault();
       if (focusedTaskId !== null) onSelectTask(focusedTaskId);
+      return;
+    }
+    if (command === 'list-dispatch') {
+      if (focusedTaskId === null || !readyIds.has(focusedTaskId)) return;
+      e.preventDefault();
+      handOffCursor(focusedTaskId);
+      void dispatchInPlace(focusedTaskId);
       return;
     }
     if (command !== 'list-down' && command !== 'list-up') return;
@@ -813,7 +839,7 @@ export function BoardView({
             }
             epics={data.epics}
             onSelect={onSelectTask}
-            onDispatch={data.handleDispatch}
+            onDispatch={dispatchInPlace}
             onWorkEpic={data.handleWorkEpic}
             onPauseEpic={data.handlePauseEpic}
             onResumeEpic={data.handleResumeEpic}

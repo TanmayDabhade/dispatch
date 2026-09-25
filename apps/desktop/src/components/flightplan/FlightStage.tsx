@@ -18,7 +18,9 @@ import {
   FlightCanvas,
   type FlightEdgeView,
   type FlightWaveView,
+  WAVE_HEADER_HEIGHT,
 } from './FlightCanvas';
+import { type CullWindow, cullWindow, sameWindow } from './flightCull';
 import {
   type FlightNavIndex,
   moveFlightCursor,
@@ -105,6 +107,33 @@ export const FlightStage = memo(function FlightStage({
   useEffect(() => {
     if (focusOnMount) canvasRef.current?.focus({ preventScroll: true });
   }, [focusOnMount]);
+
+  // The drawn window follows the scroll, re-culling only as it crosses a tile.
+  const [cull, setCull] = useState<CullWindow | null>(null);
+  useEffect(() => {
+    const scroller = canvasRef.current;
+    if (scroller === null) return;
+    const update = () => {
+      const next = cullWindow(
+        {
+          left: scroller.scrollLeft,
+          top: scroller.scrollTop,
+          width: scroller.clientWidth,
+          height: scroller.clientHeight,
+        },
+        WAVE_HEADER_HEIGHT
+      );
+      setCull((prev) => (sameWindow(prev, next) ? prev : next));
+    };
+    update();
+    scroller.addEventListener('scroll', update, { passive: true });
+    const observer = new ResizeObserver(update);
+    observer.observe(scroller);
+    return () => {
+      scroller.removeEventListener('scroll', update);
+      observer.disconnect();
+    };
+  }, []);
 
   // The host's open verb changes identity with its data; read it through a ref so
   // `activate` stays stable and a data change never re-renders every card.
@@ -216,6 +245,7 @@ export const FlightStage = memo(function FlightStage({
             bands={bands}
             focusedId={focusedId}
             onActivate={activate}
+            cull={cull}
           />
         </div>
         {laneGroups !== null && (
