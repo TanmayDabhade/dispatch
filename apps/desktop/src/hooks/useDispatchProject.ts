@@ -103,7 +103,7 @@ import {
 import type { PendingApproval } from '../lib/pendingApprovals';
 import { mergePendingApprovals } from '../lib/pendingApprovals';
 import { isTerminalRunState, runSurveyNotice } from '../lib/runState';
-import { runSteps } from '../lib/runStep';
+import { runStepFromRecord, runSteps } from '../lib/runStep';
 import { setActiveStatusModel } from '../lib/statusModel';
 import type { TaskAttention } from '../lib/taskAttention';
 import { deriveTaskAttentionById } from '../lib/taskAttention';
@@ -2081,6 +2081,16 @@ export function useDispatchProject(
     () => computeBlockedIds(tasks ?? [], statusModel),
     [tasks, statusModel]
   );
+
+  // A run already live when the window opened shows the step its record carries (a daemon
+  // that sends `lastStep`) until its next `run.log`, instead of the agent's name.
+  useEffect(() => {
+    for (const run of runs ?? []) {
+      if (isTerminalRunState(run.state)) continue;
+      const step = runStepFromRecord(run);
+      if (step !== null) runSteps.seed(run.id, step);
+    }
+  }, [runs]);
 
   const liveRunStateByTaskId = useMemo(() => {
     const map = new Map<string, RunState>();

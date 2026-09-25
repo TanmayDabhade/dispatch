@@ -1,7 +1,8 @@
-import type { NormalizedEntry } from '@dispatch/client';
+import type { NormalizedEntry, RunMeta } from '@dispatch/client';
 
 // A live run's latest step, in words ("Editing src/foo.ts", "Running tests"), read from the
-// `run.log` entries the event socket already delivers for every run. Only the label is
+// `run.log` entries the event socket already delivers for every run, and seeded from the
+// run record's `lastStep` for a run already live when the window opened. Only the label is
 // kept, never the entry, so a run writing big files costs a short string per run.
 
 const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'NotebookEdit', 'Update']);
@@ -136,6 +137,29 @@ export function runStepFromEntry(
   }
 }
 
+function isEntry(value: unknown): value is NormalizedEntry {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'kind' in value &&
+    typeof value.kind === 'string'
+  );
+}
+
+/** The step a run record says its run last took, from the daemon's `lastStep`: a label, or
+ * the log entry that announced it. Null when a daemon sends none (older ones) or it says
+ * nothing. */
+export function runStepFromRecord(
+  run: RunMeta & { lastStep?: unknown }
+): string | null {
+  const last = run.lastStep;
+  if (typeof last === 'string') {
+    const label = text(last);
+    return label === null ? null : clip(label);
+  }
+  return isEntry(last) ? runStepFromEntry(last, run.id) : null;
+}
+
 // Coarse running sentences the live step replaces or extends; the rest (Starting, Waiting
 // on approval, Stopping) say more than any step would.
 const REPLACED = new Set(['Working']);
@@ -187,13 +211,15 @@ export class RunStepStore {
     const step = runStepFromEntry(entry, runId);
     if (step === null) return;
     this.pending.set(runId, step);
-    if (this.scheduled) return;
-    this.scheduled = true;
-    const wait = Math.max(
-      0,
-      this.lastPublish + this.intervalMs - this.scheduler.now()
-    );
-    this.scheduler.schedule(() => this.publish(), wait);
+    this.schedulePublish();
+  }
+
+  /** A step read off the run's record, for a run this window has heard no step of yet:
+   * a logged step is newer, so it always wins. */
+  seed(runId: string, step: string): void {
+    if (this.steps.has(runId) || this.pending.has(runId)) return;
+    this.pending.set(runId, step);
+    this.schedulePublish();
   }
 
   get(runId: string): string | null {
@@ -204,6 +230,16 @@ export class RunStepStore {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   };
+
+  private schedulePublish(): void {
+    if (this.scheduled) return;
+    this.scheduled = true;
+    const wait = Math.max(
+      0,
+      this.lastPublish + this.intervalMs - this.scheduler.now()
+    );
+    this.scheduler.schedule(() => this.publish(), wait);
+  }
 
   private publish(): void {
     this.scheduled = false;
@@ -225,5 +261,5 @@ export class RunStepStore {
   }
 }
 
-/** The app's one store, fed by useDispatchProject's `run.log` handler. */
+/** The app's one store, fed by useDispatchProject's `run.log` handler and run list. */
 export const runSteps = new RunStepStore();
