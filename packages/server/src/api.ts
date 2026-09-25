@@ -5413,6 +5413,7 @@ export async function handleApi(
 
     if (segments[0] === 'runs') {
       if (segments.length === 1 && method === 'GET') {
+        ctx.orchestrator.backfillLastSteps();
         return jsonResponse(
           ctx.orchestrator.decorateRunsWithPendingApproval(
             ctx.orchestrator.decorateRunsWithPushed(ctx.orchestrator.list())
@@ -5427,6 +5428,7 @@ export async function handleApi(
         return listRunClaims(ctx);
       }
       if (segments.length === 2 && method === 'GET') {
+        ctx.orchestrator.backfillLastSteps();
         const result = ctx.orchestrator.getRun(segments[1]);
         if (result === null) {
           return errorResponse(404, `run not found: ${segments[1]}`);

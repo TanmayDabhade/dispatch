@@ -80,6 +80,9 @@ export interface RunMeta {
     failed: number;
     stopped: number;
   };
+  // What a live run's agent is doing, in words, and when it said so; absent
+  // before its first step and once terminal — mirrors RunMeta.lastStep.
+  lastStep?: { text: string; at: string };
 }
 
 export interface NormalizedEntry {

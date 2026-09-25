@@ -1,4 +1,4 @@
-import type { SubagentEvent, SubagentSummary } from '@dispatch/core';
+import type { RunStep, SubagentEvent, SubagentSummary } from '@dispatch/core';
 
 // The Vibe Kanban pattern: every executor, real or fake, streams a uniform
 // log shape so the transcript/UI never needs to know which executor produced
@@ -349,6 +349,11 @@ export interface RunMeta {
   // so lists can show fan-out without reading the transcript. Absent until
   // the first sub-agent is spawned.
   subagents?: SubagentSummary;
+  // What a live run's agent is doing, in words (core's runStepFromEntry), and
+  // when it said so: kept current from its log entries as they are written,
+  // so a list read never opens a transcript. In memory only; absent before
+  // the first step and once the run is terminal.
+  lastStep?: RunStep;
 }
 
 // A run's kind, defaulted for the transcripts and registry entries written

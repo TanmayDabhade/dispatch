@@ -8,6 +8,7 @@ import {
   isDoneStatus,
   loadConfig,
   nextSubagentStatus,
+  runStepFromEntry,
   slugify,
   summarizeSubagents,
   TaskParseError,
@@ -81,7 +82,7 @@ import { RunRegistry } from './registry.js';
 import { RepoDigestCache } from './repoDigest.js';
 import type { RunScopeRequest } from './scopeRequests.js';
 import type { RunDetail } from './transcript.js';
-import { replayTranscript, Transcript } from './transcript.js';
+import { recentEntries, replayTranscript, Transcript } from './transcript.js';
 import type {
   ApprovalDecision,
   BranchEntry,
@@ -414,6 +415,9 @@ export class Orchestrator {
   // When each run's claims were last refreshed from git status — see
   // scheduleClaimsRefresh's cooldown check.
   private readonly lastClaimsCheck = new Map<string, number>();
+  // Live runs whose RunMeta.lastStep this process has followed from their
+  // log (or read back once, see backfillLastSteps).
+  private readonly stepsFollowed = new Set<string>();
   // Each live run's sub-agents by spawning tool_use id and their latest
   // status — the working set recordSubagentEvent folds RunMeta.subagents from.
   private readonly subagentStatuses = new Map<
@@ -562,6 +566,31 @@ export class Orchestrator {
 
   list(): RunMeta[] {
     return this.registry.list();
+  }
+
+  /**
+   * Gives every live run the registry holds without a followed step its
+   * lastStep, read once from the tail of its transcript: a run whose log was
+   * written before this process started following it. Runs this process
+   * follows (see makeEvents) cost a set lookup, so request paths call this
+   * before they list.
+   */
+  backfillLastSteps(): void {
+    for (const meta of this.registry.list()) {
+      if (TERMINAL_RUN_STATES.has(meta.state)) continue;
+      if (this.stepsFollowed.has(meta.id)) continue;
+      this.stepsFollowed.add(meta.id);
+      const entries = recentEntries(transcriptPath(this.ctx.rootDir, meta.id));
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const entry = entries[i];
+        const text = runStepFromEntry(entry, meta.id);
+        if (text === null) continue;
+        this.registry.updateMeta(meta.id, {
+          lastStep: { text, at: entry.ts },
+        });
+        break;
+      }
+    }
   }
 
   // Every live run's current claims, for GET /api/runs/claims and the epic
@@ -4410,9 +4439,13 @@ export class Orchestrator {
     // `reviewFailure` is likewise only written when the finish carries it:
     // `null` clears a prior failure, absent leaves it alone.
     const { reviewFailure, sessionId, ...fields } = finish ?? {};
+    // A step is what a live run is doing; a finished one is doing nothing.
+    const ended = TERMINAL_RUN_STATES.has(state);
+    if (ended) this.stepsFollowed.delete(runId);
     this.registry.updateMeta(runId, {
       state,
       updatedAt: now,
+      ...(ended ? { lastStep: undefined } : {}),
       ...fields,
       ...(sessionId !== undefined ? { sessionId } : {}),
       ...(reviewFailure !== undefined
@@ -4508,8 +4541,18 @@ export class Orchestrator {
     return {
       onEntry: (entry) => {
         this.transcriptFor(runId).appendEntry(entry);
+        // The step rides on the meta so a list read has it without the log;
+        // a stray entry after the finish names no step.
+        const state = this.registry.get(runId)?.state;
+        const live = state !== undefined && !TERMINAL_RUN_STATES.has(state);
+        const text = live ? runStepFromEntry(entry, runId) : null;
+        if (live) this.stepsFollowed.add(runId);
+        const now = new Date().toISOString();
         this.registry.updateMeta(runId, {
-          updatedAt: new Date().toISOString(),
+          updatedAt: now,
+          ...(text === null
+            ? {}
+            : { lastStep: { text, at: entry.ts === '' ? now : entry.ts } }),
         });
         const fanOutChanged = this.recordSubagentEvent(runId, entry);
         this.ctx.events.broadcast({ type: 'run.log', runId, entry });
