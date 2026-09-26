@@ -67,6 +67,9 @@ export interface FanoutControlsProps {
   /** An active session's phase chips; the Flight Plan turns them off since its header
    * counts the same children. */
   phases?: boolean;
+  /** An active session's wave strip; the Live view turns it off since its band draws the
+   * same waves. */
+  waves?: boolean;
 }
 
 /** No session, or one that has run its course — the caller's own live-run pill speaks
@@ -110,6 +113,7 @@ export function FanoutControls({
   onOpenEpic,
   showOpen = true,
   phases = true,
+  waves = true,
 }: FanoutControlsProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -184,7 +188,7 @@ export function FanoutControls({
             Waiting on {rulings} ruling{rulings === 1 ? '' : 's'}
           </LabelPill>
         )}
-        {progress.waves.length > 1 && (
+        {waves && progress.waves.length > 1 && (
           <StepStrip steps={waveSteps(progress.waves)} className="w-16" />
         )}
         {onPause !== undefined && (

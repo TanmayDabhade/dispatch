@@ -4,7 +4,7 @@ import {
   isUnstartedStatus,
   statusModelOf,
 } from '@dispatch/core/browser';
-import { Users } from 'lucide-react';
+import { Users, Workflow } from 'lucide-react';
 import {
   type KeyboardEvent,
   memo,
@@ -56,7 +56,7 @@ import { flattenGroups } from '../lib/virtualRows';
 import { cn } from '@/lib/utils';
 import { IconButton } from '@/ui/ai/icon-button';
 import { PageHeader, ViewTabs } from '@/ui/ai/page-header';
-import { SelectPill } from '@/ui/ai/pill';
+import { PillButton, SelectPill } from '@/ui/ai/pill';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -141,6 +141,8 @@ interface CockpitViewProps {
   onOpenTask: (taskId: string, tab?: TaskTab, runId?: string) => void;
   /** The peek dialog (Space). */
   onPeekTask: (taskId: string) => void;
+  /** The Live view, from In flight's header: every container's work in motion at once. */
+  onOpenLive?: () => void;
 }
 
 interface CockpitHeaderProps {
@@ -257,6 +259,7 @@ export function CockpitView({
   onDispatchFailed,
   onOpenTask,
   onPeekTask,
+  onOpenLive,
 }: CockpitViewProps) {
   const directory = usePeople();
   const me = data.me ?? directory.me;
@@ -672,6 +675,18 @@ export function CockpitView({
                 loading={!data.tasksReady}
                 onActivate={activate}
                 onDispatch={lane === 'ready' ? dispatchFromRow : undefined}
+                actions={
+                  lane === 'flight' && onOpenLive !== undefined ? (
+                    <PillButton
+                      data-slot="cockpit-open-live"
+                      onClick={onOpenLive}
+                      title="Every container's work in flight (G F)"
+                    >
+                      <Workflow className="size-3" />
+                      Live
+                    </PillButton>
+                  ) : undefined
+                }
                 className={cn(
                   'min-w-0 flex-1',
                   !split && index > 0 && 'shadow-hairline-left'

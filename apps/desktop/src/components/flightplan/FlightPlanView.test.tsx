@@ -282,6 +282,43 @@ describe('FlightPlan', () => {
     expect(sent).toEqual(['t-e']);
   });
 
+  test('in a fan-out a teammate started, d sends my own task and never theirs', () => {
+    const tasks = [
+      task('e-1', { kind: 'milestone', parent: null, status: 'working' }),
+      task('t-1', { assignee: 'human:maya' }),
+      task('t-2', { assignee: 'human:wyat' }),
+    ];
+    const base = progress('active');
+    const mayas: EpicProgress = {
+      ...base,
+      session:
+        base.session === null
+          ? null
+          : { ...base.session, startedBy: 'human:maya' },
+    };
+    const sent: string[] = [];
+    mount(
+      {
+        ...dataWith(tasks, [], [mayas]),
+        localHuman: 'human:wyat',
+      } as DispatchProjectData,
+      (id) => {
+        sent.push(id);
+        return new Promise(() => {});
+      }
+    );
+    const press = (key: string) => fireEvent.keyDown(canvas(), { key });
+    const cursorAt = () => canvas().getAttribute('aria-activedescendant');
+    press('ArrowDown');
+    expect(cursorAt()).toBe('flight-node-t-1');
+    press('d');
+    expect(sent).toEqual([]);
+    press('ArrowDown');
+    expect(cursorAt()).toBe('flight-node-t-2');
+    press('d');
+    expect(sent).toEqual(['t-2']);
+  });
+
   test('a project bands its milestones', () => {
     const tasks = [
       task('e-p', { kind: 'project', parent: null }),

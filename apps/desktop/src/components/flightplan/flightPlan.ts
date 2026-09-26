@@ -108,6 +108,18 @@ export interface FlightPlanOptions {
 
 const NONE: ReadonlySet<string> = new Set();
 
+/** The teammate a task belongs to as this window sees it, else null: core's
+ * `fanoutHolder` against `me` rather than a fan-out's starter. Hand dispatch reads this. */
+export function viewerHolderOf(
+  me: string | null,
+  local: string | null
+): (task: TaskListItem) => string | null {
+  // Bare `human` stays itself while nobody is known, so it is never a teammate.
+  const localHuman = local ?? me ?? 'human';
+  const viewer = me ?? localHuman;
+  return (task) => fanoutHolder(task.meta.assignee, viewer, localHuman);
+}
+
 /** What a live fan-out session covers (the server's rule): its container's `fanoutScope`,
  * or only the direct children of a session from before plan-wide fan-outs. */
 export function sessionScope(

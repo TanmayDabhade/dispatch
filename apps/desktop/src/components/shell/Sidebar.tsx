@@ -22,6 +22,7 @@ import {
   SquarePen,
   TerminalSquare,
   Waypoints,
+  Workflow,
 } from 'lucide-react';
 import {
   type ReactNode,
@@ -63,6 +64,8 @@ const WORK_VIEWS: ViewRow<ProjectView>[] = [
   { id: 'board', label: 'Tasks', icon: ListChecks },
   // The hierarchy above the tasks: initiatives, projects, milestones.
   { id: 'projects', label: 'Projects', icon: Box },
+  // Every container's work in flight at once, as live Flight Plan bands.
+  { id: 'live', label: 'Live', icon: Workflow },
   { id: 'plans', label: 'Plans', icon: NotebookPen },
   { id: 'brain-dump', label: 'Notes', icon: Brain },
 ];
