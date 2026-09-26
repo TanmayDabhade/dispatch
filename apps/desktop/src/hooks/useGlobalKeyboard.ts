@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 import type { ChordPrefix, GlobalKeyCommand } from '../lib/keyboard';
 import {
   isTypingTagName,
+  resolveChordKey,
   resolveChordPrefix,
   resolveGlobalKeyCommand,
 } from '../lib/keyboard';
@@ -130,8 +131,29 @@ export function useGlobalKeyboard({
       onCommandRef.current(command);
     }
 
+    // An armed chord takes its second key in the capture phase, before any view's own
+    // handler can claim it (a focused list's `f` would open its filter instead of `g f`).
+    function handleChordKey(event: KeyboardEvent) {
+      if (pendingPrefix.current === null || event.defaultPrevented) return;
+      const command = resolveChordKey(
+        { key: event.key, metaKey: event.metaKey, ctrlKey: event.ctrlKey },
+        {
+          isTyping: isTypingTarget(event.target),
+          modalOpen: isAnyModalOpen(),
+          pendingPrefix: pendingPrefix.current,
+        }
+      );
+      if (command === null) return;
+      clearPrefix();
+      event.preventDefault();
+      event.stopPropagation();
+      onCommandRef.current(command);
+    }
+
+    window.addEventListener('keydown', handleChordKey, true);
     window.addEventListener('keydown', handleKeyDown);
     return () => {
+      window.removeEventListener('keydown', handleChordKey, true);
       window.removeEventListener('keydown', handleKeyDown);
       clearPrefix();
     };

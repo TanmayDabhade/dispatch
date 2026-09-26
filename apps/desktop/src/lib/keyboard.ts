@@ -96,6 +96,20 @@ export function resolveChordPrefix(
   return input.key === 'g' ? 'g' : null;
 }
 
+/** The command an armed `g` chord's second key completes, or null. `useGlobalKeyboard`
+ * resolves it before any view sees the key, so a focused list's own `f` (filter), `s` or
+ * `a` (pickers) never eats `g f`, `g s` or `g a`. */
+export function resolveChordKey(
+  input: KeyInput,
+  ctx: GlobalKeyboardContext
+): GlobalKeyCommand | null {
+  if (ctx.pendingPrefix !== 'g') return null;
+  if (input.metaKey || input.ctrlKey || ctx.isTyping || ctx.modalOpen) {
+    return null;
+  }
+  return G_CHORDS[input.key] ?? null;
+}
+
 /** Maps one keydown to the app-root command it should trigger, or `null` if this keystroke
  * isn't a global shortcut right now. Never resolves a list-navigation command — those are
  * `resolveListKeyCommand`'s job, called locally by whichever list view has focus. */
@@ -148,7 +162,7 @@ export function resolveGlobalKeyCommand(
 
   // An armed `g` resolves the chord's second key, or nothing — the hook drops the prefix
   // either way, so a stray `g x` never leaks `x` into a later keystroke.
-  if (ctx.pendingPrefix === 'g') return G_CHORDS[input.key] ?? null;
+  if (ctx.pendingPrefix === 'g') return resolveChordKey(input, ctx);
 
   if (input.key === '[') return 'toggle-sidebar';
   if (input.key === 'c') return 'new-task';

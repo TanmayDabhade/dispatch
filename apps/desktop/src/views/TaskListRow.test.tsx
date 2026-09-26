@@ -4,6 +4,8 @@ import { expect, test } from 'bun:test';
 import { useState } from 'react';
 
 import { testConfig } from '../components/settings/fixtures.test-helper';
+import { useGlobalKeyboard } from '../hooks/useGlobalKeyboard';
+import type { GlobalKeyCommand } from '../lib/keyboard';
 import { DEFAULT_TASKS_DISPLAY, type TaskProperty } from '../lib/tasksPrefs';
 import {
   handleTaskListKeyDown,
@@ -279,4 +281,55 @@ test('a task whose run is in the merge queue carries the Landing badge', () => {
     't-1'
   );
   expect(badges[0]?.getAttribute('title')).toBe('Landing · merging');
+});
+
+// A focused list under the shell's window listener: the list's own `f` opens its filter,
+// `s` and `a` its pickers.
+function ChordHarness({
+  commands,
+  local,
+}: {
+  commands: GlobalKeyCommand[];
+  local: string[];
+}) {
+  useGlobalKeyboard({ onCommand: (c) => commands.push(c) });
+  return (
+    <div
+      data-testid="list"
+      tabIndex={0}
+      onKeyDown={(e) =>
+        handleTaskListKeyDown(e, {
+          orderedIds: ['t-1'],
+          focusedTaskId: 't-1',
+          setFocusedTaskId: () => {},
+          onOpen: () => {},
+          onPeek: () => {},
+          setPicker: (picker) => {
+            if (picker !== null) local.push(picker.kind);
+          },
+          onEscape: () => false,
+          onRequestFilter: () => local.push('filter'),
+        })
+      }
+    />
+  );
+}
+
+test('a g chord’s second key goes to the shell, not the focused list', () => {
+  const commands: GlobalKeyCommand[] = [];
+  const local: string[] = [];
+  render(<ChordHarness commands={commands} local={local} />);
+  const list = screen.getByTestId('list');
+  list.focus();
+  for (const key of ['f', 's', 'a']) {
+    fireEvent.keyDown(list, { key: 'g' });
+    fireEvent.keyDown(list, { key });
+  }
+  expect({ commands, local }).toEqual({
+    commands: ['goto-live', 'goto-settings', 'goto-overseer'],
+    local: [],
+  });
+  // Outside a chord the keys are the list's again.
+  fireEvent.keyDown(list, { key: 'f' });
+  expect(local).toEqual(['filter']);
 });
