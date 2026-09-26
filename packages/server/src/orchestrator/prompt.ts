@@ -5,7 +5,7 @@ import {
   untrustedFenced,
   untrustedInline,
 } from '@dispatch/core';
-import type { LedgerEntry, TaskDoc } from '@dispatch/core';
+import type { LedgerEntry, TaskComment, TaskDoc } from '@dispatch/core';
 
 import { renderOrientationSection } from './orientation.js';
 import type { RepoOrientation } from './orientation.js';
@@ -24,6 +24,34 @@ function renderLedgerSection(entries: LedgerEntry[]): string | null {
       `- **${e.kind}**: ${untrustedInline(e.title)} — ${untrustedInline(e.detail)}`
   );
   return ['## Findings and decisions from earlier work', ...lines].join('\n');
+}
+
+// The newest comments kept in a prompt, and the character budget they share.
+const PROMPT_COMMENT_LIMIT = 20;
+const PROMPT_COMMENT_CHARS = 8000;
+
+// A task's comment thread, oldest first, for the next run to read: the notes
+// earlier runs and teammates left with task_comment. Keeps the newest that fit
+// the budget and says how many older ones it left out. Null when there are none.
+export function renderCommentsSection(
+  comments: readonly TaskComment[]
+): string | null {
+  if (comments.length === 0) return null;
+  const kept: string[] = [];
+  let used = 0;
+  for (const c of [...comments].reverse()) {
+    if (kept.length === PROMPT_COMMENT_LIMIT) break;
+    const entry = `**${untrustedInline(c.author)}** · ${c.created}\n${untrustedBlock(c.body)}`;
+    if (kept.length > 0 && used + entry.length > PROMPT_COMMENT_CHARS) break;
+    kept.push(entry);
+    used += entry.length;
+  }
+  const omitted = comments.length - kept.length;
+  return [
+    '## Comments',
+    ...(omitted > 0 ? [`(${String(omitted)} earlier comments omitted.)`] : []),
+    ...kept.reverse(),
+  ].join('\n\n');
 }
 
 // Renders a task's recorded amendments after its description, with an
@@ -47,7 +75,8 @@ export function buildTaskPrompt(
   orientation: RepoOrientation | null = null,
   // False for executors with no dispatch MCP server (ExecutorProfile.dispatchMcp):
   // their prompt must not send the agent after tools it does not have.
-  dispatchTools = true
+  dispatchTools = true,
+  comments: readonly TaskComment[] = []
 ): string {
   // Lifted out of the raw body dump so it renders as its own block after
   // the description, with the override line, instead of an unmarked paragraph.
@@ -63,6 +92,9 @@ export function buildTaskPrompt(
   if (amendmentsText !== '') {
     sections.push(renderAmendmentsSection(amendmentsText));
   }
+
+  const commentsSection = renderCommentsSection(comments);
+  if (commentsSection !== null) sections.push(commentsSection);
 
   if (parentEpic !== null) {
     sections.push(

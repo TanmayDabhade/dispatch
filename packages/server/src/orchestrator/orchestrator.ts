@@ -15,7 +15,13 @@ import {
   TaskStore,
   usesIntegrationBranch,
 } from '@dispatch/core';
-import type { EffortLevel, StatusModel, SubagentStatus } from '@dispatch/core';
+import type {
+  CommentStorePort,
+  EffortLevel,
+  StatusModel,
+  SubagentStatus,
+  TaskComment,
+} from '@dispatch/core';
 import type {
   ActorContext,
   CommandEvidence,
@@ -138,6 +144,9 @@ export interface OrchestratorContext {
   // Ledger entries injected into dispatch prompts (see promptForTask below).
   // Defaults to one over `rootDir`, same pattern as `jj`.
   ledgerStore?: LedgerStorePort;
+  // The task's comment thread, also injected into dispatch prompts. Absent,
+  // prompts carry no comments.
+  comments?: CommentStorePort;
   // Where blocking rulings are read from (see blockedFindingReason). Defaults
   // to one over `rootDir`, same pattern as `ledgerStore`.
   findingStore?: FindingStorePort;
@@ -5169,8 +5178,18 @@ export class Orchestrator {
       parentEpic,
       ledgerEntries,
       this.orientationFor(task.meta.id),
-      this.executorProfile(executorName).dispatchMcp !== false
+      this.executorProfile(executorName).dispatchMcp !== false,
+      this.commentsFor(task.meta.id)
     );
+  }
+
+  // A failed read costs the prompt its comments, never the dispatch.
+  private commentsFor(taskId: string): TaskComment[] {
+    try {
+      return this.ctx.comments?.list(taskId) ?? [];
+    } catch {
+      return [];
+    }
   }
 
   // The repo facts injected into this task's prompt (see orientation.ts): the

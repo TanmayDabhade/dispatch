@@ -1251,6 +1251,7 @@ async function bootServer(
     jj,
     ledgerStore,
     findingStore,
+    comments: commentStore,
     // `null` on the file backend, where the run transcript is evidence's only
     // home. On sqlite this is what puts commands and mutations into the
     // database, which is what the receipts exporter materializes the git audit
