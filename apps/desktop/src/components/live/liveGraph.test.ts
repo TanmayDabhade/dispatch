@@ -257,4 +257,26 @@ describe('readyContainers', () => {
   test('stops at the limit', () => {
     expect(read(1).map((r) => r.container.meta.id)).toEqual(['m-b']);
   });
+
+  test('leaves out what only a person starts: critical risk, a task derived from a review', () => {
+    const held = [
+      task('m-rel', { kind: 'milestone', title: 'Release' }),
+      task('r-1', { parent: 'm-rel', risk: 'critical' }),
+      task('r-2', { parent: 'm-rel', derivedFrom: 't-0' }),
+      task('r-3', { parent: 'm-rel' }),
+      task('m-crit', { kind: 'milestone', title: 'Cutover' }),
+      task('c-1', { parent: 'm-crit', risk: 'critical' }),
+    ];
+    const offered = readyContainers({
+      taskById: byId(held),
+      children: childrenByParent(held),
+      readyIds: new Set(['r-1', 'r-2', 'r-3', 'c-1']),
+      holderOf: () => null,
+      liveIds: new Set(),
+      limit: 5,
+    });
+    expect(offered.map((r) => [r.container.meta.id, r.ready, r.total])).toEqual(
+      [['m-rel', 1, 3]]
+    );
+  });
 });

@@ -263,15 +263,21 @@ export interface ReadyContainerInput {
 
 /**
  * The milestones and parent issues with the most work a fan-out would start right now —
- * ready, and no teammate's. Projects and initiatives are left out: their milestones say
- * the same thing more precisely. Most ready first, then by title.
+ * ready, no teammate's, and nothing only a person starts (critical risk, or a task derived
+ * from a review: the Flight Plan's `queued` rule). Projects and initiatives are left out:
+ * their milestones say the same thing more precisely. Most ready first, then by title.
  */
 export function readyContainers(input: ReadyContainerInput): ReadyContainer[] {
   const counts = new Map<string, number>();
   for (const id of input.readyIds) {
     const task = input.taskById.get(id);
     if (task === undefined || isContainerKind(task.meta.kind)) continue;
-    if (task.meta.archivedAt !== undefined || input.holderOf(task) !== null) {
+    if (
+      task.meta.archivedAt !== undefined ||
+      task.meta.risk === 'critical' ||
+      task.meta.derivedFrom !== undefined ||
+      input.holderOf(task) !== null
+    ) {
       continue;
     }
     const parent = task.meta.parent;
