@@ -432,6 +432,36 @@ describe('LiveView', () => {
     expect(handlers.resumed).toEqual(['m-1']);
   });
 
+  test('Resume all retries a fan-out whose auto-dispatch failed; only ceilings stay capped', async () => {
+    const handlers = { paused: [] as string[], resumed: [] as string[] };
+    mount(
+      dataWith(
+        {
+          sessions: [
+            // The daemon's own word for this pause: "Resume to try again".
+            progress('m-1', 'paused', {
+              pausedReason: 'fill-failed',
+              pausedDetail: 'git worktree add failed',
+            }),
+            progress('m-2', 'paused', { pausedReason: 'runs' }),
+          ],
+        },
+        handlers
+      )
+    );
+    const resume = document.querySelector<HTMLElement>(
+      '[data-slot=live-resume-all]'
+    );
+    expect(resume?.getAttribute('title')).toBe(
+      '1 paused on a ceiling stay paused: raise it on the band'
+    );
+    await act(async () => {
+      resume?.click();
+      await Promise.resolve();
+    });
+    expect(handlers.resumed).toEqual(['m-1']);
+  });
+
   test('finished leading waves fold to a count, and open on a click', () => {
     mount(
       dataWith({

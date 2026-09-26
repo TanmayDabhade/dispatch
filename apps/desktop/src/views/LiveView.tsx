@@ -287,6 +287,8 @@ export function LiveView({
   const totals = useMemo(() => liveTotals(bands, sessions), [bands, sessions]);
   const today = useMemo(() => spendToday(data.runs), [data.runs]);
   const ceilings = useMemo(() => liveCeilingsOf(sessions), [sessions]);
+  // Resume all takes every pause but a ceiling's, which only a raised ceiling lifts: a
+  // failed auto-dispatch is the daemon's "resume to try again".
   const fleet = useMemo(() => {
     const active: string[] = [];
     const resumable: string[] = [];
@@ -296,11 +298,11 @@ export function LiveView({
       if (session?.state === 'active') active.push(progress.epicId);
       else if (session?.state === 'paused') {
         if (
-          session.pausedReason === undefined ||
-          session.pausedReason === 'human'
+          session.pausedReason === 'budget' ||
+          session.pausedReason === 'runs'
         ) {
-          resumable.push(progress.epicId);
-        } else capped++;
+          capped++;
+        } else resumable.push(progress.epicId);
       }
     }
     return { active, resumable, capped };
