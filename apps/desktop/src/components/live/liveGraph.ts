@@ -79,17 +79,11 @@ function nestedInLivePlan(
   return false;
 }
 
-// What an activity band draws: the container's own plan, except that a project or
-// initiative draws only its direct work — one running task under it should not pull in
-// every milestone below.
-function activityScope(
+// A container's direct work, no sub-plans.
+function directScope(
   container: TaskListItem,
   children: ReadonlyMap<string, readonly TaskListItem[]>
 ): FlightScope {
-  const kind = canonicalKind(container.meta.kind);
-  if (kind !== 'project' && kind !== 'initiative') {
-    return flightScope(container, children);
-  }
   return {
     nodes: (children.get(container.meta.id) ?? [])
       .filter((c) => !isContainerKind(c.meta.kind))
@@ -99,10 +93,24 @@ function activityScope(
   };
 }
 
+// What an activity band draws: the container's own plan, except that a project or
+// initiative draws only its direct work — one running task under it should not pull in
+// every milestone below.
+function activityScope(
+  container: TaskListItem,
+  children: ReadonlyMap<string, readonly TaskListItem[]>
+): FlightScope {
+  const kind = canonicalKind(container.meta.kind);
+  return kind === 'project' || kind === 'initiative'
+    ? directScope(container, children)
+    : flightScope(container, children);
+}
+
 /**
  * The bands to draw, unordered (see `orderLiveBands`). Every live fan-out gets one, drawing
- * its container's Flight Plan scope, unless a live plan-wide fan-out above it already
- * covers it. Then each task in motion that no band holds yet (running, starting, landing,
+ * what it covers (its container's Flight Plan scope, or only the direct work of a session
+ * from before plan-wide fan-outs), unless a live plan-wide fan-out above it already covers
+ * it. Then each task in motion that no band holds yet (running, starting, landing,
  * or waiting on a review) brings in its parent container's band. Running and landing tasks
  * with no parent go to Loose work. A task sits in one band only.
  */
@@ -132,7 +140,10 @@ export function selectLiveBands(input: LiveSelectionInput): LiveBandSpec[] {
       kind: 'fanout',
       container,
       progress,
-      scope: flightScope(container, children),
+      scope:
+        progress.session?.scope === 'direct'
+          ? directScope(container, children)
+          : flightScope(container, children),
     });
   }
 

@@ -85,6 +85,32 @@ describe('selectLiveBands', () => {
     expect(bands.map((b) => b.key).sort()).toEqual(['m-1', 'p-store']);
   });
 
+  test('with a milestone fan-out under it, an older project fan-out draws only its direct work', () => {
+    // The two cover different work on the server, so both run at once.
+    const tasks = [
+      task('p', { kind: 'project', title: 'Storefront' }),
+      task('p-own', { parent: 'p' }),
+      task('m', { kind: 'milestone', parent: 'p', title: 'Cart' }),
+      task('a', { parent: 'm', status: 'working' }),
+      task('b', { parent: 'm' }),
+    ];
+    const bands = selectLiveBands({
+      taskById: byId(tasks),
+      children: childrenByParent(tasks),
+      sessions: [
+        progress('p', 'active', { scope: 'direct' }),
+        progress('m', 'active'),
+      ],
+      flying: new Set(['a']),
+      landing: new Map(),
+      reviewPending: new Set(),
+    });
+    expect(summary(bands)).toEqual([
+      { key: 'p', kind: 'fanout', nodes: ['p-own'] },
+      { key: 'm', kind: 'fanout', nodes: ['a', 'b'] },
+    ]);
+  });
+
   test('work in motion brings in its parent container; a project draws its direct work only', () => {
     const bands = select({
       flying: ['s-1', 'q-1'],
