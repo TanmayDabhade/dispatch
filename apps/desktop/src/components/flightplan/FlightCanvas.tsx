@@ -188,7 +188,8 @@ const BandHead = memo(function BandHead({
 });
 
 // Every edge in one SVG, the critical path's highlighter first so it sits beneath. Its own
-// memoized layer, so moving the cursor never walks the edges.
+// memoized layer, so moving the cursor never walks the edges, and its own compositing layer,
+// so cards mounting over it never repaint its strokes.
 const EdgeLayer = memo(function EdgeLayer({
   edges,
   width,
@@ -203,7 +204,7 @@ const EdgeLayer = memo(function EdgeLayer({
       aria-hidden
       width={width}
       height={height}
-      className="pointer-events-none absolute inset-0 overflow-visible"
+      className="pointer-events-none absolute inset-0 overflow-visible will-change-transform"
     >
       {edges.map((edge) =>
         edge.critical ? (

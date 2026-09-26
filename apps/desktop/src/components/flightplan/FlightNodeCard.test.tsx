@@ -112,3 +112,15 @@ describe('FlightNodeCard live step', () => {
     expect(sentence(container)).toBe('Ready for review');
   });
 });
+
+describe('FlightNodeCard layer', () => {
+  test('each card is its own compositing layer', () => {
+    // A card culled in as the plan pans must not repaint the canvas under the rest.
+    const { container } = renderCard();
+    expect(
+      container
+        .querySelector('[data-slot=flight-node]')
+        ?.classList.contains('will-change-transform')
+    ).toBe(true);
+  });
+});

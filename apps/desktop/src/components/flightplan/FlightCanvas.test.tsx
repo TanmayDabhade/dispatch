@@ -68,6 +68,9 @@ function drawn(
       (el) => el.getAttribute('data-node-id')
     ),
     edges: container.querySelectorAll('[data-slot=flight-edge]').length,
+    edgeLayer: container
+      .querySelector('[data-slot=flight-edge]')
+      ?.closest('svg'),
   };
 }
 
@@ -76,6 +79,13 @@ describe('FlightCanvas culling', () => {
     const all = drawn(null);
     expect(all.nodes).toHaveLength(400);
     expect(all.edges).toBe(390);
+  });
+
+  test('the edges are one compositing layer of their own', () => {
+    // Cards culled in over the edges then never repaint the strokes (WebKit).
+    expect(
+      drawn(null).edgeLayer?.classList.contains('will-change-transform')
+    ).toBe(true);
   });
 
   test('a window draws only what reaches into it, and always the focused node', () => {
