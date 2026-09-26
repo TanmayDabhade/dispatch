@@ -17,6 +17,7 @@ export function TaskPane({ taskId, onClose, onExpand }: TaskPaneProps) {
     <section
       aria-label="Task"
       data-slot="task-pane"
+      data-task-id={taskId}
       className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
     >
       <TaskPage

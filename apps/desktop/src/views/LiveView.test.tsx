@@ -301,6 +301,86 @@ describe('LiveView', () => {
     expect(document.querySelector('[data-slot=task-pane]')).toBeNull();
   });
 
+  describe('the side pane', () => {
+    const paneTask = () =>
+      document
+        .querySelector('[data-slot=task-pane]')
+        ?.getAttribute('data-task-id') ?? null;
+    const rest = () =>
+      act(async () => {
+        await new Promise((done) => setTimeout(done, 300));
+      });
+    const click = (id: string) => act(() => node(id)?.click());
+
+    test('follows the cursor once it rests', async () => {
+      mount(dataWith());
+      act(() => group().focus());
+      press('Enter');
+      expect(paneTask()).toBe('t-a');
+      press('j');
+      await rest();
+      expect(paneTask()).toBe('t-b');
+    });
+
+    test('stays on its task when that task’s Loose run finishes', async () => {
+      const view = mount(dataWith());
+      click('l-1');
+      expect(paneTask()).toBe('l-1');
+      // A finished run waiting on a review is not Loose work, so l-1 leaves the view.
+      view.rerenderWith(
+        dataWith({
+          tasks: TASKS.map((t) =>
+            t.meta.id === 'l-1'
+              ? { ...t, meta: { ...t.meta, status: 'review' } }
+              : t
+          ),
+          runs: [run('t-b'), run('l-1', { state: 'finished' })],
+          attention: [
+            ['v-a', 'review'],
+            ['l-1', 'review'],
+          ],
+        })
+      );
+      expect(node('l-1')).toBeNull();
+      await rest();
+      expect(paneTask()).toBe('l-1');
+    });
+
+    test('stays on its task when its wave lands and folds', async () => {
+      const tasks = [
+        task('m-1', { kind: 'milestone', title: 'Checkout' }),
+        task('t-a', { parent: 'm-1', status: 'working' }),
+        task('t-b', { parent: 'm-1', blockedBy: ['t-a'] }),
+      ];
+      const sessions = [progress('m-1', 'active')];
+      const view = mount(
+        dataWith({ tasks, runs: [run('t-a')], sessions, attention: [] })
+      );
+      click('t-a');
+      expect(paneTask()).toBe('t-a');
+      view.rerenderWith(
+        dataWith({
+          tasks: tasks.map((t) =>
+            t.meta.id === 't-a'
+              ? { ...t, meta: { ...t.meta, status: 'landed' } }
+              : t
+          ),
+          runs: [
+            run('t-a', {
+              state: 'finished',
+              reviewedAt: '2026-09-20T01:00:00.000Z',
+            }),
+          ],
+          sessions,
+          attention: [],
+        })
+      );
+      expect(node('t-a')).toBeNull();
+      await rest();
+      expect(paneTask()).toBe('t-a');
+    });
+  });
+
   test('a band links to its full Flight Plan', () => {
     const view = mount(dataWith());
     const open = document.querySelector<HTMLElement>(

@@ -396,14 +396,21 @@ export function LiveView({
   const focusedBand = focused?.band ?? null;
   const focusedId = focused?.id ?? null;
 
-  // The pane follows the cursor while it is open, once the cursor rests.
+  // Where a key last moved the cursor: the open pane follows it once it rests. A node
+  // leaving the view (its run finished, its wave folded) settles the cursor elsewhere but
+  // never swaps the task being read.
+  const [movedTo, setMovedTo] = useState<string | null>(null);
+  const showInPane = useCallback((taskId: string | null) => {
+    setMovedTo(null);
+    setPaneTaskId(taskId);
+  }, []);
   useEffect(() => {
-    if (paneTaskId === null || focusedId === null || focusedId === paneTaskId) {
+    if (paneTaskId === null || movedTo === null || movedTo === paneTaskId) {
       return;
     }
-    const timer = setTimeout(() => setPaneTaskId(focusedId), PANE_FOLLOW_MS);
+    const timer = setTimeout(() => setPaneTaskId(movedTo), PANE_FOLLOW_MS);
     return () => clearTimeout(timer);
-  }, [focusedId, paneTaskId]);
+  }, [movedTo, paneTaskId]);
 
   const daemonReady =
     !data.portLoading && !data.portError && data.client !== null;
@@ -420,13 +427,16 @@ export function LiveView({
   useEffect(() => {
     locatedRef.current = located;
   }, [located]);
-  const activate = useCallback((taskId: string) => {
-    const where = locatedRef.current.get(taskId);
-    if (where === undefined) return;
-    setCursor({ band: where.band, id: taskId });
-    setPaneTaskId(taskId);
-    gridRef.current?.focus({ preventScroll: true });
-  }, []);
+  const activate = useCallback(
+    (taskId: string) => {
+      const where = locatedRef.current.get(taskId);
+      if (where === undefined) return;
+      setCursor({ band: where.band, id: taskId });
+      showInPane(taskId);
+      gridRef.current?.focus({ preventScroll: true });
+    },
+    [showInPane]
+  );
   const openPlan = useCallback(
     (containerId: string) => onOpenTask(containerId, 'plan'),
     [onOpenTask]
@@ -585,6 +595,7 @@ export function LiveView({
         const next = moveLiveCursor(navBands, focused, command);
         if (next === null) return;
         setCursor(next);
+        setMovedTo(next.id);
         if (command === 'next-band' || command === 'prev-band') {
           revealBand(next.band);
         }
@@ -593,7 +604,7 @@ export function LiveView({
       case 'open':
         if (focused === null) return;
         e.preventDefault();
-        setPaneTaskId(focused.id);
+        showInPane(focused.id);
         return;
       case 'open-full':
         if (focused === null) return;
@@ -618,7 +629,7 @@ export function LiveView({
         // The shell's Escape would also navigate back.
         e.preventDefault();
         e.stopPropagation();
-        setPaneTaskId(null);
+        showInPane(null);
         return;
     }
   }
@@ -719,7 +730,7 @@ export function LiveView({
               <TaskPane
                 taskId={deferredPaneTaskId}
                 onClose={() => {
-                  setPaneTaskId(null);
+                  showInPane(null);
                   gridRef.current?.focus({ preventScroll: true });
                 }}
                 onExpand={() => onOpenTask(deferredPaneTaskId)}
