@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
 import { runGitSync } from './orchestrator/helpers.js';
-import { useTestAuth } from './testAuth.js';
+import { rawFetch, useTestAuth } from './testAuth.js';
 
 function initDispatchGitRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), 'dispatch-labels-api-'));
@@ -56,6 +56,32 @@ function putColor(name: string, color: unknown): Promise<Response> {
     body: JSON.stringify({ name, color }),
   });
 }
+
+describe('who may color a label', () => {
+  function putAs(token: string): Promise<Response> {
+    return rawFetch(`${baseUrl}/api/labels`, {
+      method: 'PUT',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ name: 'Type/Bug', color: '#eb5757' }),
+    });
+  }
+
+  // The registry lives in config.yml, which an agent may never rewrite.
+  it('an agent holding the on-disk token cannot', async () => {
+    const res = await putAs(handle.tokens.agentToken);
+    expect(res.status).toBe(403);
+    expect(loadConfig(root).labels).toBeUndefined();
+  });
+
+  it('a decide-tier teammate can', async () => {
+    const lead = handle.team.teammates.issue('ada', 'decide');
+    expect((await putAs(lead)).status).toBe(200);
+    expect(loadConfig(root).labels?.map((l) => l.name)).toEqual(['Type/Bug']);
+  });
+});
 
 describe('/api/labels', () => {
   it('starts empty, then lists what a PUT colors', async () => {

@@ -428,4 +428,23 @@ describe('POST /api/linear/webhook', () => {
     });
     expect(res.status).toBe(413);
   });
+
+  // A body that never ends: the daemon must stop reading near the cap rather
+  // than buffer until the server's own request limit.
+  it('cuts off an oversized delivery that declares no length', async () => {
+    const chunk = new TextEncoder().encode('x'.repeat(64 * 1024));
+    let sent = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        sent += chunk.byteLength;
+        controller.enqueue(chunk);
+      },
+    });
+    const res = await rawFetch(`${base}/api/linear/webhook`, {
+      method: 'POST',
+      body,
+    });
+    expect(res.status).toBe(413);
+    expect(sent).toBeLessThan(16 * 1024 * 1024);
+  });
 });

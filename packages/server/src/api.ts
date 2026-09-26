@@ -4656,6 +4656,9 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // data elsewhere, or decide whether and where the daemon pushes with the
   // owner's git credentials need the operator tier on top (operatorOnlyKeys).
   { method: 'PATCH', segments: ['config'], tier: 'decide' },
+  // The label registry lives in config.yml, so coloring a label is a settings
+  // write like any other.
+  { method: 'PUT', segments: ['labels'], tier: 'decide' },
   // Installing a license key changes who may sign in to this machine's
   // daemon at all — the owner's call, like the rest of the operator tier.
   { method: 'PUT', segments: ['license'], tier: 'operator' },
