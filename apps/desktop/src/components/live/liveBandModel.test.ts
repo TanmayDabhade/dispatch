@@ -156,6 +156,22 @@ describe('buildLiveBand', () => {
     });
   });
 
+  test('in a teammate’s fan-out, waiting on teammates reads against this window', () => {
+    // Maya started it: her h is hers to start, mine is not, Sam's is nobody's.
+    const waiting = (assignee: string) => {
+      const tasks = milestone({ 't-h': { assignee } });
+      const session = progress('m', 'active', { startedBy: 'human:maya' });
+      return buildLiveBand(
+        specOf(tasks, session),
+        shared(tasks, { sessions: [session] }),
+        { expanded: false }
+      ).stats.waitingOnTeammate;
+    };
+    expect(
+      ['human:maya', 'human:wyat', 'human:sam'].map((a) => waiting(a))
+    ).toEqual([0, 0, 1]);
+  });
+
   test('a paused fan-out queues nothing', () => {
     const tasks = milestone();
     const session = progress('m', 'paused');

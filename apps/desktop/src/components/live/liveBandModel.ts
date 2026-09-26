@@ -1,6 +1,6 @@
 import type { EpicProgress, MergeQueueEntryState } from '@dispatch/client';
 import type { StatusModel, TaskListItem } from '@dispatch/core/browser';
-import { fanoutCoverers, fanoutHolder } from '@dispatch/core/browser';
+import { fanoutCoverers } from '@dispatch/core/browser';
 
 import { dagTaskFromDoc, dagWaves } from '../../lib/dagLayout';
 import { type FlightNavIndex, flightNavIndex } from '../flightplan/flightKeys';
@@ -10,7 +10,11 @@ import {
   type FlightLayoutInput,
   flightStructureKey,
 } from '../flightplan/flightLayout';
-import { buildFlightPlan, type FlightPlan } from '../flightplan/flightPlan';
+import {
+  buildFlightPlan,
+  type FlightPlan,
+  viewerHolderOf,
+} from '../flightplan/flightPlan';
 import type { LiveBandActivity, LiveBandSpec } from './liveGraph';
 
 // One Live band's model: its container's Flight Plan (the same `buildFlightPlan` the full
@@ -231,19 +235,15 @@ export function buildLiveBand(
   }
   options.cache?.set(spec.key, { structure, waves, layoutKey, layout, nav });
 
-  // Whose hands a blocker is in, as the plan reads it; one outside the band is read
-  // against this window's own fan-out.
+  // A blocker in a teammate's hands: not this window's, and (in the band) not one its
+  // own fan-out starts — in a teammate's fan-out, the plan reads holders from its starter.
   const nodeById = new Map(plan.nodes.map((n) => [n.task.meta.id, n]));
-  const localHuman = shared.local ?? shared.me ?? 'human';
-  const viewer = shared.me ?? localHuman;
+  const teammateOf = viewerHolderOf(shared.me, shared.local);
   const held = (id: string): boolean => {
-    const node = nodeById.get(id);
-    if (node !== undefined) return node.holder !== null;
     const task = shared.taskById.get(id);
-    return (
-      task !== undefined &&
-      fanoutHolder(task.meta.assignee, viewer, localHuman) !== null
-    );
+    if (task === undefined || teammateOf(task) === null) return false;
+    const node = nodeById.get(id);
+    return node === undefined || node.holder !== null;
   };
   const stats: LiveBandStats = {
     running: plan.running,

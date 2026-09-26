@@ -227,6 +227,67 @@ describe('LiveView', () => {
     expect(sent).toEqual(['t-d']);
   });
 
+  describe('in a fan-out a teammate started', () => {
+    // Maya started m-1's; this window is Wyat's. t-x is Maya's, t-y Wyat's, t-z waits
+    // on t-y.
+    const tasks = [
+      task('m-1', { kind: 'milestone', title: 'Checkout' }),
+      task('t-x', {
+        parent: 'm-1',
+        assignee: 'human:maya',
+        created: '2026-09-01T00:00:01.000Z',
+      }),
+      task('t-y', {
+        parent: 'm-1',
+        assignee: 'human:wyat',
+        created: '2026-09-01T00:00:02.000Z',
+      }),
+      task('t-z', {
+        parent: 'm-1',
+        blockedBy: ['t-y'],
+        created: '2026-09-01T00:00:03.000Z',
+      }),
+    ];
+    const mayas = () =>
+      dataWith({
+        tasks,
+        runs: [],
+        attention: [],
+        sessions: [
+          progress('m-1', 'active', {
+            startedBy: 'human:maya',
+            concurrency: 2,
+          }),
+        ],
+      });
+
+    test('d sends an agent at my own task, never at Maya’s', () => {
+      const sent: string[] = [];
+      mount(mayas(), (id) => {
+        sent.push(id);
+        return new Promise(() => {});
+      });
+      act(() => group().focus());
+      expect(cursor()).toBe('flight-node-t-x');
+      press('d');
+      expect(sent).toEqual([]);
+      press('j');
+      expect(cursor()).toBe('flight-node-t-y');
+      // Maya's fan-out never starts it, but I may by hand.
+      expect(node('t-y')?.getAttribute('data-state')).toBe('teammate');
+      press('d');
+      expect(sent).toEqual(['t-y']);
+    });
+
+    test('work waiting on my own task is not waiting on a teammate', () => {
+      mount(mayas());
+      expect(node('t-z')?.getAttribute('data-state')).toBe('blocked');
+      expect(
+        document.querySelector('[data-slot=live-teammate]')?.textContent
+      ).toBe('0waiting on teammates');
+    });
+  });
+
   test('Enter opens the task beside the bands, o its page, Space peeks', () => {
     const view = mount(dataWith());
     act(() => group().focus());

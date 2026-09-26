@@ -1,8 +1,6 @@
 import type { EpicProgressChild } from '@dispatch/client';
-import type { TaskListItem } from '@dispatch/core/browser';
 import {
   DEFAULT_STATUS_MODEL,
-  fanoutHolder,
   fanoutScope,
   isUnstartedStatus,
   statusModelOf,
@@ -20,7 +18,10 @@ import {
 import { runPace } from '../components/flightplan/criticalPath';
 import { flightNodeDomId } from '../components/flightplan/FlightNodeCard';
 import type { FlightNode } from '../components/flightplan/flightPlan';
-import { tasksWithRunBranch } from '../components/flightplan/flightPlan';
+import {
+  tasksWithRunBranch,
+  viewerHolderOf,
+} from '../components/flightplan/flightPlan';
 import { canDispatch } from '../components/flightplan/FlightPlanView';
 import { childrenByParent } from '../components/flightplan/flightScope';
 import type { NodeViewContext } from '../components/flightplan/flightViews';
@@ -203,6 +204,12 @@ export function LiveView({
   const withRunBranch = useMemo(
     () => tasksWithRunBranch(data.runs),
     [data.runs]
+  );
+  // A teammate's task as this window reads it: `d` never sends one, and the fan-out
+  // offers never count one.
+  const holderOf = useMemo(
+    () => viewerHolderOf(me, data.localHuman),
+    [me, data.localHuman]
   );
 
   const specs = useMemo(
@@ -601,7 +608,7 @@ export function LiveView({
       case 'dispatch': {
         if (focused === null) return;
         const node = located.get(focused.id)?.node;
-        if (!canDispatch(node, model)) return;
+        if (!canDispatch(node, model, holderOf)) return;
         e.preventDefault();
         void optimistic.dispatch(focused.id);
         return;
@@ -617,13 +624,6 @@ export function LiveView({
   }
 
   // The empty state's offer: containers a fan-out would start work in right now.
-  const localHuman = data.localHuman ?? me ?? 'human';
-  const viewer = me ?? localHuman;
-  const holderOf = useCallback(
-    (task: TaskListItem) =>
-      fanoutHolder(task.meta.assignee, viewer, localHuman),
-    [viewer, localHuman]
-  );
   const ready = useMemo(
     () =>
       hasBands

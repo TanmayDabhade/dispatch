@@ -46,6 +46,7 @@ import {
   buildFlightPlan,
   type FlightNode,
   tasksWithRunBranch,
+  viewerHolderOf,
 } from './flightPlan';
 import { type FlightHeaderStats, FlightPlanHeader } from './FlightPlanHeader';
 import {
@@ -107,15 +108,18 @@ function useNow(intervalMs: number): number {
 
 // Whether `d` may send an agent at a node: unstarted, no blocker ahead of it, not its
 // own plan, not a teammate's or a derived task, and not already running. A held
-// (critical) node qualifies — by hand is exactly how it starts. The Live view shares it.
+// (critical) node qualifies — by hand is exactly how it starts. "A teammate's" reads
+// against the viewer (`viewerHolderOf`): in a teammate's fan-out a node's state reads
+// against its starter. The Live view shares it.
 export function canDispatch(
   node: FlightNode | undefined,
-  model: Parameters<typeof isUnstartedStatus>[1]
+  model: Parameters<typeof isUnstartedStatus>[1],
+  holderOf: (task: TaskListItem) => string | null
 ): node is FlightNode {
   return (
     node !== undefined &&
     node.state !== 'running' &&
-    node.state !== 'teammate' &&
+    holderOf(node.task) === null &&
     !node.subPlan &&
     node.task.meta.derivedFrom === undefined &&
     node.waitingOn.length === 0 &&
@@ -554,10 +558,15 @@ export function FlightPlan({
     }
     return geometry.nav.columns[0]?.[0] ?? null;
   }, [geometry.nav, planNodeById]);
-  // `d` sends an agent only at a node the plan says may start now.
+  // `d` sends an agent only at a node the plan says may start now, and never at a
+  // teammate's.
+  const viewerHolder = useMemo(
+    () => viewerHolderOf(directory.me, data.localHuman),
+    [directory.me, data.localHuman]
+  );
   const dispatchable = useCallback(
-    (id: string) => canDispatch(planNodeById.get(id), model),
-    [planNodeById, model]
+    (id: string) => canDispatch(planNodeById.get(id), model, viewerHolder),
+    [planNodeById, model, viewerHolder]
   );
   const laneData = useMemo<FlightLaneData>(
     () => ({
