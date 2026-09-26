@@ -166,6 +166,8 @@ export const FlightNodeCard = memo(function FlightNodeCard({
   const landingSentence =
     landing !== null && state === 'review' ? landingBadgeTitle(landing) : null;
   const text = landingSentence ?? sentence;
+  // Its own compositing layer: in WebKit a card culled in or out as the plan pans would
+  // otherwise repaint the canvas under every other card.
   return (
     <button
       type="button"
@@ -179,7 +181,7 @@ export const FlightNodeCard = memo(function FlightNodeCard({
       data-focused={focused || undefined}
       onClick={() => onActivate(id)}
       className={cn(
-        'rounded-card absolute top-0 left-0 flex cursor-pointer scroll-mt-10 scroll-ml-5 flex-col justify-center gap-0.5 overflow-hidden px-2.5 text-left',
+        'rounded-card absolute top-0 left-0 flex cursor-pointer scroll-mt-10 scroll-ml-5 flex-col justify-center gap-0.5 overflow-hidden px-2.5 text-left will-change-transform',
         'transition-[background-color,box-shadow,border-color] duration-300 ease-(--ease-out-expo)',
         'hover:bg-surface-active',
         STATE_CLASS[state],

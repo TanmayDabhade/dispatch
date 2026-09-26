@@ -59,6 +59,9 @@ export interface VirtualRowsProps<R> {
    * one commit per scroll instead of one each (see `observeSharedOffset`). Either way a
    * track renders inside the scroll event, so no frame paints short of rows. */
   sharedScroller?: boolean;
+  /** Scrolled out of view on the other axis (a board column off to the side): the track
+   * keeps its size and pinned rows but mounts no others. */
+  offscreen?: boolean;
   handleRef?: Ref<VirtualRowsHandle>;
   className?: string;
   rowClassName?: string;
@@ -100,6 +103,7 @@ export function VirtualRows<R>({
   scrollPaddingStart = 0,
   pinnedKeys,
   sharedScroller = false,
+  offscreen = false,
   handleRef,
   className,
   rowClassName,
@@ -161,12 +165,14 @@ export function VirtualRows<R>({
   );
 
   const totalSize = virtualizer.getTotalSize();
-  const near = trackNearViewport(
-    scrollMargin,
-    totalSize,
-    virtualizer.scrollOffset ?? 0,
-    (virtualizer.scrollRect ?? UNMEASURED_VIEWPORT).height
-  );
+  const near =
+    !offscreen &&
+    trackNearViewport(
+      scrollMargin,
+      totalSize,
+      virtualizer.scrollOffset ?? 0,
+      (virtualizer.scrollRect ?? UNMEASURED_VIEWPORT).height
+    );
   const pinned = new Set(pinnedKeys);
   const items = near
     ? virtualizer.getVirtualItems()
@@ -179,12 +185,17 @@ export function VirtualRows<R>({
       className={cn('relative w-full shrink-0', className)}
       style={{ height: totalSize }}
     >
+      {/* A layer per row: WebKit repaints every row sharing a backing when one mounts or
+          unmounts, so each window change on a scroll repainted the whole screenful. */}
       {items.map((item) => (
         <div
           key={item.key.toString()}
           data-index={item.index}
           ref={measure ? virtualizer.measureElement : undefined}
-          className={cn('absolute top-0 left-0 w-full', rowClassName)}
+          className={cn(
+            'absolute top-0 left-0 w-full will-change-transform',
+            rowClassName
+          )}
           style={{
             transform: `translateY(${item.start - scrollMargin}px)`,
             height: measure ? undefined : item.size,

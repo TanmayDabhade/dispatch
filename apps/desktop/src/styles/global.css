@@ -1,9 +1,3 @@
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
-
 html {
   /* Fixed scale: the type and spacing tokens are px, so the UI never grows with the window.
      ⌘+/⌘− webview zoom (lib/zoom.ts) is how the whole UI scales. */
