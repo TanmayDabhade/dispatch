@@ -41,9 +41,10 @@ const DEBOUNCE_MS = 100;
 // names no task), or `undefined` for a file the store never reads (an
 // editor's swap file, .DS_Store).
 function taskIdOfFile(
-  filename: string | Buffer | null
+  filename: string | Buffer | null | undefined
 ): string | null | undefined {
-  if (filename === null) return null;
+  // Linux can report a change with no filename at all, as null or undefined.
+  if (filename === null || filename === undefined) return null;
   const name = typeof filename === 'string' ? filename : filename.toString();
   if (!name.endsWith('.md')) return undefined;
   return taskIdFromFilename(name.slice(0, -'.md'.length));

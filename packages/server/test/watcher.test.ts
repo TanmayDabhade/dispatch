@@ -129,7 +129,7 @@ describe('watchTasks ids', () => {
   // Drives the listener directly, so the assertion is about which names map
   // to which ids, not about when macOS delivers the events.
   function watchWithFake(): {
-    emit: (filename: string | null) => void;
+    emit: (filename: string | null | undefined) => void;
     next: () => Promise<string[] | null>;
   } {
     let listener: ((event: string, filename: string | null) => void) | null =
@@ -149,7 +149,8 @@ describe('watchTasks ids', () => {
       factory
     );
     return {
-      emit: (filename) => listener?.('rename', filename),
+      // Node's types say null, but Bun on Linux also passes undefined.
+      emit: (filename) => listener?.('rename', filename as string | null),
       next: async () => {
         if (calls.length === 0) {
           await new Promise<void>((resolve) => (wake = resolve));
@@ -206,6 +207,13 @@ describe('watchTasks ids', () => {
     fake.emit('t-00000d-later.md');
     expect(await fake.next()).toEqual(['t-00000d']);
     fake.emit(null);
+    expect(await fake.next()).toBeNull();
+  });
+
+  // Bun on Linux can pass no filename at all rather than null.
+  it('asks for a full rescan when an event carries no filename', async () => {
+    const fake = watchWithFake();
+    fake.emit(undefined);
     expect(await fake.next()).toBeNull();
   });
 });
