@@ -1,4 +1,5 @@
 import {
+  FileCommentStore,
   getSection,
   normalizeProjectPath,
   readCredentials,
@@ -666,6 +667,28 @@ describe('LinearSync fresh state with existing links', () => {
 });
 
 describe('LinearSync first pass baseline', () => {
+  // Found against a real, empty Linear team: with no cursor, every later
+  // poll skipped the cheap probe and re-read the whole team.
+  it('takes a cursor from an import that finds nothing', async () => {
+    fake.issues = [];
+    const sync = new LinearSync({
+      rootDir: root,
+      store,
+      cache,
+      events,
+      client: fake,
+      comments: new FileCommentStore(root),
+    });
+
+    await sync.importIssues();
+    expect(readLinearState(root).cursor).not.toBeNull();
+    expect(readLinearState(root).commentCursor).not.toBeNull();
+
+    fake.sinceSeen.length = 0;
+    await sync.syncOnce();
+    expect(fake.sinceSeen).not.toContain(null);
+  });
+
   it('takes a cursor without scanning a team it has no use for', async () => {
     fake.issues = [fake.issue(), fake.issue()];
 

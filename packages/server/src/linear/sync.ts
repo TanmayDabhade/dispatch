@@ -1271,6 +1271,9 @@ export class LinearSync {
     const { pass, session, state, importing } = run;
     const { client, teamIds } = session;
     const summary = pass.summary;
+    // A complete read that saw nothing newer still moves the cursor here: without
+    // one, an empty team's every poll would skip the probe and re-read it all.
+    const startedAt = new Date().toISOString();
     let records = true;
     let comments = true;
     const walk = state.milestoneWalk === true;
@@ -1373,7 +1376,7 @@ export class LinearSync {
       await run.comments.pull(fetched.comments, complete);
       if (!commentPage.truncated) {
         state.commentCursor = rewind(
-          newest(fetched.comments, state.commentCursor)
+          newest(fetched.comments, state.commentCursor) ?? startedAt
         );
       }
     }
@@ -1393,7 +1396,7 @@ export class LinearSync {
             ...fetched.initiatives,
           ],
           state.cursor
-        )
+        ) ?? startedAt
       );
     }
   }
