@@ -65,6 +65,7 @@ import {
   DEFAULT_TASKS_DISPLAY,
   type TasksDisplayPrefs,
 } from '../../lib/tasksPrefs';
+import { nearColumnIndexes, sameColumnIndexes } from '../../lib/virtualRows';
 import { useShellActions } from '../shell/ShellActionsContext';
 import { VirtualRows, type VirtualRowsHandle } from '../virtual/VirtualRows';
 import { EpicLaneHeader } from './EpicLaneHeader';
@@ -258,6 +259,71 @@ function sameOffsets(
   return true;
 }
 
+// How far past each side of the board's visible width a column still counts as near, as a
+// share of that width: a column's cards mount this far before it scrolls into view.
+const NEAR_COLUMN_MARGIN = 0.5;
+
+/**
+ * The board's columns near its horizontal viewport, by index (`nearColumnIndexes`). A column
+ * off to the side keeps its virtual track (its height, its pinned cards) but mounts no cards,
+ * so a vertical scroll mounts cards only in the columns in and beside the window (five of
+ * seven on a 1440px window). A column comes near in a transition, so a sideways scroll
+ * mounts its cards without holding up a frame.
+ */
+function useNearColumns(
+  board: HTMLDivElement | null,
+  stack: HTMLDivElement | null,
+  columnSignature: string
+): ReadonlySet<number> | null {
+  const [near, setNear] = useState<ReadonlySet<number> | null>(null);
+  useLayoutEffect(() => {
+    if (board === null || stack === null) return;
+    // Each column's span in the board's scrolled content; every lane shares them.
+    let spans: (readonly [number, number])[] = [];
+    let width = 0;
+    let current: ReadonlySet<number> | null = null;
+    const measure = () => {
+      width = board.clientWidth;
+      const row = stack.querySelector<HTMLElement>('[data-lane-columns]');
+      const origin = board.getBoundingClientRect().left - board.scrollLeft;
+      spans =
+        row === null
+          ? []
+          : Array.from(row.children, (column) => {
+              const rect = column.getBoundingClientRect();
+              return [rect.left - origin, rect.right - origin] as const;
+            });
+    };
+    const update = (urgent: boolean) => {
+      const next = nearColumnIndexes(
+        spans,
+        board.scrollLeft,
+        width,
+        NEAR_COLUMN_MARGIN
+      );
+      if (sameColumnIndexes(current, next)) return;
+      current = next;
+      if (urgent) setNear(next);
+      else startTransition(() => setNear(next));
+    };
+    measure();
+    update(true);
+    const onScroll = () => update(false);
+    board.addEventListener('scroll', onScroll, { passive: true });
+    const observer = new ResizeObserver(() => {
+      measure();
+      update(false);
+    });
+    observer.observe(board);
+    observer.observe(stack);
+    return () => {
+      board.removeEventListener('scroll', onScroll);
+      observer.disconnect();
+    };
+  }, [board, stack, columnSignature]);
+  return near;
+}
+
 /** The board's fling tracker: placeholders while its scroller flings (see `boardFling`). */
 function useBoardFling(board: HTMLDivElement | null): FlingTracker {
   const [tracker, setTracker] = useState<FlingTracker>(NEVER_FLINGING);
@@ -340,6 +406,7 @@ function VirtualColumn({
   tasks,
   scrollElement,
   scrollMargin,
+  offscreen,
   activeTaskId,
   focusedTaskId,
   fling,
@@ -350,6 +417,8 @@ function VirtualColumn({
   tasks: readonly TaskListItem[];
   scrollElement: HTMLDivElement | null;
   scrollMargin: number;
+  /** Scrolled off to the side: no cards mount but the pinned ones. */
+  offscreen: boolean;
   activeTaskId: string | null;
   focusedTaskId: string | null;
   fling: FlingTracker;
@@ -393,6 +462,7 @@ function VirtualColumn({
         pinnedKeys={pinnedKeys}
         // Every column rides the board's one scroller: one commit per scroll, not one each.
         sharedScroller
+        offscreen={offscreen}
         handleRef={handle}
         renderRow={renderLazyCard}
       />
@@ -647,6 +717,11 @@ export function TaskBoard({
     laneStack,
     lanes.map((lane) => lane.key).join('\0')
   );
+  const nearColumns = useNearColumns(
+    board,
+    laneStack,
+    `${statuses.join('\0')}|${[...collapsedColumns].join('\0')}`
+  );
   // Ready task ids per status, for `Dispatch all ready` and its count.
   const readyByStatus = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -859,7 +934,7 @@ export function TaskBoard({
                 )}
                 {expanded && (
                   <div data-lane-columns={key} className="flex items-start">
-                    {lane.columns.map(({ status, tasks: laneTasks }) => (
+                    {lane.columns.map(({ status, tasks: laneTasks }, index) => (
                       <div
                         key={status}
                         className={cn('flex flex-col', columnClass(status))}
@@ -872,6 +947,9 @@ export function TaskBoard({
                             tasks={laneTasks}
                             scrollElement={board}
                             scrollMargin={laneOffsets.get(key) ?? 0}
+                            offscreen={
+                              nearColumns !== null && !nearColumns.has(index)
+                            }
                             activeTaskId={activeTaskId}
                             focusedTaskId={focusedTaskId}
                             fling={fling}

@@ -15,10 +15,12 @@ const size = () => 36;
 function List({
   rows = ROWS,
   pinnedKeys,
+  offscreen,
   handle,
 }: {
   rows?: Row[];
   pinnedKeys?: string[];
+  offscreen?: boolean;
   handle?: React.Ref<VirtualRowsHandle>;
 }) {
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
@@ -30,6 +32,7 @@ function List({
         estimateSize={size}
         scrollElement={scroller}
         pinnedKeys={pinnedKeys}
+        offscreen={offscreen}
         handleRef={handle}
         renderRow={(row) => <div data-row-id={row.id}>{row.id}</div>}
       />
@@ -76,6 +79,17 @@ test('gives every row its own compositing layer', () => {
 test('keeps a pinned row mounted however far away it is', () => {
   const { container } = render(<List pinnedKeys={['t-1500']} />);
   expect(mountedIds(container)).toContain('t-1500');
+});
+
+test('an offscreen track mounts only its pinned rows, at full height', () => {
+  const { container } = render(
+    <List offscreen pinnedKeys={['t-0', 't-1500']} />
+  );
+  expect(mountedIds(container)).toEqual(['t-0', 't-1500']);
+  expect(
+    container.querySelector<HTMLElement>('[data-slot="virtual-rows"]')?.style
+      .height
+  ).toBe(`${2000 * 36}px`);
 });
 
 test('scrollToKey scrolls the owner element to that row', () => {
