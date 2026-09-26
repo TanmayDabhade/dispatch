@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, expect, test } from 'bun:test';
 import { type ReactNode, useState } from 'react';
@@ -115,6 +116,10 @@ function providersWith(log: Log, entries: InboxEntry[] = []) {
     openShortcuts: noop,
     copyTaskId: noop,
   } as unknown as ShellActions;
+  // The task spec pane fetches its body through react-query; no retries in a stub.
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   // Stateful like the real seam: mark-all flips every entry's own read flag, `markRead` one.
   return function Providers({ children }: { children: ReactNode }) {
     const [current, setCurrent] = useState(entries);
@@ -134,11 +139,13 @@ function providersWith(log: Log, entries: InboxEntry[] = []) {
       navigate: (target) => log.navigated.push(target.kind),
     };
     return (
-      <ShellActionsProvider value={shell}>
-        <NotificationInboxProvider value={inbox}>
-          {children}
-        </NotificationInboxProvider>
-      </ShellActionsProvider>
+      <QueryClientProvider client={queryClient}>
+        <ShellActionsProvider value={shell}>
+          <NotificationInboxProvider value={inbox}>
+            {children}
+          </NotificationInboxProvider>
+        </ShellActionsProvider>
+      </QueryClientProvider>
     );
   };
 }

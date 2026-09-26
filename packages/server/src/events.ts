@@ -1,4 +1,4 @@
-import type { LinearSyncSummary } from './linear/sync.js';
+import type { LinearProgress, LinearSyncSummary } from './linear/sync.js';
 import type { EpicPauseReason } from './orchestrator/epic.js';
 import type { FixLoopStop } from './orchestrator/fixLoop.js';
 import type { NormalizedEntry, RunSurvey } from './orchestrator/types.js';
@@ -6,10 +6,10 @@ import type { ReceiptsResult } from './receipts/exporter.js';
 import type { SyncResult } from './sync/boardSyncer.js';
 
 // Single WS message shape the server ever sends. `hello` greets a freshly
-// opened socket; `task.changed` tells every connected client "something
+// opened socket; `task.changed` tells every connected client "these tasks
 // changed, go refetch" — clients never receive a diff, so a duplicate event
-// is harmless (see EventBus.broadcast callers in index.ts/api.ts for why
-// duplicates can happen).
+// is harmless, though the daemon no longer echoes its own writes back through
+// the file watcher (see the watcher in index.ts).
 //
 // The `run.*` variants are the orchestrator's equivalents: `run.changed` is
 // "some run's lifecycle/registry state changed, go refetch" (same
@@ -18,7 +18,12 @@ import type { SyncResult } from './sync/boardSyncer.js';
 // to the right run's log without a refetch; `approval.requested` tells
 // clients a run is now waiting on a human decision.
 export type ServerEvent =
-  | { type: 'task.changed' }
+  // `ids`, when set, names every task the change touched, so a client can
+  // refetch just those; absent means "anything may have changed".
+  | { type: 'task.changed'; ids?: string[] }
+  // A task's comments changed: added, edited or removed (with replies).
+  // Carries the ids so a client patches its thread instead of refetching.
+  | { type: 'comment.changed'; taskId: string; commentIds: string[] }
   | { type: 'hello'; version: string }
   | { type: 'run.changed' }
   | { type: 'run.log'; runId: string; entry: NormalizedEntry }
@@ -82,6 +87,8 @@ export type ServerEvent =
   // A Linear sync pass finished. Carries its own summary so the settings screen
   // can show the outcome without a follow-up fetch.
   | { type: 'linear.changed'; summary: LinearSyncSummary }
+  // A long Linear pass (an import) moved on; carries where it got to.
+  | { type: 'linear.progress'; progress: LinearProgress }
   // The repo's git state changed via an `/api/git/*` mutation — same
   // "go refetch" contract as `run.changed`.
   | { type: 'git.changed' }

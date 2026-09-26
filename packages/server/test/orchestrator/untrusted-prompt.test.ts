@@ -6,6 +6,7 @@ import type {
   MutationEvidence,
   TaskDoc,
 } from '@dispatch/core';
+import { defaultTaskFields } from '@dispatch/core';
 import { describe, expect, it } from 'bun:test';
 
 import { buildTaskPrompt } from '../../src/orchestrator/prompt.js';
@@ -38,6 +39,7 @@ function task(overrides: Partial<TaskDoc['meta']> = {}): TaskDoc {
       risk: 'routine',
       model: null,
       exercised: false,
+      ...defaultTaskFields(),
       ...overrides,
     },
     body: '## Description\n\nAdd a rate limiter.\n\n## Activity\n',

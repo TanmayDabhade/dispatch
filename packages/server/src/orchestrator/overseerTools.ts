@@ -1,10 +1,11 @@
-import { untrustedInline } from '@dispatch/core';
+import { isDoneStatus, untrustedInline } from '@dispatch/core';
 import type { LedgerEntry, TaskDoc, TaskStorePort } from '@dispatch/core';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 
 import type { TaskCache } from '../cache.js';
 import type { LedgerStorePort } from '../ledger.js';
+import { statusModelFor } from '../statuses.js';
 import type { MergeQueue, MergeQueueEntry } from './mergeQueue.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { QuestionRegistry, RunQuestion } from './questions.js';
@@ -230,7 +231,7 @@ const readyTasksTool: OverseerStatusTool<NoInput> = {
     'Tasks that are safe to dispatch right now: unblocked, in priority order.',
   inputSchema: noInput,
   read(ctx) {
-    const ready = ctx.cache.ready();
+    const ready = ctx.cache.ready(statusModelFor(ctx.store.rootDir));
     return { tasks: ready.map(toSummary), total: ready.length };
   },
 };
@@ -243,6 +244,7 @@ const blockedTasksTool: OverseerStatusTool<NoInput> = {
   inputSchema: noInput,
   read(ctx) {
     const all = ctx.cache.query();
+    const statuses = statusModelFor(ctx.store.rootDir);
     const byId = new Map(all.map((t) => [t.meta.id, t]));
     // Same rule as the desktop board's computeBlockedIds: a blocker id with no
     // matching task is dangling, not blocking. Duplicated rather than imported
@@ -255,8 +257,7 @@ const blockedTasksTool: OverseerStatusTool<NoInput> = {
           const blocker = byId.get(id);
           return (
             blocker !== undefined &&
-            blocker.meta.status !== 'landed' &&
-            blocker.meta.status !== 'dropped'
+            !isDoneStatus(blocker.meta.status, statuses)
           );
         }),
       }))
