@@ -195,7 +195,7 @@ export interface TaskStorePort {
  * The TaskDoc a freshly created task starts as — every default in one place.
  *
  * Shared by both backends rather than written out twice. The defaults here
- * (`status: 'todo'`, `priority: 'none'`, `selfReview: true`, the absent-vs-
+ * (`status: 'todo'`, `priority: 'none'`, `selfReview: false`, the absent-vs-
  * false handling of `fixLoop`, the body template) ARE the contract for what a
  * new task looks like, so a copy per backend is a copy that can drift — and a
  * task created against one backend would quietly differ from the same task
@@ -225,7 +225,7 @@ export function newTaskDoc(
     created: input.created ?? now,
     updated: now,
     external: input.external ?? null,
-    selfReview: input.selfReview ?? true,
+    selfReview: input.selfReview ?? false,
     ...(input.fixLoop === false ? { fixLoop: false } : {}),
     writes: input.writes ?? [],
     risk: input.risk ?? 'routine',

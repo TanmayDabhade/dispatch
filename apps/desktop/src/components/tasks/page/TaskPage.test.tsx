@@ -472,6 +472,18 @@ describe('dispatching from the spec', () => {
     expect(item.getAttribute('aria-disabled')).toBeNull();
   });
 
+  test('the effort picker sends nothing by default and the level picked', async () => {
+    const log = newLog();
+    mount(fakeHost(log, { tasks: [task('t-1')] }), { layout: 'full' });
+    const picker = screen.getByRole('button', { name: 'Effort' });
+    expect(picker.textContent).toBe('Default');
+    fireEvent.click(picker);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Max' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Dispatch/ }));
+    await waitFor(() => expect(log.dispatches).toHaveLength(1));
+    expect(log.dispatches[0]?.effort).toBe('max');
+  });
+
   test('d dispatches a ready task from anywhere on the page', async () => {
     const log = newLog();
     mount(fakeHost(log, { tasks: [task('t-1')] }), { layout: 'full' });

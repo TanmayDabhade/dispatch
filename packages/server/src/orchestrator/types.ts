@@ -1,4 +1,11 @@
-import type { RunStep, SubagentEvent, SubagentSummary } from '@dispatch/core';
+import type {
+  EffortLevel,
+  RunStep,
+  SubagentEvent,
+  SubagentSummary,
+} from '@dispatch/core';
+
+import type { RunUsage } from './usage.js';
 
 // The Vibe Kanban pattern: every executor, real or fake, streams a uniform
 // log shape so the transcript/UI never needs to know which executor produced
@@ -113,6 +120,10 @@ export interface ExecutorEvents {
     turns?: number;
     sessionId?: string;
     error?: string;
+    // Token spend by billing type; absent when the executor measures none.
+    usage?: RunUsage;
+    // The harness experiments (experiments.ts) the run ran under, when any.
+    experiments?: string[];
   }): void;
 }
 
@@ -127,6 +138,9 @@ export interface ExecutorStartOptions {
   // Optional — omitted uses that executor's default behavior, so fixtures and
   // callers that don't care never need to set it.
   model?: string;
+  // Reasoning effort for the session; omitted leaves the model's default.
+  // Only the Claude executor acts on it.
+  effort?: EffortLevel;
   // The dispatch PROJECT's root directory — distinct from `cwd`, which for a
   // real run is the run's own git worktree (a different directory than the
   // project it was cut from). ClaudeExecutor needs both: `cwd` to root the
@@ -159,6 +173,9 @@ export interface ExecutorProfile {
   enforcesCaps: boolean;
   /** Why this executor cannot run under `permissionMode`, or null when it can. */
   permissionRefusal(permissionMode: string): string | null;
+  /** False when runs never get the dispatch MCP server, so the task prompt
+   * must not name its tools. Absent means they do. */
+  dispatchMcp?: boolean;
 }
 
 /** One registered executor as GET /api/executors reports it. */
@@ -252,12 +269,23 @@ export interface RunMeta {
   updatedAt: string;
   costUsd?: number;
   turns?: number;
+  // Token spend by billing type (see usage.ts), set at finish alongside
+  // costUsd. Absent for runs recorded before it existed and for executors
+  // that measure no tokens.
+  usage?: RunUsage;
+  // The harness experiments this run ran under (see experiments.ts), so runs
+  // can be split by arm when comparing cost per completed task. Absent for a
+  // run under the defaults.
+  experiments?: string[];
   sessionId?: string;
   error?: string;
   // The Claude model this run was dispatched with, if one was chosen (see
   // ExecutorStartOptions.model) — surfaced so the UI can show which model ran
   // a given task.
   model?: string;
+  // The reasoning effort this run was started at; absent means the model's
+  // own default. A resume keeps it, like `model`.
+  effort?: EffortLevel;
   // Serialized ActorRef of the human the run is for, e.g. `human:ada`: who
   // pressed dispatch, or started the fan-out that dispatched it. A resume,
   // follow-up or review/verify run keeps its work's owner unless a person

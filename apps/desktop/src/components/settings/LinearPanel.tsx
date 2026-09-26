@@ -19,10 +19,16 @@ import {
   linearKeySourceNote,
   STATUS_ROLE_ROWS,
 } from '../../lib/linearSettings';
-import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
+import { useSettingsAccess } from './access';
+import { SettingsSwitch } from './fields';
+import {
+  SettingsGroup,
+  SettingsHint,
+  SettingsRow,
+  useGroupLocked,
+} from './SettingsGroup';
 import { cn } from '@/lib/utils';
 import { PillButton } from '@/ui/ai/pill';
-import { Switch } from '@/ui/ai/switch';
 import { Button } from '@/ui/button';
 import { Checkbox } from '@/ui/checkbox';
 import { PanelRow } from '@/ui/chrome';
@@ -58,8 +64,9 @@ function LinearIntervalRow({
   useEffect(() => setDraft(String(value)), [value]);
   return (
     <SettingsRow
-      title="Poll interval"
-      subtitle="Seconds between sync passes when no webhook delivers changes, minimum 30."
+      title="Check for changes every"
+      subtitle="At least 30 seconds. Used when no webhook delivers changes."
+      keywords="poll interval"
       htmlFor="linear-poll-interval"
       control={
         <Input
@@ -147,6 +154,8 @@ function LinkedTeamRow({
 }) {
   const at = linked.indexOf(team.id);
   const others = linked.filter((id) => id !== team.id);
+  // The checkbox's own element escapes a locked group's disabled fieldset.
+  const locked = useGroupLocked();
   return (
     <SettingsRow
       title={`${team.name} (${team.key})`}
@@ -158,13 +167,17 @@ function LinkedTeamRow({
       control={
         <span className="flex items-center gap-2">
           {at > 0 && (
-            <PillButton onClick={() => onChange([team.id, ...others])}>
+            <PillButton
+              disabled={locked}
+              onClick={() => onChange([team.id, ...others])}
+            >
               Make primary
             </PillButton>
           )}
           <Checkbox
             aria-label={`Link ${team.name}`}
             checked={at >= 0}
+            disabled={locked}
             onCheckedChange={(checked) =>
               onChange(checked === true ? [...others, team.id] : others)
             }
@@ -214,6 +227,9 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
   const [importResult, setImportResult] = useState<LinearSyncSummary | null>(
     null
   );
+  // The key decides whose Linear account the board is sent to, so the daemon
+  // lets only the owner set or remove it; import and sync just use it.
+  const { canOperate } = useSettingsAccess();
 
   if (config === null || linearStatus === null) return null;
 
@@ -305,9 +321,14 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
 
   return (
     <>
+      {/* Connect, disconnect, import and sync use Linear's own routes, not
+          config, so the group stays open when config is read-only. Import
+          and sync are any teammate's; the key rows lock to the owner. */}
       <SettingsGroup
-        title="Linear"
-        hint="Keeps this project’s tasks and the linked Linear teams as two faithful copies: every field both ways, the teams’ projects and initiatives as containers, their workflow states as your statuses, their members as your people, their labels (and label colors) as your labels, and issue comments as task comments. When both sides change the same field, the newer edit wins and the task’s Activity says so. The API key stays in ~/.dispatch/credentials.json, never in the repo."
+        title="Connection"
+        hint="Your API key is stored on this machine, never in the repo."
+        keywords="linear api key"
+        requires="none"
       >
         {linearStatus.keySource !== 'project' && (
           <SettingsRow
@@ -315,6 +336,7 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
             subtitle={keyNote}
             htmlFor="linear-api-key"
             stacked
+            locked={!canOperate}
             control={
               <>
                 <Input
@@ -323,11 +345,12 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
                   autoComplete="off"
                   placeholder="Linear API key"
                   value={apiKey}
+                  disabled={!canOperate}
                   onChange={(e) => setApiKey(e.target.value)}
                   className="max-w-xs"
                 />
                 <Button
-                  disabled={connecting || apiKey.trim() === ''}
+                  disabled={!canOperate || connecting || apiKey.trim() === ''}
                   onClick={() => void connect()}
                 >
                   {connecting ? 'Connecting…' : 'Connect'}
@@ -344,107 +367,115 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
         )}
 
         {linearStatus.connected && (
-          <>
-            <SettingsRow
-              title={
-                <span className="flex items-center gap-1.5">
-                  <CheckCircle2 className="text-state-review size-3.5 shrink-0" />
-                  Connected{viewer !== null ? ` as ${viewer.name}` : ''}
-                </span>
-              }
-              control={
-                linearStatus.keySource === 'project' ? (
-                  <PillButton
-                    disabled={disconnecting}
-                    onClick={() => void disconnect()}
-                  >
-                    {disconnecting ? 'Disconnecting…' : 'Disconnect'}
-                  </PillButton>
-                ) : undefined
-              }
-            >
-              {disconnectError !== null && (
-                <span className="text-state-failed text-[12px]">
-                  {disconnectError}
-                </span>
-              )}
-            </SettingsRow>
-
-            <SettingsRow
-              title="Sync this project with Linear"
-              subtitle={teamChosen ? undefined : 'Choose a team first.'}
-              htmlFor="linear-enabled"
-              control={
-                <Switch
-                  id="linear-enabled"
-                  checked={config.linear.enabled}
-                  disabled={!configured}
-                  onCheckedChange={(checked) =>
-                    void data.handleUpdateConfig({
-                      linear: { enabled: checked },
-                    })
-                  }
-                />
-              }
-            />
-
-            <SettingsRow
-              title="Direction"
-              control={
-                <Select
-                  value={config.linear.direction}
-                  onValueChange={(direction) =>
-                    void data.handleUpdateConfig({
-                      linear: {
-                        direction: direction as 'both' | 'pull' | 'push',
-                      },
-                    })
-                  }
+          <SettingsRow
+            title={
+              <span className="flex items-center gap-1.5">
+                <CheckCircle2 className="text-state-review size-3.5 shrink-0" />
+                Connected{viewer !== null ? ` as ${viewer.name}` : ''}
+              </span>
+            }
+            locked={linearStatus.keySource === 'project' && !canOperate}
+            control={
+              linearStatus.keySource === 'project' ? (
+                <PillButton
+                  disabled={!canOperate || disconnecting}
+                  onClick={() => void disconnect()}
                 >
-                  <SelectTrigger aria-label="Direction" className="w-[200px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {LINEAR_DIRECTIONS.map((d) => (
-                      <SelectItem key={d.value} value={d.value}>
-                        {d.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              }
-            />
-
-            <LinearIntervalRow
-              value={config.linear.intervalSec}
-              onSave={(intervalSec) =>
-                void data.handleUpdateConfig({ linear: { intervalSec } })
-              }
-            />
-
-            <SettingsRow
-              title="Send Acceptance Criteria to Linear"
-              subtitle="Adds it to the issue description as its own section, so teammates see it."
-              htmlFor="linear-acceptance"
-              control={
-                <Switch
-                  id="linear-acceptance"
-                  checked={config.linear.includeAcceptanceCriteria}
-                  onCheckedChange={(checked) =>
-                    void data.handleUpdateConfig({
-                      linear: { includeAcceptanceCriteria: checked },
-                    })
-                  }
-                />
-              }
-            />
-          </>
+                  {disconnecting ? 'Disconnecting…' : 'Disconnect'}
+                </PillButton>
+              ) : undefined
+            }
+          >
+            {disconnectError !== null && (
+              <span className="text-state-failed text-[12px]">
+                {disconnectError}
+              </span>
+            )}
+          </SettingsRow>
         )}
       </SettingsGroup>
 
       {linearStatus.connected && (
         <SettingsGroup
+          title="Sync settings"
+          hint="Keeps this project’s tasks and the linked Linear teams as two faithful copies: every field both ways, projects and initiatives as containers, workflow states as statuses, members as people, labels with their colors, and comments. When both sides change the same field, the newer edit wins and the task’s Activity says so."
+          keywords="linear direction acceptance"
+        >
+          <SettingsRow
+            title="Sync this project with Linear"
+            subtitle={teamChosen ? undefined : 'Choose a team first.'}
+            htmlFor="linear-enabled"
+            control={
+              <SettingsSwitch
+                id="linear-enabled"
+                checked={config.linear.enabled}
+                disabled={!configured}
+                onCheckedChange={(checked) =>
+                  void data.handleUpdateConfig({
+                    linear: { enabled: checked },
+                  })
+                }
+              />
+            }
+          />
+
+          <SettingsRow
+            title="Direction"
+            control={
+              <Select
+                value={config.linear.direction}
+                onValueChange={(direction) =>
+                  void data.handleUpdateConfig({
+                    linear: {
+                      direction: direction as 'both' | 'pull' | 'push',
+                    },
+                  })
+                }
+              >
+                <SelectTrigger aria-label="Direction" className="w-[200px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {LINEAR_DIRECTIONS.map((d) => (
+                    <SelectItem key={d.value} value={d.value}>
+                      {d.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            }
+          />
+
+          <LinearIntervalRow
+            value={config.linear.intervalSec}
+            onSave={(intervalSec) =>
+              void data.handleUpdateConfig({ linear: { intervalSec } })
+            }
+          />
+
+          <SettingsRow
+            title="Send Acceptance Criteria to Linear"
+            subtitle="Adds it to the issue description as its own section, so teammates see it."
+            htmlFor="linear-acceptance"
+            control={
+              <SettingsSwitch
+                id="linear-acceptance"
+                checked={config.linear.includeAcceptanceCriteria}
+                onCheckedChange={(checked) =>
+                  void data.handleUpdateConfig({
+                    linear: { includeAcceptanceCriteria: checked },
+                  })
+                }
+              />
+            }
+          />
+        </SettingsGroup>
+      )}
+
+      {linearStatus.connected && (
+        <SettingsGroup
           title="Teams"
+          keywords="linear team"
           hint="Link every team whose issues this project mirrors. An issue that moves between linked teams stays linked; one that leaves them all is unlinked. Your statuses are the linked teams’ workflow states, merged where a name and type match."
         >
           {data.linearTeamsError !== null && (
@@ -470,6 +501,7 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
       {linearStatus.connected && teamChosen && (
         <SettingsGroup
           title="Status roles"
+          keywords="workflow states columns"
           hint="Your statuses are the team’s workflow states, kept in step on every sync. Each role picks the one Dispatch writes as work moves; a role you change here is kept across syncs."
         >
           {STATUS_ROLE_ROWS.map((row) => (
@@ -487,7 +519,7 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
       )}
 
       {linearStatus.connected && (
-        <SettingsGroup title="Sync">
+        <SettingsGroup title="Sync" keywords="linear import" requires="none">
           <SettingsRow
             title="Changes"
             subtitle={describeLinearDelivery(linearStatus)}
@@ -495,7 +527,7 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
 
           <SettingsRow
             title="Import from Linear"
-            subtitle="Sync only moves what changes after a task is linked — it never bulk-imports the backlog on its own. Import brings down every issue, project and comment in this team that has no matching task yet."
+            subtitle="Sync only carries changes to linked tasks. Import brings in every issue, project and comment in the linked teams that isn't here yet."
             control={
               <PillButton
                 disabled={importing || !configured}

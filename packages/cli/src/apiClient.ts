@@ -721,7 +721,7 @@ export interface ApiClient {
   listTeamTokens(): Promise<TeamTokenHolder[]>;
   /** Revokes whatever token the handle holds; one per person. */
   revokeTeamToken(handle: string): Promise<void>;
-  /** Board sync's state — `{ enabled: false }` when it is off. */
+  /** Board sync's state — `{ enabled: false, reason }` when it is off. */
   getSyncStatus(): Promise<SyncStatus>;
   /** Runs a sync pass and answers with the state after it. */
   syncNow(): Promise<SyncStatus>;
@@ -731,9 +731,11 @@ export interface ApiClient {
   installLicense(key: string): Promise<LicenseStatus>;
 }
 
-/** Mirrors SyncStatus in packages/server/src/team/boardSync/service.ts. */
+/** Mirrors SyncStatus in packages/server/src/team/boardSync/service.ts.
+ *  `reason` (BoardSyncOffReason in packages/server/src/api.ts) is absent on
+ *  daemons older than it. */
 export type SyncStatus =
-  | { enabled: false }
+  | { enabled: false; reason?: 'files' | 'off' | 'not-started' }
   | {
       enabled: true;
       replica: string;

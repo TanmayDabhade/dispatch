@@ -15,7 +15,7 @@ import {
   TaskStore,
   usesIntegrationBranch,
 } from '@dispatch/core';
-import type { StatusModel, SubagentStatus } from '@dispatch/core';
+import type { EffortLevel, StatusModel, SubagentStatus } from '@dispatch/core';
 import type {
   ActorContext,
   CommandEvidence,
@@ -108,6 +108,7 @@ import {
   runKind,
   TERMINAL_RUN_STATES,
 } from './types.js';
+import type { RunUsage } from './usage.js';
 import type { DiffResult } from './worktree.js';
 import { WorktreeManager } from './worktree.js';
 
@@ -807,6 +808,7 @@ export class Orchestrator {
     // for when the actor is nobody: a fan-out's runs are its starter's.
     opts: {
       model?: string;
+      effort?: EffortLevel;
       actor?: string;
       dispatchedBy?: string;
       guard?: DispatchGuard;
@@ -866,6 +868,7 @@ export class Orchestrator {
       createdAt: now,
       updatedAt: now,
       model: opts.model,
+      ...this.effortField(opts.effort),
       // Only a human ref is recorded: 'none' with no `dispatchedBy` is how an
       // automatic caller says the run is nobody's, and crediting it to anyone
       // would be inventing an owner.
@@ -905,11 +908,12 @@ export class Orchestrator {
         cwd: wtPath,
         projectRoot: this.ctx.rootDir,
         runId,
-        prompt: this.promptForTask(task),
+        prompt: this.promptForTask(task, executorName),
         permissionMode: caps.permissionMode,
         maxTurns: caps.maxTurns,
         maxBudgetUsd: caps.maxBudgetUsd,
         model: opts.model,
+        effort: meta.effort,
       },
       executor
     );
@@ -927,6 +931,7 @@ export class Orchestrator {
     head: string;
     executor?: string;
     model?: string;
+    effort?: EffortLevel;
     buildPrompt: (ctx: { runId: string; worktreePath: string }) => string;
   }): Promise<RunMeta> {
     const task = this.ctx.store.get(opts.taskId);
@@ -973,6 +978,7 @@ export class Orchestrator {
       createdAt: now,
       updatedAt: now,
       model: opts.model,
+      ...this.effortField(opts.effort),
       kind: opts.kind,
       claims: [...task.meta.writes],
       ...(owner === undefined ? {} : { dispatchedBy: owner }),
@@ -1008,6 +1014,7 @@ export class Orchestrator {
         maxTurns: caps.maxTurns,
         maxBudgetUsd: caps.maxBudgetUsd,
         model: opts.model,
+        effort: meta.effort,
       },
       executor
     );
@@ -2172,6 +2179,7 @@ export class Orchestrator {
     request: {
       executor?: string;
       model?: string;
+      effort?: EffortLevel;
       fresh?: boolean;
       actor?: string;
       /** Whom the run is for, when not the actor (see dispatch()). */
@@ -2202,6 +2210,7 @@ export class Orchestrator {
     );
     const meta = await this.dispatch(taskId, executorName, {
       model,
+      effort: request.effort,
       actor: request.actor,
       dispatchedBy: request.dispatchedBy,
       guard: request.guard,
@@ -2264,9 +2273,16 @@ export class Orchestrator {
   // got the old one back.
   private resumeHonoursRequest(
     run: RunMeta,
-    request: { executor?: string; model?: string }
+    request: { executor?: string; model?: string; effort?: EffortLevel }
   ): boolean {
     if (request.executor !== undefined && request.executor !== run.executor) {
+      return false;
+    }
+    if (
+      request.effort !== undefined &&
+      run.effort !== undefined &&
+      request.effort !== run.effort
+    ) {
       return false;
     }
     // Only compared when the run's own model is known: an older run recorded
@@ -4395,6 +4411,8 @@ export class Orchestrator {
     finish?: {
       costUsd?: number;
       turns?: number;
+      usage?: RunUsage;
+      experiments?: string[];
       sessionId?: string;
       error?: string;
       reviewedAt?: string;
@@ -4663,6 +4681,8 @@ export class Orchestrator {
       state: 'finished' | 'failed';
       costUsd?: number;
       turns?: number;
+      usage?: RunUsage;
+      experiments?: string[];
       sessionId?: string;
       error?: string;
     }
@@ -4711,6 +4731,8 @@ export class Orchestrator {
     this.transition(runId, effectiveFinish.state, {
       costUsd: effectiveFinish.costUsd,
       turns: effectiveFinish.turns,
+      usage: effectiveFinish.usage,
+      experiments: effectiveFinish.experiments,
       sessionId: effectiveFinish.sessionId,
       error: effectiveFinish.error,
     });
@@ -4827,6 +4849,7 @@ export class Orchestrator {
       // default, so continuing an Opus run could hand the rest of the task
       // to a different model mid-conversation.
       model: oldMeta.model,
+      effort: oldMeta.effort,
       // Carries forward whatever the prior run had already claimed — a
       // follow-up must not look like it has never touched anything.
       claims: oldMeta.claims,
@@ -4898,6 +4921,7 @@ export class Orchestrator {
         maxTurns: caps.maxTurns,
         maxBudgetUsd: caps.maxBudgetUsd,
         model: oldMeta.model,
+        effort: oldMeta.effort,
       },
       executor
     );
@@ -4985,6 +5009,7 @@ export class Orchestrator {
       // actually resumed must not be reported as this run's.
       ...(continuing ? { sessionId: meta.sessionId } : {}),
       model: meta.model,
+      effort: meta.effort,
       // See requestChanges' matching comment — a resumed run keeps whatever
       // its predecessor had already claimed.
       claims: meta.claims,
@@ -5042,7 +5067,7 @@ export class Orchestrator {
     const prompt = [
       continuing
         ? renderContinuationPrompt(meta, newRunId)
-        : `${this.promptForTask(task)}\n\n${renderFreshSessionNotice(meta, newRunId)}`,
+        : `${this.promptForTask(task, executorName)}\n\n${renderFreshSessionNotice(meta, newRunId)}`,
       renderScopeRequestsSection(carried),
     ]
       .filter((section): section is string => section !== null)
@@ -5096,6 +5121,7 @@ export class Orchestrator {
         maxTurns: caps.maxTurns,
         maxBudgetUsd: caps.maxBudgetUsd,
         model: meta.model,
+        effort: meta.effort,
       },
       executor
     );
@@ -5106,6 +5132,16 @@ export class Orchestrator {
   // every dispatch/resume — same rationale as the MCP tools re-resolving
   // config on every call: a config edit takes effect on the next dispatch
   // without a dispatchd restart.
+  // A run's effort: what the caller named, else config `effort.execute`, else
+  // nothing (the model's own default). Spread into RunMeta so an unset effort
+  // leaves no key, keeping transcript headers of default runs unchanged.
+  private effortField(named: EffortLevel | undefined): {
+    effort?: EffortLevel;
+  } {
+    const effort = named ?? loadConfig(this.ctx.rootDir).effort?.execute;
+    return effort === undefined ? {} : { effort };
+  }
+
   private orchestratorCaps(): OrchestratorConfig {
     return loadConfig(this.ctx.rootDir).orchestrator;
   }
@@ -5115,7 +5151,7 @@ export class Orchestrator {
   // exact text is unit-testable independent of the orchestrator. A corrupt
   // parent epic file degrades to "no epic context" rather than failing the
   // whole dispatch — the task being dispatched is still perfectly valid.
-  private promptForTask(task: TaskDoc): string {
+  private promptForTask(task: TaskDoc, executorName: string): string {
     let parentEpic: TaskDoc | null = null;
     if (task.meta.parent !== null) {
       try {
@@ -5132,7 +5168,8 @@ export class Orchestrator {
       task,
       parentEpic,
       ledgerEntries,
-      this.orientationFor(task.meta.id)
+      this.orientationFor(task.meta.id),
+      this.executorProfile(executorName).dispatchMcp !== false
     );
   }
 

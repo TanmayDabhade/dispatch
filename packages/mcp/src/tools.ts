@@ -1537,6 +1537,14 @@ async function recordMutation(
   }
 }
 
+// The status vocabulary as the model sees it on task_list/task_save. The
+// fields stay plain strings (see task_save), so this is the only place an
+// agent learns the valid values before a call fails.
+const STATUS_PARAM_DOC =
+  'Built-in statuses: draft | ready | working | review | landing | landed | ' +
+  'dropped. A project may define its own set in .dispatch/config.yml, and ' +
+  'that set is what this is checked against.';
+
 // Registers the five task_* tools plus run_list against a fixed root
 // directory. Each task_* tool re-resolves the TaskStore/config on every call
 // (rather than caching it at registration time) so a `dispatch init` that
@@ -1557,9 +1565,12 @@ export function registerDispatchTools(
       description:
         'List tasks (metadata only — no body) optionally filtered by status, kind, or parent.',
       inputSchema: {
-        status: z.string().optional(),
-        kind: z.string().optional(),
-        parent: z.string().optional(),
+        status: z.string().optional().describe(STATUS_PARAM_DOC),
+        kind: z.string().optional().describe('task | epic'),
+        parent: z
+          .string()
+          .optional()
+          .describe('An epic id (e-…): only that epic’s child tasks.'),
       },
       outputSchema: {
         tasks: z.array(z.object(taskSummaryShape)),
@@ -1601,21 +1612,75 @@ export function registerDispatchTools(
       // our own validate() below and produces the same CLI-style error
       // message, instead of a generic zod schema-validation error.
       inputSchema: {
-        id: z.string().optional(),
+        id: z
+          .string()
+          .optional()
+          .describe('The task to update (t-… or e-…). Omit to create.'),
         title: z.string().optional(),
-        status: z.string().optional(),
-        kind: z.string().optional(),
-        parent: z.string().nullable().optional(),
-        // A project or milestone by title or id, resolved to `parent`.
-        milestone: z.string().optional(),
-        blockedBy: z.array(z.string()).optional(),
-        labels: z.array(z.string()).optional(),
-        priority: z.string().optional(),
-        assignee: z.string().optional(),
-        description: z.string().optional(),
+        status: z
+          .string()
+          .optional()
+          .describe(
+            `${STATUS_PARAM_DOC} working, review, landing and landed are ` +
+              'normally set by dispatchd as runs and the merge queue advance; ' +
+              'landed means merged.'
+          ),
+        kind: z
+          .string()
+          .optional()
+          .describe(
+            'task | milestone | project | initiative (default task; legacy ' +
+              'epic reads as milestone). Create only.'
+          ),
+        parent: z
+          .string()
+          .nullable()
+          .optional()
+          .describe(
+            'Parent container id (a milestone, project, initiative or parent ' +
+              'issue); null clears it.'
+          ),
+        milestone: z
+          .string()
+          .optional()
+          .describe(
+            'A project or milestone by title or id, resolved to `parent`.'
+          ),
+        blockedBy: z
+          .array(z.string())
+          .optional()
+          .describe(
+            'Task ids that must land before this one can start. Replaces the whole list.'
+          ),
+        labels: z
+          .array(z.string())
+          .optional()
+          .describe('Free-form labels. Replaces the whole list.'),
+        priority: z
+          .string()
+          .optional()
+          .describe('urgent | high | medium | low | none'),
+        assignee: z
+          .string()
+          .optional()
+          .describe('agent | human | human:<handle> | none'),
+        description: z
+          .string()
+          .optional()
+          .describe(
+            "Markdown for the task's Description section. Create only."
+          ),
         // Files this task expects to touch, for the epic scheduler. Omitted
         // means "unknown", which serializes against everything.
-        writes: z.array(z.string()).optional(),
+        writes: z
+          .array(z.string())
+          .optional()
+          .describe(
+            'Files, or dir/** prefixes, this task will modify; tasks whose ' +
+              'writes do not overlap may run in parallel. Omit when unknown — ' +
+              'an unknown task is serialized against everything. Replaces the ' +
+              'whole list.'
+          ),
       },
       outputSchema: { meta: z.object(taskMetaShape), body: z.string() },
       // No idempotentHint: creating (no id) makes a new task every call, so
@@ -1631,9 +1696,13 @@ export function registerDispatchTools(
       title: 'Comment on a task',
       description:
         "Add a comment to a task's thread, credited to you — for progress " +
-        'notes and questions others should see. Read the thread back with ' +
-        'task_comments.',
-      inputSchema: { id: z.string(), text: z.string() },
+        'notes, decisions and questions others should see. Humans read the ' +
+        'thread in the app, and later runs of the same task receive it as ' +
+        'part of their prompt. Read it back with task_comments.',
+      inputSchema: {
+        id: z.string().describe('The task id (t-… or e-…).'),
+        text: z.string().describe('The comment; must not be empty.'),
+      },
       outputSchema: { comment: commentShape },
     },
     ({ id, text }) => taskComment(rootDir, { id, text })
@@ -1657,7 +1726,7 @@ export function registerDispatchTools(
     {
       title: 'Ready work',
       description:
-        'List tasks ready to start now: kind task, status todo, all blockers done. Priority-ordered.',
+        'List tasks ready to start now: kind task, status ready, every blocker landed or dropped. Priority-ordered.',
       outputSchema: {
         tasks: z.array(
           z.object({
@@ -1730,10 +1799,11 @@ export function registerDispatchTools(
       title: 'Message the human',
       description:
         'Raise a message to the human running this task — the agent->user ' +
-        'channel of agent collaboration. Use it to flag a question, a ' +
-        'blocker, or a notable update that should surface beyond your own ' +
-        'assistant output, e.g. before pausing on something ambiguous. ' +
-        "Lands on this run's own Session tab, badged as coming from you. " +
+        'channel of agent collaboration. Use it for a blocker or a notable ' +
+        'update that should surface beyond your own assistant output. It does ' +
+        'not wait and returns no reply; for a question you need answered, use ' +
+        "ask_user instead. Lands on this run's own Session tab, badged as " +
+        'coming from you. ' +
         'Requires a live dispatch run context; fails with a clear error ' +
         'outside one (a manually-started MCP server, or dispatchd not ' +
         'running).',

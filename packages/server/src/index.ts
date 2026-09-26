@@ -1030,7 +1030,7 @@ async function bootServer(
         });
   if (boardSyncScheduler === null && store instanceof TaskStore) {
     console.log(
-      `dispatchd: no trunk resolvable for ${rootDir}; board sync disabled`
+      `dispatchd: no main branch for ${rootDir}; task files won't be committed`
     );
   }
   // The receipts exporter: the database backend's counterpart to the board
@@ -2059,6 +2059,7 @@ async function bootServer(
       // on is torn down — it can sit in a quiet window for minutes and ends by
       // starting an agent (see Orchestrator.shutdown).
       orchestrator.shutdown();
+      epicEngine.shutdown();
       watcher?.close();
       sourceWatcher.close();
       prManager.stopPolling();

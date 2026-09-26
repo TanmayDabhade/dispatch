@@ -1,5 +1,6 @@
 import type { RunMeta } from '@dispatch/client';
 import type {
+  EffortLevel,
   StatusModel,
   TaskListItem,
   UpdatePatch,
@@ -54,6 +55,10 @@ export interface TaskPageModel {
   /** Peeks another task. */
   openTask: (taskId: string) => void;
   selectMode: (mode: TaskPageMode) => void;
-  dispatch: (executor?: string, model?: string) => Promise<void>;
+  dispatch: (
+    executor?: string,
+    model?: string,
+    effort?: EffortLevel
+  ) => Promise<void>;
   dispatching: boolean;
 }

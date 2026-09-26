@@ -1,4 +1,8 @@
-import type { TaskListItem, UpdatePatch } from '@dispatch/core/browser';
+import type {
+  EffortLevel,
+  TaskListItem,
+  UpdatePatch,
+} from '@dispatch/core/browser';
 import {
   isCanceledStatus,
   isContainer,
@@ -398,11 +402,17 @@ function TaskPageLoaded({
   const { dispatchTask } = host;
   const dispatching = awaitingRun !== null;
   const dispatch = useCallback(
-    async (executor?: string, runModel?: string) => {
+    async (executor?: string, runModel?: string, effort?: EffortLevel) => {
       const known = new Set(runs.map((r) => r.id));
       setAwaitingRun(known);
       try {
-        await dispatchTask(taskId, executor, runModel, layout !== 'full');
+        await dispatchTask(
+          taskId,
+          executor,
+          runModel,
+          layout !== 'full',
+          effort
+        );
       } catch (err) {
         setAwaitingRun(null);
         fail('Dispatch failed', err);

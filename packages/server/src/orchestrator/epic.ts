@@ -308,6 +308,10 @@ export class EpicEngine {
     string,
     ReturnType<typeof setTimeout>
   >();
+  // resumeOnBoot()'s pending re-arm timers, so shutdown() can cancel them.
+  private readonly resumeTimers = new Set<ReturnType<typeof setTimeout>>();
+  // Set by shutdown(): no fill starts and nothing persists after it.
+  private closed = false;
   private fixLoop: EpicFixLoopPort | null = null;
   // Per active session, what its unstarted work waited on at the last fill:
   // blockers, and its own tasks a teammate held (see onTasksChanged). Memory
@@ -678,14 +682,30 @@ export class EpicEngine {
       if (session.state !== 'active' || this.armed.has(epicId)) continue;
       count++;
       const timer = setTimeout(() => {
+        this.resumeTimers.delete(timer);
         const current = this.sessions.get(epicId);
         if (current === undefined || current.state !== 'active') return;
         this.armed.add(epicId);
         this.scheduleFill(epicId);
       }, this.resumeDelayMs);
       timer.unref?.();
+      this.resumeTimers.add(timer);
     }
     return count;
+  }
+
+  // Cancels every pending timer and turns later fills and writes into no-ops.
+  // runsDir resolves DISPATCH_HOME at write time, so a retry firing after its
+  // owner is gone would otherwise write into whatever home is current by then.
+  shutdown(): void {
+    this.closed = true;
+    for (const timer of this.resumeTimers) clearTimeout(timer);
+    for (const timer of this.fillRetryTimers.values()) clearTimeout(timer);
+    for (const timer of this.changedTimers.values()) clearTimeout(timer);
+    this.resumeTimers.clear();
+    this.fillRetryTimers.clear();
+    this.fillRetryAttempts.clear();
+    this.changedTimers.clear();
   }
 
   // Orchestrator.onRunTerminal's subscriber: a run reaching a terminal state
@@ -765,9 +785,12 @@ export class EpicEngine {
   // down. Failures are recorded rather than propagated, matching
   // invokeHooksSafely's rule for a throwing subscriber.
   private scheduleFill(epicId: string): void {
+    if (this.closed) return;
     void this.enqueueFill(epicId).then(
       () => this.fillRetryAttempts.delete(epicId),
       (err: unknown) => {
+        // A fill already in flight at shutdown must not arm a new retry.
+        if (this.closed) return;
         const message = (err as Error).message;
         this.recordFillFailure(epicId, message);
         this.armFillRetry(epicId, message);
@@ -1340,6 +1363,7 @@ export class EpicEngine {
   // hydrate()'s try/catch on the read side. Best-effort: a failure here must
   // never block the transition that triggered it.
   private persist(): void {
+    if (this.closed) return;
     try {
       mkdirSync(runsDir(this.ctx.rootDir), { recursive: true });
       const sessions: Record<string, PersistedSessionRecord> = {};

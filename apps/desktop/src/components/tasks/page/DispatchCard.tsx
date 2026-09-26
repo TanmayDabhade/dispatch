@@ -1,4 +1,5 @@
 import type { ExecutorsResponse } from '@dispatch/client';
+import type { EffortLevel } from '@dispatch/core/browser';
 import {
   Check,
   CircleSlash,
@@ -17,7 +18,14 @@ import type {
   ReadinessCheck,
 } from '../../../lib/dispatchReadiness';
 import { dispatchesOnKey } from '../../../lib/dispatchReadiness';
-import { modelLabel, MODELS, readDefaultModel } from '../../../lib/models';
+import {
+  DEFAULT_EFFORT_ID,
+  effortFromId,
+  effortOptions,
+  modelLabel,
+  MODELS,
+  readDefaultModel,
+} from '../../../lib/models';
 import { cn } from '@/lib/utils';
 import { PillButton, SelectPill } from '@/ui/ai/pill';
 import { Button } from '@/ui/button';
@@ -104,7 +112,9 @@ export interface DispatchCardProps {
   executors: ExecutorsResponse | undefined;
   /** The model a dispatch runs on when the picker is untouched. */
   defaultModel: string | undefined;
-  onDispatch: (executor?: string, model?: string) => void;
+  /** The project's `effort.execute`, named on the effort picker's Default entry. */
+  defaultEffort?: EffortLevel;
+  onDispatch: (executor?: string, model?: string, effort?: EffortLevel) => void;
   onOpenRun: () => void;
   onOpenTask: (taskId: string) => void;
   /** Starts an AI pass that fills in a thin spec; omitted hides `Add detail`. */
@@ -126,6 +136,7 @@ export function DispatchCard({
   starting,
   executors,
   defaultModel,
+  defaultEffort,
   onDispatch,
   onOpenRun,
   onOpenTask,
@@ -134,6 +145,9 @@ export function DispatchCard({
   onAddWrites,
 }: DispatchCardProps) {
   const [model, setModel] = useState(() => defaultModel ?? readDefaultModel());
+  // The Default sentinel sends no effort, so the daemon applies the config's.
+  const [effortId, setEffortId] = useState(DEFAULT_EFFORT_ID);
+  const efforts = effortOptions(defaultEffort);
   // Undefined sends no executor at all: the daemon's default, which a resumable run
   // never refuses for naming one.
   const [executor, setExecutor] = useState<string | undefined>(undefined);
@@ -155,8 +169,12 @@ export function DispatchCard({
   function dispatch(explicit?: string) {
     const chosen = explicit ?? executor;
     const on = chosen ?? executors?.default ?? 'claude';
-    // The model picker lists Claude ids; any other executor picks its own.
-    onDispatch(chosen, on === 'claude' ? model : undefined);
+    // The model and effort pickers are Claude's; any other executor picks its own.
+    onDispatch(
+      chosen,
+      on === 'claude' ? model : undefined,
+      on === 'claude' ? effortFromId(effortId) : undefined
+    );
   }
 
   return (
@@ -219,6 +237,28 @@ export function DispatchCard({
                     <DropdownMenuItem key={m.id} onClick={() => setModel(m.id)}>
                       <span className="flex-1">{m.label}</span>
                       {m.id === model && <Check className="ml-auto size-3" />}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+            {runsOn === 'claude' && (
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={<SelectPill aria-label="Effort" />}
+                >
+                  {efforts.find((e) => e.id === effortId)?.label}
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {efforts.map((e) => (
+                    <DropdownMenuItem
+                      key={e.id}
+                      onClick={() => setEffortId(e.id)}
+                    >
+                      <span className="flex-1">{e.label}</span>
+                      {e.id === effortId && (
+                        <Check className="ml-auto size-3" />
+                      )}
                     </DropdownMenuItem>
                   ))}
                 </DropdownMenuContent>

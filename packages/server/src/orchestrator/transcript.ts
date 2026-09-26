@@ -20,6 +20,7 @@ import type {
   RunState,
   RunSurvey,
 } from './types.js';
+import type { RunUsage } from './usage.js';
 
 interface TranscriptHeaderLine {
   type: 'header';
@@ -54,6 +55,8 @@ interface TranscriptStateLine {
   ts: string;
   costUsd?: number;
   turns?: number;
+  usage?: RunUsage;
+  experiments?: string[];
   sessionId?: string;
   error?: string;
   // C2's review marker (see RunMeta) rides along on a state line exactly
@@ -169,6 +172,8 @@ export class Transcript {
     finish?: {
       costUsd?: number;
       turns?: number;
+      usage?: RunUsage;
+      experiments?: string[];
       sessionId?: string;
       error?: string;
       reviewedAt?: string;
@@ -307,6 +312,8 @@ export function replayTranscript(path: string): RunDetail | null {
         updatedAt: line.ts,
         costUsd: line.costUsd ?? meta.costUsd,
         turns: line.turns ?? meta.turns,
+        usage: line.usage ?? meta.usage,
+        experiments: line.experiments ?? meta.experiments,
         sessionId: line.sessionId ?? meta.sessionId,
         error: line.error ?? meta.error,
         reviewedAt: line.reviewedAt ?? meta.reviewedAt,

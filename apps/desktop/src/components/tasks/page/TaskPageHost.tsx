@@ -1,3 +1,4 @@
+import type { EffortLevel } from '@dispatch/core/browser';
 import { createContext, useContext } from 'react';
 
 import type { DispatchProjectData } from '../../../hooks/useDispatchProject';
@@ -67,7 +68,9 @@ export interface TaskPageHost {
     taskId: string,
     executor: string | undefined,
     model: string | undefined,
-    stayInPlace: boolean
+    stayInPlace: boolean,
+    /** The effort picker's choice; absent lets the daemon apply the config's. */
+    effort?: EffortLevel
   ) => Promise<void>;
   /** Opens a run's pull request on the PR review page. */
   openPr: (runId: string) => void;

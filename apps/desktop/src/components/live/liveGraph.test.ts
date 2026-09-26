@@ -264,7 +264,7 @@ describe('readyContainers', () => {
       task('r-1', { parent: 'm-rel', risk: 'critical' }),
       task('r-2', { parent: 'm-rel', derivedFrom: 't-0' }),
       task('r-3', { parent: 'm-rel' }),
-      task('m-crit', { kind: 'milestone', title: 'Cutover' }),
+      task('m-crit', { kind: 'milestone', title: 'Switchover' }),
       task('c-1', { parent: 'm-crit', risk: 'critical' }),
     ];
     const offered = readyContainers({

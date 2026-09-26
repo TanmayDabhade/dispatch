@@ -72,7 +72,7 @@ export function run(overrides: Partial<RunMeta> = {}): RunMeta {
 export interface HostLog {
   updates: { id: string; patch: UpdatePatch }[];
   moves: { id: string; status: string }[];
-  dispatches: { taskId: string; stayInPlace: boolean }[];
+  dispatches: { taskId: string; stayInPlace: boolean; effort?: string }[];
   peeks: string[];
   comments: string[];
 }
@@ -163,8 +163,12 @@ export function fakeHost(
     project,
     peekTask: (id) => log.peeks.push(id),
     openTaskPage: () => {},
-    dispatchTask: (taskId, _executor, _model, stayInPlace) => {
-      log.dispatches.push({ taskId, stayInPlace });
+    dispatchTask: (taskId, _executor, _model, stayInPlace, effort) => {
+      log.dispatches.push({
+        taskId,
+        stayInPlace,
+        ...(effort === undefined ? {} : { effort }),
+      });
       return Promise.resolve();
     },
     openPr: () => {},

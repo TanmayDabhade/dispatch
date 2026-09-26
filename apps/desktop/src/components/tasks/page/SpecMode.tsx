@@ -144,7 +144,10 @@ export function SpecMode({ page }: { page: TaskPageModel }) {
           defaultModel={
             config === null ? undefined : resolveExecuteModel(config)
           }
-          onDispatch={(executor, model) => void page.dispatch(executor, model)}
+          defaultEffort={config?.effort?.execute}
+          onDispatch={(executor, model, effort) =>
+            void page.dispatch(executor, model, effort)
+          }
           onOpenRun={() => page.selectMode('run')}
           onOpenTask={page.openTask}
           onEnrich={enrich}

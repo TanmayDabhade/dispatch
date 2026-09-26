@@ -16,6 +16,7 @@ import {
   FlightPlanHostContext,
 } from './components/flightplan/ContainerFlightPlanSection';
 import { PeopleProvider } from './components/people/PeopleContext';
+import { accessFor } from './components/settings/access';
 import { AddProjectDialog } from './components/shell/AddProjectDialog';
 import { CommandPalette } from './components/shell/CommandPalette';
 import {
@@ -519,6 +520,12 @@ function App() {
       ),
     [rawData, feedback]
   );
+  // Settings reports its own save failures (its save line, a refusal's reason,
+  // a kept draft), which the toast wrapper above would swallow first.
+  const settingsData = useMemo(
+    () => ({ ...data, handleUpdateConfig: rawData.handleUpdateConfig }),
+    [data, rawData.handleUpdateConfig]
+  );
 
   // The overseer chat's session — mounted here, not inside OverseerView, so the
   // open conversation survives switching tabs. Uses `rawData`'s client/port
@@ -529,7 +536,8 @@ function App() {
     rawData.client,
     rawData.port,
     activeProject?.path ?? null,
-    rawData.config?.models.overseer
+    rawData.config?.models.overseer,
+    rawData.config?.effort?.overseer
   );
 
   // Opens the full task view; unspecified runId resolves to the task's latest
@@ -722,8 +730,11 @@ function App() {
           openTaskPage: (taskId, mode, runId) =>
             openTaskView(taskId, mode, runId),
           // Raw, so a refusal reaches the page (which reports it) instead of resolving.
-          dispatchTask: (taskId, executor, model, stayInPlace) =>
-            rawHandleDispatch(taskId, executor, model, { batch: stayInPlace }),
+          dispatchTask: (taskId, executor, model, stayInPlace, effort) =>
+            rawHandleDispatch(taskId, executor, model, {
+              batch: stayInPlace,
+              effort,
+            }),
           openPr: (runId) => {
             const number = prNumberFromUrl(
               projectRuns.find((r) => r.id === runId)?.prUrl
@@ -1236,7 +1247,7 @@ function App() {
                                   {navState.globalView === 'settings' && (
                                     <SettingsView
                                       activeProject={activeProject}
-                                      data={data}
+                                      data={settingsData}
                                       initialPage={
                                         navState.settingsPage ?? 'general'
                                       }
@@ -1516,8 +1527,15 @@ function App() {
                         syncStatus={
                           activeProject !== null ? data.syncStatus : null
                         }
-                        onDisableAutoCommit={() =>
-                          void data.handleUpdateConfig({ autoCommit: false })
+                        // autoCommit is an operator-only key, so only the owner is offered it.
+                        onDisableAutoCommit={
+                          accessFor(data.myTier, data.attachedWithoutAppToken)
+                            .canOperate
+                            ? () =>
+                                void data.handleUpdateConfig({
+                                  autoCommit: false,
+                                })
+                            : undefined
                         }
                         spendToday={todaySpend}
                         ceilings={liveCeilings}

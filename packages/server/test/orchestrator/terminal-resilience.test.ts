@@ -21,6 +21,8 @@ import { initGitRepo, withBrokenRepo } from './helpers.js';
 
 let fakeHome: string;
 let repo: string;
+// Shut down in afterEach: an engine's retry timers outlive its test otherwise.
+const engines: EpicEngine[] = [];
 const originalDispatchHome = process.env.DISPATCH_HOME;
 
 beforeEach(() => {
@@ -30,6 +32,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  for (const engine of engines.splice(0)) engine.shutdown();
   if (originalDispatchHome === undefined) delete process.env.DISPATCH_HOME;
   else process.env.DISPATCH_HOME = originalDispatchHome;
   rmSync(fakeHome, { recursive: true, force: true });
@@ -84,6 +87,7 @@ function makeHarness(fillRetryDelayMs?: number, session?: string): Harness {
     orchestrator,
     fillRetryDelayMs,
   });
+  engines.push(epics);
   const terminal: RunMeta[] = [];
   orchestrator.onRunTerminal((meta) => terminal.push(meta));
   return { orchestrator, epics, store, cache, events, terminal };
