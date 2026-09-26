@@ -46,6 +46,33 @@ const LIVE_BAND_GAP = 12;
 /** A band with nothing to draw says so in one line this tall. */
 const EMPTY_BODY = 36;
 
+// The part of a band's canvas worth drawing: the canvas scrolled `left` across and `width`
+// wide, `top` into the page's scroller. Its rows clamp to the canvas's `height`, so a
+// page scroll that keeps the whole band in reach leaves the window as it was.
+function bandCull(
+  left: number,
+  width: number,
+  scroller: HTMLElement | null,
+  top: number,
+  height: number
+): CullWindow | null {
+  const window = cullWindow(
+    {
+      left,
+      top: (scroller?.scrollTop ?? 0) - top - LIVE_BAND_HEAD,
+      width,
+      height: scroller?.clientHeight ?? height,
+    },
+    WAVE_HEADER_HEIGHT
+  );
+  if (window === null) return null;
+  return {
+    ...window,
+    y0: Math.max(window.y0, 0),
+    y1: Math.min(window.y1, height),
+  };
+}
+
 /** A band's full height — exact, so the band list can window without measuring. */
 export function liveBandHeight(band: LiveBandModel): number {
   const body =
@@ -257,8 +284,12 @@ export const LiveBand = memo(function LiveBand({
   const { spec, plan, layout } = band;
   const model = actions.model;
   // A band coming into reach draws its title row at once and its cards at low priority,
-  // so a fast scroll or a band jump never spends a whole frame on one band.
-  const drawn = useDeferredValue(true, false);
+  // so a fast scroll never spends a whole frame on one band. The cursor's band draws at
+  // once, so a J/K lands on a drawn card.
+  const deferred = useDeferredValue(true, false);
+  const [focusedOnce, setFocusedOnce] = useState(focusedId !== null);
+  if (focusedId !== null && !focusedOnce) setFocusedOnce(true);
+  const drawn = deferred || focusedOnce;
 
   const path = useMemo(
     () =>
@@ -345,21 +376,25 @@ export const LiveBand = memo(function LiveBand({
     return out;
   }, [spec, layout, plan, ctx.view, model]);
 
-  // The drawn window follows both scrolls, re-culling only as it crosses a tile.
+  // The drawn window follows both scrolls, re-culling only as it crosses a tile. Until
+  // the canvas is laid out it is the scroller's width from the left edge, so a band that
+  // draws on its first render never draws every card.
   const canvasRef = useRef<HTMLDivElement>(null);
-  const [cull, setCull] = useState<CullWindow | null>(null);
+  const [cull, setCull] = useState<CullWindow | null>(() =>
+    scroller === null
+      ? null
+      : bandCull(0, scroller.clientWidth, scroller, top, layout.height)
+  );
   useEffect(() => {
     const el = canvasRef.current;
     if (el === null) return;
     const update = () => {
-      const next = cullWindow(
-        {
-          left: el.scrollLeft,
-          top: (scroller?.scrollTop ?? 0) - top - LIVE_BAND_HEAD,
-          width: el.clientWidth,
-          height: scroller?.clientHeight ?? el.clientHeight,
-        },
-        WAVE_HEADER_HEIGHT
+      const next = bandCull(
+        el.scrollLeft,
+        el.clientWidth,
+        scroller,
+        top,
+        layout.height
       );
       setCull((prev) => (sameWindow(prev, next) ? prev : next));
     };
@@ -373,7 +408,7 @@ export const LiveBand = memo(function LiveBand({
       scroller?.removeEventListener('scroll', update);
       observer.disconnect();
     };
-  }, [scroller, top]);
+  }, [scroller, top, layout.height]);
 
   // The cursor's card comes into view once drawn: across the band, and down the page.
   useEffect(() => {
