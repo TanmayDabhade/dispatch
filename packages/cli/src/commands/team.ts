@@ -69,7 +69,7 @@ export function registerTeamCommands(program: Command, ctx: CliContext): void {
     .option('--name <displayName>', 'display name for a new roster entry')
     .option(
       '--tier <tier>',
-      'request (default: board, dispatch, review, merge), decide (+ approvals, scope decisions, previews, invites) or operator (+ terminals, browser, file writes and git on this machine)'
+      'request (default: board, dispatch, review, merge), decide (+ approvals, scope decisions, previews; only the app token issues tokens for others) or operator (+ terminals, browser, file writes and git on this machine)'
     )
     .option(
       '--expires <days>',

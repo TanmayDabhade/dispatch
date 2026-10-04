@@ -25,6 +25,9 @@ export interface TokenIdentity {
   /** True for the built-in on-disk agent token, which every run's agent
    *  reads: a request presenting it may be an agent, never provably a human. */
   agentToken?: boolean;
+  /** True for the built-in app token: the owner at this machine, the only
+   *  caller who may issue a credential for anyone but themselves. */
+  appToken?: boolean;
 }
 
 // One of the two tokens the daemon mints at startup. They authenticate as the
@@ -111,6 +114,7 @@ export class TokenRegistry {
         handle: operatorHandle,
         ref,
         tier: 'operator',
+        appToken: true,
       },
       {
         hash: sha256(pair.agentToken),
@@ -142,6 +146,7 @@ export class TokenRegistry {
           ref: own.ref,
           tier: own.tier,
           ...(own.agentToken === true ? { agentToken: true } : {}),
+          ...(own.appToken === true ? { appToken: true } : {}),
         },
       };
     }

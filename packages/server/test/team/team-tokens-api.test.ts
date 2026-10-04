@@ -278,15 +278,14 @@ describe('the tier ladder', () => {
   it('nobody hands out more than they hold', async () => {
     const lead = await issued({ email: 'grace@example.com', tier: 'decide' });
 
-    // A decide-tier lead can invite reviewers at their own level or below…
-    expect((await invite({ email: 'ada@example.com' }, lead)).status).toBe(201);
+    // A decide-tier lead can replace their own token at their own level…
     expect(
-      (await invite({ email: 'mary@example.com', tier: 'decide' }, lead)).status
+      (await invite({ handle: 'grace', tier: 'decide' }, lead)).status
     ).toBe(201);
-    // …but minting an operator token would be a shell by another name.
+    // …but not mint themselves an operator token, a shell by another name.
+    const fresh = await issued({ email: 'grace@example.com', tier: 'decide' });
     expect(
-      (await invite({ email: 'eve@example.com', tier: 'operator' }, lead))
-        .status
+      (await invite({ handle: 'grace', tier: 'operator' }, fresh)).status
     ).toBe(403);
   });
 
@@ -305,6 +304,72 @@ describe('the tier ladder', () => {
 
     // Linus is untouched.
     expect((await get('/api/whoami', ops)).status).toBe(200);
+  });
+});
+
+// XH-R1: only the owner's app token issues a credential for someone else. A
+// re-issue hands the caller the new token and revokes the old one, so a
+// teammate allowed to do it for another handle could become that person.
+describe('issuing for someone else', () => {
+  async function issued(body: object, token?: string): Promise<string> {
+    const res = await invite(body, token);
+    expect(res.status).toBe(201);
+    return ((await res.json()) as { token: string }).token;
+  }
+
+  async function whoami(token: string) {
+    return rawFetch(`${baseUrl}/api/whoami`, { headers: headers(token) });
+  }
+
+  it('a decider cannot re-issue a peer and take over their identity', async () => {
+    const bob = await issued({ email: 'bob@example.com', tier: 'decide' });
+    const carol = await issued({ email: 'carol@example.com', tier: 'decide' });
+
+    const byHandle = await invite({ handle: 'carol', tier: 'decide' }, bob);
+    expect(byHandle.status).toBe(403);
+    expect(await byHandle.text()).not.toContain('"token"');
+    // The email path resolves to the same roster entry and is refused too.
+    expect(
+      (await invite({ email: 'carol@example.com', tier: 'decide' }, bob)).status
+    ).toBe(403);
+
+    // Carol is untouched.
+    const me = await whoami(carol);
+    expect(me.status).toBe(200);
+    expect(((await me.json()) as { handle: string }).handle).toBe('carol');
+  });
+
+  it('a decider cannot invite someone new either', async () => {
+    const bob = await issued({ email: 'bob@example.com', tier: 'decide' });
+    expect((await invite({ email: 'eve@example.com' }, bob)).status).toBe(403);
+  });
+
+  it('a teammate holding operator is still not the owner', async () => {
+    const linus = await issued({
+      email: 'linus@example.com',
+      tier: 'operator',
+    });
+    const carol = await issued({ email: 'carol@example.com', tier: 'decide' });
+    expect(
+      (await invite({ handle: 'carol', tier: 'decide' }, linus)).status
+    ).toBe(403);
+    expect((await whoami(carol)).status).toBe(200);
+  });
+
+  it('a decider can re-issue their own credential', async () => {
+    const bob = await issued({ email: 'bob@example.com', tier: 'decide' });
+    const replaced = await issued({ handle: 'bob', tier: 'decide' }, bob);
+    expect((await whoami(bob)).status).toBe(401);
+    const me = await whoami(replaced);
+    expect(me.status).toBe(200);
+    expect(((await me.json()) as { handle: string }).handle).toBe('bob');
+  });
+
+  it("the owner can still re-issue anyone's", async () => {
+    const carol = await issued({ email: 'carol@example.com', tier: 'decide' });
+    const replaced = await issued({ handle: 'carol', tier: 'decide' });
+    expect((await whoami(carol)).status).toBe(401);
+    expect((await whoami(replaced)).status).toBe(200);
   });
 });
 

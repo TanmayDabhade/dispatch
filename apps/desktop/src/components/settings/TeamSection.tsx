@@ -35,7 +35,7 @@ const TIER_INFO: Record<AuthTier, { label: string; adds: string }> = {
   },
   decide: {
     label: 'Can approve',
-    adds: 'Also approve requests and invite people',
+    adds: 'Also approve requests and scope decisions',
   },
   operator: {
     label: 'Full access',

@@ -24,10 +24,11 @@ import { SeatLimitError } from './teammates.js';
 // agent holding the on-disk agent token must not be able to mint itself a
 // second identity.
 //
-// On top of that, nobody hands out more than they hold: a decide-tier lead can
-// invite reviewers but cannot mint an operator token, which would be a shell on
-// the host by another name. The same cap applies to revoking, so a lead cannot
-// lock the operator's own teammate-issued operator tokens out either.
+// Only the owner's app token issues a credential for another handle (XH-R1):
+// the new token comes back to the caller and replaces the old one, so anyone
+// else doing it could become that teammate. A teammate may replace only their
+// own. On top of that, nobody hands out more than they hold, and the same cap
+// applies to revoking, so a lead cannot lock out an operator-tier teammate.
 
 // How long an invite lasts when the inviter does not say. Long enough that a
 // teammate on a project is not re-invited every sprint; short enough that a
@@ -174,6 +175,15 @@ export async function issueTeamToken(
     handle = wanted;
   } else {
     return errorResponse(400, 'expected { handle } or { email }');
+  }
+
+  // Whoever receives this token speaks as `handle`, so only the owner may
+  // issue one for someone else.
+  if (ctx.caller?.appToken !== true && ctx.caller?.handle !== handle) {
+    return errorResponse(
+      403,
+      `only the daemon owner can issue a token for "${handle}"; you can re-issue only your own`
+    );
   }
 
   // Issuing replaces what they held, so replacing an operator token is as
