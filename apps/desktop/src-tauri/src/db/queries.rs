@@ -148,6 +148,9 @@ pub fn upsert_project(
 /// Upserts a session with monotonic accumulation of token deltas — safe to
 /// replay if a log file is ever re-scanned from offset 0. Returns true if a
 /// new session row was created (vs. an existing one updated).
+// Each argument maps onto one column of the row being written; a params
+// struct would only rename them.
+#[allow(clippy::too_many_arguments)]
 pub fn upsert_session(
     conn: &Connection,
     session_id: &str,
@@ -219,6 +222,9 @@ pub fn upsert_session(
     Ok(!existed)
 }
 
+// Each argument maps onto one column of the row being written; a params
+// struct would only rename them.
+#[allow(clippy::too_many_arguments)]
 pub fn insert_file_changed(
     conn: &Connection,
     session_id: &str,

@@ -246,7 +246,7 @@ mod tests {
         insert_session(&conn, "s-c", "old-c");
         insert_project(&conn, "plain", "/tmp/plain", 1, 1);
 
-        let folded = reattribute_dispatch_worktree_projects(&conn, &[root.clone()]).unwrap();
+        let folded = reattribute_dispatch_worktree_projects(&conn, std::slice::from_ref(&root)).unwrap();
         assert_eq!(folded, 2);
 
         assert_eq!(

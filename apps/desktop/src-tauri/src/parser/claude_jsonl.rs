@@ -482,8 +482,7 @@ mod tests {
         // block's content should end up in `text`.
         let assistant = records
             .iter()
-            .filter(|r| r.record_type == "assistant")
-            .nth(0)
+            .find(|r| r.record_type == "assistant")
             .expect("fixture has at least one assistant record");
         assert_eq!(assistant.text.as_deref(), Some("I'll create the main function."));
     }
