@@ -24,11 +24,15 @@ import { SeatLimitError } from './teammates.js';
 // agent holding the on-disk agent token must not be able to mint itself a
 // second identity.
 //
-// Only the owner's app token issues a credential for another handle (XH-R1):
-// the new token comes back to the caller and replaces the old one, so anyone
-// else doing it could become that teammate. A teammate may replace only their
-// own. On top of that, nobody hands out more than they hold, and the same cap
-// applies to revoking, so a lead cannot lock out an operator-tier teammate.
+// Only the owner's app token re-issues an existing teammate's credential
+// (XH-R1): the new token comes back to the caller and replaces the old one, so
+// anyone else doing it could become that teammate. A teammate may replace only
+// their own, and a lead may still invite someone not yet on the roster.
+//
+// On top of that, nobody hands out more than they hold: a decide-tier lead can
+// invite reviewers but cannot mint an operator token, which would be a shell on
+// the host by another name. The same cap applies to revoking, so a lead cannot
+// lock the operator's own teammate-issued operator tokens out either.
 
 // How long an invite lasts when the inviter does not say. Long enough that a
 // teammate on a project is not re-invited every sprint; short enough that a
@@ -149,6 +153,9 @@ export async function issueTeamToken(
   }
 
   let handle: string;
+  // The roster with an email invite's new entry added, written only once the
+  // caller is allowed to issue for it.
+  let addedRoster: TeamMember[] | null = null;
   if (typeof body.email === 'string' && body.email.trim() !== '') {
     const email = body.email.trim();
     if (!email.includes('@')) {
@@ -159,10 +166,7 @@ export async function issueTeamToken(
         ? body.displayName.trim()
         : email.slice(0, email.indexOf('@'));
     const result = upsertMember(roster.members, email, displayName);
-    if (result.changed) {
-      mkdirSync(join(ctx.rootDir, DISPATCH_DIR), { recursive: true });
-      writeFileSync(teamFile(ctx.rootDir), serializeTeam(result.members));
-    }
+    if (result.changed) addedRoster = result.members;
     handle = result.member.handle;
   } else if (typeof body.handle === 'string') {
     const wanted = body.handle;
@@ -178,20 +182,31 @@ export async function issueTeamToken(
   }
 
   // Whoever receives this token speaks as `handle`, so only the owner may
-  // issue one for someone else.
-  if (ctx.caller?.appToken !== true && ctx.caller?.handle !== handle) {
+  // issue one for an existing teammate other than the caller. A handle that
+  // still holds a token counts as existing even if it left the roster.
+  const current = ctx.team.teammates.issuedTier(handle);
+  const existing =
+    roster.members.some((m) => m.handle === handle) || current !== null;
+  if (
+    existing &&
+    ctx.caller?.appToken !== true &&
+    ctx.caller?.handle !== handle
+  ) {
     return errorResponse(
       403,
-      `only the daemon owner can issue a token for "${handle}"; you can re-issue only your own`
+      `only the daemon owner can re-issue ${handle}'s token; you can re-issue only your own`
     );
   }
 
   // Issuing replaces what they held, so replacing an operator token is as
   // privileged as revoking one.
-  const current = ctx.team.teammates.issuedTier(handle);
   if (current !== null) {
     const replacing = exceedsCaller(ctx, current);
     if (replacing !== null) return replacing;
+  }
+  if (addedRoster !== null) {
+    mkdirSync(join(ctx.rootDir, DISPATCH_DIR), { recursive: true });
+    writeFileSync(teamFile(ctx.rootDir), serializeTeam(addedRoster));
   }
   let token: string;
   try {
