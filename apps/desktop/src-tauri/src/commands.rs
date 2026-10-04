@@ -56,21 +56,56 @@ pub fn get_session_detail(
 pub fn open_in_editor(path: String) -> Result<(), String> {
     if let Ok(editor) = std::env::var("EDITOR") {
         if !editor.trim().is_empty() {
-            return Command::new(&editor)
+            return tool_command(&editor)
                 .arg(&path)
                 .spawn()
                 .map(|_| ())
-                .map_err(|e| format!("failed to launch $EDITOR ({editor}): {e}"));
+                .map_err(|e| {
+                    format!(
+                        "failed to launch $EDITOR ({editor}): {e}{}",
+                        searched_path_hint(&e)
+                    )
+                });
         }
     }
 
-    Command::new("code")
+    tool_command("code")
         .arg(&path)
         .spawn()
         .map(|_| ())
         .map_err(|e| {
-            format!("failed to launch editor: $EDITOR is not set and `code` failed to start: {e}")
+            format!(
+                "failed to launch editor: $EDITOR is not set and `code` failed to start: {e}{}",
+                searched_path_hint(&e)
+            )
         })
+}
+
+/// Builds a `Command` for an external CLI tool (`gh`, `code`, `$EDITOR`) whose
+/// `PATH` includes the standard tool-install directories (`/opt/homebrew/bin`,
+/// `/usr/local/bin`, ...). A macOS app launched from Finder/Spotlight inherits a
+/// minimal `PATH` that omits them, so a Homebrew-installed tool, or VS Code's
+/// `code` shim in `/usr/local/bin`, would otherwise be reported as missing. On
+/// Unix, `Command` resolves the program against the child's `PATH` when it is
+/// set, so this fixes both the lookup and any tools the child shells out to.
+fn tool_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut cmd = Command::new(program);
+    cmd.env("PATH", sidecar::enriched_child_path());
+    cmd
+}
+
+/// When a spawn failed because the program wasn't found, returns a suffix naming
+/// the `PATH` that was searched, so a "not installed" report shows at a glance
+/// which directories were checked. Empty for any other error kind.
+fn searched_path_hint(e: &std::io::Error) -> String {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        format!(
+            " (searched PATH: {})",
+            sidecar::enriched_child_path().to_string_lossy()
+        )
+    } else {
+        String::new()
+    }
 }
 
 /// Caps how many diff lines `get_file_diff_for_session_file` will ever serialize over IPC —
@@ -694,16 +729,10 @@ pub struct GithubRepo {
     pub description: String,
 }
 
-/// Builds a `gh` invocation whose `PATH` includes the standard tool-install
-/// directories (`/opt/homebrew/bin`, `/usr/local/bin`, ...). A macOS app launched
-/// from Finder/Spotlight inherits a minimal `PATH` that omits them, so a
-/// Homebrew-installed `gh` would otherwise be reported as missing. On Unix,
-/// `Command` resolves the program against the child's `PATH` when it is set,
-/// so this fixes both the lookup and any tools `gh` itself shells out to.
+/// Builds a `gh` invocation that can find a Homebrew-installed `gh` from a
+/// Finder launch (see `tool_command`).
 fn gh_command() -> Command {
-    let mut cmd = Command::new("gh");
-    cmd.env("PATH", sidecar::enriched_child_path());
-    cmd
+    tool_command("gh")
 }
 
 /// Verifies the GitHub CLI is installed and authenticated, turning both failure
@@ -717,7 +746,8 @@ fn ensure_gh_authenticated() -> Result<(), String> {
         .output()
         .map_err(|e| {
             format!(
-                "GitHub CLI (`gh`) is not installed or not on PATH: {e} — https://cli.github.com"
+                "GitHub CLI (`gh`) is not installed or not on PATH: {e}{} — https://cli.github.com",
+                searched_path_hint(&e)
             )
         })?;
     if !output.status.success() {
@@ -748,7 +778,12 @@ pub async fn list_github_repos() -> Result<Vec<GithubRepo>, String> {
                 "100",
             ])
             .output()
-            .map_err(|e| format!("failed to run `gh repo list`: {e}"))?;
+            .map_err(|e| {
+                format!(
+                    "failed to run `gh repo list`: {e}{}",
+                    searched_path_hint(&e)
+                )
+            })?;
         if !output.status.success() {
             return Err(format!(
                 "`gh repo list` failed: {}",
@@ -791,7 +826,12 @@ pub async fn clone_github_repo(
             .arg(&name_with_owner)
             .arg(&target)
             .output()
-            .map_err(|e| format!("failed to run `gh repo clone`: {e} — is `gh` installed?"))?;
+            .map_err(|e| {
+                format!(
+                    "failed to run `gh repo clone`: {e}{} — is `gh` installed?",
+                    searched_path_hint(&e)
+                )
+            })?;
         if !output.status.success() {
             return Err(format!(
                 "`gh repo clone` failed: {}",
@@ -824,6 +864,35 @@ mod tests {
         let parts: Vec<&str> = path.split(':').collect();
         assert!(parts.contains(&"/opt/homebrew/bin"), "PATH was {path}");
         assert!(parts.contains(&"/usr/local/bin"), "PATH was {path}");
+    }
+
+    /// The editor fallback goes through the same PATH enrichment as `gh`:
+    /// VS Code installs its `code` shim in `/usr/local/bin`, which a
+    /// Finder-launched app can't see otherwise.
+    #[test]
+    fn tool_command_carries_homebrew_dirs_on_path() {
+        let cmd = tool_command("code");
+        assert_eq!(cmd.get_program(), "code");
+        let path = cmd
+            .get_envs()
+            .find(|(k, _)| *k == "PATH")
+            .and_then(|(_, v)| v)
+            .expect("tool_command must set PATH")
+            .to_string_lossy()
+            .to_string();
+        let parts: Vec<&str> = path.split(':').collect();
+        assert!(parts.contains(&"/usr/local/bin"), "PATH was {path}");
+    }
+
+    #[test]
+    fn searched_path_hint_only_for_not_found() {
+        let not_found = std::io::Error::from(std::io::ErrorKind::NotFound);
+        let hint = searched_path_hint(&not_found);
+        assert!(hint.starts_with(" (searched PATH: "), "hint was {hint}");
+        assert!(hint.contains("/opt/homebrew/bin"), "hint was {hint}");
+
+        let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        assert_eq!(searched_path_hint(&denied), "");
     }
 
     #[test]
