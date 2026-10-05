@@ -1,11 +1,13 @@
 import type { DraftRecord } from '@dispatch/client';
 import {
+  Box,
   Brain,
   CircleDot,
   Crosshair,
   FileCode2,
   GitBranch,
   GitMerge,
+  House,
   Inbox,
   Layers,
   LayoutDashboard,
@@ -20,6 +22,7 @@ import {
   SquarePen,
   TerminalSquare,
   Waypoints,
+  Workflow,
 } from 'lucide-react';
 import {
   type ReactNode,
@@ -59,6 +62,10 @@ const WORK_VIEWS: ViewRow<ProjectView>[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   // Board, list and milestones are header view tabs inside Tasks now, not rail rows.
   { id: 'board', label: 'Tasks', icon: ListChecks },
+  // The hierarchy above the tasks: initiatives, projects, milestones.
+  { id: 'projects', label: 'Projects', icon: Box },
+  // Every container's work in flight at once, as live Flight Plan bands.
+  { id: 'live', label: 'Live', icon: Workflow },
   { id: 'plans', label: 'Plans', icon: NotebookPen },
   { id: 'brain-dump', label: 'Notes', icon: Brain },
 ];
@@ -94,10 +101,11 @@ const RUN_GLOBAL_VIEWS: ViewRow<GlobalView>[] = [
   { id: 'all-agents', label: 'All agents', icon: Radar },
 ];
 
-/** Every project destination in rail order — Inbox first, then the sections as
+/** Every project destination in rail order — Home and Inbox first, then the sections as
  * they are rendered — which is also the ⌘N order: ⌘1 is the first row, and so
  * on. App indexes into this for `goto-N`. */
 export const PROJECT_NAV_VIEWS: PaletteView[] = [
+  { id: 'cockpit', label: 'Home' },
   { id: 'inbox', label: 'Inbox' },
   ...[...WORK_VIEWS, ...RUN_PROJECT_VIEWS, ...CODE_VIEWS].map(
     ({ id, label }) => ({ id, label })
@@ -355,6 +363,13 @@ export function Sidebar({
   const topGroup: SidebarNavSection = {
     id: 'top',
     items: [
+      {
+        // The Cockpit: what is ready for you, in flight, and waiting on you.
+        id: 'cockpit',
+        label: 'Home',
+        icon: <House strokeWidth={2} />,
+        disabled: !hasActiveProject,
+      },
       {
         id: 'inbox',
         label: 'Inbox',

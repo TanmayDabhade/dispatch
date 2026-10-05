@@ -17,11 +17,14 @@ describe('TokenRegistry', () => {
       handle: 'wyat',
       ref: 'human:wyat',
       tier: 'operator',
+      appToken: true,
     });
+    // Flagged as the agent token: whoever presents it may be a run's agent.
     expect(reg.resolve('agent-aaa')).toEqual({
       handle: 'wyat',
       ref: 'human:wyat',
       tier: 'request',
+      agentToken: true,
     });
   });
 

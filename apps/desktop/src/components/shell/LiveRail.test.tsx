@@ -102,6 +102,8 @@ function session(
       maxSpendUsd: 60,
       maxRuns: null,
       startedAt: '2026-08-04T00:00:00.000Z',
+      startedBy: null,
+      scope: 'plan',
       updatedAt: '2026-08-04T00:00:00.000Z',
       active: true,
     },
@@ -128,7 +130,9 @@ function session(
 }
 
 function epicDoc(id: string, title: string): TaskDoc {
-  return { meta: { id, title, kind: 'epic', status: 'working' } } as TaskDoc;
+  return {
+    meta: { id, title, kind: 'milestone', status: 'working' },
+  } as TaskDoc;
 }
 
 function railProps(over: Partial<Parameters<typeof LiveRail>[0]> = {}) {
@@ -162,7 +166,7 @@ test('renders a 28px row per live run; clicking opens its task on Chat', () => {
   const row = screen.getByRole('button', { name: 'Do the thing' });
   expect(row.className).toContain('h-7');
   fireEvent.click(row);
-  expect(calls).toEqual([['t-1', 'chat', 'r-1']]);
+  expect(calls).toEqual([['t-1', 'run', 'r-1']]);
 });
 
 test('the section has no tabs and no attention strip any more', () => {
