@@ -474,6 +474,50 @@ test('a reply from another surface rejects on failure and leaves the draft alone
   expect(result.current.draft).toBe('half typed');
 });
 
+// The Tasks composer keeps its own text and files too: its first message opens
+// the conversation, and neither its files nor the upload of them touch the
+// Overseer page's pending ones.
+test('a reply with no conversation open starts one with its own files', async () => {
+  const started: { prompt: string; files: unknown }[] = [];
+  const client = {
+    baseUrl: `http://127.0.0.1:${PORT}`,
+    startOverseer: (prompt: string, opts: { attachments?: unknown }) => {
+      started.push({ prompt, files: opts.attachments });
+      return Promise.resolve(overseerRecord());
+    },
+    getOverseer: () => Promise.resolve(overseerRecord()),
+    uploadOverseerAttachments: (files: File[]) =>
+      Promise.resolve(
+        files.map((f) => ({
+          name: f.name,
+          path: `.dispatch/attachments/${f.name}`,
+          size: 1,
+          mimeType: 'text/plain',
+        }))
+      ),
+  } as unknown as ApiClient;
+  const { result } = renderHook(
+    () => useOverseerSession(client, PORT, '/repo'),
+    { wrapper }
+  );
+  await act(async () => {
+    await result.current.attachFiles([new File(['x'], 'page.txt')]);
+  });
+  let own: Awaited<ReturnType<typeof result.current.upload>> = [];
+  await act(async () => {
+    own = await result.current.upload([new File(['y'], 'tasks.txt')]);
+  });
+  expect(own.map((a) => a.name)).toEqual(['tasks.txt']);
+
+  await act(async () => {
+    await result.current.reply('from Tasks', own);
+  });
+
+  expect(result.current.conversationId).toBe('w-1');
+  expect(started).toEqual([{ prompt: 'from Tasks', files: own }]);
+  expect(result.current.attachments.map((a) => a.name)).toEqual(['page.txt']);
+});
+
 // The decide failure belongs to the session for exactly the reason the send
 // failure does. While an approval is queued the Runs tab shows a waiting
 // overseer row, so flipping there is the path the rail encourages — and the rail

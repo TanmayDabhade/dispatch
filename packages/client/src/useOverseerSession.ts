@@ -192,9 +192,14 @@ export interface OverseerSession {
    * the outcome is readable on `sending` and `sendError`.
    */
   submit: (text: string) => Promise<void>;
-  /** Posts `text` for a surface with its own draft (a Threads reply): raises
-   *  `sending`, leaves `draft` and `sendError` alone, and rejects on failure. */
-  reply: (text: string) => Promise<void>;
+  /**
+   * Posts `text`, with `attachments` when given, for a surface that keeps its
+   * own draft (a Threads reply, the Tasks composer): opens the conversation
+   * when none is open yet, as `submit` does, and raises `sending`, but leaves
+   * `draft`, `attachments` and `sendError` alone and rejects on failure, so
+   * the Overseer page's unsent message is never touched by another surface.
+   */
+  reply: (text: string, attachments?: OverseerAttachment[]) => Promise<void>;
   /**
    * A submit is in flight. Session-held for the same reason `draft` is: the
    * rail unmounts the chat's whole panel on a tab flip, and a component-local
@@ -327,6 +332,9 @@ export interface OverseerSession {
   attachments: OverseerAttachment[];
   /** Uploads files for the next submit; a failure lands on `sendError`. */
   attachFiles: (files: File[]) => Promise<void>;
+  /** Uploads files for a surface that holds its own (see `reply`): stores
+   *  nothing on the session and rejects on failure. */
+  upload: (files: File[]) => Promise<OverseerAttachment[]>;
   /** Drops one pending attachment (by `path`) before it is sent. */
   removeAttachment: (path: string) => void;
   /** An upload from `attachFiles` is in flight; Send waits for it. */
@@ -592,10 +600,14 @@ export function useOverseerSession(
   const submitNew = useCallback((text: string) => send(text, true), [send]);
 
   const reply = useCallback(
-    async (text: string) => {
+    async (text: string, files: OverseerAttachment[] = []) => {
       setSending(true);
       try {
-        await sendMessage(text);
+        if (conversationId === null) {
+          await start(text, files);
+        } else {
+          await sendMessage(text, files);
+        }
         setRevoked(false);
       } catch (err) {
         setRevoked(isRevokedRefusal(err));
@@ -604,7 +616,15 @@ export function useOverseerSession(
         setSending(false);
       }
     },
-    [sendMessage]
+    [conversationId, sendMessage, start]
+  );
+
+  const upload = useCallback(
+    (files: File[]) =>
+      client === null
+        ? Promise.reject(new Error('dispatchd client not ready'))
+        : client.uploadOverseerAttachments(files),
+    [client]
   );
 
   // The open gates, read fresh rather than from cache: a gate answered
@@ -856,6 +876,7 @@ export function useOverseerSession(
     setDraft,
     attachments,
     attachFiles,
+    upload,
     removeAttachment,
     attaching,
     fetchAttachment,
