@@ -246,6 +246,9 @@ export interface OverseerRecordView extends OverseerRecord {
   /** ROLLOVER_TOKENS: the `contextTokens` at which the next turn starts over
    *  from a recap. Always set; optional for clients that read older daemons. */
   contextLimit?: number;
+  /** The daemon's Overseer is revoked, so no conversation takes a turn until
+   *  a human approves it again. Always set, like `contextLimit`. */
+  revoked?: boolean;
 }
 
 /**
@@ -752,12 +755,16 @@ export class OverseerManager {
 
   /**
    * `record` as every /api/overseer route answers it: with the context size
-   * its next turn rolls over at, and while a turn runs, with the text it has
-   * streamed and not committed (`live`), so a window that opens or reconnects
-   * mid-turn picks up from there.
+   * its next turn rolls over at, whether the Overseer is revoked, and while a
+   * turn runs, with the text it has streamed and not committed (`live`), so a
+   * window that opens or reconnects mid-turn picks up from there.
    */
   view(record: OverseerRecord): OverseerRecordView {
-    const view = { ...record, contextLimit: ROLLOVER_TOKENS };
+    const view = {
+      ...record,
+      contextLimit: ROLLOVER_TOKENS,
+      revoked: this.ctx.bus?.revoked() === true,
+    };
     if (record.state !== 'running') return view;
     const live = this.live.snapshot(record.id);
     return live === undefined ? view : { ...view, live };
@@ -777,6 +784,17 @@ export class OverseerManager {
       throw new OrchestratorClientError(`unknown overseer backend: ${name}`);
     }
     return backend;
+  }
+
+  /**
+   * The Overseer's own agent row was just approved or revoked: every record's
+   * `revoked` changed with it, so each conversation is announced, and a window
+   * shows the agent off (or back on) without a send of its own refused first.
+   */
+  agentDecided(): void {
+    for (const conversationId of this.conversations.keys()) {
+      this.ctx.events.broadcast({ type: 'overseer.changed', conversationId });
+    }
   }
 
   // A revoked overseer takes no new turns until a human approves it again.

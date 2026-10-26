@@ -320,6 +320,7 @@ describe('overseer types mirror dispatchd', () => {
     );
     const server = fields(source, 'OverseerRecordView');
     expect(server).toContain('contextLimit?');
+    expect(server).toContain('revoked?');
     expect(fields(clientSource(), 'OverseerRecordView')).toEqual(server);
   });
 

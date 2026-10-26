@@ -1854,6 +1854,9 @@ export interface OverseerRecordView extends OverseerRecord {
   /** The `contextTokens` at which the next turn starts over from a recap (the
    *  daemon's rollover threshold). Absent from a daemon older than this field. */
   contextLimit?: number;
+  /** The daemon's Overseer is revoked: no conversation takes a turn until a
+   *  human approves it again. Absent from a daemon older than this field. */
+  revoked?: boolean;
 }
 
 // Mirrors AgentSessionKind in packages/server/src/orchestrator/agentSessions.ts:

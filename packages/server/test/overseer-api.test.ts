@@ -987,6 +987,52 @@ describe('a revoked overseer', () => {
     ).toEqual([]);
   });
 
+  // A client learns the Overseer is off from the record itself, not from a
+  // send it refused, and hears of the change when it happens.
+  it('says so on its records and announces each change', async () => {
+    await startWithOverseer(new FakeOverseer({ ok: true, reply: 'all quiet' }));
+    const { ref } = (await json(await fetch(`${baseUrl}/api/whoami`))) as {
+      ref: string;
+    };
+    const overseer = encodeURIComponent(
+      `agent:${ref.slice('human:'.length)}/overseer`
+    );
+    const { record } = await startConversation();
+    expect(record).toMatchObject({ revoked: false });
+    await settled(record.id);
+
+    const ws = new WebSocket(wsUrl(handle));
+    const changes: string[] = [];
+    ws.addEventListener('message', (ev) => {
+      const frame = JSON.parse(ev.data as string) as {
+        type: string;
+        conversationId?: string;
+      };
+      if (frame.type === 'overseer.changed') {
+        changes.push(frame.conversationId ?? '');
+      }
+    });
+    await new Promise<void>((resolve) =>
+      ws.addEventListener('open', () => resolve())
+    );
+
+    await fetch(`${baseUrl}/api/agents/${overseer}/revoke`, { method: 'POST' });
+    await waitFor(() => Promise.resolve(changes.length === 1));
+    expect(changes).toEqual([record.id]);
+    expect(await getRecord(record.id)).toMatchObject({ revoked: true });
+    const { conversation } = (await json(
+      await fetch(`${baseUrl}/api/overseer/current`)
+    )) as { conversation: unknown };
+    expect(conversation).toMatchObject({ revoked: true });
+
+    await fetch(`${baseUrl}/api/agents/${overseer}/approve`, {
+      method: 'POST',
+    });
+    await waitFor(() => Promise.resolve(changes.length === 2));
+    expect(await getRecord(record.id)).toMatchObject({ revoked: false });
+    ws.close();
+  });
+
   it('comes back on when a human approves its revoked row', async () => {
     await startWithOverseer(new FakeOverseer({ ok: true, reply: 'all quiet' }));
     const { ref } = (await json(await fetch(`${baseUrl}/api/whoami`))) as {
