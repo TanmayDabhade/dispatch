@@ -672,9 +672,7 @@ function ToolRun({
 /** How full the conversation's context is, as a whole percent of the context
  *  its next turn starts over from a recap at; null until the daemon says both
  *  (a daemon older than `contextLimit`, or no turn has reported yet). */
-function contextPercent(
-  record: OverseerRecordView | undefined
-): number | null {
+function contextPercent(record: OverseerRecordView | undefined): number | null {
   const used = record?.contextTokens;
   const limit = record?.contextLimit;
   if (used === undefined || used <= 0 || limit === undefined || limit <= 0) {
