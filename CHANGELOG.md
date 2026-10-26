@@ -57,6 +57,11 @@ holds what a user upgrading needs to know.
   work. The conversation now says "Denied: … — Dispatch restarted before anyone
   decided", and the Overseer hears on its next turn that it did not happen; ask
   it again to queue the action anew.
+- **Sending from Tasks leaves the Overseer page's unsent message alone.** The
+  "say something" box in Tasks used to empty what you had typed on the Overseer
+  page, take the files waiting there with its own message, and, when the send
+  failed, put its text into the Overseer page's box. It now keeps its own text,
+  files and error, and the Overseer page keeps its own.
 - **`dispatch team invite` now makes a team invite link.** It prints one
   `dispatch-team:` link that a teammate pastes into `dispatch team join` (or
   Settings → Team) to join your signed team. The old behaviour, a sign-in token
