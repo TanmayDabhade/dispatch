@@ -238,9 +238,15 @@ export interface OverseerRecord {
   updatedAt: string;
 }
 
-/** What GET /api/overseer/:id answers with: the record, plus the running
- *  turn's live text. `live` is never stored. */
-export type OverseerRecordView = OverseerRecord & { live?: LiveText };
+/** What every /api/overseer route answers a record with (`view`): the record,
+ *  plus what the daemon knows beside it, none of it stored. */
+export interface OverseerRecordView extends OverseerRecord {
+  /** The running turn's text, while one runs. */
+  live?: LiveText;
+  /** ROLLOVER_TOKENS: the `contextTokens` at which the next turn starts over
+   *  from a recap. Always set; optional for clients that read older daemons. */
+  contextLimit?: number;
+}
 
 /**
  * Who hears an Overseer turn's live text over /ws (owner decision 2026-10-23):
@@ -392,7 +398,7 @@ function settleRunningCalls(messages: OverseerMessage[]): OverseerMessage[] {
  * written through to the store so a conversation outlives the daemon (a turn
  * the daemon died in loads back as failed). Machine-local, like PlanManager.
  * The text a running turn streams is the one thing kept in memory only: see
- * `live` and `withLive`.
+ * `live` and `view`.
  *
  * Two rules this class exists to enforce, on top of what OverseerToolRegistry
  * already guarantees. A turn's mutating registry calls are *collected*, never
@@ -745,14 +751,16 @@ export class OverseerManager {
   }
 
   /**
-   * `record` as GET /api/overseer/:id answers it: while a turn runs, with
-   * the text it has streamed and not committed (`live`), so a window that
-   * opens or reconnects mid-turn picks up from there.
+   * `record` as every /api/overseer route answers it: with the context size
+   * its next turn rolls over at, and while a turn runs, with the text it has
+   * streamed and not committed (`live`), so a window that opens or reconnects
+   * mid-turn picks up from there.
    */
-  withLive(record: OverseerRecord): OverseerRecordView {
-    if (record.state !== 'running') return record;
+  view(record: OverseerRecord): OverseerRecordView {
+    const view = { ...record, contextLimit: ROLLOVER_TOKENS };
+    if (record.state !== 'running') return view;
     const live = this.live.snapshot(record.id);
-    return live === undefined ? record : { ...record, live };
+    return live === undefined ? view : { ...view, live };
   }
 
   /** The backend a conversation opened with none named runs on: the default agent's, else Claude's. */

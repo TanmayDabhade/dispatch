@@ -1846,9 +1846,15 @@ export interface LiveText {
 }
 
 // Mirrors OverseerRecordView in packages/server/src/orchestrator/overseer.ts —
-// what GET /api/overseer/:id and /current answer with: the record, plus the
-// running turn's live text. Mutation responses may leave `live` out.
-export type OverseerRecordView = OverseerRecord & { live?: LiveText };
+// what every /api/overseer route answers a record with: the record, plus what
+// the daemon knows beside it, none of it stored.
+export interface OverseerRecordView extends OverseerRecord {
+  /** The running turn's text, while one runs. */
+  live?: LiveText;
+  /** The `contextTokens` at which the next turn starts over from a recap (the
+   *  daemon's rollover threshold). Absent from a daemon older than this field. */
+  contextLimit?: number;
+}
 
 // Mirrors AgentSessionKind in packages/server/src/orchestrator/agentSessions.ts:
 // which kind of conversation agent a session row is — planner chat, enrich
@@ -3727,14 +3733,14 @@ export interface ApiClient {
       effort?: EffortLevel;
       attachments?: OverseerAttachment[];
     }
-  ): Promise<OverseerRecord>;
+  ): Promise<OverseerRecordView>;
   /** The record, with its running turn's live text while a turn runs. */
   getOverseer(id: string): Promise<OverseerRecordView>;
   /** The model and effort the conversation's next turns run on; null restores the project default. */
   setOverseerOptions(
     id: string,
     options: { model?: string | null; effort?: EffortLevel | null }
-  ): Promise<OverseerRecord>;
+  ): Promise<OverseerRecordView>;
   // Sends a follow-up on an existing conversation. Resolves (202) with the
   // record already back in `running` — watch `overseer.changed` for the reply.
   // Mid-turn it queues for the turn's end. 404s an unknown conversation.
@@ -3742,13 +3748,13 @@ export interface ApiClient {
     conversationId: string,
     text: string,
     attachments?: OverseerAttachment[]
-  ): Promise<OverseerRecord>;
+  ): Promise<OverseerRecordView>;
   /** Uploads files for the next overseer message to carry. */
   uploadOverseerAttachments(files: File[]): Promise<OverseerAttachment[]>;
   /** An overseer attachment's bytes, for a thumbnail or a download. */
   fetchOverseerAttachment(attachment: OverseerAttachment): Promise<Blob>;
   /** Stops the running turn; anything queued waits for the next send. */
-  stopOverseer(conversationId: string): Promise<OverseerRecord>;
+  stopOverseer(conversationId: string): Promise<OverseerRecordView>;
   /** Jev's read on whether `text` starts a new subject; fail-open reads "no". */
   judgeOverseerTopic(
     conversationId: string,
@@ -3762,12 +3768,12 @@ export interface ApiClient {
     conversationId: string,
     entryId: string,
     text: string
-  ): Promise<OverseerRecord>;
+  ): Promise<OverseerRecordView>;
   /** Drops one queued message; same 404/409 rules as the edit. */
   removeQueuedOverseerMessage(
     conversationId: string,
     entryId: string
-  ): Promise<OverseerRecord>;
+  ): Promise<OverseerRecordView>;
   /** The caller's own conversation on this project, newest first, or null. */
   currentOverseer(): Promise<{ conversation: OverseerRecordView | null }>;
   /** What "Allow for this conversation" still covers: per program for Bash, up to four hours. */

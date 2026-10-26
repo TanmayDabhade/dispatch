@@ -3496,7 +3496,7 @@ async function startOverseer(
     speaker,
     attached.attachments
   );
-  return jsonResponse(record, 202);
+  return jsonResponse(ctx.overseerManager.view(record), 202);
 }
 
 // POST /api/overseer/:id/message — mirrors sendPlanMessage: 202 with the record
@@ -3527,7 +3527,7 @@ async function sendOverseerMessage(
     speaker,
     attached.attachments
   );
-  return jsonResponse(record, 202);
+  return jsonResponse(ctx.overseerManager.view(record), 202);
 }
 
 // PATCH /api/overseer/:id/queued/:entryId — rewrites one message still waiting
@@ -3548,7 +3548,9 @@ async function editOverseerQueued(
     return errorResponse(400, 'invalid text: text is required');
   }
   return jsonResponse(
-    ctx.overseerManager.editQueued(conversationId, entryId, body.text)
+    ctx.overseerManager.view(
+      ctx.overseerManager.editQueued(conversationId, entryId, body.text)
+    )
   );
 }
 
@@ -6406,7 +6408,7 @@ export async function handleApi(
         return errorResponse(405, 'method not allowed');
       }
       // One conversation per person per project: the newest one they opened.
-      // Reads carry a running turn's live text; mutation responses need not.
+      // Every record goes out as the manager's view of it (`view`).
       if (
         segments.length === 2 &&
         segments[1] === 'current' &&
@@ -6415,9 +6417,7 @@ export async function handleApi(
         const current = ctx.overseerManager.current(speaker?.address ?? null);
         return jsonResponse({
           conversation:
-            current === undefined
-              ? null
-              : ctx.overseerManager.withLive(current),
+            current === undefined ? null : ctx.overseerManager.view(current),
         });
       }
       const conversationId = segments[1];
@@ -6432,7 +6432,7 @@ export async function handleApi(
       }
       if (segments.length === 2 && method === 'GET') {
         return jsonResponse(
-          ctx.overseerManager.withLive(ctx.overseerManager.get(conversationId))
+          ctx.overseerManager.view(ctx.overseerManager.get(conversationId))
         );
       }
       // The model and effort its next turns run on; null restores the default.
@@ -6447,18 +6447,20 @@ export async function handleApi(
           body.effort === null ? null : readOptionalEffort(body.effort);
         if (effort !== null && !effort.ok) return effort.response;
         return jsonResponse(
-          ctx.overseerManager.setOptions(conversationId, {
-            ...(model === null
-              ? { model: null }
-              : model.model !== undefined
-                ? { model: model.model }
-                : {}),
-            ...(effort === null
-              ? { effort: null }
-              : effort.effort !== undefined
-                ? { effort: effort.effort }
-                : {}),
-          })
+          ctx.overseerManager.view(
+            ctx.overseerManager.setOptions(conversationId, {
+              ...(model === null
+                ? { model: null }
+                : model.model !== undefined
+                  ? { model: model.model }
+                  : {}),
+              ...(effort === null
+                ? { effort: null }
+                : effort.effort !== undefined
+                  ? { effort: effort.effort }
+                  : {}),
+            })
+          )
         );
       }
       if (
@@ -6493,7 +6495,9 @@ export async function handleApi(
         segments[2] === 'stop' &&
         method === 'POST'
       ) {
-        return jsonResponse(ctx.overseerManager.stop(conversationId));
+        return jsonResponse(
+          ctx.overseerManager.view(ctx.overseerManager.stop(conversationId))
+        );
       }
       // One queued message: rewrite it or drop it before the turn ends.
       if (segments.length === 4 && segments[2] === 'queued') {
@@ -6503,7 +6507,9 @@ export async function handleApi(
         }
         if (method === 'DELETE') {
           return jsonResponse(
-            ctx.overseerManager.removeQueued(conversationId, entryId)
+            ctx.overseerManager.view(
+              ctx.overseerManager.removeQueued(conversationId, entryId)
+            )
           );
         }
       }

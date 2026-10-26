@@ -2156,7 +2156,7 @@ describe('overseer live text', () => {
       text: 'Hel',
     });
     expect(two).toMatchObject({ seq: 2, turnId, segmentId, text: 'lo' });
-    expect(h.manager.withLive(h.manager.get(started.id)).live).toEqual({
+    expect(h.manager.view(h.manager.get(started.id)).live).toEqual({
       seq: 2,
       turnId,
       segments: [{ id: segmentId, text: 'Hello' }],
@@ -2164,7 +2164,7 @@ describe('overseer live text', () => {
 
     h.backend.settle({ reply: 'Hello', streamId: 'm1:0' });
     await waitFor(() => h.manager.get(started.id).state === 'ready');
-    const settled = h.manager.withLive(h.manager.get(started.id));
+    const settled = h.manager.view(h.manager.get(started.id));
     expect(settled.live).toBeUndefined();
     expect(settled.messages.at(-1)).toMatchObject({
       role: 'assistant',
@@ -2174,7 +2174,7 @@ describe('overseer live text', () => {
 
     // The next turn reuses the backend's segment id; its frames still differ.
     h.manager.sendMessage(started.id, 'again');
-    expect(h.manager.withLive(h.manager.get(started.id)).live).toMatchObject({
+    expect(h.manager.view(h.manager.get(started.id)).live).toMatchObject({
       seq: 2,
       segments: [],
     });
@@ -2199,9 +2199,9 @@ describe('overseer live text', () => {
       streamId: `${turnId}:a`,
       at: expect.any(String),
     });
-    expect(
-      h.manager.withLive(h.manager.get(started.id)).live?.segments
-    ).toEqual([{ id: `${turnId}:b`, text: 'Two runs' }]);
+    expect(h.manager.view(h.manager.get(started.id)).live?.segments).toEqual([
+      { id: `${turnId}:b`, text: 'Two runs' },
+    ]);
 
     h.backend.settle({ reply: 'Two runs are live.', streamId: 'b' });
     await waitFor(() => h.manager.get(started.id).state === 'ready');
@@ -2262,7 +2262,7 @@ describe('overseer live text', () => {
     options?.onNarration?.('a', 'Half a thought');
     expect(deltasOf(h)).toHaveLength(1);
     expect(h.manager.get(started.id).messages).toHaveLength(3);
-    expect(h.manager.withLive(h.manager.get(started.id)).live).toBeUndefined();
+    expect(h.manager.view(h.manager.get(started.id)).live).toBeUndefined();
   });
 
   // A Claude block whose stream broke off comes again under a new segment:
@@ -2283,7 +2283,7 @@ describe('overseer live text', () => {
       text: '',
       abandoned: true,
     });
-    expect(h.manager.withLive(h.manager.get(started.id)).live).toEqual({
+    expect(h.manager.view(h.manager.get(started.id)).live).toEqual({
       seq: 2,
       turnId,
       segments: [],
@@ -2334,7 +2334,7 @@ describe('overseer live text', () => {
     // A restart starts over: the turn loads as restarted, with no live text.
     const again = heldManager(h.store);
     expect(
-      again.manager.withLive(again.manager.get(started.id))
+      again.manager.view(again.manager.get(started.id))
     ).not.toHaveProperty('live');
   });
 

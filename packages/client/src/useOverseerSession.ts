@@ -171,7 +171,7 @@ export interface OverseerSession {
    * gone). Consumers can trust it: whatever is readable here is a conversation
    * dispatchd still has.
    */
-  record: OverseerRecord | undefined;
+  record: OverseerRecordView | undefined;
   /** Why `record` is missing or stale when the fetch itself failed, not just pending. */
   recordError: string | null;
   /**
@@ -789,7 +789,7 @@ export function useOverseerSession(
   // the bubble it came from is usually gone by then (the turn sent it).
   const changeQueued = useCallback(
     async (
-      call: (api: ApiClient, id: string) => Promise<OverseerRecord>
+      call: (api: ApiClient, id: string) => Promise<OverseerRecordView>
     ): Promise<boolean> => {
       if (client === null || conversationId === null) return false;
       setSendError(null);

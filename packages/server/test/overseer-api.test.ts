@@ -8,9 +8,10 @@ import { join } from 'node:path';
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
 import { FakeExecutor } from '../src/orchestrator/executors/fake.js';
-import type {
-  OverseerAttachment,
-  OverseerRecord,
+import {
+  type OverseerAttachment,
+  type OverseerRecord,
+  ROLLOVER_TOKENS,
 } from '../src/orchestrator/overseer.js';
 import type {
   OverseerBackend,
@@ -156,6 +157,39 @@ describe('POST /api/overseer and GET /api/overseer/:id', () => {
         text: 'Nothing is running.',
       })
     );
+  });
+
+  // The desktop's context meter reads how full the context may get from the
+  // daemon, so every route that answers a record names the threshold.
+  it('names the rollover threshold on every record it answers with', async () => {
+    await startWithOverseer(new FakeOverseer({ ok: true, reply: 'quiet' }));
+    const { record } = await startConversation();
+    expect(record).toMatchObject({ contextLimit: ROLLOVER_TOKENS });
+    await settled(record.id);
+    const answers = [
+      await fetch(`${baseUrl}/api/overseer/${record.id}`),
+      await fetch(`${baseUrl}/api/overseer/${record.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ effort: null }),
+      }),
+      await fetch(`${baseUrl}/api/overseer/${record.id}/stop`, {
+        method: 'POST',
+      }),
+      await fetch(`${baseUrl}/api/overseer/${record.id}/message`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'and now?' }),
+      }),
+    ];
+    for (const res of answers) {
+      expect(res.ok).toBe(true);
+      expect(await json(res)).toMatchObject({ contextLimit: ROLLOVER_TOKENS });
+    }
+    const { conversation } = (await json(
+      await fetch(`${baseUrl}/api/overseer/current`)
+    )) as { conversation: unknown };
+    expect(conversation).toMatchObject({ contextLimit: ROLLOVER_TOKENS });
   });
 
   it('400s an empty prompt and an unregistered backend', async () => {
