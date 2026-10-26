@@ -3,6 +3,7 @@ import type {
   OverseerAction,
   OverseerApproval,
   OverseerAttachment,
+  OverseerRecordView,
 } from '@dispatch/client';
 import {
   Check,
@@ -42,6 +43,7 @@ import { StreamingText } from '@/ui/ai/streaming-text';
 import { ToolApprovalCard } from '@/ui/ai/tool-approval-card';
 import { ToolChip, ToolChipGroup } from '@/ui/ai/tool-chips';
 import { Button } from '@/ui/button';
+import { ProgressGlyph } from '@/ui/chrome';
 import {
   Collapsible,
   CollapsibleContent,
@@ -667,6 +669,43 @@ function ToolRun({
   );
 }
 
+/** How full the conversation's context is, as a whole percent of the context
+ *  its next turn starts over from a recap at; null until the daemon says both
+ *  (a daemon older than `contextLimit`, or no turn has reported yet). */
+function contextPercent(
+  record: OverseerRecordView | undefined
+): number | null {
+  const used = record?.contextTokens;
+  const limit = record?.contextLimit;
+  if (used === undefined || used <= 0 || limit === undefined || limit <= 0) {
+    return null;
+  }
+  return Math.min(100, Math.round((used / limit) * 100));
+}
+
+/** The status line's context meter: a pie and its percent, the rule on hover. */
+function ContextMeter({ percent }: { percent: number }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            data-testid="overseer-context"
+            className="inline-flex items-center gap-1 align-middle tabular-nums"
+          />
+        }
+      >
+        <ProgressGlyph fraction={percent / 100} />
+        {percent}% context
+      </TooltipTrigger>
+      <TooltipContent className="max-w-64">
+        How full the agent's context is. When it is full, the agent's next turn
+        starts afresh from a recap of the latest lines.
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 interface OverseerChatProps {
   overseer: OverseerSession;
   /** Replaces both composers' placeholders (Two views says "say something"). */
@@ -1058,6 +1097,7 @@ export function OverseerChat({
   }
 
   const spend = overseer.record?.spendUsd ?? 0;
+  const context = contextPercent(overseer.record);
   const suggestions = slashSuggestions(draft, overseer.record?.commands ?? []);
 
   return (
@@ -1121,6 +1161,12 @@ export function OverseerChat({
               <span data-testid="overseer-spend">
                 {busy ? ' · ' : ''}${spend.toFixed(2)} so far
               </span>
+            )}
+            {context !== null && (
+              <>
+                {busy || spend > 0 ? ' · ' : ''}
+                <ContextMeter percent={context} />
+              </>
             )}
           </span>
           {busy && (

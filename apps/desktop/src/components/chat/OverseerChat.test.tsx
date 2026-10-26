@@ -1,4 +1,8 @@
-import type { OverseerAction, OverseerRecord } from '@dispatch/client';
+import type {
+  OverseerAction,
+  OverseerRecord,
+  OverseerRecordView,
+} from '@dispatch/client';
 import {
   act,
   fireEvent,
@@ -1376,4 +1380,36 @@ test('tool chips say how each call went, and a call left running ends with its t
   rerender(chat('ready'));
   expect(chipState('Bash')).toBe('done');
   expect(chipState('Edit')).toBe('failed');
+});
+
+// How close the next turn is to starting over from a recap: the record's
+// context against the threshold the daemon names beside it.
+test('the status line says how full the context is', () => {
+  const chat = (over: Partial<OverseerRecordView>) => (
+    <OverseerChat
+      overseer={overseerSession({
+        conversationId: 'w-1',
+        record: { ...overseerRecord({ spendUsd: 0.5 }), ...over },
+      })}
+    />
+  );
+  const { rerender } = render(
+    chat({ contextTokens: 93_000, contextLimit: 150_000 })
+  );
+  expect(screen.getByTestId('overseer-context').textContent).toBe(
+    '62% context'
+  );
+  expect(screen.getByTestId('overseer-spend').textContent).toContain('$0.50');
+
+  // Past the threshold it reads full, never more.
+  rerender(chat({ contextTokens: 180_000, contextLimit: 150_000 }));
+  expect(screen.getByTestId('overseer-context').textContent).toBe(
+    '100% context'
+  );
+
+  // A daemon that does not name its threshold, or a turn yet to report.
+  rerender(chat({ contextTokens: 93_000 }));
+  expect(screen.queryByTestId('overseer-context')).toBeNull();
+  rerender(chat({ contextLimit: 150_000 }));
+  expect(screen.queryByTestId('overseer-context')).toBeNull();
 });

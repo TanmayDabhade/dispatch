@@ -14,6 +14,10 @@ holds what a user upgrading needs to know.
   streaming, use Settings → Agents → Streaming, or set `overseer.stream`
   (`live`, `narration` or `off`) or `runs.stream` (`live` or `off`) in
   `.dispatch/config.yml`.
+- **The Overseer shows how full its context is.** Its status line, beside what
+  the conversation has cost, reads "62% context": how close the agent is to its
+  context limit, the point where its next turn starts afresh from a recap of the
+  latest lines. A daemon older than the desktop shows no meter.
 - **Update the desktop app and the `dispatch` CLI together with the daemon.**
   Claude runs now log how each tool call ended as an entry of its own. A desktop
   or CLI older than this release, attached to a newer daemon, shows each of
