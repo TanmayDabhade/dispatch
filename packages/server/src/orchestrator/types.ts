@@ -1,4 +1,5 @@
 import type {
+  DISPATCH_MCP_TOOLS,
   EffortLevel,
   RunStep,
   SubagentEvent,
@@ -81,51 +82,105 @@ export function redactMessageEntry(
   return { ts: entry.ts, kind: 'message', messageId, redacted: true };
 }
 
-// Dispatch's own messaging tools as each executor names a call to them:
-// Claude's `mcp__dispatch__<tool>`, Codex's `mcp.dispatch.<tool>`.
-const MESSAGING_TOOL_NAMES: ReadonlySet<string> = new Set(
-  ['msg_send', 'msg_reply'].flatMap((tool) => [
-    `mcp__dispatch__${tool}`,
-    `mcp.dispatch.${tool}`,
-  ])
-);
+// What a transcript keeps of a Dispatch tool call's input, given the input.
+type KeptInput = (input: Record<string, unknown>) => Record<string, unknown>;
 
-// The input fields of such a call a transcript keeps: where the message went
-// and how it was sent.
-const MESSAGING_ROUTING_FIELDS = [
+// Keeps the named input fields that are present, and nothing else.
+function onlyFields(...names: string[]): KeptInput {
+  return (input) => {
+    const kept: Record<string, unknown> = {};
+    for (const name of names) {
+      if (input[name] !== undefined) kept[name] = input[name];
+    }
+    return kept;
+  };
+}
+
+// Where a msg_send / msg_reply message went and how it was sent.
+const MESSAGE_ROUTING = onlyFields(
   'to',
   'kind',
   'messageId',
   'blocking',
   'urgent',
-  'wake',
-] as const;
+  'wake'
+);
 
-// A run's msg_send / msg_reply call as its transcript keeps it: the routing
-// fields alone, without the message's body, data, choices, choice or refs.
-// What the call sends is a bus message only its audience may read, but a
-// tool entry carries no messageId to redact it by and reaches every
-// request-tier reader, so the text goes no further than the executor. A
-// message to a human still lands whole as its logOutgoing message entry,
-// which follows the message's audience.
-export function withoutMessageContent(entry: NormalizedEntry): NormalizedEntry {
-  if (
-    entry.kind !== 'tool' ||
-    entry.toolName === undefined ||
-    !MESSAGING_TOOL_NAMES.has(entry.toolName) ||
-    entry.toolInput === undefined
-  ) {
-    return entry;
-  }
+// The Dispatch tools whose calls write text that fewer readers may read than
+// a run transcript reaches (every socket and every request-tier caller, the
+// shared agent token included), and what a transcript keeps of each call:
+// what names the call's target, never the text.
+//
+// - msg_send / msg_reply: a bus message, read by its audience alone. A
+//   message to a human still lands whole as its logOutgoing message entry,
+//   which follows that audience.
+// - doc_save: a personal doc is its owner's, a run's edit to an accepted
+//   team doc a proposal for deciders and its author's operator, and the
+//   docs routes refuse the shared agent token for any doc. A ref such as
+//   `doc-…` does not say which, so every call loses its body, title and each
+//   op's text; an op keeps its kind.
+// - memory_save: a personal memory is its operator's, a shared one a
+//   proposal until a human accepts it, and the memory routes refuse the
+//   shared agent token too. The title is the lesson itself.
+// - memory_forget: the reason is kept with the memory it retires.
+//
+// The other tools stay whole: their input is ids and queries, or text every
+// transcript reader may already read (a task, a task comment, an inbox item,
+// evidence) or that leaves Dispatch (a Linear comment).
+const SCOPED_TOOL_INPUTS = {
+  msg_send: MESSAGE_ROUTING,
+  msg_reply: MESSAGE_ROUTING,
+  doc_save: (input) => {
+    const kept = onlyFields('doc', 'slug', 'scope', 'baseRev', 'links')(input);
+    if (Array.isArray(input.ops)) {
+      kept.ops = input.ops.map((op: unknown) =>
+        typeof op === 'object' &&
+        op !== null &&
+        typeof (op as { op?: unknown }).op === 'string'
+          ? { op: (op as { op: string }).op }
+          : {}
+      );
+    }
+    return kept;
+  },
+  memory_save: onlyFields(
+    'scope',
+    'kind',
+    'refs',
+    'epic',
+    'appliesTo',
+    'supersedes',
+    'projectOnly'
+  ),
+  memory_forget: onlyFields('id'),
+} satisfies Partial<Record<(typeof DISPATCH_MCP_TOOLS)[number], KeptInput>>;
+
+// SCOPED_TOOL_INPUTS under each executor's name for a call to the tool:
+// Claude's `mcp__dispatch__<tool>`, Codex's `mcp.dispatch.<tool>`.
+const SCOPED_TOOL_NAMES: ReadonlyMap<string, KeptInput> = new Map(
+  Object.entries(SCOPED_TOOL_INPUTS).flatMap(([tool, keep]) => [
+    [`mcp__dispatch__${tool}`, keep],
+    [`mcp.dispatch.${tool}`, keep],
+  ])
+);
+
+// A run's tool entry as its transcript keeps it: a call to a tool in
+// SCOPED_TOOL_INPUTS keeps only what names its target. The executor logs a
+// call as it starts, before anything says where its text was stored, so the
+// entry has no messageId or doc id to redact it by on the way out; the text
+// goes no further than the executor, and a reader finds it where it was
+// stored, under that store's own rule.
+export function withoutScopedText(entry: NormalizedEntry): NormalizedEntry {
+  const keep =
+    entry.kind === 'tool' && entry.toolName !== undefined
+      ? SCOPED_TOOL_NAMES.get(entry.toolName)
+      : undefined;
+  if (keep === undefined || entry.toolInput === undefined) return entry;
   const input =
     typeof entry.toolInput === 'object' && entry.toolInput !== null
       ? (entry.toolInput as Record<string, unknown>)
       : {};
-  const routing: Record<string, unknown> = {};
-  for (const field of MESSAGING_ROUTING_FIELDS) {
-    if (input[field] !== undefined) routing[field] = input[field];
-  }
-  return { ...entry, toolInput: routing };
+  return { ...entry, toolInput: keep(input) };
 }
 
 // How much of a tool's result a transcript keeps: a Codex command's output,

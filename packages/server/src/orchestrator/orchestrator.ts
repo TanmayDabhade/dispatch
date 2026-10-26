@@ -125,7 +125,7 @@ import {
   runLineage,
   runOperator,
   TERMINAL_RUN_STATES,
-  withoutMessageContent,
+  withoutScopedText,
 } from './types.js';
 import type { RunUsage } from './usage.js';
 import type { DiffResult, FollowResult } from './worktree.js';
@@ -5178,9 +5178,10 @@ export class Orchestrator {
     const turnId = streams ? this.live.begin(runId) : null;
     return {
       onEntry: (logged) => {
-        // A msg_send / msg_reply call keeps only where it went: what it said
-        // follows the message's audience, which a tool entry cannot.
-        const entry = withoutMessageContent(logged);
+        // A Dispatch call that writes a message, a doc or a memory keeps
+        // only what it named: the text follows its own store's readers,
+        // which a tool entry cannot.
+        const entry = withoutScopedText(logged);
         // The entry holds the text its segment streamed, so the segment
         // leaves the live text before anyone hears of the entry: a read
         // after run.log never shows that text twice.

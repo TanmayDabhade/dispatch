@@ -130,6 +130,21 @@ async function listen(
   return { heard, close: () => ws.close() };
 }
 
+// Opens /ws as `token` and keeps every run.log frame it hears, as sent.
+async function listenText(
+  w: World,
+  token: string
+): Promise<{ heard: string[]; close: () => void }> {
+  const heard: string[] = [];
+  const ws = new WebSocket(`ws://127.0.0.1:${w.handle.port}/ws?token=${token}`);
+  await new Promise((r) => (ws.onopen = r));
+  ws.onmessage = (e) => {
+    const frame = String(e.data);
+    if (frame.includes('"run.log"')) heard.push(frame);
+  };
+  return { heard, close: () => ws.close() };
+}
+
 // A request-tier teammate's message to the owner's run, and the run's DM back
 // to them: one entry delivered to the run, one it sent.
 async function privateExchange(w: World) {
@@ -206,22 +221,10 @@ describe("a run transcript's message entries", () => {
     const w = world();
     const outsider = await invite(w, 'out@x.io', 'request');
     const exchange = await privateExchange(w);
-    const frames = async (token: string) => {
-      const heard: string[] = [];
-      const ws = new WebSocket(
-        `ws://127.0.0.1:${w.handle.port}/ws?token=${token}`
-      );
-      await new Promise((r) => (ws.onopen = r));
-      ws.onmessage = (e) => {
-        const frame = String(e.data);
-        if (frame.includes('"run.log"')) heard.push(frame);
-      };
-      return { heard, close: () => ws.close() };
-    };
     const sockets = {
-      participant: await frames(exchange.req.token),
-      outsider: await frames(outsider.token),
-      agent: await frames(w.agent),
+      participant: await listenText(w, exchange.req.token),
+      outsider: await listenText(w, outsider.token),
+      agent: await listenText(w, w.agent),
     };
     const events = w.executor.events.at(-1);
     if (events === undefined) throw new Error('no run events');
@@ -322,5 +325,95 @@ describe("a run transcript's message entries", () => {
       expect(entries.map((e) => e.kind)).toEqual(whole.map((e) => e.kind));
       expect(entries.filter((e) => e.redacted === true)).toHaveLength(3);
     }
+  });
+});
+
+describe("a run transcript's Dispatch tool calls", () => {
+  // A teammate's run keeps a personal doc and a personal memory for them,
+  // and forgets a memory: text only that teammate reads, which the run's
+  // executor logs as the calls' input.
+  it('leave out the text doc and memory writes keep for fewer readers', async () => {
+    const w = world();
+    const outsider = await invite(w, 'out@x.io', 'request');
+    const req = await invite(w, 'req@x.io', 'request');
+    const run = await liveRun(w, req.token, 'take notes');
+    const doc = {
+      title: 'PRIVATE-TITLE',
+      body: 'PRIVATE-BODY',
+      scope: 'personal',
+    };
+    const saved = await call(w, run.runToken, 'POST', '/api/docs', doc);
+    expect(saved.status).toBe(201);
+    const docId = saved.json.doc.id as string;
+    // The doc itself is the teammate's alone.
+    for (const token of [outsider.token, w.app]) {
+      const read = await call(w, token, 'GET', `/api/docs/${docId}`);
+      expect(secrets(read.text)).toEqual([]);
+    }
+    const sockets = {
+      operator: await listenText(w, req.token),
+      owner: await listenText(w, w.app),
+      outsider: await listenText(w, outsider.token),
+      agent: await listenText(w, w.agent),
+    };
+    const events = w.executor.events.at(-1);
+    if (events === undefined) throw new Error('no run events');
+    const ts = new Date().toISOString();
+    events.onEntry({
+      ts,
+      kind: 'tool',
+      toolName: 'mcp__dispatch__doc_save',
+      toolInput: doc,
+      status: 'running',
+      toolUseId: 'toolu_1',
+    });
+    events.onEntry({
+      ts,
+      kind: 'tool',
+      toolName: 'mcp__dispatch__memory_save',
+      toolInput: {
+        scope: 'personal',
+        kind: 'preference',
+        title: 'PRIVATE-LESSON',
+        body: 'PRIVATE-WHY',
+      },
+      status: 'running',
+      toolUseId: 'toolu_2',
+    });
+    events.onEntry({
+      ts,
+      kind: 'tool',
+      toolName: 'mcp.dispatch.memory_forget',
+      toolInput: { id: '#AB12', reason: 'PRIVATE-REASON' },
+      status: 'running',
+      toolUseId: 'item_1',
+    });
+    await waitFor(() =>
+      Object.values(sockets).every((s) => s.heard.length === 3)
+    );
+
+    for (const s of Object.values(sockets)) {
+      expect(secrets(s.heard.join('\n'))).toEqual([]);
+    }
+    const path = `/api/runs/${run.runId}`;
+    for (const token of [req.token, w.app, outsider.token, w.agent]) {
+      const detail = await call(w, token, 'GET', path);
+      expect(detail.status).toBe(200);
+      expect(secrets(detail.text)).toEqual([]);
+    }
+    // The calls keep what they named, for every reader.
+    const detail = await call(w, outsider.token, 'GET', path);
+    const entries = detail.json.entries as {
+      kind: string;
+      toolInput?: unknown;
+    }[];
+    expect(
+      entries.filter((e) => e.kind === 'tool').map((e) => e.toolInput)
+    ).toEqual([
+      { scope: 'personal' },
+      { scope: 'personal', kind: 'preference' },
+      { id: '#AB12' },
+    ]);
+    for (const s of Object.values(sockets)) s.close();
   });
 });

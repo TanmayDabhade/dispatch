@@ -39,6 +39,11 @@ holds what a user upgrading needs to know.
   messages. Whoever may read one still finds it in the desktop's Threads view.
   The run's `msg_send` and `msg_reply` calls in its chat now show only whom the
   message was for, not what it said.
+- **A run's chat no longer shows what it wrote into docs and memory.** Its
+  `doc_save`, `memory_save` and `memory_forget` calls show which doc or memory
+  they touched and how (scope, kind, the kind of each edit), not the title, body
+  or reason: a personal doc or memory, or a proposal, is for fewer people than
+  can read the run. Open the doc or the memory to read what it says.
 - **A Codex run's command output is cut at 2,000 characters** in its chat, with
   "… (truncated)" at the cut, as an Overseer tool row already was.
 - **An Overseer action you had not confirmed ends with a restart.** It used to

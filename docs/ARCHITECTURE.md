@@ -379,23 +379,35 @@ every one at the `decide` tier. Every other entry (the agent's own work, the
 Session composer's turns, a daemon notice from docs or memory, which carries no
 `messageId`) and `run.delta`, the agent's own text as it writes it, reach every
 socket and every request-tier caller: run detail already returns the agent's
-entries to all of them once they are written. A run reaches anyone only through
-`msg_send` / `msg_reply`, and the agent's tool entry for that call carries no
-`messageId` to redact by, so the daemon keeps only where the message went (`to`,
-`kind`, `messageId`, `blocking`, `urgent`, `wake`; `withoutMessageContent` in
-`orchestrator/types.ts`) before it writes any executor's entry; the text reaches
-a reader through the message's own entry, and a message to another agent, which
-gets none on the sender's transcript, through the bus thread. Redaction of
-message entries happens on the way out; the stored transcript keeps them whole,
-and the daemon's own readers (review summaries, judgments, memory) read it as
-stored. The two sides reuse the bus's own two rules, so a run's chat shows a
-message where the bus does, and they differ at the edges as the bus's do: the
-socket rule also counts a message's `to` addresses and its recipients on a
-teammate's machine, and the read rule lets a run's token read for its whole task
-(its task's address and other runs). The desktop, `dispatch run show`,
-`--watch`, `run watch` and `dispatch share` show nothing for a redacted entry,
-and the CLI, which uses the shared agent token, gets every bus message's entry
-redacted.
+entries to all of them once they are written. So a Dispatch tool call that
+writes text kept for fewer readers loses that text before the daemon writes any
+executor's entry (`withoutScopedText` in `orchestrator/types.ts`, under Claude's
+`mcp__dispatch__<tool>` and Codex's `mcp.dispatch.<tool>` names): the executor
+logs the call as it starts, before anything says where the text went, so the
+entry has no id to redact it by. `msg_send` / `msg_reply`, the only way a run
+reaches anyone, keep where the message went (`to`, `kind`, `messageId`,
+`blocking`, `urgent`, `wake`); the text reaches a reader through the message's
+own entry, and a message to another agent, which gets none on the sender's
+transcript, through the bus thread. `doc_save` keeps `doc`, `slug`, `scope`,
+`baseRev`, `links` and each op's kind, not its body, title or op text: a
+personal doc is its owner's, a run's edit to an accepted team doc is a proposal
+for deciders and the run's operator, the docs routes refuse the shared agent
+token, and a `doc-…` ref does not say which applies. `memory_save` keeps
+`scope`, `kind`, `refs`, `epic`, `appliesTo`, `supersedes` and `projectOnly`,
+not its title (the lesson itself) or body, for the same reasons, and
+`memory_forget` keeps the memory's `id`, not the reason. Every other tool's
+input stays whole: ids and queries, or text every transcript reader may already
+read (a task, a task comment, an inbox item, evidence) or that leaves Dispatch
+(a Linear comment). Redaction of message entries happens on the way out; the
+stored transcript keeps them whole, and the daemon's own readers (review
+summaries, judgments, memory) read it as stored. The two sides reuse the bus's
+own two rules, so a run's chat shows a message where the bus does, and they
+differ at the edges as the bus's do: the socket rule also counts a message's
+`to` addresses and its recipients on a teammate's machine, and the read rule
+lets a run's token read for its whole task (its task's address and other runs).
+The desktop, `dispatch run show`, `--watch`, `run watch` and `dispatch share`
+show nothing for a redacted entry, and the CLI, which uses the shared agent
+token, gets every bus message's entry redacted.
 
 **Switches.** Two `.dispatch/config.yml` blocks, read when a turn or a run
 starts, so a change applies from the Overseer's next turn and to runs started
