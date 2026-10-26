@@ -64,6 +64,11 @@ export interface NormalizedEntry {
   // was keyed by, so a client showing that text live drops it once the
   // entry lands.
   streamId?: string;
+  // `assistant` entries of an agent that only prints (a CLI executor): one
+  // read of its stdout, cut wherever the read fell, mid-line or inside a
+  // code block. Consecutive chunks are one text, which a reader joins before
+  // rendering it as Markdown.
+  chunk?: true;
   // A `message` entry its reader may not read: only `ts` and `messageId`
   // are left (redactMessageEntry). Never stored; the daemon redacts a
   // message entry for a socket outside its message's audience and for a

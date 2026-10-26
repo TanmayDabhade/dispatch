@@ -380,6 +380,10 @@ export interface NormalizedEntry {
   // `assistant` entries whose text streamed: the segment its `run.delta`
   // frames carried, so a client drops that live text once the entry lands.
   streamId?: string;
+  // `assistant` entries of a CLI agent: one read of its stdout, cut wherever
+  // the read fell. Consecutive chunks are one text; join them before
+  // rendering it.
+  chunk?: true;
   // A `message` entry whose message this reader may not read: only `ts` and
   // `messageId` are left. It holds the entry's place in the transcript (and
   // run.log's `index`); readers show nothing for it.
