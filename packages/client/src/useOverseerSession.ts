@@ -215,7 +215,14 @@ export interface OverseerSession {
    * unmounted tree and the failure is reported to nobody.
    */
   sendError: string | null;
-  /** The last send was refused because the Overseer is revoked; cleared by a send that works. */
+  /**
+   * The Overseer is revoked and takes no turns. Whichever came last decides:
+   * the open record's `revoked` (refetched on every `overseer.changed`, which
+   * dispatchd broadcasts when the Overseer is approved or revoked), a send
+   * refused as revoked (which refetches the record), or a send that worked.
+   * With no conversation open, or on a daemon whose records do not say, only
+   * the sends do.
+   */
   revoked: boolean;
   /**
    * Decides one queued mutating action by answering its `overseer-action`
@@ -465,7 +472,11 @@ export function useOverseerSession(
     };
   }, [client, port, projectPath, queryClient, resume]);
 
-  const { data: record, error } = useQuery({
+  const {
+    data: record,
+    error,
+    dataUpdatedAt,
+  } = useQuery({
     queryKey: overseerKey(port, conversationId),
     // Every read carries the running turn's live text; the store takes it.
     queryFn: async () => {
@@ -507,6 +518,21 @@ export function useOverseerSession(
       return rec;
     },
     [client, model, effortId, fakeBackend, port, queryClient]
+  );
+
+  // A send the daemon refused because the Overseer is revoked: say so at once,
+  // and fetch the open record, whose `revoked` is the daemon's word from then on.
+  const noteRefusal = useCallback(
+    (err: unknown) => {
+      const refused = isRevokedRefusal(err);
+      setRevoked(refused);
+      if (refused && conversationId !== null) {
+        void queryClient.invalidateQueries({
+          queryKey: overseerKey(port, conversationId),
+        });
+      }
+    },
+    [conversationId, port, queryClient]
   );
 
   const sendMessage = useCallback(
@@ -558,7 +584,7 @@ export function useOverseerSession(
         }
         setRevoked(false);
       } catch (err) {
-        setRevoked(isRevokedRefusal(err));
+        noteRefusal(err);
         setSendError(err instanceof Error ? err.message : String(err));
         setDraft((current) => (current === '' ? text : current));
         setAttachments((current) => [...files, ...current]);
@@ -566,7 +592,7 @@ export function useOverseerSession(
         setSending(false);
       }
     },
-    [attachments, conversationId, sendMessage, start]
+    [attachments, conversationId, noteRefusal, sendMessage, start]
   );
 
   // Uploads right away, so Send only ever waits on the message itself.
@@ -610,13 +636,13 @@ export function useOverseerSession(
         }
         setRevoked(false);
       } catch (err) {
-        setRevoked(isRevokedRefusal(err));
+        noteRefusal(err);
         throw err;
       } finally {
         setSending(false);
       }
     },
-    [conversationId, sendMessage, start]
+    [conversationId, noteRefusal, sendMessage, start]
   );
 
   const upload = useCallback(
@@ -833,6 +859,13 @@ export function useOverseerSession(
   const recordGone =
     error instanceof ApiError && (error.status === 404 || error.status === 410);
   const shown = recordGone ? undefined : record;
+
+  // Each record that lands (fetched, or written by a mutation) says whether
+  // the Overseer is revoked, and that is newer than any send before it.
+  const recordRevoked = shown?.revoked;
+  useEffect(() => {
+    if (recordRevoked !== undefined) setRevoked(recordRevoked);
+  }, [dataUpdatedAt, recordRevoked]);
 
   const committed = useMemo(
     () => (shown === undefined ? NO_SEGMENTS : committedSegments(shown)),

@@ -778,6 +778,53 @@ test('a refusal coded overseer_revoked marks the session revoked until a send wo
   expect(result.current.revoked).toBe(false);
 });
 
+// The daemon says on every record whether its Overseer is off, so the banner
+// needs no refused send, and goes when it is approved again, which no send
+// could show: the composer is locked while the agent is off.
+test('the record says when the Overseer is off and when it is back', async () => {
+  let off = true;
+  const { result, queryClient } = openWithClient({
+    getOverseer: () => Promise.resolve({ ...overseerRecord(), revoked: off }),
+  });
+  await waitFor(() => expect(result.current.record).toBeDefined());
+  expect(result.current.revoked).toBe(true);
+
+  off = false;
+  await act(async () => {
+    invalidateOverseerEvent(queryClient, PORT, 'w-1');
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(result.current.revoked).toBe(false));
+});
+
+// A refused send is newer than the record on screen: the session believes it,
+// and fetches the record, whose word then holds both ways.
+test('a send refused as revoked refetches the record, whose word then holds', async () => {
+  let off = false;
+  let fetched = 0;
+  const { result } = openWithClient({
+    getOverseer: () => {
+      fetched += 1;
+      return Promise.resolve({ ...overseerRecord(), revoked: off });
+    },
+    sendOverseerMessage: () =>
+      Promise.reject(
+        new ApiError('the overseer is revoked', 409, 'overseer_revoked')
+      ),
+  });
+  await waitFor(() => expect(result.current.record).toBeDefined());
+  expect(result.current.revoked).toBe(false);
+
+  off = true;
+  const before = fetched;
+  await act(async () => {
+    await result.current.submit('hello');
+  });
+  expect(result.current.revoked).toBe(true);
+  await waitFor(() => expect(fetched).toBeGreaterThan(before));
+  expect(result.current.revoked).toBe(true);
+});
+
 test('another 409 is not a revocation', async () => {
   const client = {
     baseUrl: `http://127.0.0.1:${PORT}`,
@@ -1024,6 +1071,26 @@ function runningRecord(live?: LiveText): OverseerRecordView {
     ],
     ...(live === undefined ? {} : { live }),
   };
+}
+
+// A hook over the given client calls with w-1 open, and the QueryClient it reads.
+function openWithClient(calls: Partial<ApiClient>) {
+  const client = {
+    baseUrl: `http://127.0.0.1:${PORT}`,
+    ...calls,
+  } as unknown as ApiClient;
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const rendered = renderHook(() => useOverseerSession(client, PORT, '/repo'), {
+    wrapper: ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    ),
+  });
+  act(() => {
+    rendered.result.current.open('w-1');
+  });
+  return { ...rendered, queryClient };
 }
 
 // A hook over `getOverseer` answers handed out in order (the last one repeats),
