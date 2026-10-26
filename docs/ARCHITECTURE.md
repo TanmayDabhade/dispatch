@@ -288,6 +288,31 @@ Notable modules:
 | `repoDigest.ts`/`orientation.ts`/`hotspots.ts` | —     | Repo context handed to agents                                          |
 | `jj.ts`                                        | —     | Jujutsu support, including colocation with git                         |
 
+### Overseer records
+
+Every `/api/overseer` route that answers with a conversation sends it through
+`OverseerManager.view`, which adds to the stored record what the daemon knows
+beside it and never stores: `live` while a turn runs (see
+[Live text](#live-text-narration-and-tool-results)), `contextLimit` and
+`revoked`. `contextLimit` is `ROLLOVER_TOKENS` (150,000): once the record's
+`contextTokens` reaches it, the next turn starts a fresh session from a recap of
+the latest lines, behind a divider, and the old session's grants end. The
+desktop's status line shows the share as "62% context". `revoked` says the
+daemon's Overseer agent is not approved, the same check that refuses a turn with
+409 `overseer_revoked`. Approving or revoking that agent's own row broadcasts
+`overseer.changed` for every conversation, so each window refetches the record
+it shows and shows the agent off, or back on, without a send of its own refused
+first. The session (`useOverseerSession`) takes whichever came last: a record
+that landed, a send refused as revoked (which refetches the open record) or a
+send that worked.
+
+The session holds the Overseer page's unsent message (its draft and attached
+files), and `submit` sends and clears it. Another surface with a composer of its
+own, a Threads reply or the "say something" box in Tasks, sends with `reply`,
+which opens the conversation when none is open, takes that surface's own files
+(uploaded with `upload`), rejects on failure and leaves the page's message
+alone.
+
 ## Live text, narration and tool results
 
 The Overseer chat and a task run's chat show an agent at work, not only what it
@@ -323,11 +348,12 @@ Overseer turn never keeps it as narration, and a frame with `abandoned: true`
 and empty `text` tells clients to drop it rather than show it for the rest of
 the turn.
 
-**Snapshot.** `GET /api/overseer/:id`, `GET /api/overseer/current` and
-`GET /api/runs/:id` add `live: { seq, turnId, segments }` while a turn runs, so
-a window that opens or reconnects mid-turn starts from what was already written.
-Mutation responses may omit it; the stored record and the run transcript never
-hold it. The buffer is `packages/server/src/liveText.ts`, in memory only.
+**Snapshot.** Every Overseer route that answers with a record (see
+[Overseer records](#overseer-records)) and `GET /api/runs/:id` add
+`live: { seq, turnId, segments }` while a turn runs, so a window that opens or
+reconnects mid-turn starts from what was already written. The stored record and
+the run transcript never hold it. The buffer is
+`packages/server/src/liveText.ts`, in memory only.
 
 **Gap repair.** The client folds frames in `packages/client/src/liveText.ts`, a
 pure reducer behind one store per window, keyed by port and
