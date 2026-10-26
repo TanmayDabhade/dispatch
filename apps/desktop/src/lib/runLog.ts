@@ -65,12 +65,31 @@ export function reportsToolResults(entries: NormalizedEntry[]): boolean {
 // run's own story. A tool call's result is folded into the call
 // (foldToolResults). Everything else becomes its own group, except runs of
 // consecutive `tool` entries, which collapse into one `tools` group so the
-// log view can render them as a single collapsible cluster.
+// log view can render them as a single collapsible cluster, and runs of
+// consecutive `chunk` entries (a CLI agent's stdout, one read each), which
+// become one entry holding their joined text in the first one's place, so a
+// code block or list cut between reads renders whole. The entries themselves
+// are untouched: run.log's `index` still counts each chunk.
 export function groupLogEntries(entries: NormalizedEntry[]): LogGroup[] {
   const groups: LogGroup[] = [];
+  // The texts of the chunks the last group is joining, while it is one.
+  let chunks: string[] | null = null;
+  const joinChunks = () => {
+    const group = groups[groups.length - 1];
+    if (chunks !== null && chunks.length > 1 && group !== undefined) {
+      group.entries[0] = { ...group.entries[0], text: chunks.join('') };
+    }
+    chunks = null;
+  };
   for (const entry of foldToolResults(entries)) {
     if (entry.kind === 'usage' || entry.redacted === true) continue;
     if (entry.kind === 'agent' && entry.agent?.phase === 'progress') continue;
+    const chunk = entry.kind === 'assistant' && entry.chunk === true;
+    if (chunk && chunks !== null) {
+      chunks.push(entry.text ?? '');
+      continue;
+    }
+    joinChunks();
     const groupKind: LogGroup['kind'] =
       entry.kind === 'tool' ? 'tools' : 'message';
     const last = groups[groups.length - 1];
@@ -79,7 +98,9 @@ export function groupLogEntries(entries: NormalizedEntry[]): LogGroup[] {
     } else {
       groups.push({ kind: groupKind, entries: [entry] });
     }
+    if (chunk) chunks = [entry.text ?? ''];
   }
+  joinChunks();
   return groups;
 }
 

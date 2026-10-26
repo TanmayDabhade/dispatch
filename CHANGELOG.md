@@ -24,6 +24,12 @@ holds what a user upgrading needs to know.
 
 ### Changed
 
+- **A CLI agent's output reads as one text in its run chat.** Gemini, Qwen,
+  Cursor, opencode, Crush, Goose, Aider and any agent you set up with
+  `executors.<name>.command` print their answer in pieces, and the chat used to
+  render each piece on its own, so a code block or a list cut between two of
+  them came out broken. Runs started after you upgrade the daemon and the
+  desktop show the pieces joined; older runs show as before.
 - **Saving a setting leaves the rest of `.dispatch/config.yml` as you wrote
   it.** A long line, such as a verify or preview command, is no longer wrapped
   onto a second line, a file with CRLF line ends keeps them, and a block whose

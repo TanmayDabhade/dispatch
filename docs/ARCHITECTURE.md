@@ -255,6 +255,21 @@ person configured for their own interactive Codex in `~/.codex/config.toml` are
 switched off for every dispatched run (a system entry names them); the run gets
 only Dispatch's own server and carto.
 
+Any other agent that is a command-line program runs on `CliExecutor`
+(`executors/cli.ts`): the presets in `executors/cliPresets.ts` whose binary is
+on PATH, and every `executors.<name>.command` in config.yml. It has no approval
+protocol (a gated `permissionMode` is refused, and the transcript opens by
+saying nothing holds a floor command), no cost, turns or resume, and takes no
+mid-run message. Its stdout lands as `assistant` entries one read at a time,
+each marked `chunk: true` because a read ends wherever the pipe had data, often
+mid-line or inside a code block; its stderr lands as `system` entries. The
+desktop's run chat (`groupLogEntries` in `apps/desktop/src/lib/runLog.ts`) joins
+consecutive chunks into one text in the first one's place before rendering it as
+Markdown, so a code block or a list cut between reads renders whole; each chunk
+keeps its own entry, and run.log's `index`, in the transcript. A stderr line or
+a tool row between two reads starts a new text, and a transcript logged before
+the marker existed renders chunk by chunk as before.
+
 Notable modules:
 
 | Module                                         | Lines | Role                                                                   |

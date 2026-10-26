@@ -832,3 +832,30 @@ test('a run with nothing logged yet shows its first words instead of the spinner
   expect(screen.getByText('Looking around.')).toBeDefined();
   expect(screen.queryByText('Working…')).toBeNull();
 });
+
+// A CLI agent's stdout lands one read at a time, cut wherever each read fell:
+// the chat shows the reads as the one text they are, so a code block or a
+// list split between them still renders whole.
+test("a CLI agent's output renders as one text however its reads cut it", () => {
+  const chunk = (text: string): NormalizedEntry => ({
+    ts: '2026-10-26T10:00:00.000Z',
+    kind: 'assistant',
+    text,
+    chunk: true,
+  });
+  renderEntries([
+    chunk('Here is the fix:\n\n```ts\nconst a = 1;\n'),
+    chunk('const b = 2;\n```\n\nThen:\n\n- one\n'),
+    chunk('- two\n'),
+  ]);
+
+  const log = screen.getByRole('region', { name: 'Run log' });
+  const blocks = log.querySelectorAll('pre');
+  expect(blocks).toHaveLength(1);
+  expect(blocks[0]?.textContent).toContain('const a = 1;');
+  expect(blocks[0]?.textContent).toContain('const b = 2;');
+  const lists = log.querySelectorAll('ul');
+  expect(lists).toHaveLength(1);
+  expect(lists[0]?.querySelectorAll('li')).toHaveLength(2);
+  expect(within(log).queryByText(/```/)).toBeNull();
+});
