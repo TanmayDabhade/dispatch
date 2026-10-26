@@ -356,7 +356,6 @@ export function TwoViewOverseer({
               </>
             }
             disabled={revoked || attached}
-            durable
             onOpenDoor={onOpenDoor}
           />
         )}

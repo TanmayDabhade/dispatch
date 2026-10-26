@@ -417,9 +417,10 @@ export function findInThread(
 // The SDK's own tool-loading step: plumbing, not work the human asked about.
 const HIDDEN_TOOLS = new Set(['ToolSearch']);
 
-/** A thread row as the chat renders it: consecutive tool calls fold into one chip row. */
+/** A thread row as the chat renders it: consecutive tool calls fold into one
+ *  chip row, so a lone `tool` row never reaches the chat. */
 export type OverseerStreamItem =
-  | OverseerThreadItem
+  | Exclude<OverseerThreadItem, { kind: 'tool' }>
   | {
       kind: 'tools';
       key: string;
