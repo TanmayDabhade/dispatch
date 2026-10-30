@@ -1356,11 +1356,11 @@ export class MilestoneEngine {
         ids === undefined ? [...set] : ids.filter((id) => set.has(id));
       const blockers = touched(waiting);
       const holding = touched(held);
-      const unparked = touched(parked);
+      const parkedTouched = touched(parked);
       if (
         blockers.length === 0 &&
         holding.length === 0 &&
-        unparked.length === 0
+        parkedTouched.length === 0
       ) {
         continue;
       }
@@ -1381,7 +1381,7 @@ export class MilestoneEngine {
         );
       });
       // Back to ready: the session's own task again, so it is now work to fill.
-      const readyAgain = unparked.some((id) => {
+      const readyAgain = parkedTouched.some((id) => {
         const task = this.ctx.cache.get(id);
         return (
           task !== null &&
