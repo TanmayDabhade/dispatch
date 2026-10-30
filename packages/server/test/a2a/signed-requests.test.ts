@@ -161,37 +161,6 @@ describe('signed requests on the listener', () => {
     expect(get.status).toBe(200);
   });
 
-  // DIS-122: the outbound worker streams a peer's answer with a body-less
-  // signed POST to :subscribe. It used to be refused sig_malformed, because
-  // the listener reads that missing body as zero bytes, so answers only
-  // arrived by polling.
-  it('streams a signed body-less :subscribe from a signature client', async () => {
-    const { key } = await signatureClient('acme');
-    const res = await postSigned(key, 'm-subscribe-1');
-    expect(res.status).toBe(200);
-    const task = ((await res.json()) as { task: { id: string } }).task;
-    const url = `${listenerUrl}/a2a/v1/tasks/${task.id}:subscribe`;
-    const warn = spyOn(console, 'warn');
-    try {
-      const sub = await rawFetch(url, {
-        method: 'POST',
-        headers: signedHeaders(key, 'POST', url, null, {
-          accept: 'text/event-stream',
-        }),
-      });
-      expect(sub.status).toBe(200);
-      expect(sub.headers.get('content-type')).toContain('text/event-stream');
-      await sub.body?.cancel();
-      expect(
-        warn.mock.calls.some((call) =>
-          String(call[0]).includes('sig_malformed')
-        )
-      ).toBe(false);
-    } finally {
-      warn.mockRestore();
-    }
-  });
-
   it('a request signed for another origin is refused', async () => {
     const { key } = await signatureClient('acme');
     expect((await postSigned(key, 'm-1', 'http://evil.example')).status).toBe(
@@ -1093,6 +1062,44 @@ describe('relay re-review I1: a dot-segment path cannot reach another tenant', (
         `${RELAY}/t/${A}`
       );
       expect(result?.ok).toBe(false);
+    }
+  });
+});
+
+// Last in the file, so the event stream it opens can't affect any other test.
+describe('signed :subscribe (DIS-122)', () => {
+  // DIS-122: the outbound worker streams a peer's answer with a body-less
+  // signed POST to :subscribe. It used to be refused sig_malformed, because
+  // the listener reads that missing body as zero bytes, so answers only
+  // arrived by polling.
+  it('streams a signed body-less :subscribe from a signature client', async () => {
+    const { key } = await signatureClient('acme');
+    const res = await postSigned(key, 'm-subscribe-1');
+    expect(res.status).toBe(200);
+    const task = ((await res.json()) as { task: { id: string } }).task;
+    const url = `${listenerUrl}/a2a/v1/tasks/${task.id}:subscribe`;
+    const warn = spyOn(console, 'warn');
+    try {
+      // Closed explicitly so no stream outlives this test.
+      const abort = new AbortController();
+      const sub = await rawFetch(url, {
+        method: 'POST',
+        headers: signedHeaders(key, 'POST', url, null, {
+          accept: 'text/event-stream',
+        }),
+        signal: abort.signal,
+      });
+      expect(sub.status).toBe(200);
+      expect(sub.headers.get('content-type')).toContain('text/event-stream');
+      abort.abort();
+      await sub.body?.cancel().catch(() => {});
+      expect(
+        warn.mock.calls.some((call) =>
+          String(call[0]).includes('sig_malformed')
+        )
+      ).toBe(false);
+    } finally {
+      warn.mockRestore();
     }
   });
 });
