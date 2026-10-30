@@ -276,15 +276,12 @@ const STATUS_RANK: Record<BranchEntryStatus, number> = {
  * is fixed per task so a re-dispatch or a restack rebuilds the same branch
  * instead of leaving old ones behind.
  */
-export function stackBaseBranch(taskId: string): string {
+function stackBaseBranch(taskId: string): string {
   return `dispatch/stack-base-${taskId}`;
 }
 
 // The commit message on a stack base, naming every blocker it combines.
-export function stackBaseMessage(
-  taskId: string,
-  parents: readonly string[]
-): string {
+function stackBaseMessage(taskId: string, parents: readonly string[]): string {
   return `dispatch: stack base for ${taskId} over ${parents.join(', ')}`;
 }
 
