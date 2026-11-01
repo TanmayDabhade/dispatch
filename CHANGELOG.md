@@ -72,7 +72,9 @@ holds what a user upgrading needs to know.
   as it is approved.** "The agent is off." used to appear only after a message
   to the revoked agent failed, and stayed, with the composer locked, after you
   approved it again in Settings → Connected agents, until the app reloaded.
-  Every window now follows the agent's state as it changes.
+  Every window with a conversation open now follows the agent's state as it
+  changes. With none open, a window learns it from your next message, which it
+  always lets you send.
 - **`dispatch team invite` now makes a team invite link.** It prints one
   `dispatch-team:` link that a teammate pastes into `dispatch team join` (or
   Settings → Team) to join your signed team. The old behaviour, a sign-in token

@@ -333,3 +333,33 @@ test('a window on the agent token locks the composer and offers the takeover', (
   const box = screen.getByRole('textbox', { name: 'Follow-up message' });
   expect((box as HTMLTextAreaElement).disabled).toBe(true);
 });
+
+test('a revoked Overseer locks the open conversation, and says it is off', () => {
+  render(
+    <Harness
+      overseer={session({ revoked: true })}
+      client={{}}
+      extra={{ revoked: true }}
+    />
+  );
+  expect(screen.getByTestId('overseer-off')).toBeTruthy();
+  const box = screen.getByRole('textbox', { name: 'Follow-up message' });
+  expect((box as HTMLTextAreaElement).disabled).toBe(true);
+});
+
+// No record would ever tell the window the agent came back, so the next
+// message decides: it works, or it is refused and the banner stays.
+test('with no conversation open, a revoked Overseer says it is off but keeps the composer', () => {
+  render(
+    <Harness
+      overseer={session({ revoked: true, conversationId: null })}
+      client={{}}
+      extra={{ revoked: true }}
+    />
+  );
+  expect(screen.getByTestId('overseer-off')).toBeTruthy();
+  const box = screen.getByRole('textbox', {
+    name: 'Overseer opening question',
+  });
+  expect((box as HTMLTextAreaElement).disabled).toBe(false);
+});

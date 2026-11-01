@@ -304,7 +304,10 @@ daemon's Overseer agent is not approved, the same check that refuses a turn with
 it shows and shows the agent off, or back on, without a send of its own refused
 first. The session (`useOverseerSession`) takes whichever came last: a record
 that landed, a send refused as revoked (which refetches the open record) or a
-send that worked.
+send that worked. Only an open conversation's record can say the agent is back,
+so the desktop locks the composers on `revoked` only while a conversation is
+open (`revokedLocksComposer`); with none open, the banner shows after a refused
+send and the next send decides.
 
 The session holds the Overseer page's unsent message (its draft and attached
 files), and `submit` sends and clears it. Another surface with a composer of its
