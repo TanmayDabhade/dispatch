@@ -1174,7 +1174,14 @@ describe('MilestoneEngine refill when its own task is ready again', () => {
       .list()
       .find((r) => r.taskId === f1 && r.id !== first.id);
     expect(second).toBeDefined();
-    harness.orchestrator.approve(second!.id, 'go', true);
+
+    // Leave nothing running: an approved run would finish (and free F2) after
+    // afterEach deletes the repo, slowing whichever test file runs next.
+    harness.milestones.shutdown();
+    await harness.orchestrator.cancel(second!.id);
+    await waitFor(
+      () => harness.orchestrator.getRun(second!.id)?.meta.state === 'cancelled'
+    );
   });
 });
 
