@@ -801,9 +801,14 @@ test('the record says when the Overseer is off and when it is back', async () =>
 // desktop keeps the composer and the next send decides, from the Overseer
 // page or from Tasks (reply).
 test('with the conversation set aside, the next reply decides whether the Overseer is off', async () => {
+  // `refuse` is the daemon's state: its records and its sends agree on it.
   let refuse = true;
+  const fetched: string[] = [];
   const { result } = openWithClient({
-    getOverseer: () => Promise.resolve({ ...overseerRecord(), revoked: true }),
+    getOverseer: (id: string) => {
+      fetched.push(id);
+      return Promise.resolve({ ...overseerRecord(), id, revoked: refuse });
+    },
     startOverseer: () =>
       refuse
         ? Promise.reject(
@@ -825,6 +830,12 @@ test('with the conversation set aside, the next reply decides whether the Overse
   refuse = false;
   await act(async () => {
     await result.current.reply('back on?');
+  });
+  expect(result.current.revoked).toBe(false);
+  // The new conversation's record, fetched after the start, agrees.
+  await waitFor(() => {
+    expect(fetched).toContain('w-2');
+    expect(result.current.record?.revoked).toBeDefined();
   });
   expect(result.current.revoked).toBe(false);
 });
