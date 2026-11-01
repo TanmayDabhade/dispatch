@@ -425,7 +425,9 @@ writes text kept for fewer readers loses that text before the daemon writes any
 executor's entry (`withoutScopedText` in `orchestrator/types.ts`, under Claude's
 `mcp__dispatch__<tool>` and Codex's `mcp.dispatch.<tool>` names): the executor
 logs the call as it starts, before anything says where the text went, so the
-entry has no id to redact it by. `msg_send` / `msg_reply`, the only way a run
+entry has no id to redact it by. `GET /api/runs/:id` applies the same rule again
+as it reads, so a transcript an older daemon wrote, with those inputs whole,
+serves them as a new one does. `msg_send` / `msg_reply`, the only way a run
 reaches anyone, keep where the message went (`to`, `kind`, `messageId`,
 `blocking`, `urgent`, `wake`); the text reaches a reader through the message's
 own entry, and a message to another agent, which gets none on the sender's

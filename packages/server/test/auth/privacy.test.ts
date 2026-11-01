@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'bun:test';
+import { appendFileSync } from 'node:fs';
 
-import { claudeMemoryDir } from '../../src/orchestrator/paths.js';
+import {
+  claudeMemoryDir,
+  transcriptPath,
+} from '../../src/orchestrator/paths.js';
 import type { World } from './world.js';
 import { call, invite, liveRun, useWorld, waitFor } from './world.js';
 
@@ -416,6 +420,75 @@ describe("a run transcript's Dispatch tool calls", () => {
       { id: '#AB12' },
     ]);
     for (const s of Object.values(sockets)) s.close();
+  });
+
+  // A daemon before these calls were scoped stored their input whole, and
+  // the transcript on disk keeps it.
+  it('leave out the text a transcript from an older daemon kept', async () => {
+    const w = world();
+    const outsider = await invite(w, 'out@x.io', 'request');
+    const req = await invite(w, 'req@x.io', 'request');
+    const run = await liveRun(w, req.token, 'take notes');
+    const ts = new Date().toISOString();
+    const file = `${claudeMemoryDir(w.root, run.runId)}/feedback_x.md`;
+    const stored = [
+      {
+        toolName: 'mcp__dispatch__doc_save',
+        toolInput: {
+          scope: 'personal',
+          title: 'PRIVATE-TITLE',
+          body: 'PRIVATE-BODY',
+        },
+      },
+      {
+        toolName: 'mcp__dispatch__memory_save',
+        toolInput: {
+          scope: 'personal',
+          kind: 'preference',
+          title: 'PRIVATE-LESSON',
+        },
+      },
+      {
+        toolName: 'mcp.dispatch.msg_send',
+        toolInput: { to: ['human:test'], kind: 'message', body: 'PRIVATE-DM' },
+      },
+      {
+        toolName: 'Write',
+        toolInput: { file_path: file, content: 'PRIVATE-NOTE' },
+      },
+    ];
+    for (const [i, logged] of stored.entries()) {
+      const entry = {
+        ts,
+        kind: 'tool',
+        status: 'running',
+        toolUseId: `t${i}`,
+        ...logged,
+      };
+      appendFileSync(
+        transcriptPath(w.root, run.runId),
+        `${JSON.stringify({ type: 'entry', entry })}\n`
+      );
+    }
+
+    const path = `/api/runs/${run.runId}`;
+    for (const token of [req.token, w.app, outsider.token, w.agent]) {
+      const detail = await call(w, token, 'GET', path);
+      expect(detail.status).toBe(200);
+      expect(secrets(detail.text)).toEqual([]);
+      const entries = detail.json.entries as {
+        kind: string;
+        toolInput?: unknown;
+      }[];
+      expect(
+        entries.filter((e) => e.kind === 'tool').map((e) => e.toolInput)
+      ).toEqual([
+        { scope: 'personal' },
+        { scope: 'personal', kind: 'preference' },
+        { to: ['human:test'], kind: 'message' },
+        { file_path: file },
+      ]);
+    }
   });
 });
 

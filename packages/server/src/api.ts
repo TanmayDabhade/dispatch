@@ -252,7 +252,7 @@ import type { FixLoop } from './orchestrator/fixLoop.js';
 import type { MergeQueue } from './orchestrator/mergeQueue.js';
 import type { Orchestrator } from './orchestrator/orchestrator.js';
 import type { OverseerManager } from './orchestrator/overseer.js';
-import { boardSyncDir } from './orchestrator/paths.js';
+import { boardSyncDir, claudeMemoryRoot } from './orchestrator/paths.js';
 import type { PlanManager } from './orchestrator/plan.js';
 import type { PrManager, PrReviewEvent, RepoPr } from './orchestrator/pr.js';
 import {
@@ -277,6 +277,7 @@ import {
   runMessageRefusal,
   runOperator,
   TERMINAL_RUN_STATES,
+  withoutScopedText,
 } from './orchestrator/types.js';
 import type { NormalizedEntry, RunMeta } from './orchestrator/types.js';
 import type { VerificationRunner } from './orchestrator/verify.js';
@@ -1835,15 +1836,19 @@ function busReader(ctx: ApiContext): Sender | null {
 // still line up with run.log's `index`. An entry with no messageId (the
 // agent's own work, the Session composer's turns, a daemon notice) is whole,
 // and so is every entry for a deciding human, who reads every message, even
-// one messages.db no longer holds.
+// one messages.db no longer holds. Every caller gets a tool entry as
+// withoutScopedText keeps it: the daemon scrubs a call as it logs it, and
+// scrubbing again here covers a transcript a daemon from before that wrote.
 function readableEntries(
   ctx: ApiContext,
   entries: NormalizedEntry[]
 ): NormalizedEntry[] {
+  const memoryRoot = claudeMemoryRoot(ctx.rootDir);
+  const scoped = entries.map((entry) => withoutScopedText(entry, memoryRoot));
   const reader = busReader(ctx);
-  if (reader?.canDecide === true) return entries;
+  if (reader?.canDecide === true) return scoped;
   const readable = new Map<string, boolean>();
-  return entries.map((entry) => {
+  return scoped.map((entry) => {
     const id = entry.kind === 'message' ? entry.messageId : undefined;
     if (id === undefined) return entry;
     let ok = readable.get(id);
