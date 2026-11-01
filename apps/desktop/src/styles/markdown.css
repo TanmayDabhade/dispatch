@@ -20,6 +20,12 @@
   margin: 0.4em 0;
 }
 
+/* A live text drawn block by block (StreamingText's `blocks`) keeps the gap one Markdown
+   would leave between its paragraphs. */
+[data-slot='streaming-blocks'] > .dispatch-md + .dispatch-md {
+  margin-top: 0.4em;
+}
+
 .dispatch-md ul,
 .dispatch-md ol {
   margin: 0.4em 0;

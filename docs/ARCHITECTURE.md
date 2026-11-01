@@ -268,7 +268,11 @@ consecutive chunks into one text in the first one's place before rendering it as
 Markdown, so a code block or a list cut between reads renders whole; each chunk
 keeps its own entry, and run.log's `index`, in the transcript. A stderr line or
 a tool row between two reads starts a new text, and a transcript logged before
-the marker existed renders chunk by chunk as before.
+the marker existed renders chunk by chunk as before. That text grows with every
+read while the run is live, so the live row draws it one Markdown block at a
+time (`StreamingText`'s `blocks`, split by `splitSettledMarkdown` in
+`packages/ui`): a read re-parses the block still open, and each finished one is
+parsed once. The finished run's row is one Markdown again.
 
 Notable modules:
 

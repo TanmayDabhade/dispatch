@@ -859,3 +859,54 @@ test("a CLI agent's output renders as one text however its reads cut it", () => 
   expect(lists[0]?.querySelectorAll('li')).toHaveLength(2);
   expect(within(log).queryByText(/```/)).toBeNull();
 });
+
+// That text grows with every read, so while the run is live it is drawn one
+// Markdown block at a time (a read redraws the open block, not all of it);
+// once the run ends it is one Markdown again.
+test("a live CLI agent's output is drawn block by block", () => {
+  const chunk = (text: string): NormalizedEntry => ({
+    ts: '2026-10-26T10:00:00.000Z',
+    kind: 'assistant',
+    text,
+    chunk: true,
+  });
+  const entries = [
+    chunk('First paragraph.\n\n```sh\nbun test\n\n'),
+    chunk('bun run lint\n```\n\nStill wri'),
+  ];
+  const { rerender } = renderEntries(entries);
+  const log = screen.getByRole('region', { name: 'Run log' });
+  const drawn = () =>
+    Array.from(log.querySelectorAll('[data-slot="markdown"]'), (md) =>
+      md.textContent?.trim()
+    );
+  expect(log.querySelector('[data-slot="streaming-blocks"]')).not.toBeNull();
+  const blocks = drawn();
+  expect(blocks).toHaveLength(3);
+  expect(blocks[0]).toBe('First paragraph.');
+  // The blank line inside the code block does not end it.
+  expect(blocks[1]).toContain('bun test');
+  expect(blocks[1]).toContain('bun run lint');
+  expect(blocks[2]).toBe('Still wri');
+
+  rerender(
+    <RunLogView
+      meta={meta({ state: 'finished' })}
+      entries={entries}
+      pendingApprovals={[]}
+      onApprove={noop}
+      onSendMessage={noop}
+      openQuestions={[]}
+      onAnswerQuestion={noop}
+      pendingScopeRequest={null}
+      onDecideScopeRequest={noop}
+      scopeDecide={CAN_DECIDE}
+      onRestartDaemon={noop}
+      onRequestChanges={noop}
+      onOpenMessage={null}
+      me={null}
+      readsAllThreads
+    />
+  );
+  expect(drawn()).toHaveLength(1);
+});

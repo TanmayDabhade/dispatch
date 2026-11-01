@@ -86,13 +86,16 @@ export function TranscriptRow({
     // Only the genuinely-live entry goes through StreamingText, which reveals what it grows
     // by and shows the text it arrived with at once; it renders through the same Markdown
     // as the settled branch below, so the entry looks the same once it stops being live.
+    // A CLI agent's joined stdout (`chunk`) holds everything it has printed and grows with
+    // every read, so it is drawn block by block: a read re-parses the open block only.
     return (
       <div className="grid grid-cols-[52px_minmax(0,1fr)] gap-3 py-0.5">
         <GutterCell tag={tag} tone={tone} />
         <StreamingText
           text={entry.text ?? ''}
           streaming
-          render={(text) => <AssistantProse text={text} />}
+          blocks={entry.chunk === true}
+          render={renderProse}
         />
       </div>
     );
@@ -128,6 +131,10 @@ function AssistantProse({ text }: { text: string }) {
     />
   );
 }
+
+// StreamingText's `render`, one function for the module's life, so the finished blocks of
+// a `blocks` text are drawn once.
+const renderProse = (text: string) => <AssistantProse text={text} />;
 
 function GutterCell({
   tag,
