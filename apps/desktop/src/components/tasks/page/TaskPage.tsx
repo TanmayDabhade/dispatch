@@ -36,6 +36,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTaskComments } from '../../../hooks/useTaskComments';
 import { useTaskDoc } from '../../../hooks/useTaskDoc';
 import { useTeamOn } from '../../../hooks/useTeamOn';
+import { describeError } from '../../../lib/actionFeedback';
 import { parseActivity } from '../../../lib/activityFeed';
 import type { TaskTab } from '../../../lib/appNav';
 import { liveClaimsFrom } from '../../../lib/dispatchPreview';
@@ -56,7 +57,10 @@ import {
 } from '../../../lib/linearSettings';
 import { presenceLine } from '../../../lib/remotePresence';
 import { criteriaItems } from '../../../lib/reviewCriteria';
-import { isTerminalRunState } from '../../../lib/runState';
+import {
+  isTerminalRunState,
+  tasksWithFinishedRun,
+} from '../../../lib/runState';
 import { useStatusModelOf } from '../../../lib/statusModel';
 import { dueDateInfo } from '../../../lib/taskDates';
 import { parseTaskSections } from '../../../lib/taskDisplay';
@@ -167,18 +171,12 @@ function TeamPresenceLine({
   );
 }
 
-function errorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return typeof err === 'string' ? err : 'Something went wrong.';
-}
-
 // Which rail picker each single-key command opens.
 const PICKER_FOR_KEY: Partial<Record<ListKeyCommand, RailPicker>> = {
   'list-set-status': 'status',
   'list-set-priority': 'priority',
   'list-set-assignee': 'assignee',
   'list-set-labels': 'labels',
-  'list-set-epic': 'parent',
   'list-set-milestone': 'parent',
 };
 
@@ -384,9 +382,17 @@ function TaskPageLoaded({
   const runs = useMemo(() => executeRuns(allRuns), [allRuns]);
   const latestRun = runs[0];
   const model = useStatusModelOf(project.config);
+  const finishedRuns = useMemo(
+    () => tasksWithFinishedRun(project.runs),
+    [project.runs]
+  );
+  const finishedRun = useCallback(
+    (id: string) => finishedRuns.has(id),
+    [finishedRuns]
+  );
   const unmet = useMemo(
-    () => unmetBlockers(item, tasksById, model),
-    [item, tasksById, model]
+    () => unmetBlockers(item, tasksById, model, finishedRun),
+    [item, tasksById, model, finishedRun]
   );
   const stateInput = {
     statusType: statusType(meta.status, model),
@@ -438,7 +444,7 @@ function TaskPageLoaded({
 
   const fail = useCallback(
     (title: string, err: unknown) => {
-      toasts.push({ title, description: errorMessage(err), tone: 'error' });
+      toasts.push({ title, description: describeError(err), tone: 'error' });
     },
     [toasts]
   );
@@ -511,6 +517,7 @@ function TaskPageLoaded({
     liveRun: runs.find((r) => !isTerminalRunState(r.state)),
     reading: project.readinessById.get(taskId),
     liveClaims,
+    finishedRun,
   });
   // A container goes out from its plan, never as one run.
   const canDispatch = !container && readiness.canDispatch;
@@ -539,6 +546,7 @@ function TaskPageLoaded({
     children,
     tasksById,
     unmetBlockers: unmet,
+    finishedRun,
     readiness,
     statusModel: model,
     patch,

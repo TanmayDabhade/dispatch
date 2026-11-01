@@ -2,11 +2,11 @@ import { describe, expect, it } from 'bun:test';
 
 import type {
   DiffFile,
-  EpicProgress,
-  EpicProgressChild,
-  EpicSession,
-  EpicSpend,
   Message,
+  MilestoneProgress,
+  MilestoneProgressChild,
+  MilestoneSession,
+  MilestoneSpend,
   NormalizedEntry,
   PlanProposal,
   PlanRecord,
@@ -17,8 +17,8 @@ import {
   formatApprovalRequest,
   formatDiffFiles,
   formatEntry,
-  formatEpicProgress,
   formatLastEntries,
+  formatMilestoneProgress,
   formatPlanNeedsReply,
   formatProposal,
   formatRunsTable,
@@ -406,7 +406,7 @@ describe('formatDiffFiles', () => {
 describe('formatProposal', () => {
   it('numbers tasks and renders a dependency arrow for blocked ones', () => {
     const proposal: PlanProposal = {
-      epic: { title: 'Ship the widget', description: '...' },
+      milestone: { title: 'Ship the widget', description: '...' },
       tasks: [
         {
           title: 'Design',
@@ -425,13 +425,13 @@ describe('formatProposal', () => {
       ],
     };
     const text = formatProposal(proposal);
-    expect(text).toContain('Epic: Ship the widget');
+    expect(text).toContain('Milestone: Ship the widget');
     expect(text).toContain('0. Design [high]');
     expect(text).toContain('1. Implement [medium]');
     expect(text).toContain('blocked by 0');
   });
 
-  it('omits the epic line for a flat proposal with no epic', () => {
+  it('omits the milestone line for a flat proposal with no milestone', () => {
     const proposal: PlanProposal = {
       tasks: [
         {
@@ -443,11 +443,11 @@ describe('formatProposal', () => {
         },
       ],
     };
-    expect(formatProposal(proposal)).not.toContain('Epic:');
+    expect(formatProposal(proposal)).not.toContain('Milestone:');
   });
 });
 
-describe('formatEpicProgress', () => {
+describe('formatMilestoneProgress', () => {
   const run: RunMeta = {
     id: 'r-1',
     taskId: 't-1',
@@ -461,9 +461,11 @@ describe('formatEpicProgress', () => {
     updatedAt: '2026-07-20T00:00:00Z',
   };
 
-  function session(overrides: Partial<EpicSession> = {}): EpicSession {
+  function session(
+    overrides: Partial<MilestoneSession> = {}
+  ): MilestoneSession {
     return {
-      epicId: 'e-1',
+      milestoneId: 'e-1',
       concurrency: 4,
       executor: 'fake',
       state: 'active',
@@ -476,7 +478,7 @@ describe('formatEpicProgress', () => {
     };
   }
 
-  function spend(overrides: Partial<EpicSpend> = {}): EpicSpend {
+  function spend(overrides: Partial<MilestoneSpend> = {}): MilestoneSpend {
     return {
       settledUsd: 41.2,
       liveCount: 3,
@@ -489,8 +491,8 @@ describe('formatEpicProgress', () => {
   }
 
   function child(
-    overrides: Partial<EpicProgressChild> = {}
-  ): EpicProgressChild {
+    overrides: Partial<MilestoneProgressChild> = {}
+  ): MilestoneProgressChild {
     return {
       id: 't-1',
       title: 'Child',
@@ -502,9 +504,11 @@ describe('formatEpicProgress', () => {
     };
   }
 
-  function progress(overrides: Partial<EpicProgress> = {}): EpicProgress {
+  function progress(
+    overrides: Partial<MilestoneProgress> = {}
+  ): MilestoneProgress {
     return {
-      epicId: 'e-1',
+      milestoneId: 'e-1',
       active: true,
       concurrency: 4,
       session: session(),
@@ -517,22 +521,22 @@ describe('formatEpicProgress', () => {
   }
 
   it('renders the session state, concurrency, children, and live runs', () => {
-    const text = formatEpicProgress(progress());
-    expect(text).toContain('epic e-1: active (concurrency 4)');
+    const text = formatMilestoneProgress(progress());
+    expect(text).toContain('milestone e-1: active (concurrency 4)');
     expect(text).toContain('t-1');
     expect(text).toContain('live runs:');
     expect(text).toContain('r-1');
   });
 
   it('renders the spend line with both ceilings', () => {
-    const text = formatEpicProgress(progress());
+    const text = formatMilestoneProgress(progress());
     expect(text).toContain(
       'spend $41.20 settled + ~$30.00 in flight of $60.00 · 7/20 runs'
     );
   });
 
   it('drops the ceiling halves of the spend line when neither is set', () => {
-    const text = formatEpicProgress(
+    const text = formatMilestoneProgress(
       progress({
         session: session({ maxSpendUsd: null, maxRuns: null }),
         spend: spend({ maxSpendUsd: null, maxRuns: null }),
@@ -543,7 +547,7 @@ describe('formatEpicProgress', () => {
   });
 
   it('prints wave and phase per child', () => {
-    const text = formatEpicProgress(
+    const text = formatMilestoneProgress(
       progress({
         children: [
           child(),
@@ -563,7 +567,7 @@ describe('formatEpicProgress', () => {
   });
 
   it('adds a REASON column only when some child carries one', () => {
-    const text = formatEpicProgress(
+    const text = formatMilestoneProgress(
       progress({
         children: [
           child(),
@@ -580,11 +584,11 @@ describe('formatEpicProgress', () => {
     expect(lines.find((l) => l.startsWith('t-2'))).toContain(
       'blocked by t-9 (failed)'
     );
-    expect(formatEpicProgress(progress())).not.toContain('REASON');
+    expect(formatMilestoneProgress(progress())).not.toContain('REASON');
   });
 
   it('prints the paused reason under the header', () => {
-    const text = formatEpicProgress(
+    const text = formatMilestoneProgress(
       progress({
         active: false,
         session: session({
@@ -594,12 +598,12 @@ describe('formatEpicProgress', () => {
         }),
       })
     );
-    expect(text).toContain('epic e-1: paused (concurrency 4)');
+    expect(text).toContain('milestone e-1: paused (concurrency 4)');
     expect(text).toContain('paused — spend ceiling reached');
   });
 
   it('carries the fill failure detail into the paused line', () => {
-    const text = formatEpicProgress(
+    const text = formatMilestoneProgress(
       progress({
         active: false,
         session: session({
@@ -615,8 +619,8 @@ describe('formatEpicProgress', () => {
     );
   });
 
-  it('falls back to active/inactive for an epic that was never dispatched', () => {
-    const text = formatEpicProgress(
+  it('falls back to active/inactive for a milestone that was never dispatched', () => {
+    const text = formatMilestoneProgress(
       progress({
         active: false,
         concurrency: undefined,
@@ -634,7 +638,7 @@ describe('formatEpicProgress', () => {
         liveRuns: [],
       })
     );
-    expect(text).toContain('epic e-1: inactive');
+    expect(text).toContain('milestone e-1: inactive');
     expect(text).not.toContain('concurrency');
     expect(text).not.toContain('paused');
     expect(text).not.toContain('live runs:');

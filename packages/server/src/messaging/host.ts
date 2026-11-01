@@ -51,7 +51,7 @@ export interface DaemonHostDeps {
     | 'list'
   >;
   // Read-only: task parent/kind/status/risk lookups for wake policy and
-  // epic channel membership.
+  // milestone channel membership.
   store: TaskStorePort;
   ownerRef: string;
   // Who a run's notices and wake gates name (XH-R9); omitted, the owner.
@@ -69,13 +69,13 @@ export interface DaemonHostDeps {
   federation?: FederationHooks;
 }
 
-// An epic channel's implicit members: every task parented to its epic, as
+// A milestone channel's implicit members: every task parented to its milestone, as
 // `task:<id>`. `childrenOf` lets a bulk caller reuse one task listing.
-export function implicitEpicMembers(
-  childrenOf: (epicId: string) => { meta: { id: string } }[],
+export function implicitMilestoneMembers(
+  childrenOf: (milestoneId: string) => { meta: { id: string } }[],
   channel: string
 ): Address[] {
-  const match = /^epic\/(.+)$/.exec(channel);
+  const match = /^milestone\/(.+)$/.exec(channel);
   if (match === null) return [];
   return childrenOf(match[1]).map((task) => `task:${task.meta.id}`);
 }
@@ -90,10 +90,10 @@ export function settle<T>(call: () => T): Promise<T> {
   }
 }
 
-// Why `task` can never be woken ('an epic', or its done status's name under the
+// Why `task` can never be woken ('a milestone', or its done status's name under the
 // project's `model`), or null. Checked when a wake gate is raised and when it runs.
 export function wakeRefusal(task: TaskDoc, model: StatusModel): string | null {
-  if (isContainerKind(task.meta.kind)) return 'an epic';
+  if (isContainerKind(task.meta.kind)) return 'a milestone';
   if (isDoneStatus(task.meta.status, model)) return task.meta.status;
   return null;
 }
@@ -104,7 +104,7 @@ export type ExternalPolicy = Required<
 >;
 
 // dispatchd's MessagingHost: live runs and wakes from the orchestrator, policy
-// and epic membership from the task store, gate effects from GateHandlers.
+// and milestone membership from the task store, gate effects from GateHandlers.
 export class DaemonMessagingHost implements MessagingHost {
   private externalPolicy: ExternalPolicy | null = null;
   readonly federation?: FederationHooks;
@@ -297,11 +297,11 @@ export class DaemonMessagingHost implements MessagingHost {
     return group.includes(sender) ? group : [sender, ...group];
   }
 
-  // Only `epic/<id>` channels have implicit members: the epic's child tasks,
+  // Only `milestone/<id>` channels have implicit members: the milestone's child tasks,
   // with no membership kept by hand.
   implicitMembers(channel: string): Address[] {
-    return implicitEpicMembers(
-      (epicId) => this.deps.store.list({ parent: epicId }),
+    return implicitMilestoneMembers(
+      (milestoneId) => this.deps.store.list({ parent: milestoneId }),
       channel
     );
   }

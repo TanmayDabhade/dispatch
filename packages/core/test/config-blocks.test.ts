@@ -153,11 +153,11 @@ describe('updateConfig blocks', () => {
     );
     const cfg = updateConfig(dir, {
       carto: { enabled: 'off' },
-      epicConcurrency: 2,
+      milestoneConcurrency: 2,
       policy: { gates: { merge: 'auto' } },
     });
     expect(cfg.carto.enabled).toBe('off');
-    expect(cfg.orchestrator.epicConcurrency).toBe(2);
+    expect(cfg.orchestrator.milestoneConcurrency).toBe(2);
     expect(cfg.policy?.gates.merge).toBe('auto');
     const text = read(dir);
     expect(text).toContain('# enabled: detect');

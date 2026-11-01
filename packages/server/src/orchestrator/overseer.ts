@@ -395,7 +395,7 @@ function settleRunningCalls(messages: OverseerMessage[]): OverseerMessage[] {
 }
 
 /**
- * Owns the overseer's chat conversations (epic: the project assistant tab):
+ * Owns the overseer's chat conversations (milestone: the project assistant tab):
  * drives a `OverseerBackend` as a multi-turn, tool-calling conversation and
  * tracks each turn's running -> ready|failed state plus the transcript,
  * written through to the store so a conversation outlives the daemon (a turn

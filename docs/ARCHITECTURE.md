@@ -92,7 +92,7 @@ already uses. The loader checks the whole patched file before it is written.
 - diff snapshots, taken before a worktree is removed
 - review comments, review packages and outputs
 - verify outputs and results
-- merge-queue state, epic PR records
+- merge-queue state, milestone PR records
 - `worktrees/` — one working tree per run
 - `memory.db` — project and team memory, and memory proposals
 - `claude-memory/<lineage>/` — a run's Claude memory export
@@ -166,7 +166,7 @@ they're for:
   requests and tool approvals are gates
 - **Review** — `/api/prs/*` (comments, diff, findings, review agent, submit),
   `/api/runs/:id/review*`
-- **Merge** — `/api/merge-queue/*`, `/api/epics/:id/land`, `/api/branches`
+- **Merge** — `/api/merge-queue/*`, `/api/milestones/:id/land`, `/api/branches`
 - **Repo** — `/api/impact`, `/api/landing`
 - **Capture** — `/api/inbox/*`, `/api/notes/*`, `/api/conversations`
 - **Overseer** — `/api/overseer`, `/api/overseer/:id/message`; its action
@@ -288,9 +288,8 @@ Notable modules:
 | `planner.ts`                                   | 243   | Proposes a task set; indices resolve to real ids at confirm            |
 | `../policyEngine.ts`                           | —     | Autonomy ladder: gates consult per-project policy, auto-decide, record |
 | `../messaging/`                                | —     | Message bus host: questions, scope, approval and wake gates            |
-| `epic.ts`/`epicBranch.ts`                      | —     | Epic sessions, progress, and their branches                            |
+| `milestone.ts`/`milestoneBranch.ts`            | —     | Milestone sessions, progress, and their branches                       |
 | `repoDigest.ts`/`orientation.ts`/`hotspots.ts` | —     | Repo context handed to agents                                          |
-| `jj.ts`                                        | —     | Jujutsu support, including colocation with git                         |
 
 ### Overseer records
 
@@ -443,12 +442,12 @@ transcript, through the bus thread. `doc_save` keeps `doc`, `slug`, `scope`,
 personal doc is its owner's, a run's edit to an accepted team doc is a proposal
 for deciders and the run's operator, the docs routes refuse the shared agent
 token, and a `doc-…` ref does not say which applies. `memory_save` keeps
-`scope`, `kind`, `refs`, `epic`, `appliesTo`, `supersedes` and `projectOnly`,
-not its title (the lesson itself) or body, for the same reasons, and
-`memory_forget` keeps the memory's `id`, not the reason. A Claude run's `Write`,
-`Edit`, `MultiEdit` or `NotebookEdit` call on a file inside a Claude memory
-export (`claudeMemoryRoot`, where export mode has the run save memories as
-usual) keeps only its `file_path` (`notebook_path`): Dispatch keeps a file
+`scope`, `kind`, `refs`, `milestone`, `appliesTo`, `supersedes` and
+`projectOnly`, not its title (the lesson itself) or body, for the same reasons,
+and `memory_forget` keeps the memory's `id`, not the reason. A Claude run's
+`Write`, `Edit`, `MultiEdit` or `NotebookEdit` call on a file inside a Claude
+memory export (`claudeMemoryRoot`, where export mode has the run save memories
+as usual) keeps only its `file_path` (`notebook_path`): Dispatch keeps a file
 written there as the operator's personal memory, and an edit's old text is one
 already exported to them. Every other tool's input stays whole: ids and queries,
 or text every transcript reader may already read (a task, a task comment, an
@@ -588,10 +587,10 @@ covering board, tasks, task detail, PR review, diffs, branches, milestones,
 plans, sessions, agents, impact, inbox/brain-dump, threads, settings, gallery.
 
 **CLI** (`packages/cli`) — commands include `init`, `mcp`, `task`, `plan`,
-`epic`, `serve`, `ui`, `doctor`, `run`, `runs`, `approve`, `message`, `cancel`,
-`diff`, `review`, `scope`, `approvals`, `fanout`, `worktree`, `share`, `team`,
-`sync`, `receipts`, `migrate`, `merge-task`, `merge-team`; `dispatch --help`
-lists them all. Every read command takes `--json`.
+`milestone`, `serve`, `ui`, `doctor`, `run`, `runs`, `approve`, `message`,
+`cancel`, `diff`, `review`, `scope`, `approvals`, `fanout`, `worktree`, `share`,
+`team`, `sync`, `receipts`, `migrate`, `merge-task`, `merge-team`;
+`dispatch --help` lists them all. Every read command takes `--json`.
 
 **MCP** (`packages/mcp`) — stdio server registered into the project's
 `.mcp.json` by `dispatch init`. 21 tools. Five (`task_list`, `task_get`,
@@ -674,7 +673,7 @@ something:
   `src-tauri/Cargo.toml` still says `0.1.0` — harmless, since `tauri.conf.json`
   wins, but it is the one version string left unaligned.
 - `docs/archive/design/` holds the earlier direction docs. The lovable pair fed
-  the agreed storage/hosted direction (live epics still reference their old
+  the agreed storage/hosted direction (live milestones still reference their old
   `docs/design/` paths). `LICENSING.md` and `docs/TEAM-SERVER.md` are the
   current statements.
 - The repo-local lint baseline is red, so CI signal on those checks is weak.
