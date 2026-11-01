@@ -733,3 +733,7 @@ generativelanguage
 oninitialized
 rewake
 rundll
+nocapture
+blackhole
+nonblocking
+waitable
