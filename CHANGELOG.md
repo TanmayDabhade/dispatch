@@ -67,7 +67,8 @@ holds what a user upgrading needs to know.
   "say something" box in Tasks used to empty what you had typed on the Overseer
   page, take the files waiting there with its own message, and, when the send
   failed, put its text into the Overseer page's box. It now keeps its own text,
-  files and error, and the Overseer page keeps its own.
+  files and error, and the Overseer page keeps its own; switching projects
+  empties both.
 - **The Overseer shows it is off as soon as it is revoked, and on again as soon
   as it is approved.** "The agent is off." used to appear only after a message
   to the revoked agent failed, and stayed, with the composer locked, after you

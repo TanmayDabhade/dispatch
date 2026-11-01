@@ -18,14 +18,22 @@ export interface TasksComposerProps {
   about: { taskId: string; title: string } | null;
   onOpenOverseer: () => void;
   disabled: boolean;
+  /** The project it sends to; a switch starts the composer afresh. */
+  project: string;
 }
 
 /**
  * "say something" in Tasks: always your agent. Its reply shows in a tray; you
  * stay put. Its text, files and failure are its own: the Overseer page keeps
  * its unsent message on the session, and a send from here never touches it.
+ * They are one project's too, keyed by `project`: its files were uploaded to
+ * that project's dispatchd, and Tasks stays mounted across a project switch.
  */
-export function TasksComposer({
+export function TasksComposer(props: TasksComposerProps) {
+  return <ProjectTasksComposer key={props.project} {...props} />;
+}
+
+function ProjectTasksComposer({
   overseer,
   about,
   onOpenOverseer,

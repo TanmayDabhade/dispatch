@@ -36,6 +36,7 @@ test('sits as one line until used, carrying the context pill', () => {
       about={{ taskId: 't-1', title: 'Fix login' }}
       onOpenOverseer={() => {}}
       disabled={false}
+      project="/repo"
     />
   );
   const collapsed = screen.getByTestId('tasks-composer-collapsed');
@@ -77,6 +78,7 @@ function WithSession({ client }: { client: ApiClient }) {
       about={null}
       onOpenOverseer={() => {}}
       disabled={false}
+      project="/repo"
     />
   );
 }
@@ -190,4 +192,46 @@ test('a failed send from Tasks comes back to Tasks, not the Overseer page', asyn
       name: 'Say something to your agent',
     }).value
   ).toBe('hi');
+});
+
+// Its files were uploaded to the project's own dispatchd, which the next
+// project's daemon has never heard of.
+test('a project switch starts the composer afresh', async () => {
+  const session = {
+    ...overseer,
+    upload: (files: File[]) =>
+      Promise.resolve(
+        files.map((f) => ({
+          path: `.dispatch/files/overseer/u-1/${f.name}`,
+          name: f.name,
+          mimeType: 'text/plain',
+          size: 1,
+        }))
+      ),
+  } as OverseerSession;
+  const composer = (project: string) => (
+    <TasksComposer
+      overseer={session}
+      about={null}
+      onOpenOverseer={() => {}}
+      disabled={false}
+      project={project}
+    />
+  );
+  const { rerender } = render(composer('/a'));
+  fireEvent.click(screen.getByTestId('tasks-composer-collapsed'));
+  const picker = document.querySelector<HTMLInputElement>('input[type="file"]');
+  if (picker === null) throw new Error('no file picker');
+  fireEvent.change(picker, {
+    target: { files: [new File(['x'], 'log.txt')] },
+  });
+  await waitFor(() => expect(screen.getByText('log.txt')).toBeTruthy());
+  fireEvent.change(
+    screen.getByRole('textbox', { name: 'Say something to your agent' }),
+    { target: { value: 'half a question about a' } }
+  );
+
+  rerender(composer('/b'));
+  expect(screen.queryByText('log.txt')).toBeNull();
+  expect(screen.getByTestId('tasks-composer-collapsed')).toBeTruthy();
 });

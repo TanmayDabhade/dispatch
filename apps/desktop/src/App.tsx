@@ -2269,6 +2269,7 @@ function App() {
                 about={aboutTask}
                 onOpenOverseer={() => dispatchNav({ type: 'tv/showOverseer' })}
                 disabled={revokedLocksComposer(overseer)}
+                project={activeProject?.path ?? ''}
               />
             }
           />
