@@ -239,7 +239,7 @@ function OverseerMessageBubble({
       {text.trim() !== '' && (
         <p
           title={when}
-          className="bg-surface-secondary shadow-hairline rounded-card font-book max-w-[85%] self-end px-3 py-1.5 text-[13px] whitespace-pre-wrap"
+          className="bg-message rounded-bubble font-book max-w-[80%] self-end p-3 text-[13px] leading-relaxed whitespace-pre-wrap"
         >
           {text}
         </p>
@@ -505,7 +505,7 @@ function OverseerQueuedBubble({
   return (
     <div
       data-testid="overseer-queued"
-      className="rounded-control bg-surface-quaternary/60 text-muted-foreground font-book flex max-w-[85%] flex-col gap-1 self-end border-[0.5px] border-dashed px-3 py-1.5 text-[13px]"
+      className="rounded-bubble text-muted-foreground font-book flex max-w-[80%] flex-col gap-1 self-end border border-dashed p-3 text-[13px]"
     >
       {editing === null ? (
         <span className="whitespace-pre-wrap">{text}</span>
