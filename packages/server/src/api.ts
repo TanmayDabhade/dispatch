@@ -255,7 +255,7 @@ import type { MergeQueue } from './orchestrator/mergeQueue.js';
 import type { MilestoneEngine } from './orchestrator/milestone.js';
 import type { Orchestrator } from './orchestrator/orchestrator.js';
 import type { OverseerManager } from './orchestrator/overseer.js';
-import { boardSyncDir } from './orchestrator/paths.js';
+import { boardSyncDir, claudeMemoryRoot } from './orchestrator/paths.js';
 import type { PlanManager } from './orchestrator/plan.js';
 import type { PrManager, PrReviewEvent, RepoPr } from './orchestrator/pr.js';
 import {
@@ -276,11 +276,13 @@ import {
   OrchestratorClientError,
   OrchestratorConflictError,
   OrchestratorNotFoundError,
+  redactMessageEntry,
   runMessageRefusal,
   runOperator,
   TERMINAL_RUN_STATES,
+  withoutScopedText,
 } from './orchestrator/types.js';
-import type { RunMeta } from './orchestrator/types.js';
+import type { NormalizedEntry, RunMeta } from './orchestrator/types.js';
 import type { VerificationRunner } from './orchestrator/verify.js';
 import type { PresenceTracker } from './presence.js';
 import type { PreviewState, PreviewSupervisor } from './preview.js';
@@ -1500,6 +1502,8 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     'sync',
     'preview',
     'memory',
+    'overseer',
+    'runs',
   ] as const) {
     if (!(key in body)) continue;
     const field = objectField(body, key);
@@ -1949,6 +1953,49 @@ function runMetaFor(ctx: ApiContext, runId: string): RunMeta | undefined {
     ctx.orchestrator.list().find((r) => r.id === runId) ??
     ctx.orchestrator.getRun(runId)?.meta
   );
+}
+
+// Who the caller is to the message bus's read rule (DeliveryEngine.canRead):
+// a run's own token reads as that run, the bare shared agent token as no one
+// (it takes part in no conversation), and any other credential as its human,
+// deciding when its tier allows.
+function busReader(ctx: ApiContext): Sender | null {
+  if (ctx.viaRun !== undefined)
+    return { address: `run:${ctx.viaRun}`, canDecide: false };
+  if (ctx.viaAgentToken === true) return null;
+  return {
+    address: humanActor(ctx),
+    canDecide: tierAllows(ctx.caller?.tier ?? 'request', 'decide'),
+  };
+}
+
+// A run's transcript entries as the caller may see them: a message entry whose
+// bus message the caller cannot read is redacted in place, so the entries
+// still line up with run.log's `index`. An entry with no messageId (the
+// agent's own work, the Session composer's turns, a daemon notice) is whole,
+// and so is every entry for a deciding human, who reads every message, even
+// one messages.db no longer holds. Every caller gets a tool entry as
+// withoutScopedText keeps it: the daemon scrubs a call as it logs it, and
+// scrubbing again here covers a transcript a daemon from before that wrote.
+function readableEntries(
+  ctx: ApiContext,
+  entries: NormalizedEntry[]
+): NormalizedEntry[] {
+  const memoryRoot = claudeMemoryRoot(ctx.rootDir);
+  const scoped = entries.map((entry) => withoutScopedText(entry, memoryRoot));
+  const reader = busReader(ctx);
+  if (reader?.canDecide === true) return scoped;
+  const readable = new Map<string, boolean>();
+  return scoped.map((entry) => {
+    const id = entry.kind === 'message' ? entry.messageId : undefined;
+    if (id === undefined) return entry;
+    let ok = readable.get(id);
+    if (ok === undefined) {
+      ok = reader !== null && ctx.messaging.engine.canRead(id, reader);
+      readable.set(id, ok);
+    }
+    return ok ? entry : redactMessageEntry(entry, id);
+  });
 }
 
 /** Content hash used as the edit precondition — see readRunFile / applyRunEdit. */
@@ -3592,7 +3639,7 @@ async function startOverseer(
     speaker,
     attached.attachments
   );
-  return jsonResponse(record, 202);
+  return jsonResponse(ctx.overseerManager.view(record), 202);
 }
 
 // POST /api/overseer/:id/message — mirrors sendPlanMessage: 202 with the record
@@ -3623,7 +3670,7 @@ async function sendOverseerMessage(
     speaker,
     attached.attachments
   );
-  return jsonResponse(record, 202);
+  return jsonResponse(ctx.overseerManager.view(record), 202);
 }
 
 // PATCH /api/overseer/:id/queued/:entryId — rewrites one message still waiting
@@ -3644,7 +3691,9 @@ async function editOverseerQueued(
     return errorResponse(400, 'invalid text: text is required');
   }
   return jsonResponse(
-    ctx.overseerManager.editQueued(conversationId, entryId, body.text)
+    ctx.overseerManager.view(
+      ctx.overseerManager.editQueued(conversationId, entryId, body.text)
+    )
   );
 }
 
@@ -5768,11 +5817,12 @@ export async function handleApi(
         }
         // The same landing fields the list carries, so run detail can say
         // where its work went, and the text a live run has streamed and not
-        // logged yet.
+        // logged yet. Message entries follow their message's read rule.
         const live = ctx.orchestrator.liveText(segments[1]);
         const view: RunDetailView = {
           ...result,
           meta: ctx.orchestrator.decorateRunsWithPushed([result.meta])[0],
+          entries: readableEntries(ctx, result.entries),
           ...(live !== undefined ? { live } : {}),
         };
         return jsonResponse(view);
@@ -6548,7 +6598,7 @@ export async function handleApi(
         return errorResponse(405, 'method not allowed');
       }
       // One conversation per person per project: the newest one they opened.
-      // Reads carry a running turn's live text; mutation responses need not.
+      // Every record goes out as the manager's view of it (`view`).
       if (
         segments.length === 2 &&
         segments[1] === 'current' &&
@@ -6557,9 +6607,7 @@ export async function handleApi(
         const current = ctx.overseerManager.current(speaker?.address ?? null);
         return jsonResponse({
           conversation:
-            current === undefined
-              ? null
-              : ctx.overseerManager.withLive(current),
+            current === undefined ? null : ctx.overseerManager.view(current),
         });
       }
       const conversationId = segments[1];
@@ -6574,7 +6622,7 @@ export async function handleApi(
       }
       if (segments.length === 2 && method === 'GET') {
         return jsonResponse(
-          ctx.overseerManager.withLive(ctx.overseerManager.get(conversationId))
+          ctx.overseerManager.view(ctx.overseerManager.get(conversationId))
         );
       }
       // The model and effort its next turns run on; null restores the default.
@@ -6589,18 +6637,20 @@ export async function handleApi(
           body.effort === null ? null : readOptionalEffort(body.effort);
         if (effort !== null && !effort.ok) return effort.response;
         return jsonResponse(
-          ctx.overseerManager.setOptions(conversationId, {
-            ...(model === null
-              ? { model: null }
-              : model.model !== undefined
-                ? { model: model.model }
-                : {}),
-            ...(effort === null
-              ? { effort: null }
-              : effort.effort !== undefined
-                ? { effort: effort.effort }
-                : {}),
-          })
+          ctx.overseerManager.view(
+            ctx.overseerManager.setOptions(conversationId, {
+              ...(model === null
+                ? { model: null }
+                : model.model !== undefined
+                  ? { model: model.model }
+                  : {}),
+              ...(effort === null
+                ? { effort: null }
+                : effort.effort !== undefined
+                  ? { effort: effort.effort }
+                  : {}),
+            })
+          )
         );
       }
       if (
@@ -6635,7 +6685,9 @@ export async function handleApi(
         segments[2] === 'stop' &&
         method === 'POST'
       ) {
-        return jsonResponse(ctx.overseerManager.stop(conversationId));
+        return jsonResponse(
+          ctx.overseerManager.view(ctx.overseerManager.stop(conversationId))
+        );
       }
       // One queued message: rewrite it or drop it before the turn ends.
       if (segments.length === 4 && segments[2] === 'queued') {
@@ -6645,7 +6697,9 @@ export async function handleApi(
         }
         if (method === 'DELETE') {
           return jsonResponse(
-            ctx.overseerManager.removeQueued(conversationId, entryId)
+            ctx.overseerManager.view(
+              ctx.overseerManager.removeQueued(conversationId, entryId)
+            )
           );
         }
       }

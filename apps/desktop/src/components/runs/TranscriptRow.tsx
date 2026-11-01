@@ -90,12 +90,15 @@ function TranscriptRowContent({
     // Only the genuinely-live entry goes through StreamingText, which reveals what it grows
     // by and shows the text it arrived with at once; it renders through the same Markdown
     // as the settled branch below, so the entry looks the same once it stops being live.
+    // A CLI agent's joined stdout (`chunk`) holds everything it has printed and grows with
+    // every read, so it is drawn block by block: a read re-parses the open block only.
     return (
       <div className="min-w-0 px-1 py-0.5">
         <StreamingText
           text={entry.text ?? ''}
           streaming
-          render={(text) => <AssistantProse text={text} streaming />}
+          blocks={entry.chunk === true}
+          render={renderProse}
         />
       </div>
     );
@@ -180,6 +183,10 @@ function AssistantProse({
     />
   );
 }
+
+// StreamingText's `render` for a live reply, one function for the module's life, so the
+// finished blocks of a `blocks` text are drawn once. New blocks fade in (`streaming`).
+const renderProse = (text: string) => <AssistantProse text={text} streaming />;
 
 // A tool entry's `status` is the call's outcome once its result is folded in (groupLogEntries),
 // and trusted outright then. A call with none yet is logged `running`, which alone is no live
