@@ -69,13 +69,13 @@ holds what a user upgrading needs to know.
   failed, put its text into the Overseer page's box. It now keeps its own text,
   files and error, and the Overseer page keeps its own; switching projects
   empties both.
-- **The Overseer shows it is off as soon as it is revoked, and on again as soon
-  as it is approved.** "The agent is off." used to appear only after a message
-  to the revoked agent failed, and stayed, with the composer locked, after you
-  approved it again in Settings → Connected agents, until the app reloaded.
-  Every window with a conversation open now follows the agent's state as it
-  changes. With none open, a window learns it from your next message, which it
-  always lets you send.
+- **An open Overseer conversation shows the agent is off as soon as it is
+  revoked, and on again as soon as it is approved.** "The agent is off." used to
+  appear only after a message to the revoked agent failed, and stayed, with the
+  composer locked, after you approved it again in Settings → Connected agents,
+  until the app reloaded. Every window with a conversation open now follows the
+  agent's state as it changes. With none open, a window learns it from your next
+  message, which it always lets you send.
 - **`dispatch team invite` now makes a team invite link.** It prints one
   `dispatch-team:` link that a teammate pastes into `dispatch team join` (or
   Settings → Team) to join your signed team. The old behaviour, a sign-in token

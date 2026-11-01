@@ -541,10 +541,12 @@ reading, failed when the text starts with `error:`.
 **Rendering.** Both chats render live text through `StreamingText`
 (`packages/ui`) with the app's Markdown: text that grows continues its reveal
 from where it was, text that arrives whole shows at once, and a code fence still
-open at the end is closed for display. Overseer narration renders as the agent's
-prose, quieter than the reply, and live segments take the place of the "working"
-row while there is text. Both chats use one approval card (`ToolApprovalCard`),
-whose Deny takes an optional reason that reaches the model.
+open at the end is closed for display. A CLI agent's joined output, which grows
+for the whole run, is drawn a block at a time (see `CliExecutor` above).
+Overseer narration renders as the agent's prose, quieter than the reply, and
+live segments take the place of the "working" row while there is text. Both
+chats use one approval card (`ToolApprovalCard`), whose Deny takes an optional
+reason that reaches the model.
 
 ## Messaging
 
