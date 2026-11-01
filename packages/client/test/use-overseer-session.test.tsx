@@ -797,6 +797,38 @@ test('the record says when the Overseer is off and when it is back', async () =>
   await waitFor(() => expect(result.current.revoked).toBe(false));
 });
 
+// With no conversation open, no record can say the agent came back, so the
+// desktop keeps the composer and the next send decides, from the Overseer
+// page or from Tasks (reply).
+test('with the conversation set aside, the next reply decides whether the Overseer is off', async () => {
+  let refuse = true;
+  const { result } = openWithClient({
+    getOverseer: () => Promise.resolve({ ...overseerRecord(), revoked: true }),
+    startOverseer: () =>
+      refuse
+        ? Promise.reject(
+            new ApiError('the overseer is revoked', 409, 'overseer_revoked')
+          )
+        : Promise.resolve({ ...overseerRecord(), id: 'w-2' }),
+  });
+  await waitFor(() => expect(result.current.revoked).toBe(true));
+  act(() => {
+    result.current.reset();
+  });
+  expect(result.current.conversationId).toBeNull();
+  expect(result.current.revoked).toBe(true);
+
+  await act(async () => {
+    await result.current.reply('still off?').catch(() => {});
+  });
+  expect(result.current.revoked).toBe(true);
+  refuse = false;
+  await act(async () => {
+    await result.current.reply('back on?');
+  });
+  expect(result.current.revoked).toBe(false);
+});
+
 // A refused send is newer than the record on screen: the session believes it,
 // and fetches the record, whose word then holds both ways.
 test('a send refused as revoked refetches the record, whose word then holds', async () => {
