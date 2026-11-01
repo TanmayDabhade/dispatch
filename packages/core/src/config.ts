@@ -2048,7 +2048,7 @@ function applyLinearPatch(
         'invalid linear.archiveFinished: must be a boolean'
       );
     }
-    doc.setIn(['linear', 'archiveFinished'], patch.archiveFinished);
+    setIn(doc, ['linear', 'archiveFinished'], patch.archiveFinished);
   }
   if (patch.statusMap !== undefined) {
     if (

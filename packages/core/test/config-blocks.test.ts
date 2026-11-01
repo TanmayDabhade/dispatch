@@ -164,6 +164,14 @@ describe('updateConfig blocks', () => {
     expect(text).toContain('# tuned later');
   });
 
+  // Settings → Linear's archive switch sends this key alone.
+  test('writes linear.archiveFinished alone into a block left with no value', () => {
+    const dir = root('linear:\n  # enabled: true\n');
+    const cfg = updateConfig(dir, { linear: { archiveFinished: true } });
+    expect(cfg.linear.archiveFinished).toBe(true);
+    expect(read(dir)).toContain('# enabled: true');
+  });
+
   test('a patch the loader would refuse throws, and the file stays as it was', () => {
     const before = 'sync:\n  enabled: true\n  remote: origin\n';
     for (const bad of [
