@@ -8,6 +8,10 @@ import { TaskCache } from '../../src/cache.js';
 import { EventBus, type ServerEvent } from '../../src/events.js';
 import { FakeExecutor } from '../../src/orchestrator/executors/fake.js';
 import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
+import {
+  claudeMemoryDir,
+  claudeMemoryRoot,
+} from '../../src/orchestrator/paths.js';
 import type { NormalizedEntry } from '../../src/orchestrator/types.js';
 import { initGitRepo } from './helpers.js';
 
@@ -161,6 +165,12 @@ const UNTOUCHED: NormalizedEntry[] = [
   call('mcp.dispatch.task_comment', { id: 't-1', text: 'on the board' }),
   call('mcp__other__doc_save', { title: 'theirs', body: 'theirs' }),
   call('Write', { file_path: 'a.md', content: 'in the diff' }),
+  // Beside the exports, not in them.
+  call('Edit', {
+    file_path: '/tmp/claude-memory-notes.md',
+    old_string: 'a',
+    new_string: 'b',
+  }),
 ];
 
 function setUp(steps: { entry: NormalizedEntry }[]) {
@@ -215,5 +225,67 @@ describe("a run's Dispatch tool calls", () => {
     await waitFor(() => orchestrator.getRun(run.id)?.meta.state === 'finished');
 
     expect(orchestrator.getRun(run.id)?.entries).toEqual(UNTOUCHED);
+  });
+});
+
+describe("a run's file writes into a Claude memory export", () => {
+  // Export mode hands a Claude run an auto-memory directory and tells it to
+  // save memories there as usual, with Write and Edit: what it writes there
+  // becomes the operator's personal memory, and an edit's old text is one
+  // already exported to it.
+  it('keep only the file they name', async () => {
+    const dir = claudeMemoryDir(repo, 'r-lineage');
+    const writes: { logged: NormalizedEntry; kept: unknown }[] = [
+      {
+        logged: call('Write', {
+          file_path: `${dir}/feedback_x.md`,
+          content: '---\nname: PRIVATE-LESSON\n---\nPRIVATE-BODY',
+        }),
+        kept: { file_path: `${dir}/feedback_x.md` },
+      },
+      {
+        logged: call('Edit', {
+          file_path: `${dir}/MEMORY.md`,
+          old_string: 'PRIVATE-OLD',
+          new_string: 'PRIVATE-NEW',
+          replace_all: false,
+        }),
+        kept: { file_path: `${dir}/MEMORY.md` },
+      },
+      {
+        logged: {
+          ...call('MultiEdit', {
+            file_path: `${dir}/topic.md`,
+            edits: [{ old_string: 'PRIVATE-FROM', new_string: 'PRIVATE-TO' }],
+          }),
+          parentToolUseId: 'toolu_agent',
+        },
+        kept: { file_path: `${dir}/topic.md` },
+      },
+      {
+        logged: call('NotebookEdit', {
+          notebook_path: `${claudeMemoryRoot(repo)}/o-c1/n.ipynb`,
+          new_source: 'PRIVATE-CELL',
+        }),
+        kept: { notebook_path: `${claudeMemoryRoot(repo)}/o-c1/n.ipynb` },
+      },
+    ];
+    const { orchestrator, seen, taskId } = setUp(
+      writes.map((c) => ({ entry: c.logged }))
+    );
+    const run = await orchestrator.dispatch(taskId, 'fake');
+    await waitFor(() => orchestrator.getRun(run.id)?.meta.state === 'finished');
+
+    const stored = orchestrator.getRun(run.id)?.entries ?? [];
+    const logged = seen.flatMap((e) => (e.type === 'run.log' ? [e.entry] : []));
+    for (const entries of [stored, logged]) {
+      expect(secrets(JSON.stringify(entries))).toEqual([]);
+      expect(entries.map((e) => e.toolInput)).toEqual(
+        writes.map((c) => c.kept)
+      );
+      expect(entries.map(({ toolInput: _, ...rest }) => rest)).toEqual(
+        writes.map(({ logged: { toolInput: _, ...rest } }) => rest)
+      );
+    }
   });
 });

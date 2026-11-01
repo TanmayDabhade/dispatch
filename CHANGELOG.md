@@ -53,7 +53,9 @@ holds what a user upgrading needs to know.
   `doc_save`, `memory_save` and `memory_forget` calls show which doc or memory
   they touched and how (scope, kind, the kind of each edit), not the title, body
   or reason: a personal doc or memory, or a proposal, is for fewer people than
-  can read the run. Open the doc or the memory to read what it says.
+  can read the run. A Claude run's writes and edits to the memory files Dispatch
+  hands it show only which file. Open the doc or the memory to read what it
+  says.
 - **A Codex run's command output is cut at 2,000 characters** in its chat, with
   "… (truncated)" at the cut, as an Overseer tool row already was.
 - **An Overseer action you had not confirmed ends with a restart.** It used to

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
+import { claudeMemoryDir } from '../../src/orchestrator/paths.js';
 import type { World } from './world.js';
 import { call, invite, liveRun, useWorld, waitFor } from './world.js';
 
@@ -414,6 +415,68 @@ describe("a run transcript's Dispatch tool calls", () => {
       { scope: 'personal', kind: 'preference' },
       { id: '#AB12' },
     ]);
+    for (const s of Object.values(sockets)) s.close();
+  });
+});
+
+describe("a run transcript's writes into its Claude memory export", () => {
+  // Export mode has a teammate's Claude run save memories into its export
+  // with Write and Edit; Dispatch keeps those files as the teammate's
+  // personal memory.
+  it('leave out the text they wrote', async () => {
+    const w = world();
+    const outsider = await invite(w, 'out@x.io', 'request');
+    const req = await invite(w, 'req@x.io', 'request');
+    const run = await liveRun(w, req.token, 'take notes');
+    const sockets = {
+      operator: await listenText(w, req.token),
+      outsider: await listenText(w, outsider.token),
+      agent: await listenText(w, w.agent),
+    };
+    const events = w.executor.events.at(-1);
+    if (events === undefined) throw new Error('no run events');
+    const file = `${claudeMemoryDir(w.root, run.runId)}/feedback_x.md`;
+    const ts = new Date().toISOString();
+    events.onEntry({
+      ts,
+      kind: 'tool',
+      toolName: 'Write',
+      toolInput: { file_path: file, content: 'name: PRIVATE-LESSON' },
+      status: 'running',
+      toolUseId: 'toolu_1',
+    });
+    events.onEntry({
+      ts,
+      kind: 'tool',
+      toolName: 'Edit',
+      toolInput: {
+        file_path: file,
+        old_string: 'PRIVATE-LESSON',
+        new_string: 'PRIVATE-BETTER',
+      },
+      status: 'running',
+      toolUseId: 'toolu_2',
+    });
+    await waitFor(() =>
+      Object.values(sockets).every((s) => s.heard.length === 2)
+    );
+
+    for (const s of Object.values(sockets)) {
+      expect(secrets(s.heard.join('\n'))).toEqual([]);
+    }
+    const path = `/api/runs/${run.runId}`;
+    for (const token of [req.token, outsider.token, w.agent]) {
+      const detail = await call(w, token, 'GET', path);
+      expect(detail.status).toBe(200);
+      expect(secrets(detail.text)).toEqual([]);
+      const entries = detail.json.entries as {
+        kind: string;
+        toolInput?: unknown;
+      }[];
+      expect(
+        entries.filter((e) => e.kind === 'tool').map((e) => e.toolInput)
+      ).toEqual([{ file_path: file }, { file_path: file }]);
+    }
     for (const s of Object.values(sockets)) s.close();
   });
 });

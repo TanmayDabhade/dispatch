@@ -69,6 +69,7 @@ import { truncateReason } from './mergeQueue.js';
 import { collectOrientation } from './orientation.js';
 import type { RepoOrientation } from './orientation.js';
 import {
+  claudeMemoryRoot,
   diffSnapshotPath,
   runsDir,
   runTokenPath,
@@ -5178,10 +5179,14 @@ export class Orchestrator {
     const turnId = streams ? this.live.begin(runId) : null;
     return {
       onEntry: (logged) => {
-        // A Dispatch call that writes a message, a doc or a memory keeps
-        // only what it named: the text follows its own store's readers,
-        // which a tool entry cannot.
-        const entry = withoutScopedText(logged);
+        // A Dispatch call that writes a message, a doc or a memory, and a
+        // file write into a Claude memory export, keeps only what it named:
+        // the text follows its own store's readers, which a tool entry
+        // cannot.
+        const entry = withoutScopedText(
+          logged,
+          claudeMemoryRoot(this.ctx.rootDir)
+        );
         // The entry holds the text its segment streamed, so the segment
         // leaves the live text before anyone hears of the entry: a read
         // after run.log never shows that text twice.

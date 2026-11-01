@@ -436,19 +436,24 @@ for deciders and the run's operator, the docs routes refuse the shared agent
 token, and a `doc-…` ref does not say which applies. `memory_save` keeps
 `scope`, `kind`, `refs`, `epic`, `appliesTo`, `supersedes` and `projectOnly`,
 not its title (the lesson itself) or body, for the same reasons, and
-`memory_forget` keeps the memory's `id`, not the reason. Every other tool's
-input stays whole: ids and queries, or text every transcript reader may already
-read (a task, a task comment, an inbox item, evidence) or that leaves Dispatch
-(a Linear comment). Redaction of message entries happens on the way out; the
-stored transcript keeps them whole, and the daemon's own readers (review
-summaries, judgments, memory) read it as stored. The two sides reuse the bus's
-own two rules, so a run's chat shows a message where the bus does, and they
-differ at the edges as the bus's do: the socket rule also counts a message's
-`to` addresses and its recipients on a teammate's machine, and the read rule
-lets a run's token read for its whole task (its task's address and other runs).
-The desktop, `dispatch run show`, `--watch`, `run watch` and `dispatch share`
-show nothing for a redacted entry, and the CLI, which uses the shared agent
-token, gets every bus message's entry redacted.
+`memory_forget` keeps the memory's `id`, not the reason. A Claude run's `Write`,
+`Edit`, `MultiEdit` or `NotebookEdit` call on a file inside a Claude memory
+export (`claudeMemoryRoot`, where export mode has the run save memories as
+usual) keeps only its `file_path` (`notebook_path`): Dispatch keeps a file
+written there as the operator's personal memory, and an edit's old text is one
+already exported to them. Every other tool's input stays whole: ids and queries,
+or text every transcript reader may already read (a task, a task comment, an
+inbox item, evidence, a file in the run's worktree) or that leaves Dispatch (a
+Linear comment). Redaction of message entries happens on the way out; the stored
+transcript keeps them whole, and the daemon's own readers (review summaries,
+judgments, memory) read it as stored. The two sides reuse the bus's own two
+rules, so a run's chat shows a message where the bus does, and they differ at
+the edges as the bus's do: the socket rule also counts a message's `to`
+addresses and its recipients on a teammate's machine, and the read rule lets a
+run's token read for its whole task (its task's address and other runs). The
+desktop, `dispatch run show`, `--watch`, `run watch` and `dispatch share` show
+nothing for a redacted entry, and the CLI, which uses the shared agent token,
+gets every bus message's entry redacted.
 
 **Switches.** Two `.dispatch/config.yml` blocks, read when a turn or a run
 starts, so a change applies from the Overseer's next turn and to runs started

@@ -5,6 +5,7 @@ import type {
   SubagentEvent,
   SubagentSummary,
 } from '@dispatch-foo/core';
+import { isAbsolute, relative, sep } from 'node:path';
 
 import type { RunUsage } from './usage.js';
 
@@ -131,7 +132,9 @@ const MESSAGE_ROUTING = onlyFields(
 //
 // The other tools stay whole: their input is ids and queries, or text every
 // transcript reader may already read (a task, a task comment, an inbox item,
-// evidence) or that leaves Dispatch (a Linear comment).
+// evidence) or that leaves Dispatch (a Linear comment). A file write into a
+// Claude memory export is the one call of another tool that loses its text
+// (keptFileWrite).
 const SCOPED_TOOL_INPUTS = {
   msg_send: MESSAGE_ROUTING,
   msg_reply: MESSAGE_ROUTING,
@@ -169,23 +172,70 @@ const SCOPED_TOOL_NAMES: ReadonlyMap<string, KeptInput> = new Map(
   ])
 );
 
+// Claude Code's tools that write a file, and the input field naming the file.
+const FILE_WRITE_TOOLS: ReadonlyMap<string, string> = new Map([
+  ['Write', 'file_path'],
+  ['Edit', 'file_path'],
+  ['MultiEdit', 'file_path'],
+  ['NotebookEdit', 'notebook_path'],
+]);
+
+// Whether `path` names something inside `dir`.
+function isInside(path: string, dir: string): boolean {
+  const rel = relative(dir, path);
+  return (
+    rel !== '' &&
+    rel !== '..' &&
+    !rel.startsWith(`..${sep}`) &&
+    !isAbsolute(rel)
+  );
+}
+
+// What a transcript keeps of a file write's input: the file alone, when the
+// file is inside `memoryRoot` (claudeMemoryRoot, which holds every Claude
+// auto-memory export of the project). Export mode tells a Claude run to save
+// memories there as usual, with Write and Edit, and Dispatch keeps a new file
+// there as the operator's personal memory; an edit's old text is one already
+// exported to them. Null for any other call.
+function keptFileWrite(
+  entry: NormalizedEntry,
+  input: Record<string, unknown>,
+  memoryRoot: string
+): Record<string, unknown> | null {
+  const field = FILE_WRITE_TOOLS.get(entry.toolName ?? '');
+  const path = field === undefined ? undefined : input[field];
+  if (field === undefined || typeof path !== 'string') return null;
+  return isInside(path, memoryRoot) ? { [field]: path } : null;
+}
+
 // A run's tool entry as its transcript keeps it: a call to a tool in
-// SCOPED_TOOL_INPUTS keeps only what names its target. The executor logs a
-// call as it starts, before anything says where its text was stored, so the
-// entry has no messageId or doc id to redact it by on the way out; the text
-// goes no further than the executor, and a reader finds it where it was
-// stored, under that store's own rule.
-export function withoutScopedText(entry: NormalizedEntry): NormalizedEntry {
-  const keep =
-    entry.kind === 'tool' && entry.toolName !== undefined
-      ? SCOPED_TOOL_NAMES.get(entry.toolName)
-      : undefined;
-  if (keep === undefined || entry.toolInput === undefined) return entry;
+// SCOPED_TOOL_INPUTS keeps only what names its target, and a file write into
+// a Claude memory export under `memoryRoot` only the file it wrote. The
+// executor logs a call as it starts, before anything says where its text was
+// stored, so the entry has no messageId or doc id to redact it by on the way
+// out; the text goes no further than the executor, and a reader finds it
+// where it was stored, under that store's own rule. Applying it twice gives
+// the same entry, so a reader of a transcript written before a call was
+// scoped can apply it again.
+export function withoutScopedText(
+  entry: NormalizedEntry,
+  memoryRoot: string
+): NormalizedEntry {
+  if (
+    entry.kind !== 'tool' ||
+    entry.toolName === undefined ||
+    entry.toolInput === undefined
+  ) {
+    return entry;
+  }
   const input =
     typeof entry.toolInput === 'object' && entry.toolInput !== null
       ? (entry.toolInput as Record<string, unknown>)
       : {};
-  return { ...entry, toolInput: keep(input) };
+  const keep = SCOPED_TOOL_NAMES.get(entry.toolName);
+  if (keep !== undefined) return { ...entry, toolInput: keep(input) };
+  const file = keptFileWrite(entry, input, memoryRoot);
+  return file === null ? entry : { ...entry, toolInput: file };
 }
 
 // How much of a tool's result a transcript keeps: a Codex command's output,
