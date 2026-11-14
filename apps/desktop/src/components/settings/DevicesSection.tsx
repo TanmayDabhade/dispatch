@@ -13,6 +13,7 @@ import {
   listRemoteConnections,
 } from '../../lib/remoteConnections';
 import styles from './DevicesSection.module.css';
+import { IphoneGroup } from './IphoneGroup';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
 import { grantableTiers } from './TeamSection';
 
@@ -98,6 +99,7 @@ export function DevicesSection({
 
   return (
     <>
+      <IphoneGroup data={data} />
       <SettingsGroup
         title="Pair a device"
         hint="The Dispatch app on another machine, or a phone. It gets its own token, acting as you at the tier you pick."
