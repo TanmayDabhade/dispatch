@@ -1,8 +1,4 @@
-import {
-  type PairingOffer,
-  parsePairingUrl,
-  toBase64Url,
-} from '@dispatch/remote';
+import { type PairingOffer, toBase64Url } from '@dispatch/remote';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -10,7 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, TextInput, View } from 'react-native';
 
 import { offerKind } from '../src/macs';
-import { urlFromParams } from '../src/pairing';
+import { readPairingText, urlFromParams } from '../src/pairing';
 import { useRemote } from '../src/remote';
 import { font, radius, useColours } from '../src/theme';
 import { Body, Button, Card, Row, Title } from '../src/ui';
@@ -34,7 +30,7 @@ export default function PairScreen() {
   const scanned = useRef(false);
 
   const read = (text: string) => {
-    const parsed = parsePairingUrl(text.trim());
+    const parsed = readPairingText(text);
     if (!parsed.ok) {
       setError(parsed.error);
       return;
@@ -158,7 +154,7 @@ export default function PairScreen() {
                 if (scanned.current) return;
                 scanned.current = true;
                 read(result.data);
-                if (!parsePairingUrl(result.data.trim()).ok)
+                if (!readPairingText(result.data).ok)
                   setTimeout(() => (scanned.current = false), 1500);
               }}
             />
