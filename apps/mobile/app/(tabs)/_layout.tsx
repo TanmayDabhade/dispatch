@@ -1,9 +1,17 @@
+import type { ApiClient } from '@dispatch/client';
 import { Tabs } from 'expo-router';
 
+import { useLive } from '../../src/live';
 import { font, size, useColours } from '../../src/theme';
+
+const countOpen = (client: ApiClient) =>
+  client.openDecisions().then((r) => r.items.length);
 
 export default function TabsLayout() {
   const c = useColours();
+  // The Needs you count as the tab's badge, in amber: waiting on you.
+  const open = useLive(countOpen, ['decisions.changed', 'inbox.changed']);
+  const badge = (open.data ?? 0) > 0 ? open.data : undefined;
   return (
     <Tabs
       screenOptions={{
@@ -22,7 +30,18 @@ export default function TabsLayout() {
         tabBarLabelStyle: { fontFamily: font.medium },
       }}
     >
-      <Tabs.Screen name="index" options={{ title: 'Needs you' }} />
+      <Tabs.Screen
+        name="index"
+        options={{
+          title: 'Needs you',
+          ...(badge === undefined ? {} : { tabBarBadge: badge }),
+          tabBarBadgeStyle: {
+            backgroundColor: c.amber,
+            color: c.onRed,
+            fontFamily: font.semibold,
+          },
+        }}
+      />
       <Tabs.Screen name="runs" options={{ title: 'Runs' }} />
       <Tabs.Screen name="overseer" options={{ title: 'Overseer' }} />
       <Tabs.Screen name="review" options={{ title: 'Review' }} />
