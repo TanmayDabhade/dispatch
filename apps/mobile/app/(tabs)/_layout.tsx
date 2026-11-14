@@ -24,6 +24,7 @@ export default function TabsLayout() {
     >
       <Tabs.Screen name="index" options={{ title: 'Needs you' }} />
       <Tabs.Screen name="runs" options={{ title: 'Runs' }} />
+      <Tabs.Screen name="overseer" options={{ title: 'Overseer' }} />
       <Tabs.Screen name="review" options={{ title: 'Review' }} />
       <Tabs.Screen name="settings" options={{ title: 'Mac' }} />
     </Tabs>
