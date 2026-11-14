@@ -51,6 +51,12 @@ export function useOverseer(): OverseerView {
   const [deciding, setDeciding] = useState<string | null>(null);
   // null: follow the daemon's current conversation; '' : a fresh one.
   const [pinned, setPinned] = useState<string | null>(null);
+  // A conversation belongs to one Mac: switching Macs (a new client) goes
+  // back to following that Mac's current conversation.
+  useEffect(() => {
+    setPinned(null);
+    setRecord(undefined);
+  }, [client]);
   const idRef = useRef<string | null>(null);
   idRef.current = record?.id ?? null;
 
