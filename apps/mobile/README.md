@@ -15,8 +15,8 @@ cd apps/mobile
 pnpm ios                                         # expo run:ios
 ```
 
-To check the app bundles without Xcode (CI runs this on every PR that
-touches the app or a package it uses):
+To check the app bundles without Xcode (CI runs this on every PR that touches
+the app or a package it uses):
 
 ```sh
 moon run mobile:build                            # expo export for iOS into dist/

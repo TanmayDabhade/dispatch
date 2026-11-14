@@ -9,7 +9,7 @@ function message(over: Partial<Message>): Message {
     thread: 'th-1',
     replyTo: null,
     from: 'run:r-7',
-    to: ['human:tanmay'],
+    to: ['human:ada'],
     kind: 'question',
     body: 'Which library should we use?',
     refs: [],
@@ -102,15 +102,15 @@ describe('a question card', () => {
   });
 
   test('names who asks', () => {
-    expect(askerOf(message({ from: 'agent:tanmay/overseer' }))).toBe(
+    expect(askerOf(message({ from: 'agent:ada/overseer' }))).toBe(
       'The Overseer'
     );
     // Only the exact address is the Overseer; other agents say they are one.
     expect(askerOf(message({ from: 'agent:overseer-bot' }))).toBe(
       'Agent overseer-bot'
     );
-    expect(askerOf(message({ from: 'agent:tanmay/overseer/x' }))).toBe(
-      'Agent tanmay/overseer/x'
+    expect(askerOf(message({ from: 'agent:ada/overseer/x' }))).toBe(
+      'Agent ada/overseer/x'
     );
     expect(askerOf(message({ from: 'human:wyat' }))).toBe('wyat');
     expect(decisionCard(message({ from: 'human:wyat' })).runId).toBeNull();

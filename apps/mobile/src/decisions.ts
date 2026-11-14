@@ -12,9 +12,9 @@ import {
 // from the open decision's message with no React in sight, so tests can pin
 // it down. The screen (app/(tabs)/index.tsx) only draws this.
 
-export type DecisionKind = 'approval' | 'scope' | 'question';
+type DecisionKind = 'approval' | 'scope' | 'question';
 
-export interface DecisionAction {
+interface DecisionAction {
   label: string;
   tone: 'primary' | 'plain' | 'danger';
   reply: ReplyInput;
