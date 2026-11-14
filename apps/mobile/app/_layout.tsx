@@ -2,6 +2,7 @@ import { Redirect, Stack, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { ActivityIndicator, View } from 'react-native';
 
+import { useAppFonts } from '../src/fonts';
 import { RemoteProvider, useRemote } from '../src/remote';
 import { usePalette } from '../src/ui';
 
@@ -41,6 +42,10 @@ function Gate() {
 }
 
 export default function RootLayout() {
+  // Hold the first frame until Geist is in, so text never reflows from the
+  // system font. A failed load lets the app start on the system font.
+  const fontsReady = useAppFonts();
+  if (!fontsReady) return null;
   return (
     <RemoteProvider>
       <StatusBar style="auto" />
