@@ -12,3 +12,24 @@ tasks:
       - '^:build'
     options:
       runInCI: 'skip'
+
+  # Rewrites src/theme.gen.ts from packages/ui's tokens.css. test/theme.test.ts
+  # fails CI when the two drift apart.
+  theme:
+    command: 'bun scripts/theme.ts'
+    inputs:
+      - '/packages/ui/src/styles/tokens.css'
+      - 'scripts/theme.ts'
+    outputs:
+      - 'src/theme.gen.ts'
+    options:
+      runInCI: 'always'
+
+  # Inherited from bun-common; widened so a desktop token change re-runs the
+  # theme drift test here.
+  test:
+    inputs:
+      - '**/*'
+      - '!node_modules/**'
+      - '!dist/**'
+      - '/packages/ui/src/styles/tokens.css'

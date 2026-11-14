@@ -8,7 +8,8 @@
     "start": "expo start",
     "ios": "expo run:ios",
     "export": "expo export --platform ios",
-    "tsc": "tsgo --noEmit --pretty"
+    "tsc": "tsgo --noEmit --pretty",
+    "theme": "bun scripts/theme.ts"
   },
   "dependencies": {
     "@dispatch/client": "workspace:*",
