@@ -1,10 +1,15 @@
-import { type PairingOffer, parsePairingUrl } from '@dispatch/remote';
+import {
+  type PairingOffer,
+  parsePairingUrl,
+  toBase64Url,
+} from '@dispatch/remote';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, TextInput, View } from 'react-native';
 
+import { offerKind } from '../src/macs';
 import { urlFromParams } from '../src/pairing';
 import { useRemote } from '../src/remote';
 import { font, radius, useColours } from '../src/theme';
@@ -68,6 +73,14 @@ export default function PairScreen() {
   ];
 
   if (offer !== null) {
+    const kind = offerKind(
+      { active: null, macs },
+      {
+        daemonId: offer.daemonId,
+        daemonKey: toBase64Url(offer.daemonKey),
+        relay: offer.relay,
+      }
+    );
     return (
       <ScrollView>
         <Card>
@@ -76,10 +89,20 @@ export default function PairScreen() {
             Only pair with a Mac you own. This phone will be able to answer
             agents, cancel runs and merge work there.
           </Body>
-          {macs.some((m) => m.daemonId === offer.daemonId) ? (
+          {kind === 'key-changed' ? (
+            <Card tone="red">
+              <Title>This Mac's keys have changed</Title>
+              <Body>
+                The code says it is a Mac this phone already knows, but with
+                different keys. That happens when Dispatch was reset on that
+                Mac, or when someone shows a code made to pass as it. Pair only
+                if you just reset it yourself; pairing replaces the old keys.
+              </Body>
+            </Card>
+          ) : kind === 'same' ? (
             <Body muted>
-              This phone already knows this Mac. Pairing again replaces its
-              keys.
+              This phone already knows this Mac. Pairing again renews its
+              pairing.
             </Body>
           ) : macs.length === 0 ? null : (
             <Body muted>

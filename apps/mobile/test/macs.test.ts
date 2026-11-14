@@ -4,6 +4,7 @@ import {
   activeMac,
   addMac,
   EMPTY,
+  offerKind,
   type Paired,
   parseMacList,
   removeMac,
@@ -62,5 +63,22 @@ describe('the Macs a phone is paired with', () => {
     list = removeMac(list, 'work');
     expect(list).toEqual({ active: null, macs: [] });
     expect(activeMac(list)).toBeNull();
+  });
+
+  test('tells a known Mac from one whose keys changed', () => {
+    const list = addMac(EMPTY, mac('work'));
+    const offer = {
+      daemonId: 'work',
+      daemonKey: 'key-work',
+      relay: mac('work').relay,
+    };
+    expect(offerKind(list, offer)).toBe('same');
+    expect(offerKind(list, { ...offer, daemonKey: 'other' })).toBe(
+      'key-changed'
+    );
+    expect(offerKind(list, { ...offer, relay: 'wss://evil.example' })).toBe(
+      'key-changed'
+    );
+    expect(offerKind(list, { ...offer, daemonId: 'home' })).toBe('new');
   });
 });

@@ -96,3 +96,21 @@ export function removeMac(list: MacList, daemonId: string): MacList {
     list.active === daemonId ? (macs[0]?.daemonId ?? null) : list.active;
   return { active, macs };
 }
+
+/**
+ * How a pairing code relates to the Macs this phone knows: a new Mac, the
+ * same Mac again (same id, key and relay), or a known id with a different
+ * key or relay. The last is what a code made to pass as one of your Macs
+ * looks like (or that Mac was reset), so the pairing screen warns instead of
+ * calling it a routine re-pair.
+ */
+export function offerKind(
+  list: MacList,
+  offer: { daemonId: string; daemonKey: string; relay: string }
+): 'new' | 'same' | 'key-changed' {
+  const known = list.macs.find((m) => m.daemonId === offer.daemonId);
+  if (known === undefined) return 'new';
+  return known.daemonKey === offer.daemonKey && known.relay === offer.relay
+    ? 'same'
+    : 'key-changed';
+}
