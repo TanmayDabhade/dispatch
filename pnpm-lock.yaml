@@ -918,6 +918,9 @@ importers:
       lucide-react:
         specifier: 'catalog:'
         version: 1.25.0(react@19.2.7)
+      uqr:
+        specifier: 'catalog:'
+        version: 0.1.3
     devDependencies:
       '@happy-dom/global-registrator':
         specifier: 'catalog:'
