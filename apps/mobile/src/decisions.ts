@@ -52,14 +52,21 @@ export function preview(input: unknown): string {
     : text;
 }
 
-/** Who is asking, in words: "A run", "The Overseer", or the sender's name. */
+/** The Overseer's bus address: `agent:<owner>/overseer`, and nothing else. */
+const OVERSEER = /^agent:[^/:]+\/overseer$/;
+
+/** Who is asking, in words: "A run", "The Overseer", a teammate's handle, or
+ *  "Agent <name>". Matched on exact address shapes, not on a name containing
+ *  a word, so an agent called "overseer-ish" can't pass as the Overseer, and
+ *  agents keep their kind so none reads as a person. */
 export function askerOf(message: Message): string {
   const from = message.from;
   if (from.startsWith('run:')) return 'A run';
   if (from === 'agent:dispatch') return 'Dispatch';
-  if (/overseer/i.test(from)) return 'The Overseer';
-  const colon = from.indexOf(':');
-  return colon === -1 ? from : from.slice(colon + 1);
+  if (OVERSEER.test(from)) return 'The Overseer';
+  if (from.startsWith('human:')) return from.slice('human:'.length);
+  if (from.startsWith('agent:')) return `Agent ${from.slice('agent:'.length)}`;
+  return from;
 }
 
 export function decisionCard(message: Message): DecisionCard {

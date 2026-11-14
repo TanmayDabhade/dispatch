@@ -102,7 +102,16 @@ describe('a question card', () => {
   });
 
   test('names who asks', () => {
-    expect(askerOf(message({ from: 'agent:overseer' }))).toBe('The Overseer');
+    expect(askerOf(message({ from: 'agent:tanmay/overseer' }))).toBe(
+      'The Overseer'
+    );
+    // Only the exact address is the Overseer; other agents say they are one.
+    expect(askerOf(message({ from: 'agent:overseer-bot' }))).toBe(
+      'Agent overseer-bot'
+    );
+    expect(askerOf(message({ from: 'agent:tanmay/overseer/x' }))).toBe(
+      'Agent tanmay/overseer/x'
+    );
     expect(askerOf(message({ from: 'human:wyat' }))).toBe('wyat');
     expect(decisionCard(message({ from: 'human:wyat' })).runId).toBeNull();
   });
