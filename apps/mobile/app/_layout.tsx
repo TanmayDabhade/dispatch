@@ -4,16 +4,16 @@ import { ActivityIndicator, View } from 'react-native';
 
 import { useAppFonts } from '../src/fonts';
 import { RemoteProvider, useRemote } from '../src/remote';
-import { usePalette } from '../src/ui';
+import { font, useColours } from '../src/theme';
 
 function Gate() {
   const { loaded, paired } = useRemote();
   const segments = useSegments();
-  const p = usePalette();
+  const c = useColours();
   if (!loaded) {
     return (
       <View
-        style={{ flex: 1, justifyContent: 'center', backgroundColor: p.bg }}
+        style={{ flex: 1, justifyContent: 'center', backgroundColor: c.bg }}
       >
         <ActivityIndicator />
       </View>
@@ -25,10 +25,12 @@ function Gate() {
   return (
     <Stack
       screenOptions={{
-        contentStyle: { backgroundColor: p.bg },
-        headerStyle: { backgroundColor: p.bg },
-        headerTintColor: p.accent,
-        headerTitleStyle: { color: p.text },
+        contentStyle: { backgroundColor: c.bg },
+        headerStyle: { backgroundColor: c.bg },
+        headerShadowVisible: false,
+        headerTintColor: c.accentInk,
+        headerTitleStyle: { color: c.text, fontFamily: font.semibold },
+        headerBackButtonDisplayMode: 'minimal',
       }}
     >
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />

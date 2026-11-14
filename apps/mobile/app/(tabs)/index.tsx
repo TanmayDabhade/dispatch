@@ -15,6 +15,7 @@ import { FlatList, RefreshControl, TextInput } from 'react-native';
 
 import { useLive } from '../../src/live';
 import { useRemote } from '../../src/remote';
+import { radius, useColours } from '../../src/theme';
 import {
   ago,
   Body,
@@ -25,7 +26,6 @@ import {
   Row,
   styles,
   Title,
-  usePalette,
 } from '../../src/ui';
 
 // Everything an agent is blocked on and asking this person: a tool call to
@@ -57,7 +57,7 @@ function Decision({
   const [busy, setBusy] = useState(false);
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const p = usePalette();
+  const c = useColours();
   const runId = runIdOf(message);
 
   const send = async (reply: ReplyInput) => {
@@ -182,15 +182,16 @@ function Decision({
         value={text}
         onChangeText={setText}
         placeholder="Answer in your own words"
-        placeholderTextColor={p.muted}
+        placeholderTextColor={c.text4}
         multiline
         style={[
           styles.body,
           {
-            color: p.text,
-            borderColor: p.border,
+            color: c.text,
+            backgroundColor: c.surface,
+            borderColor: c.controlBorder,
             borderWidth: 1,
-            borderRadius: 8,
+            borderRadius: radius.lg,
             padding: 10,
             minHeight: 44,
           },
