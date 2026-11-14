@@ -1,5 +1,6 @@
 import {
   approvalReply,
+  gateOf,
   type Message,
   type ReplyInput,
   runIdOf,
@@ -8,11 +9,13 @@ import {
   toScopeRequest,
 } from '@dispatch/client';
 
+import { actionReply } from './overseer';
+
 // What a Needs you card shows and what each of its buttons sends, worked out
 // from the open decision's message with no React in sight, so tests can pin
 // it down. The screen (app/(tabs)/index.tsx) only draws this.
 
-type DecisionKind = 'approval' | 'scope' | 'question';
+type DecisionKind = 'approval' | 'scope' | 'action' | 'question';
 
 interface DecisionAction {
   label: string;
@@ -95,6 +98,25 @@ export function decisionCard(message: Message): DecisionCard {
             ]
           : []),
         { label: 'Deny', tone: 'danger', reply: approvalReply(false) },
+      ],
+      freeText: false,
+      runId,
+    };
+  }
+
+  // A change the Overseer proposed (cancel a run, create tasks…). The same
+  // answer as the Overseer tab's card: confirm runs it, cancel drops it.
+  const gate = gateOf(message);
+  if (gate?.type === 'overseer-action') {
+    return {
+      kind: 'action',
+      title: 'The Overseer wants to',
+      body: gate.summary,
+      code: null,
+      truncated: false,
+      actions: [
+        { label: 'Confirm', tone: 'primary', reply: actionReply(true) },
+        { label: 'Cancel', tone: 'danger', reply: actionReply(false) },
       ],
       freeText: false,
       runId,

@@ -67,6 +67,28 @@ describe('a tool approval card', () => {
   });
 });
 
+describe('an Overseer action card', () => {
+  test('shows what it would do and sends confirm or cancel', () => {
+    const card = decisionCard(
+      message({
+        from: 'agent:dispatch',
+        data: {
+          type: 'overseer-action',
+          conversation: 'c-1',
+          actionId: 'a-1',
+          summary: 'Cancel run r-7',
+        },
+      })
+    );
+    expect(card.kind).toBe('action');
+    expect(card.body).toBe('Cancel run r-7');
+    expect(card.actions.map((a) => a.reply.choice)).toEqual([
+      'confirm',
+      'cancel',
+    ]);
+  });
+});
+
 describe('a scope request card', () => {
   test('lists the paths and sends grant or deny', () => {
     const card = decisionCard(
