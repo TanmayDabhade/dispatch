@@ -133,6 +133,24 @@ export function Button({
   );
 }
 
+/** A title with something on its right: a chip, a time. */
+export function TitleRow({
+  title,
+  right,
+}: {
+  title: ReactNode;
+  right: ReactNode;
+}) {
+  return (
+    <View style={styles.titleRow}>
+      <View style={{ flex: 1 }}>
+        <Title>{title}</Title>
+      </View>
+      {right}
+    </View>
+  );
+}
+
 export function Row({ children }: { children: ReactNode }) {
   return <View style={styles.row}>{children}</View>;
 }
@@ -207,6 +225,7 @@ export const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 },
+  titleRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
   button: {
     borderRadius: radius.lg,
     borderWidth: 1,
