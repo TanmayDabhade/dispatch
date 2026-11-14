@@ -102,7 +102,7 @@ export function DevicesSection({
       <IphoneGroup data={data} />
       <SettingsGroup
         title="Pair a device"
-        hint="The Dispatch app on another machine, or a phone. It gets its own token, acting as you at the tier you pick."
+        hint="The Dispatch app on another machine. It gets its own token, acting as you at the tier you pick. For the iPhone app, use Show code under iPhone above."
         keywords="pair device phone remote code"
         requires="none"
       >
