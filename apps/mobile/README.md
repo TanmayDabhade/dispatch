@@ -45,9 +45,24 @@ DISPATCH_REMOTE_RELAY=ws://<your-mac's-ip>:8080 dispatchd
 
 - **Needs you:** tool approvals, scope requests, questions, and the Overseer's
   proposed actions. The tab's badge counts them.
-- **Runs:** live runs first, each with its log and a cancel button.
+- **Runs:** the tasks ready to start, each with Start, then live runs, each with
+  its log and a cancel button. **New** writes a task: the first line is its
+  title, and Save and start runs it straight away.
 - **Overseer:** the Mac's current Overseer conversation, streaming as it writes,
   with cards to confirm its actions and allow its tool calls.
 - **Review:** finished runs to merge or discard, and the merge queue.
 - **Mac:** connection status, switching between paired Macs, pairing another,
   and forgetting one.
+
+## Send a page from Safari
+
+Until the app has its own share extension, an iOS Shortcut can send a page into
+a new task. Make a shortcut that shows in the share sheet, takes Safari web
+pages, and opens this URL, with each value URL-encoded:
+
+```text
+dispatch-remote://task/new?title=<page title>&url=<page URL>
+```
+
+`text=<anything>` works too. The link only fills in the New task screen. Nothing
+is saved or started until you tap.
