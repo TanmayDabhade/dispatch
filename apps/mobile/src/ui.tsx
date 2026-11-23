@@ -151,6 +151,12 @@ export function TitleRow({
   );
 }
 
+/** A small heading over a group of cards, like desktop's section eyebrows. */
+export function SectionLabel({ children }: { children: ReactNode }) {
+  const c = useColours();
+  return <Text style={[styles.section, { color: c.text3 }]}>{children}</Text>;
+}
+
 export function Row({ children }: { children: ReactNode }) {
   return <View style={styles.row}>{children}</View>;
 }
@@ -223,6 +229,14 @@ export const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 6,
     overflow: 'hidden',
+  },
+  section: {
+    fontFamily: font.medium,
+    fontSize: size.caption,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginHorizontal: 18,
+    marginTop: 20,
   },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 },
   titleRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
