@@ -39,6 +39,10 @@ function Gate() {
         options={{ title: 'Pair with your Mac', presentation: 'modal' }}
       />
       <Stack.Screen name="run/[id]" options={{ title: 'Run' }} />
+      <Stack.Screen
+        name="task/new"
+        options={{ title: 'New task', presentation: 'modal' }}
+      />
     </Stack>
   );
 }
